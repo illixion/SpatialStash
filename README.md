@@ -12,7 +12,9 @@ A visionOS app for Apple Vision Pro that transforms your 2D images into immersiv
 
 ## Screenshots
 
-*Coming soon*
+![Home](images/home.jpeg)
+![Filters](images/filters.jpeg)
+![Settings](images/settings.jpeg)
 
 ## Requirements
 
