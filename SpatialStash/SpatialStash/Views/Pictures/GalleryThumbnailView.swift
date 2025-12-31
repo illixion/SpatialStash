@@ -1,7 +1,8 @@
 /*
  Spatial Stash - Gallery Thumbnail View
 
- Individual thumbnail view with async image loading and visionOS hover effects.
+ Individual thumbnail view with async image loading, animated GIF support,
+ and visionOS hover effects.
  */
 
 import SwiftUI
@@ -9,12 +10,19 @@ import SwiftUI
 struct GalleryThumbnailView: View {
     let image: GalleryImage
     @State private var loadedImage: UIImage?
+    @State private var imageData: Data?
     @State private var isLoading = true
     @State private var loadFailed = false
+    @State private var isAnimatedGIF = false
 
     var body: some View {
         ZStack {
-            if let loadedImage {
+            if let imageData, isAnimatedGIF {
+                // Display animated GIF
+                AnimatedImageView(data: imageData, contentMode: .scaleAspectFill)
+                    .frame(width: 200, height: 200)
+            } else if let loadedImage {
+                // Display static image
                 Image(uiImage: loadedImage)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
@@ -40,6 +48,7 @@ struct GalleryThumbnailView: View {
         }
         .background(Color.secondary.opacity(0.2))
         .cornerRadius(12)
+        .clipped()
         .hoverEffect(.lift)
         .task {
             await loadThumbnail()
@@ -48,8 +57,11 @@ struct GalleryThumbnailView: View {
 
     private func loadThumbnail() async {
         do {
-            loadedImage = try await ImageLoader.shared.loadImage(from: image.thumbnailURL)
-            if loadedImage == nil {
+            if let result = try await ImageLoader.shared.loadImageWithData(from: image.thumbnailURL) {
+                loadedImage = result.image
+                imageData = result.data
+                isAnimatedGIF = result.data.isAnimatedGIF
+            } else {
                 loadFailed = true
             }
         } catch {

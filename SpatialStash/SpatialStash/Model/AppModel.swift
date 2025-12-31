@@ -160,6 +160,11 @@ class AppModel {
     var spatial3DImage: ImagePresentationComponent.Spatial3DImage? = nil
     var isLoadingDetailImage: Bool = false
 
+    // MARK: - GIF Support
+
+    var isAnimatedGIF: Bool = false
+    var currentImageData: Data? = nil
+
     // MARK: - Initialization
 
     init() {
@@ -414,9 +419,36 @@ class AppModel {
         isShowingDetailView = true
         spatial3DImageState = .notGenerated
         spatial3DImage = nil
+        isAnimatedGIF = false
+        currentImageData = nil
         isLoadingDetailImage = true
         // Reset content entity to clear previous image
         contentEntity.components.remove(ImagePresentationComponent.self)
+
+        // Load image data to detect if it's a GIF
+        Task {
+            await loadImageDataForDetail(url: image.fullSizeURL)
+        }
+    }
+
+    /// Load image data for the detail view and detect if it's an animated GIF
+    private func loadImageDataForDetail(url: URL) async {
+        do {
+            if let data = try await ImageLoader.shared.loadImageData(from: url) {
+                currentImageData = data
+                isAnimatedGIF = data.isAnimatedGIF
+
+                if isAnimatedGIF {
+                    // For GIFs, calculate aspect ratio from the image data
+                    if let image = UIImage(data: data) {
+                        imageAspectRatio = image.size.width / image.size.height
+                    }
+                    isLoadingDetailImage = false
+                }
+            }
+        } catch {
+            print("[AppModel] Failed to load image data: \(error)")
+        }
     }
 
     /// Dismiss the detail view and return to gallery

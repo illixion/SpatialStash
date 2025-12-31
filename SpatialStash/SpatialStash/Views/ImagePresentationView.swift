@@ -1,8 +1,9 @@
 /*
-See the LICENSE.txt file for this sample’s licensing information.
+See the LICENSE.txt file for this sample's licensing information.
 
 Abstract:
 The view containing the entity with the ImagePresentationComponent.
+Handles both static images (with spatial 3D conversion) and animated GIFs.
 */
 
 import RealityKit
@@ -14,61 +15,72 @@ struct ImagePresentationView: View {
 
     var body: some View {
         ZStack {
-            GeometryReader3D { geometry in
-                RealityView { content in
-                    await appModel.createImagePresentationComponent()
-                    // Scale the entity to fit in the bounds.
-                    let availableBounds = content.convert(geometry.frame(in: .local), from: .local, to: .scene)
-                    scaleImagePresentationToFit(in: availableBounds)
-                    content.add(appModel.contentEntity)
-                    // Resize window to match initial aspect ratio
-                    resizeWindowToAspectRatio(appModel.imageAspectRatio)
-                } update: { content in
-                    guard let presentationScreenSize = appModel
-                        .contentEntity
-                        .observable
-                        .components[ImagePresentationComponent.self]?
-                        .presentationScreenSize, presentationScreenSize != .zero else {
-                            return
-                    }
-                    // Position the entity at the back of the window.
-                    let originalPosition = appModel.contentEntity.position(relativeTo: nil)
-                    appModel.contentEntity.setPosition(SIMD3<Float>(originalPosition.x, originalPosition.y, 0.0), relativeTo: nil)
-                    // Scale the entity to fit in the bounds.
-                    let availableBounds = content.convert(geometry.frame(in: .local), from: .local, to: .scene)
-                    scaleImagePresentationToFit(in: availableBounds)
+            if appModel.isAnimatedGIF, let gifData = appModel.currentImageData {
+                // Display animated GIF without RealityKit (no 3D conversion possible)
+                AnimatedGIFDetailView(
+                    imageData: gifData,
+                    aspectRatio: appModel.imageAspectRatio
+                )
+                .onAppear {
+                    setupWindowForGIF()
                 }
-                .onAppear() {
-                    guard let windowScene = sceneDelegate.windowScene else {
-                        print("Unable to get the window scene. Unable to set the resizing restrictions.")
-                        return
-                    }
-                    // Ensure that the scene resizes uniformly on X and Y axes.
-                    windowScene.requestGeometryUpdate(.Vision(resizingRestrictions: .uniform))
+                .onDisappear {
+                    resetWindowRestrictions()
                 }
-                .onDisappear() {
-                    guard let windowScene = sceneDelegate.windowScene else {
-                        return
-                    }
-                    // Reset to freeform resizing when leaving detail view
-                    windowScene.requestGeometryUpdate(.Vision(resizingRestrictions: .freeform))
-                }
-                .onChange(of: appModel.imageAspectRatio) { _, newAspectRatio in
-                    resizeWindowToAspectRatio(newAspectRatio)
-                }
-                .onChange(of: appModel.imageURL) {
-                    Task {
+            } else {
+                // Display static image with RealityKit for potential 3D conversion
+                GeometryReader3D { geometry in
+                    RealityView { content in
                         await appModel.createImagePresentationComponent()
-                    }
-                }
-                .onChange(of: appModel.isLoadingDetailImage) { wasLoading, isLoading in
-                    // When loading finishes, ensure window is resized to match the new image
-                    if wasLoading && !isLoading {
+                        // Scale the entity to fit in the bounds.
+                        let availableBounds = content.convert(geometry.frame(in: .local), from: .local, to: .scene)
+                        scaleImagePresentationToFit(in: availableBounds)
+                        content.add(appModel.contentEntity)
+                        // Resize window to match initial aspect ratio
                         resizeWindowToAspectRatio(appModel.imageAspectRatio)
+                    } update: { content in
+                        guard let presentationScreenSize = appModel
+                            .contentEntity
+                            .observable
+                            .components[ImagePresentationComponent.self]?
+                            .presentationScreenSize, presentationScreenSize != .zero else {
+                                return
+                        }
+                        // Position the entity at the back of the window.
+                        let originalPosition = appModel.contentEntity.position(relativeTo: nil)
+                        appModel.contentEntity.setPosition(SIMD3<Float>(originalPosition.x, originalPosition.y, 0.0), relativeTo: nil)
+                        // Scale the entity to fit in the bounds.
+                        let availableBounds = content.convert(geometry.frame(in: .local), from: .local, to: .scene)
+                        scaleImagePresentationToFit(in: availableBounds)
+                    }
+                    .onAppear() {
+                        guard let windowScene = sceneDelegate.windowScene else {
+                            print("Unable to get the window scene. Unable to set the resizing restrictions.")
+                            return
+                        }
+                        // Ensure that the scene resizes uniformly on X and Y axes.
+                        windowScene.requestGeometryUpdate(.Vision(resizingRestrictions: .uniform))
+                    }
+                    .onDisappear() {
+                        resetWindowRestrictions()
+                    }
+                    .onChange(of: appModel.imageAspectRatio) { _, newAspectRatio in
+                        resizeWindowToAspectRatio(newAspectRatio)
+                    }
+                    .onChange(of: appModel.imageURL) {
+                        Task {
+                            await appModel.createImagePresentationComponent()
+                        }
+                    }
+                    .onChange(of: appModel.isLoadingDetailImage) { wasLoading, isLoading in
+                        // When loading finishes, ensure window is resized to match the new image
+                        if wasLoading && !isLoading {
+                            resizeWindowToAspectRatio(appModel.imageAspectRatio)
+                        }
                     }
                 }
+                .aspectRatio(appModel.imageAspectRatio, contentMode: .fit)
             }
-            .aspectRatio(appModel.imageAspectRatio, contentMode: .fit)
 
             // Loading overlay
             if appModel.isLoadingDetailImage {
@@ -84,6 +96,17 @@ struct ImagePresentationView: View {
                 }
             }
         }
+    }
+
+    private func setupWindowForGIF() {
+        guard let windowScene = sceneDelegate.windowScene else { return }
+        windowScene.requestGeometryUpdate(.Vision(resizingRestrictions: .uniform))
+        resizeWindowToAspectRatio(appModel.imageAspectRatio)
+    }
+
+    private func resetWindowRestrictions() {
+        guard let windowScene = sceneDelegate.windowScene else { return }
+        windowScene.requestGeometryUpdate(.Vision(resizingRestrictions: .freeform))
     }
 
     /// Resize the window to match the given aspect ratio

@@ -54,75 +54,87 @@ struct OrnamentsView: View {
                 }
                 .disabled(!appModel.hasNextImage || appModel.isLoadingDetailImage)
 
-                Divider()
-                    .frame(height: 24)
+                // 2D/3D Toggle - only show for non-GIF images
+                if !appModel.isAnimatedGIF {
+                    Divider()
+                        .frame(height: 24)
 
-                // 2D/3D Toggle
-                Button {
-                    guard var ipc = appModel.contentEntity.components[ImagePresentationComponent.self] else {
-                        print("Unable to find ImagePresentationComponent.")
-                        return
-                    }
-                    switch ipc.viewingMode {
-                    case .mono:
-                        switch appModel.spatial3DImageState {
-                        case .generated:
-                            ipc.desiredViewingMode = .spatial3D
-                            appModel.contentEntity.components.set(ipc)
-                        case .notGenerated:
-                            Task {
-                                do {
-                                    try await appModel.generateSpatial3DImage()
-                                } catch {
-                                    print("Spatial3DImage generation failed: \(error.localizedDescription)")
-                                    appModel.spatial3DImageState = .notGenerated
-                                }
-                            }
-                        case .generating:
-                            print("Spatial 3D Image is still generating...")
+                    Button {
+                        guard var ipc = appModel.contentEntity.components[ImagePresentationComponent.self] else {
+                            print("Unable to find ImagePresentationComponent.")
                             return
                         }
-                    case .spatial3D:
-                        ipc.desiredViewingMode = .mono
-                        appModel.contentEntity.components.set(ipc)
-                    default:
-                        print("Unhandled viewing mode: \(ipc.viewingMode)")
-                    }
-                } label: {
-                    // Show loading state or current viewing mode
-                    if appModel.isLoadingDetailImage {
-                        HStack(spacing: 4) {
-                            ProgressView()
-                                .scaleEffect(0.7)
-                            Text("Loading...")
-                        }
-                    } else if let viewingMode = appModel.contentEntity.observable.components[ImagePresentationComponent.self]?.viewingMode {
-                        switch viewingMode {
+                        switch ipc.viewingMode {
                         case .mono:
-                            HStack(spacing: 4) {
-                                Image(systemName: "cube")
-                                Text(appModel.spatial3DImageState == .generated ? "Show 3D" : "Convert to 3D")
+                            switch appModel.spatial3DImageState {
+                            case .generated:
+                                ipc.desiredViewingMode = .spatial3D
+                                appModel.contentEntity.components.set(ipc)
+                            case .notGenerated:
+                                Task {
+                                    do {
+                                        try await appModel.generateSpatial3DImage()
+                                    } catch {
+                                        print("Spatial3DImage generation failed: \(error.localizedDescription)")
+                                        appModel.spatial3DImageState = .notGenerated
+                                    }
+                                }
+                            case .generating:
+                                print("Spatial 3D Image is still generating...")
+                                return
                             }
                         case .spatial3D:
-                            HStack(spacing: 4) {
-                                Image(systemName: "square")
-                                Text("Show 2D")
-                            }
+                            ipc.desiredViewingMode = .mono
+                            appModel.contentEntity.components.set(ipc)
                         default:
+                            print("Unhandled viewing mode: \(ipc.viewingMode)")
+                        }
+                    } label: {
+                        // Show loading state or current viewing mode
+                        if appModel.isLoadingDetailImage {
+                            HStack(spacing: 4) {
+                                ProgressView()
+                                    .scaleEffect(0.7)
+                                Text("Loading...")
+                            }
+                        } else if let viewingMode = appModel.contentEntity.observable.components[ImagePresentationComponent.self]?.viewingMode {
+                            switch viewingMode {
+                            case .mono:
+                                HStack(spacing: 4) {
+                                    Image(systemName: "cube")
+                                    Text(appModel.spatial3DImageState == .generated ? "Show 3D" : "Convert to 3D")
+                                }
+                            case .spatial3D:
+                                HStack(spacing: 4) {
+                                    Image(systemName: "square")
+                                    Text("Show 2D")
+                                }
+                            default:
+                                HStack(spacing: 4) {
+                                    Image(systemName: "cube")
+                                    Text("Convert to 3D")
+                                }
+                            }
+                        } else {
+                            // Component not loaded yet - show default state
                             HStack(spacing: 4) {
                                 Image(systemName: "cube")
                                 Text("Convert to 3D")
                             }
                         }
-                    } else {
-                        // Component not loaded yet - show default state
-                        HStack(spacing: 4) {
-                            Image(systemName: "cube")
-                            Text("Convert to 3D")
-                        }
                     }
+                    .disabled(appModel.isLoadingDetailImage)
+                } else {
+                    // Show GIF indicator instead of 3D button
+                    Divider()
+                        .frame(height: 24)
+
+                    HStack(spacing: 4) {
+                        Image(systemName: "play.circle")
+                        Text("Animated GIF")
+                    }
+                    .foregroundColor(.secondary)
                 }
-                .disabled(appModel.isLoadingDetailImage)
             }
             .padding()
         }
