@@ -23,6 +23,13 @@ struct SettingsTabView: View {
                         }
                     }
                     .pickerStyle(.menu)
+
+                    Picker("Images per Page", selection: $appModel.pageSize) {
+                        ForEach(AppModel.pageSizeOptions, id: \.self) { size in
+                            Text("\(size)").tag(size)
+                        }
+                    }
+                    .pickerStyle(.menu)
                 }
 
                 Section("Stash Server") {

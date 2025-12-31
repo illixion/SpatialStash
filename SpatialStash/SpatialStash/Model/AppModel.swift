@@ -72,7 +72,19 @@ class AppModel {
     var isLoadingGallery: Bool = false
     var currentPage: Int = 0
     var hasMorePages: Bool = true
-    private let pageSize: Int = 20
+
+    /// Number of images/videos to fetch per page (configurable in settings)
+    var pageSize: Int {
+        didSet {
+            if pageSize != oldValue {
+                UserDefaults.standard.set(pageSize, forKey: "pageSize")
+                print("[AppModel] Page size changed to: \(pageSize)")
+            }
+        }
+    }
+
+    /// Available page size options for the picker
+    static let pageSizeOptions: [Int] = [10, 20, 30, 50, 100]
 
     // MARK: - Video Gallery State
 
@@ -171,6 +183,7 @@ class AppModel {
         // Load persisted settings or use defaults (use local vars to avoid self reference issues)
         let defaultServerURL = ""
         let defaultAPIKey = ""
+        let defaultPageSize = 20
 
         let loadedServerURL = UserDefaults.standard.string(forKey: "stashServerURL") ?? defaultServerURL
         let loadedAPIKey = UserDefaults.standard.string(forKey: "stashAPIKey") ?? defaultAPIKey
@@ -182,10 +195,15 @@ class AppModel {
             loadedSourceType = .staticURLs
         }
 
+        // Load page size (with validation)
+        let savedPageSize = UserDefaults.standard.integer(forKey: "pageSize")
+        let loadedPageSize = savedPageSize > 0 ? savedPageSize : defaultPageSize
+
         // Initialize stored properties
         self.stashServerURL = loadedServerURL
         self.stashAPIKey = loadedAPIKey
         self.mediaSourceType = loadedSourceType
+        self.pageSize = loadedPageSize
 
         // Initialize API client with config
         let initialConfig: StashServerConfig
@@ -215,6 +233,7 @@ class AppModel {
         print("[AppModel] Init - Server URL: \(self.stashServerURL)")
         print("[AppModel] Init - Has API Key: \(!self.stashAPIKey.isEmpty)")
         print("[AppModel] Init - Media Source: \(self.mediaSourceType.rawValue)")
+        print("[AppModel] Init - Page Size: \(self.pageSize)")
         print("[AppModel] Init - Image source: \(type(of: self.imageSource))")
 
         // Set initial image URL from bundled images (fallback)
