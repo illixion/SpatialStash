@@ -21,10 +21,6 @@ struct ImagePresentationView: View {
                     imageData: gifData,
                     aspectRatio: appModel.imageAspectRatio
                 )
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    appModel.toggleUIVisibility()
-                }
                 .onAppear {
                     setupWindowForGIF()
                     appModel.startAutoHideTimer()
@@ -58,9 +54,6 @@ struct ImagePresentationView: View {
                         // Scale the entity to fit in the bounds.
                         let availableBounds = content.convert(geometry.frame(in: .local), from: .local, to: .scene)
                         scaleImagePresentationToFit(in: availableBounds)
-                    }
-                    .onTapGesture {
-                        appModel.toggleUIVisibility()
                     }
                     .onAppear() {
                         guard let windowScene = sceneDelegate.windowScene else {

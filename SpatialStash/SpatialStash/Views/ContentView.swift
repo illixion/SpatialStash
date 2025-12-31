@@ -40,6 +40,21 @@ struct ContentView: View {
                 }
             }
         )
+        .ornament(
+            visibility: shouldShowRestoreButton ? .visible : .hidden,
+            attachmentAnchor: .scene(.bottomFront),
+            ornament: {
+                Button {
+                    appModel.toggleUIVisibility()
+                } label: {
+                    Image(systemName: "ellipsis.circle.fill")
+                        .font(.title)
+                }
+                .buttonStyle(.borderless)
+                .padding(8)
+                .glassBackgroundEffect()
+            }
+        )
     }
 
     private var shouldShowOrnament: Bool {
@@ -52,5 +67,10 @@ struct ContentView: View {
             return false
         }
         return true
+    }
+
+    private var shouldShowRestoreButton: Bool {
+        // Show restore button only when UI is hidden in detail view
+        appModel.isShowingDetailView && appModel.isUIHidden && !appModel.isLoadingDetailImage
     }
 }
