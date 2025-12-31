@@ -9,14 +9,12 @@ import SwiftUI
 
 struct AnimatedGIFDetailView: View {
     let imageData: Data
-    let aspectRatio: CGFloat
 
     var body: some View {
         GeometryReader { geometry in
             AnimatedImageView(data: imageData, contentMode: .scaleAspectFit)
                 .frame(width: geometry.size.width, height: geometry.size.height)
         }
-        .aspectRatio(aspectRatio, contentMode: .fit)
         .background(Color.black)
     }
 }

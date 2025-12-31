@@ -31,5 +31,16 @@ struct VideoPlayerView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .onAppear {
+            appModel.startAutoHideTimer()
+        }
+        .onDisappear {
+            appModel.cancelAutoHideTimer()
+        }
+        .onChange(of: appModel.selectedVideo?.id) {
+            // Reset UI visibility and timer when video changes
+            appModel.isUIHidden = false
+            appModel.startAutoHideTimer()
+        }
     }
 }

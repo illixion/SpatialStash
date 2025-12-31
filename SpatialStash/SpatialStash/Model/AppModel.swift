@@ -511,7 +511,7 @@ class AppModel {
         cancelAutoHideTimer()
         autoHideTask = Task { @MainActor in
             try? await Task.sleep(for: .seconds(autoHideDelay))
-            if !Task.isCancelled && isShowingDetailView && !isLoadingDetailImage {
+            if !Task.isCancelled && (isShowingDetailView || isShowingVideoDetail) && !isLoadingDetailImage {
                 isUIHidden = true
             }
         }

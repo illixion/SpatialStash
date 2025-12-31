@@ -17,17 +17,12 @@ struct ImagePresentationView: View {
         ZStack {
             if appModel.isAnimatedGIF, let gifData = appModel.currentImageData {
                 // Display animated GIF without RealityKit (no 3D conversion possible)
-                AnimatedGIFDetailView(
-                    imageData: gifData,
-                    aspectRatio: appModel.imageAspectRatio
-                )
+                AnimatedGIFDetailView(imageData: gifData)
                 .onAppear {
                     setupWindowForGIF()
-                    appModel.startAutoHideTimer()
                 }
                 .onDisappear {
                     resetWindowRestrictions()
-                    appModel.cancelAutoHideTimer()
                 }
             } else {
                 // Display static image with RealityKit for potential 3D conversion
@@ -62,12 +57,9 @@ struct ImagePresentationView: View {
                         }
                         // Ensure that the scene resizes uniformly on X and Y axes.
                         windowScene.requestGeometryUpdate(.Vision(resizingRestrictions: .uniform))
-                        // Start auto-hide timer
-                        appModel.startAutoHideTimer()
                     }
                     .onDisappear() {
                         resetWindowRestrictions()
-                        appModel.cancelAutoHideTimer()
                     }
                     .onChange(of: appModel.imageAspectRatio) { _, newAspectRatio in
                         resizeWindowToAspectRatio(newAspectRatio)
@@ -76,16 +68,11 @@ struct ImagePresentationView: View {
                         Task {
                             await appModel.createImagePresentationComponent()
                         }
-                        // Reset UI visibility and timer when image changes
-                        appModel.isUIHidden = false
-                        appModel.startAutoHideTimer()
                     }
                     .onChange(of: appModel.isLoadingDetailImage) { wasLoading, isLoading in
                         // When loading finishes, ensure window is resized to match the new image
                         if wasLoading && !isLoading {
                             resizeWindowToAspectRatio(appModel.imageAspectRatio)
-                            // Start auto-hide timer after image loads
-                            appModel.startAutoHideTimer()
                         }
                     }
                 }
@@ -105,6 +92,24 @@ struct ImagePresentationView: View {
                         .foregroundColor(.white)
                 }
             }
+        }
+        .onAppear {
+            appModel.startAutoHideTimer()
+        }
+        .onDisappear {
+            appModel.cancelAutoHideTimer()
+        }
+        .onChange(of: appModel.isLoadingDetailImage) { wasLoading, isLoading in
+            // Start auto-hide timer when loading finishes
+            if wasLoading && !isLoading {
+                appModel.isUIHidden = false
+                appModel.startAutoHideTimer()
+            }
+        }
+        .onChange(of: appModel.selectedImage?.id) {
+            // Reset UI visibility and timer when image changes
+            appModel.isUIHidden = false
+            appModel.startAutoHideTimer()
         }
     }
 

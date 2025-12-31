@@ -62,15 +62,15 @@ struct ContentView: View {
         if appModel.spatial3DImageState == .generating {
             return false
         }
-        // Hide ornament when user has hidden UI in detail view
-        if appModel.isShowingDetailView && appModel.isUIHidden {
+        // Hide ornament when user has hidden UI in detail view (images, GIFs, or videos)
+        if (appModel.isShowingDetailView || appModel.isShowingVideoDetail) && appModel.isUIHidden {
             return false
         }
         return true
     }
 
     private var shouldShowRestoreButton: Bool {
-        // Show restore button only when UI is hidden in detail view
-        appModel.isShowingDetailView && appModel.isUIHidden && !appModel.isLoadingDetailImage
+        // Show restore button only when UI is hidden in detail view (images, GIFs, or videos)
+        (appModel.isShowingDetailView || appModel.isShowingVideoDetail) && appModel.isUIHidden
     }
 }

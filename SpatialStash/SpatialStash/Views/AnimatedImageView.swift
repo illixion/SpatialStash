@@ -1,14 +1,14 @@
 /*
  Spatial Stash - Animated Image View
 
- UIViewRepresentable wrapper that displays animated GIFs using UIImageView.
- Falls back to standard display for non-animated images.
+ WKWebView-based wrapper that displays animated GIFs using the browser's
+ native GIF rendering for reliable playback without cropping issues.
  */
 
 import SwiftUI
-import UIKit
+import WebKit
 
-/// A SwiftUI wrapper for UIImageView that supports animated GIF display
+/// A SwiftUI wrapper for WKWebView that displays animated GIFs
 struct AnimatedImageView: UIViewRepresentable {
     let imageData: Data
     let contentMode: UIView.ContentMode
@@ -18,65 +18,66 @@ struct AnimatedImageView: UIViewRepresentable {
         self.contentMode = contentMode
     }
 
-    func makeUIView(context: Context) -> UIImageView {
-        let imageView = UIImageView()
-        imageView.contentMode = contentMode
-        imageView.clipsToBounds = true
-        imageView.backgroundColor = .clear
-        return imageView
+    func makeUIView(context: Context) -> WKWebView {
+        let configuration = WKWebViewConfiguration()
+
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.isOpaque = false
+        webView.backgroundColor = .clear
+        webView.scrollView.backgroundColor = .clear
+        webView.scrollView.isScrollEnabled = false
+        webView.scrollView.bounces = false
+
+        return webView
     }
 
-    func updateUIView(_ uiView: UIImageView, context: Context) {
-        // Check if this is an animated GIF by looking for multiple frames
-        if let source = CGImageSourceCreateWithData(imageData as CFData, nil) {
-            let frameCount = CGImageSourceGetCount(source)
+    func updateUIView(_ webView: WKWebView, context: Context) {
+        let base64String = imageData.base64EncodedString()
+        let objectFit = contentMode == .scaleAspectFit ? "contain" : "cover"
 
-            if frameCount > 1 {
-                // This is an animated GIF - create animated UIImage
-                var images: [UIImage] = []
-                var totalDuration: Double = 0
-
-                for i in 0..<frameCount {
-                    if let cgImage = CGImageSourceCreateImageAtIndex(source, i, nil) {
-                        images.append(UIImage(cgImage: cgImage))
-
-                        // Get frame duration
-                        if let properties = CGImageSourceCopyPropertiesAtIndex(source, i, nil) as? [CFString: Any],
-                           let gifProperties = properties[kCGImagePropertyGIFDictionary] as? [CFString: Any] {
-                            if let delayTime = gifProperties[kCGImagePropertyGIFUnclampedDelayTime] as? Double, delayTime > 0 {
-                                totalDuration += delayTime
-                            } else if let delayTime = gifProperties[kCGImagePropertyGIFDelayTime] as? Double {
-                                totalDuration += delayTime
-                            } else {
-                                totalDuration += 0.1 // Default 100ms per frame
-                            }
-                        } else {
-                            totalDuration += 0.1
-                        }
-                    }
+        let html = """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+            <style>
+                * {
+                    margin: 0;
+                    padding: 0;
+                    box-sizing: border-box;
                 }
-
-                if !images.isEmpty {
-                    uiView.animationImages = images
-                    uiView.animationDuration = totalDuration
-                    uiView.animationRepeatCount = 0 // Loop forever
-                    uiView.image = images.first
-                    uiView.startAnimating()
-                    return
+                html, body {
+                    width: 100%;
+                    height: 100%;
+                    background: transparent;
+                    overflow: hidden;
                 }
-            }
-        }
+                .image-container {
+                    width: 100%;
+                    height: 100%;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    background: transparent;
+                }
+                img {
+                    max-width: 100%;
+                    max-height: 100%;
+                    width: auto;
+                    height: auto;
+                    object-fit: \(objectFit);
+                }
+            </style>
+        </head>
+        <body>
+            <div class="image-container">
+                <img src="data:image/gif;base64,\(base64String)" alt="Animated GIF">
+            </div>
+        </body>
+        </html>
+        """
 
-        // Not an animated GIF - display as static image
-        uiView.animationImages = nil
-        uiView.stopAnimating()
-        uiView.image = UIImage(data: imageData)
-    }
-
-    static func dismantleUIView(_ uiView: UIImageView, coordinator: ()) {
-        uiView.stopAnimating()
-        uiView.animationImages = nil
-        uiView.image = nil
+        webView.loadHTMLString(html, baseURL: nil)
     }
 }
 
