@@ -32,6 +32,15 @@ struct SettingsTabView: View {
                     .pickerStyle(.menu)
                 }
 
+                Section("Display") {
+                    Picker("Auto-hide Controls", selection: $appModel.autoHideDelay) {
+                        ForEach(AppModel.autoHideDelayOptions, id: \.value) { option in
+                            Text(option.label).tag(option.value)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
+
                 Section("Stash Server") {
                     TextField("Server URL", text: $appModel.stashServerURL)
                         .textFieldStyle(.plain)

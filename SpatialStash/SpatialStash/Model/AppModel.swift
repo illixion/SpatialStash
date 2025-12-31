@@ -185,8 +185,23 @@ class AppModel {
     /// Timer for auto-hiding UI after inactivity
     private var autoHideTask: Task<Void, Never>?
 
-    /// Duration before auto-hiding UI (in seconds)
-    private let autoHideDelay: TimeInterval = 3.0
+    /// Duration before auto-hiding UI (in seconds), 0 means disabled
+    var autoHideDelay: TimeInterval {
+        didSet {
+            if autoHideDelay != oldValue {
+                UserDefaults.standard.set(autoHideDelay, forKey: "autoHideDelay")
+            }
+        }
+    }
+
+    /// Available auto-hide delay options (0 = disabled)
+    static let autoHideDelayOptions: [(label: String, value: TimeInterval)] = [
+        ("Disabled", 0),
+        ("2 seconds", 2),
+        ("3 seconds", 3),
+        ("5 seconds", 5),
+        ("10 seconds", 10)
+    ]
 
     // MARK: - Initialization
 
@@ -195,6 +210,7 @@ class AppModel {
         let defaultServerURL = ""
         let defaultAPIKey = ""
         let defaultPageSize = 20
+        let defaultAutoHideDelay: TimeInterval = 3.0
 
         let loadedServerURL = UserDefaults.standard.string(forKey: "stashServerURL") ?? defaultServerURL
         let loadedAPIKey = UserDefaults.standard.string(forKey: "stashAPIKey") ?? defaultAPIKey
@@ -210,11 +226,16 @@ class AppModel {
         let savedPageSize = UserDefaults.standard.integer(forKey: "pageSize")
         let loadedPageSize = savedPageSize > 0 ? savedPageSize : defaultPageSize
 
+        // Load auto-hide delay (0 means disabled, use default if not set)
+        let savedAutoHideDelay = UserDefaults.standard.double(forKey: "autoHideDelay")
+        let loadedAutoHideDelay = UserDefaults.standard.object(forKey: "autoHideDelay") != nil ? savedAutoHideDelay : defaultAutoHideDelay
+
         // Initialize stored properties
         self.stashServerURL = loadedServerURL
         self.stashAPIKey = loadedAPIKey
         self.mediaSourceType = loadedSourceType
         self.pageSize = loadedPageSize
+        self.autoHideDelay = loadedAutoHideDelay
 
         // Initialize API client with config
         let initialConfig: StashServerConfig
@@ -509,6 +530,8 @@ class AppModel {
     /// Start the auto-hide timer
     func startAutoHideTimer() {
         cancelAutoHideTimer()
+        // If auto-hide is disabled (delay is 0), don't start the timer
+        guard autoHideDelay > 0 else { return }
         autoHideTask = Task { @MainActor in
             try? await Task.sleep(for: .seconds(autoHideDelay))
             if !Task.isCancelled && (isShowingDetailView || isShowingVideoDetail) && !isLoadingDetailImage {
