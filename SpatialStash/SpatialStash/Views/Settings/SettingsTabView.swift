@@ -8,6 +8,8 @@ import SwiftUI
 
 struct SettingsTabView: View {
     @Environment(AppModel.self) private var appModel
+    @State private var cacheStats: (fileCount: Int, totalSize: Int64) = (0, 0)
+    @State private var isClearingCache = false
 
     var body: some View {
         @Bindable var appModel = appModel
@@ -65,6 +67,40 @@ struct SettingsTabView: View {
                     }
                 }
 
+                Section("Image Cache") {
+                    HStack {
+                        Text("Cached Images")
+                        Spacer()
+                        Text("\(cacheStats.fileCount)")
+                            .foregroundColor(.secondary)
+                    }
+                    HStack {
+                        Text("Cache Size")
+                        Spacer()
+                        Text(formatBytes(cacheStats.totalSize))
+                            .foregroundColor(.secondary)
+                    }
+                    Button(role: .destructive) {
+                        isClearingCache = true
+                        Task {
+                            await ImageLoader.shared.clearCache()
+                            await refreshCacheStats()
+                            isClearingCache = false
+                        }
+                    } label: {
+                        if isClearingCache {
+                            HStack {
+                                ProgressView()
+                                    .scaleEffect(0.8)
+                                Text("Clearing...")
+                            }
+                        } else {
+                            Text("Clear Image Cache")
+                        }
+                    }
+                    .disabled(isClearingCache || cacheStats.fileCount == 0)
+                }
+
                 Section {
                     Button("Refresh All Content") {
                         print("[Settings] Refresh button pressed, source: \(appModel.mediaSourceType)")
@@ -94,6 +130,9 @@ struct SettingsTabView: View {
                 }
             }
             .navigationTitle("Settings")
+            .task {
+                await refreshCacheStats()
+            }
         }
     }
 
@@ -105,5 +144,16 @@ struct SettingsTabView: View {
         } catch {
             print("Connection failed: \(error)")
         }
+    }
+
+    private func refreshCacheStats() async {
+        cacheStats = await DiskImageCache.shared.getCacheStats()
+    }
+
+    private func formatBytes(_ bytes: Int64) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useKB, .useMB, .useGB]
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: bytes)
     }
 }

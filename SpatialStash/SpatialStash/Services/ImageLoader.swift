@@ -34,9 +34,18 @@ actor ImageLoader {
     /// - Parameter url: The URL to load the image from
     /// - Returns: The loaded image, or nil if loading failed
     func loadImage(from url: URL) async throws -> UIImage? {
-        // Check cache first
+        // Check memory cache first
         if let cached = cache.object(forKey: url as NSURL) {
             return cached.image
+        }
+
+        // Check disk cache
+        if let diskData = await DiskImageCache.shared.loadData(for: url),
+           let image = UIImage(data: diskData) {
+            // Restore to memory cache
+            let cachedData = CachedImageData(image: image, data: diskData)
+            cache.setObject(cachedData, forKey: url as NSURL, cost: diskData.count)
+            return image
         }
 
         // Check if already loading
@@ -61,9 +70,12 @@ actor ImageLoader {
             // Create cached data wrapper
             let cachedData = CachedImageData(image: image, data: data)
 
-            // Cache the image with data
+            // Cache in memory
             let cost = data.count
             cache.setObject(cachedData, forKey: url as NSURL, cost: cost)
+
+            // Cache to disk
+            await DiskImageCache.shared.saveData(data, for: url)
 
             return cachedData
         }
@@ -81,9 +93,18 @@ actor ImageLoader {
     /// - Parameter url: The URL to load the image from
     /// - Returns: The raw image data, or nil if loading failed
     func loadImageData(from url: URL) async throws -> Data? {
-        // Check cache first
+        // Check memory cache first
         if let cached = cache.object(forKey: url as NSURL) {
             return cached.data
+        }
+
+        // Check disk cache
+        if let diskData = await DiskImageCache.shared.loadData(for: url),
+           let image = UIImage(data: diskData) {
+            // Restore to memory cache
+            let cachedData = CachedImageData(image: image, data: diskData)
+            cache.setObject(cachedData, forKey: url as NSURL, cost: diskData.count)
+            return diskData
         }
 
         // Check if already loading
@@ -108,9 +129,12 @@ actor ImageLoader {
             // Create cached data wrapper
             let cachedData = CachedImageData(image: image, data: data)
 
-            // Cache the image with data
+            // Cache in memory
             let cost = data.count
             cache.setObject(cachedData, forKey: url as NSURL, cost: cost)
+
+            // Cache to disk
+            await DiskImageCache.shared.saveData(data, for: url)
 
             return cachedData
         }
@@ -128,9 +152,18 @@ actor ImageLoader {
     /// - Parameter url: The URL to load the image from
     /// - Returns: A tuple of (UIImage, Data), or nil if loading failed
     func loadImageWithData(from url: URL) async throws -> (image: UIImage, data: Data)? {
-        // Check cache first
+        // Check memory cache first
         if let cached = cache.object(forKey: url as NSURL) {
             return (cached.image, cached.data)
+        }
+
+        // Check disk cache
+        if let diskData = await DiskImageCache.shared.loadData(for: url),
+           let image = UIImage(data: diskData) {
+            // Restore to memory cache
+            let cachedData = CachedImageData(image: image, data: diskData)
+            cache.setObject(cachedData, forKey: url as NSURL, cost: diskData.count)
+            return (image, diskData)
         }
 
         // Check if already loading
@@ -158,9 +191,12 @@ actor ImageLoader {
             // Create cached data wrapper
             let cachedData = CachedImageData(image: image, data: data)
 
-            // Cache the image with data
+            // Cache in memory
             let cost = data.count
             cache.setObject(cachedData, forKey: url as NSURL, cost: cost)
+
+            // Cache to disk
+            await DiskImageCache.shared.saveData(data, for: url)
 
             return cachedData
         }
@@ -177,9 +213,10 @@ actor ImageLoader {
         return nil
     }
 
-    /// Clear the image cache
-    func clearCache() {
+    /// Clear the image cache (both memory and disk)
+    func clearCache() async {
         cache.removeAllObjects()
+        await DiskImageCache.shared.clearCache()
     }
 
     /// Remove a specific image from cache
