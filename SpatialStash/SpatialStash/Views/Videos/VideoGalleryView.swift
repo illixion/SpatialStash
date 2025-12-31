@@ -40,31 +40,44 @@ struct VideoGalleryView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                // Video grid
-                ScrollView {
-                    LazyVGrid(columns: columns, spacing: 16) {
-                        ForEach(appModel.galleryVideos) { video in
-                            VideoThumbnailView(video: video)
-                                .onTapGesture {
-                                    appModel.selectVideoForDetail(video)
-                                }
-                                .onAppear {
-                                    // Lazy loading trigger
-                                    if video == appModel.galleryVideos.last && appModel.hasMoreVideoPages {
-                                        Task {
-                                            await appModel.loadNextVideoPage()
+                // Video grid with scroll position preservation
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVGrid(columns: columns, spacing: 16) {
+                            ForEach(appModel.galleryVideos) { video in
+                                VideoThumbnailView(video: video)
+                                    .id(video.id)
+                                    .onTapGesture {
+                                        appModel.selectVideoForDetail(video)
+                                    }
+                                    .onAppear {
+                                        // Lazy loading trigger
+                                        if video == appModel.galleryVideos.last && appModel.hasMoreVideoPages {
+                                            Task {
+                                                await appModel.loadNextVideoPage()
+                                            }
                                         }
                                     }
-                                }
-                        }
+                            }
 
-                        if appModel.isLoadingVideos {
-                            ProgressView()
-                                .frame(maxWidth: .infinity)
-                                .padding()
+                            if appModel.isLoadingVideos {
+                                ProgressView()
+                                    .frame(maxWidth: .infinity)
+                                    .padding()
+                            }
+                        }
+                        .padding()
+                    }
+                    .onAppear {
+                        // Restore scroll position when returning from detail view
+                        if let lastViewedId = appModel.lastViewedVideoId {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    proxy.scrollTo(lastViewedId, anchor: .center)
+                                }
+                            }
                         }
                     }
-                    .padding()
                 }
             }
         }

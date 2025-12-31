@@ -38,31 +38,44 @@ struct GalleryGridView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                // Gallery grid
-                ScrollView {
-                    LazyVGrid(columns: columns, spacing: 16) {
-                        ForEach(appModel.galleryImages) { image in
-                            GalleryThumbnailView(image: image)
-                                .onTapGesture {
-                                    appModel.selectImageForDetail(image)
-                                }
-                                .onAppear {
-                                    // Lazy loading trigger - load more when last item appears
-                                    if image == appModel.galleryImages.last && appModel.hasMorePages {
-                                        Task {
-                                            await appModel.loadNextPage()
+                // Gallery grid with scroll position preservation
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVGrid(columns: columns, spacing: 16) {
+                            ForEach(appModel.galleryImages) { image in
+                                GalleryThumbnailView(image: image)
+                                    .id(image.id)
+                                    .onTapGesture {
+                                        appModel.selectImageForDetail(image)
+                                    }
+                                    .onAppear {
+                                        // Lazy loading trigger - load more when last item appears
+                                        if image == appModel.galleryImages.last && appModel.hasMorePages {
+                                            Task {
+                                                await appModel.loadNextPage()
+                                            }
                                         }
                                     }
-                                }
-                        }
+                            }
 
-                        if appModel.isLoadingGallery {
-                            ProgressView()
-                                .frame(maxWidth: .infinity)
-                                .padding()
+                            if appModel.isLoadingGallery {
+                                ProgressView()
+                                    .frame(maxWidth: .infinity)
+                                    .padding()
+                            }
+                        }
+                        .padding()
+                    }
+                    .onAppear {
+                        // Restore scroll position when returning from detail view
+                        if let lastViewedId = appModel.lastViewedImageId {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    proxy.scrollTo(lastViewedId, anchor: .center)
+                                }
+                            }
                         }
                     }
-                    .padding()
                 }
             }
         }

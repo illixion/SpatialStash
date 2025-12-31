@@ -123,6 +123,11 @@ class AppModel {
     var selectedImage: GalleryImage?
     var selectedVideo: GalleryVideo?
 
+    // MARK: - Scroll Position Tracking
+
+    var lastViewedImageId: UUID?
+    var lastViewedVideoId: UUID?
+
     // MARK: - Bundled Images (Legacy - kept for reference)
 
     let imageNames: [String] = [
@@ -404,6 +409,7 @@ class AppModel {
     /// Select an image from the gallery to view in detail
     func selectImageForDetail(_ image: GalleryImage) {
         selectedImage = image
+        lastViewedImageId = image.id
         imageURL = image.fullSizeURL
         isShowingDetailView = true
         spatial3DImageState = .notGenerated
@@ -496,6 +502,7 @@ class AppModel {
     /// Select a video to play
     func selectVideoForDetail(_ video: GalleryVideo) {
         selectedVideo = video
+        lastViewedVideoId = video.id
         isShowingVideoDetail = true
     }
 
