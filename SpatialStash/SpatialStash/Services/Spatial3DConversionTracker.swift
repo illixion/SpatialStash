@@ -1,0 +1,58 @@
+/*
+ Spatial Stash - Spatial 3D Conversion Tracker
+
+ Tracks which images have been converted to spatial 3D so they can be
+ automatically re-converted when viewed again.
+ */
+
+import Foundation
+
+actor Spatial3DConversionTracker {
+    static let shared = Spatial3DConversionTracker()
+
+    private let userDefaultsKey = "spatial3DConvertedImages"
+    private var convertedImageURLs: Set<String>
+
+    private init() {
+        // Load from UserDefaults
+        if let saved = UserDefaults.standard.array(forKey: userDefaultsKey) as? [String] {
+            convertedImageURLs = Set(saved)
+            print("[Spatial3DTracker] Loaded \(convertedImageURLs.count) previously converted images")
+        } else {
+            convertedImageURLs = []
+        }
+    }
+
+    /// Mark an image as having been converted to spatial 3D
+    func markAsConverted(url: URL) {
+        let urlString = url.absoluteString
+        convertedImageURLs.insert(urlString)
+        save()
+    }
+
+    /// Check if an image has been previously converted
+    func wasConverted(url: URL) -> Bool {
+        return convertedImageURLs.contains(url.absoluteString)
+    }
+
+    /// Remove conversion status for an image
+    func removeConversionStatus(url: URL) {
+        convertedImageURLs.remove(url.absoluteString)
+        save()
+    }
+
+    /// Clear all conversion tracking data
+    func clearAll() {
+        convertedImageURLs.removeAll()
+        save()
+    }
+
+    /// Get the count of tracked conversions
+    var convertedCount: Int {
+        convertedImageURLs.count
+    }
+
+    private func save() {
+        UserDefaults.standard.set(Array(convertedImageURLs), forKey: userDefaultsKey)
+    }
+}

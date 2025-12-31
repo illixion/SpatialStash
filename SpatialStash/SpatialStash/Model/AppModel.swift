@@ -625,6 +625,9 @@ class AppModel {
             imageAspectRatio = CGFloat(aspectRatio)
         }
         isLoadingDetailImage = false
+
+        // Auto-generate spatial 3D if this image was previously converted
+        await autoGenerateSpatial3DIfPreviouslyConverted()
     }
 
     func generateSpatial3DImage() async throws {
@@ -650,8 +653,32 @@ class AppModel {
         try await spatial3DImage.generate()
         spatial3DImageState = .generated
 
+        // Track that this image was converted
+        if let url = imageURL {
+            await Spatial3DConversionTracker.shared.markAsConverted(url: url)
+        }
+
         if let aspectRatio = imagePresentationComponent.aspectRatio(for: .spatial3D) {
             imageAspectRatio = CGFloat(aspectRatio)
+        }
+    }
+
+    /// Check if the current image was previously converted and auto-generate if so
+    private func autoGenerateSpatial3DIfPreviouslyConverted() async {
+        guard let url = imageURL,
+              !isAnimatedGIF,
+              spatial3DImageState == .notGenerated else {
+            return
+        }
+
+        let wasConverted = await Spatial3DConversionTracker.shared.wasConverted(url: url)
+        if wasConverted {
+            print("[AppModel] Auto-generating spatial 3D for previously converted image")
+            do {
+                try await generateSpatial3DImage()
+            } catch {
+                print("[AppModel] Auto-generation failed: \(error)")
+            }
         }
     }
 }
