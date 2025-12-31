@@ -21,11 +21,17 @@ struct ImagePresentationView: View {
                     imageData: gifData,
                     aspectRatio: appModel.imageAspectRatio
                 )
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    appModel.toggleUIVisibility()
+                }
                 .onAppear {
                     setupWindowForGIF()
+                    appModel.startAutoHideTimer()
                 }
                 .onDisappear {
                     resetWindowRestrictions()
+                    appModel.cancelAutoHideTimer()
                 }
             } else {
                 // Display static image with RealityKit for potential 3D conversion
@@ -53,6 +59,9 @@ struct ImagePresentationView: View {
                         let availableBounds = content.convert(geometry.frame(in: .local), from: .local, to: .scene)
                         scaleImagePresentationToFit(in: availableBounds)
                     }
+                    .onTapGesture {
+                        appModel.toggleUIVisibility()
+                    }
                     .onAppear() {
                         guard let windowScene = sceneDelegate.windowScene else {
                             print("Unable to get the window scene. Unable to set the resizing restrictions.")
@@ -60,9 +69,12 @@ struct ImagePresentationView: View {
                         }
                         // Ensure that the scene resizes uniformly on X and Y axes.
                         windowScene.requestGeometryUpdate(.Vision(resizingRestrictions: .uniform))
+                        // Start auto-hide timer
+                        appModel.startAutoHideTimer()
                     }
                     .onDisappear() {
                         resetWindowRestrictions()
+                        appModel.cancelAutoHideTimer()
                     }
                     .onChange(of: appModel.imageAspectRatio) { _, newAspectRatio in
                         resizeWindowToAspectRatio(newAspectRatio)
@@ -71,11 +83,16 @@ struct ImagePresentationView: View {
                         Task {
                             await appModel.createImagePresentationComponent()
                         }
+                        // Reset UI visibility and timer when image changes
+                        appModel.isUIHidden = false
+                        appModel.startAutoHideTimer()
                     }
                     .onChange(of: appModel.isLoadingDetailImage) { wasLoading, isLoading in
                         // When loading finishes, ensure window is resized to match the new image
                         if wasLoading && !isLoading {
                             resizeWindowToAspectRatio(appModel.imageAspectRatio)
+                            // Start auto-hide timer after image loads
+                            appModel.startAutoHideTimer()
                         }
                     }
                 }

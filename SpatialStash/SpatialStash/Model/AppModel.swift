@@ -177,6 +177,17 @@ class AppModel {
     var isAnimatedGIF: Bool = false
     var currentImageData: Data? = nil
 
+    // MARK: - UI Visibility State (for immersive image viewing)
+
+    /// Whether the UI (ornaments, navbar) should be hidden in detail view
+    var isUIHidden: Bool = false
+
+    /// Timer for auto-hiding UI after inactivity
+    private var autoHideTask: Task<Void, Never>?
+
+    /// Duration before auto-hiding UI (in seconds)
+    private let autoHideDelay: TimeInterval = 3.0
+
     // MARK: - Initialization
 
     init() {
@@ -476,6 +487,47 @@ class AppModel {
         selectedImage = nil
         spatial3DImageState = .notGenerated
         spatial3DImage = nil
+        // Reset UI visibility when leaving detail view
+        cancelAutoHideTimer()
+        isUIHidden = false
+    }
+
+    // MARK: - UI Visibility Control
+
+    /// Toggle UI visibility (for tap gesture)
+    func toggleUIVisibility() {
+        isUIHidden.toggle()
+        if !isUIHidden {
+            // UI is now visible, start auto-hide timer
+            startAutoHideTimer()
+        } else {
+            // UI is hidden, cancel any pending auto-hide
+            cancelAutoHideTimer()
+        }
+    }
+
+    /// Start the auto-hide timer
+    func startAutoHideTimer() {
+        cancelAutoHideTimer()
+        autoHideTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(autoHideDelay))
+            if !Task.isCancelled && isShowingDetailView && !isLoadingDetailImage {
+                isUIHidden = true
+            }
+        }
+    }
+
+    /// Cancel the auto-hide timer
+    func cancelAutoHideTimer() {
+        autoHideTask?.cancel()
+        autoHideTask = nil
+    }
+
+    /// Reset the auto-hide timer (called on user interaction)
+    func resetAutoHideTimer() {
+        if !isUIHidden {
+            startAutoHideTimer()
+        }
     }
 
     /// Navigate to next image in gallery while in detail view

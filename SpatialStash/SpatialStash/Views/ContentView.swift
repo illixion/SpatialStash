@@ -47,6 +47,10 @@ struct ContentView: View {
         if appModel.spatial3DImageState == .generating {
             return false
         }
+        // Hide ornament when user has hidden UI in detail view
+        if appModel.isShowingDetailView && appModel.isUIHidden {
+            return false
+        }
         return true
     }
 }
