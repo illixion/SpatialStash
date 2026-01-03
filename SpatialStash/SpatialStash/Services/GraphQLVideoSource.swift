@@ -38,13 +38,23 @@ final class GraphQLVideoSource: VideoSource, @unchecked Sendable {
             }
 
             let duration = scene.files?.first?.duration
+            let sourceWidth = scene.files?.first?.width
+            let sourceHeight = scene.files?.first?.height
+
+            // Detect stereoscopic format from tags
+            let tagNames = scene.tags?.map { $0.name } ?? []
+            let (isStereoscopic, stereoscopicFormat) = StereoscopicFormat.detect(from: tagNames)
 
             return GalleryVideo(
                 stashId: scene.id,
                 thumbnailURL: thumbnailURL,
                 streamURL: streamURL,
                 title: scene.title,
-                duration: duration
+                duration: duration,
+                isStereoscopic: isStereoscopic,
+                stereoscopicFormat: stereoscopicFormat,
+                sourceWidth: sourceWidth,
+                sourceHeight: sourceHeight
             )
         }
 

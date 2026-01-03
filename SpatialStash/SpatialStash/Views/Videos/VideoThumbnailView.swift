@@ -50,18 +50,45 @@ struct VideoThumbnailView: View {
                 .shadow(radius: 4)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            // Duration badge
-            if let duration = video.formattedDuration {
-                Text(duration)
-                    .font(.caption)
-                    .fontWeight(.medium)
-                    .padding(.horizontal, 6)
+            // Bottom badges (3D indicator and duration)
+            HStack(spacing: 6) {
+                // 3D badge for stereoscopic videos
+                if video.isStereoscopic {
+                    HStack(spacing: 2) {
+                        Image(systemName: "view.3d")
+                            .font(.caption2)
+                        if let format = video.stereoscopicFormat {
+                            Text(format.shortLabel)
+                                .font(.caption2)
+                                .fontWeight(.semibold)
+                        } else {
+                            Text("3D")
+                                .font(.caption2)
+                                .fontWeight(.semibold)
+                        }
+                    }
+                    .padding(.horizontal, 5)
                     .padding(.vertical, 2)
-                    .background(.black.opacity(0.7))
+                    .background(.blue.opacity(0.8))
                     .foregroundColor(.white)
                     .cornerRadius(4)
-                    .padding(8)
+                }
+
+                Spacer()
+
+                // Duration badge
+                if let duration = video.formattedDuration {
+                    Text(duration)
+                        .font(.caption)
+                        .fontWeight(.medium)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(.black.opacity(0.7))
+                        .foregroundColor(.white)
+                        .cornerRadius(4)
+                }
             }
+            .padding(8)
         }
         .background(Color.secondary.opacity(0.2))
         .cornerRadius(12)

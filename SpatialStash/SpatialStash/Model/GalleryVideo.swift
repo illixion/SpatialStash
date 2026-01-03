@@ -14,13 +14,23 @@ struct GalleryVideo: Identifiable, Equatable, Hashable {
     let title: String?
     let duration: TimeInterval?
 
+    // Stereoscopic 3D properties
+    let isStereoscopic: Bool
+    let stereoscopicFormat: StereoscopicFormat?
+    let sourceWidth: Int?
+    let sourceHeight: Int?
+
     init(
         id: UUID = UUID(),
         stashId: String,
         thumbnailURL: URL,
         streamURL: URL,
         title: String? = nil,
-        duration: TimeInterval? = nil
+        duration: TimeInterval? = nil,
+        isStereoscopic: Bool = false,
+        stereoscopicFormat: StereoscopicFormat? = nil,
+        sourceWidth: Int? = nil,
+        sourceHeight: Int? = nil
     ) {
         self.id = id
         self.stashId = stashId
@@ -28,6 +38,10 @@ struct GalleryVideo: Identifiable, Equatable, Hashable {
         self.streamURL = streamURL
         self.title = title
         self.duration = duration
+        self.isStereoscopic = isStereoscopic
+        self.stereoscopicFormat = stereoscopicFormat
+        self.sourceWidth = sourceWidth
+        self.sourceHeight = sourceHeight
     }
 
     /// Formatted duration string (e.g., "1:23:45" or "12:34")

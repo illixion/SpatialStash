@@ -382,6 +382,12 @@ actor StashAPIClient {
         let date: String?
         let paths: StashScenePaths
         let files: [StashSceneFile]?
+        let tags: [StashSceneTag]?
+    }
+
+    struct StashSceneTag: Decodable {
+        let id: String
+        let name: String
     }
 
     struct StashScenePaths: Decodable {
@@ -413,6 +419,10 @@ actor StashAPIClient {
                         width
                         height
                         duration
+                    }
+                    tags {
+                        id
+                        name
                     }
                 }
             }
