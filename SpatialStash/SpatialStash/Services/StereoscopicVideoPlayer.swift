@@ -1,8 +1,8 @@
 /*
  Spatial Stash - Stereoscopic Video Player
 
- Coordinates downloading, converting, buffering, and playing stereoscopic 3D video.
- Orchestrates the full pipeline from SBS/OU source to MV-HEVC playback.
+ Coordinates downloading, converting, and playing stereoscopic 3D video.
+ Downloads full video, converts to MV-HEVC, then plays the converted file.
  */
 
 import AVFoundation
@@ -12,15 +12,15 @@ import RealityKit
 /// Player state for stereoscopic video
 enum StereoscopicPlayerState: Equatable {
     case idle
-    case loading
-    case buffering(progress: Double)
+    case downloading(progress: Double)
+    case converting(progress: Double)
     case playing
     case paused
     case error(String)
 
     var isActive: Bool {
         switch self {
-        case .loading, .buffering, .playing, .paused:
+        case .downloading, .converting, .playing, .paused:
             return true
         case .idle, .error:
             return false
@@ -31,6 +31,7 @@ enum StereoscopicPlayerState: Equatable {
 /// Reason for falling back to 2D playback
 enum FallbackReason {
     case conversionFailed(Error)
+    case downloadFailed(Error)
     case insufficientResources
     case unsupportedFormat
     case userRequested
@@ -53,31 +54,23 @@ class StereoscopicVideoPlayer: ObservableObject {
     @Published private(set) var currentChunkInfo: String = ""
 
     // AVPlayer for playback
-    private(set) var avPlayer: AVQueuePlayer?
+    private(set) var avPlayer: AVPlayer?
 
     // Components
-    private let downloader = VideoChunkDownloader()
     private let converter = MVHEVCConverter()
-    private let bufferManager = ChunkBufferManager()
 
     // State
     private var currentVideo: GalleryVideo?
     private var apiKey: String?
-    private var videoInfo: VideoStreamInfo?
-    private var conversionConfig: MVHEVCConversionConfig?
+    private var convertedFileURL: URL?
 
     // Tasks
-    private var downloadTask: Task<Void, Never>?
+    private var processingTask: Task<Void, Never>?
     private var timeObserver: Any?
-    private var itemEndObservation: NSObjectProtocol?
+    private var downloadTask: URLSessionDownloadTask?
+    private var downloadObservation: NSKeyValueObservation?
 
-    // Error tracking
-    private var consecutiveFailures = 0
-    private let maxConsecutiveFailures = 3
-
-    init() {
-        setupObservers()
-    }
+    init() {}
 
     deinit {
         // Note: stop() must be called from MainActor context before deinit
@@ -101,47 +94,59 @@ class StereoscopicVideoPlayer: ObservableObject {
 
         currentVideo = video
         self.apiKey = apiKey
-        state = .loading
-        consecutiveFailures = 0
+        state = .downloading(progress: 0)
 
-        do {
-            // Probe video for stream info
-            videoInfo = try await downloader.probeVideo(url: video.streamURL, apiKey: apiKey)
+        processingTask = Task {
+            do {
+                // Step 1: Download the complete video
+                currentChunkInfo = "Downloading video..."
+                let localVideoURL = try await downloadVideo(video: video, apiKey: apiKey)
 
-            guard let videoInfo = videoInfo else {
-                throw StereoscopicPlayerError.probeFailure
+                if Task.isCancelled { return }
+
+                // Step 2: Get video duration
+                let asset = AVURLAsset(url: localVideoURL)
+                let durationCM = try await asset.load(.duration)
+                await MainActor.run {
+                    self.duration = durationCM.seconds
+                }
+
+                // Step 3: Convert to MV-HEVC
+                await MainActor.run {
+                    self.state = .converting(progress: 0)
+                    self.currentChunkInfo = "Converting to 3D..."
+                }
+
+                let config = MVHEVCConversionConfig.from(video: video, format: format)
+                let convertedURL = try await converter.convertFullVideo(
+                    sourceURL: localVideoURL,
+                    config: config,
+                    videoId: video.stashId,
+                    progressHandler: { progress in
+                        Task { @MainActor in
+                            self.state = .converting(progress: progress)
+                            self.currentChunkInfo = "Converting: \(Int(progress * 100))%"
+                        }
+                    }
+                )
+
+                if Task.isCancelled { return }
+
+                // Step 4: Start playback
+                await MainActor.run {
+                    self.convertedFileURL = convertedURL
+                    self.startPlayback(url: convertedURL)
+                }
+
+                // Clean up downloaded source file
+                try? FileManager.default.removeItem(at: localVideoURL)
+
+            } catch {
+                await MainActor.run {
+                    self.state = .error(error.localizedDescription)
+                    self.postFallbackNotification(reason: .conversionFailed(error))
+                }
             }
-
-            duration = videoInfo.totalDuration
-            let totalChunks = await downloader.totalChunks(for: videoInfo)
-
-            // Create conversion config
-            conversionConfig = MVHEVCConversionConfig.from(
-                video: video,
-                format: format
-            )
-
-            // Configure buffer
-            await bufferManager.configure(totalChunks: totalChunks, looping: true)
-
-            // Start download and conversion pipeline
-            downloadTask = Task {
-                await downloadAndConvertLoop()
-            }
-
-            // Wait for initial buffer
-            await waitForInitialBuffer()
-
-            // Start playback
-            await startPlayback()
-
-        } catch {
-            state = .error(error.localizedDescription)
-            NotificationCenter.default.post(
-                name: .stereoscopicFallbackTo2D,
-                object: self,
-                userInfo: ["reason": FallbackReason.conversionFailed(error), "video": video]
-            )
         }
     }
 
@@ -166,17 +171,27 @@ class StereoscopicVideoPlayer: ObservableObject {
         }
     }
 
+    /// Seek to a time in seconds
+    func seek(to time: TimeInterval) {
+        let cmTime = CMTime(seconds: time, preferredTimescale: 600)
+        avPlayer?.seek(to: cmTime)
+    }
+
     /// Seek to a percentage of the video
-    func seek(toPercentage percentage: Double) async {
-        await bufferManager.seek(toPercentage: percentage)
-        // Rebuild the player queue from the new position
-        await rebuildPlayerQueue()
+    func seek(toPercentage percentage: Double) {
+        let targetTime = duration * percentage
+        seek(to: targetTime)
     }
 
     /// Stop playback and cleanup
     func stop() {
+        processingTask?.cancel()
+        processingTask = nil
+
         downloadTask?.cancel()
         downloadTask = nil
+        downloadObservation?.invalidate()
+        downloadObservation = nil
 
         if let observer = timeObserver, let player = avPlayer {
             player.removeTimeObserver(observer)
@@ -184,184 +199,119 @@ class StereoscopicVideoPlayer: ObservableObject {
         timeObserver = nil
 
         avPlayer?.pause()
-        avPlayer?.removeAllItems()
         avPlayer = nil
 
-        Task {
-            await bufferManager.clear()
-            if let video = currentVideo {
+        // Clean up converted file
+        if let url = convertedFileURL {
+            try? FileManager.default.removeItem(at: url)
+        }
+        convertedFileURL = nil
+
+        if let video = currentVideo {
+            Task {
                 await converter.cleanup(videoId: video.stashId)
             }
         }
 
-        if let observation = itemEndObservation {
-            NotificationCenter.default.removeObserver(observation)
-        }
-        itemEndObservation = nil
-
         currentVideo = nil
-        videoInfo = nil
-        conversionConfig = nil
         state = .idle
         currentTime = 0
         duration = 0
         bufferProgress = 0
-        consecutiveFailures = 0
+        currentChunkInfo = ""
     }
 
     /// Request fallback to 2D playback
     func requestFallback(reason: FallbackReason = .userRequested) {
         guard let video = currentVideo else { return }
-
         stop()
-
-        NotificationCenter.default.post(
-            name: .stereoscopicFallbackTo2D,
-            object: self,
-            userInfo: ["reason": reason, "video": video]
-        )
+        postFallbackNotification(reason: reason, video: video)
     }
 
     // MARK: - Private Methods
 
-    private func setupObservers() {
-        // Observers are set up during playback initialization
-    }
+    private func downloadVideo(video: GalleryVideo, apiKey: String?) async throws -> URL {
+        let cachesDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        let downloadDir = cachesDir.appendingPathComponent("StereoscopicDownloads", isDirectory: true)
+        try? FileManager.default.createDirectory(at: downloadDir, withIntermediateDirectories: true)
 
-    private func updateBufferState() async {
-        let bufferState = await bufferManager.state
-        switch bufferState {
-        case .buffering(let progress):
-            bufferProgress = progress
-            // Only update state if we're not already playing
-            if state != .playing && state != .paused {
-                state = .buffering(progress: progress)
-            }
-        case .ready:
-            bufferProgress = 1.0
-        case .error(let message):
-            state = .error(message)
-        default:
-            break
-        }
-    }
+        let destinationURL = downloadDir.appendingPathComponent("\(video.stashId)_source.mp4")
 
-    private func downloadAndConvertLoop() async {
-        guard let video = currentVideo,
-              let videoInfo = videoInfo,
-              let config = conversionConfig else {
-            return
+        // Remove existing file if present
+        try? FileManager.default.removeItem(at: destinationURL)
+
+        var request = URLRequest(url: video.streamURL)
+        if let apiKey = apiKey, !apiKey.isEmpty {
+            request.setValue(apiKey, forHTTPHeaderField: "ApiKey")
         }
 
-        while !Task.isCancelled {
-            let neededChunks = await bufferManager.chunksNeeded()
+        return try await withCheckedThrowingContinuation { continuation in
+            let session = URLSession.shared
+            let task = session.downloadTask(with: request) { tempURL, response, error in
+                if let error = error {
+                    continuation.resume(throwing: error)
+                    return
+                }
 
-            if neededChunks.isEmpty {
-                // Buffer is full, wait before checking again
-                try? await Task.sleep(for: .milliseconds(500))
-                continue
-            }
+                guard let tempURL = tempURL else {
+                    continuation.resume(throwing: URLError(.badServerResponse))
+                    return
+                }
 
-            for chunkIndex in neededChunks {
-                guard !Task.isCancelled else { return }
+                guard let httpResponse = response as? HTTPURLResponse,
+                      (200...299).contains(httpResponse.statusCode) else {
+                    let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+                    continuation.resume(throwing: URLError(.badServerResponse, userInfo: [
+                        NSLocalizedDescriptionKey: "Server returned status \(statusCode)"
+                    ]))
+                    return
+                }
 
                 do {
-                    // Download chunk
-                    let chunk = try await downloader.downloadChunk(
-                        url: video.streamURL,
-                        apiKey: apiKey,
-                        chunkIndex: chunkIndex,
-                        videoInfo: videoInfo
-                    )
-
-                    // Convert to MV-HEVC
-                    let converted = try await converter.convert(
-                        chunkData: chunk.data,
-                        chunkIndex: chunkIndex,
-                        config: config,
-                        videoId: video.stashId
-                    )
-
-                    // Add to buffer
-                    await bufferManager.addChunk(converted, isLast: chunk.isLast)
-
-                    // Update buffer state on main actor
-                    await MainActor.run {
-                        Task {
-                            await self.updateBufferState()
-                            let stats = await self.bufferManager.bufferStats()
-                            self.currentChunkInfo = "Chunk \(stats.current + 1)/\(stats.total)"
-                        }
-                    }
-
-                    // Reset failure counter on success
-                    consecutiveFailures = 0
-
-                    // Queue the chunk for playback if player is ready
-                    await queueChunkIfReady(converted)
-
+                    try FileManager.default.moveItem(at: tempURL, to: destinationURL)
+                    continuation.resume(returning: destinationURL)
                 } catch {
-                    print("[StereoscopicPlayer] Chunk \(chunkIndex) failed: \(error)")
-                    consecutiveFailures += 1
-
-                    if consecutiveFailures >= maxConsecutiveFailures {
-                        await MainActor.run {
-                            requestFallback(reason: .conversionFailed(error))
-                        }
-                        return
-                    }
+                    continuation.resume(throwing: error)
                 }
             }
+
+            // Observe download progress
+            self.downloadObservation = task.progress.observe(\.fractionCompleted) { [weak self] progress, _ in
+                Task { @MainActor in
+                    self?.state = .downloading(progress: progress.fractionCompleted)
+                    self?.currentChunkInfo = "Downloading: \(Int(progress.fractionCompleted * 100))%"
+                }
+            }
+
+            self.downloadTask = task
+            task.resume()
         }
     }
 
-    private func waitForInitialBuffer() async {
-        // Wait until buffer is ready to play
-        var attempts = 0
-        let maxAttempts = 300 // 30 seconds max wait
+    private func startPlayback(url: URL) {
+        let asset = AVURLAsset(url: url)
+        let playerItem = AVPlayerItem(asset: asset)
+        let player = AVPlayer(playerItem: playerItem)
 
-        while await !bufferManager.isReadyToPlay && attempts < maxAttempts {
-            try? await Task.sleep(for: .milliseconds(100))
-            attempts += 1
-
-            if Task.isCancelled { return }
+        // Enable looping
+        NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime,
+            object: playerItem,
+            queue: .main
+        ) { [weak player] _ in
+            player?.seek(to: .zero)
+            player?.play()
         }
 
-        if attempts >= maxAttempts {
-            state = .error("Timeout waiting for initial buffer")
-        }
-    }
-
-    private func startPlayback() async {
-        guard let firstChunk = await bufferManager.getCurrentChunk() else {
-            state = .error("No chunks available for playback")
-            return
-        }
-
-        // Create queue player
-        let player = AVQueuePlayer()
-        player.actionAtItemEnd = .advance
         self.avPlayer = player
-
-        // Add initial items to queue
-        let firstItem = bufferManager.createPlayerItem(for: firstChunk)
-        player.insert(firstItem, after: nil)
-
-        // Try to queue the next chunk too
-        if let nextChunk = await bufferManager.peekNextChunk() {
-            let nextItem = bufferManager.createPlayerItem(for: nextChunk)
-            player.insert(nextItem, after: firstItem)
-        }
 
         // Setup time observer
         setupTimeObserver()
 
-        // Setup item end observer
-        setupItemEndObserver()
-
         // Start playback
         player.play()
         state = .playing
+        currentChunkInfo = "Playing"
 
         NotificationCenter.default.post(
             name: .stereoscopicPlaybackReady,
@@ -378,90 +328,19 @@ class StereoscopicVideoPlayer: ObservableObject {
             queue: .main
         ) { [weak self] time in
             guard let self = self else { return }
-            // Calculate total time based on chunk position + current item time
-            Task { @MainActor in
-                let chunkIndex = await self.bufferManager.currentIndex
-                let chunkDuration = 20.0 // Approximate chunk duration
-                self.currentTime = (Double(chunkIndex) * chunkDuration) + time.seconds
-            }
+            self.currentTime = time.seconds
         }
     }
 
-    private func setupItemEndObserver() {
-        itemEndObservation = NotificationCenter.default.addObserver(
-            forName: .AVPlayerItemDidPlayToEndTime,
-            object: nil,
-            queue: .main
-        ) { [weak self] notification in
-            guard let self = self,
-                  let item = notification.object as? AVPlayerItem,
-                  self.avPlayer?.items().contains(item) == true else {
-                return
-            }
+    private func postFallbackNotification(reason: FallbackReason, video: GalleryVideo? = nil) {
+        let videoToUse = video ?? currentVideo
+        guard let video = videoToUse else { return }
 
-            Task { @MainActor in
-                await self.handleChunkTransition()
-            }
-        }
-    }
-
-    private func handleChunkTransition() async {
-        // Advance to next chunk in buffer
-        guard let nextChunk = await bufferManager.advanceToNextChunk() else {
-            // No more chunks and not looping
-            state = .paused
-            return
-        }
-
-        // Queue the following chunk
-        if let followingChunk = await bufferManager.peekNextChunk() {
-            let item = bufferManager.createPlayerItem(for: followingChunk)
-            avPlayer?.insert(item, after: avPlayer?.items().last)
-        }
-    }
-
-    private func queueChunkIfReady(_ chunk: ConvertedChunk) async {
-        guard let player = avPlayer, state == .playing || state == .paused else {
-            return
-        }
-
-        // Only queue if this is the next expected chunk
-        let currentIndex = await bufferManager.currentIndex
-        let chunkCount = await bufferManager.chunkCount
-        let nextExpectedIndex = (currentIndex + player.items().count) % chunkCount
-
-        if chunk.index == nextExpectedIndex {
-            let bufferedChunk = BufferedChunk(
-                index: chunk.index,
-                fileURL: chunk.fileURL,
-                duration: chunk.duration,
-                isLast: chunk.isLast
-            )
-            let item = bufferManager.createPlayerItem(for: bufferedChunk)
-            player.insert(item, after: player.items().last)
-        }
-    }
-
-    private func rebuildPlayerQueue() async {
-        guard let player = avPlayer else { return }
-
-        // Remove all items except current
-        while player.items().count > 1 {
-            if let lastItem = player.items().last {
-                player.remove(lastItem)
-            }
-        }
-
-        // Queue next chunks from new position
-        if let currentChunk = await bufferManager.getCurrentChunk() {
-            let item = bufferManager.createPlayerItem(for: currentChunk)
-            player.replaceCurrentItem(with: item)
-        }
-
-        if let nextChunk = await bufferManager.peekNextChunk() {
-            let item = bufferManager.createPlayerItem(for: nextChunk)
-            player.insert(item, after: player.currentItem)
-        }
+        NotificationCenter.default.post(
+            name: .stereoscopicFallbackTo2D,
+            object: self,
+            userInfo: ["reason": reason, "video": video]
+        )
     }
 }
 
@@ -469,23 +348,20 @@ class StereoscopicVideoPlayer: ObservableObject {
 
 enum StereoscopicPlayerError: Error, LocalizedError {
     case notStereoscopic
-    case probeFailure
-    case noChunksAvailable
+    case downloadFailed(String)
+    case conversionFailed(String)
     case playbackFailed(String)
-    case conversionTimeout
 
     var errorDescription: String? {
         switch self {
         case .notStereoscopic:
             return "Video is not stereoscopic"
-        case .probeFailure:
-            return "Failed to probe video stream"
-        case .noChunksAvailable:
-            return "No chunks available for playback"
+        case .downloadFailed(let msg):
+            return "Download failed: \(msg)"
+        case .conversionFailed(let msg):
+            return "Conversion failed: \(msg)"
         case .playbackFailed(let msg):
             return "Playback failed: \(msg)"
-        case .conversionTimeout:
-            return "Conversion timed out"
         }
     }
 }

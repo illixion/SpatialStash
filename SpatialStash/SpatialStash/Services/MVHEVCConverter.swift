@@ -78,6 +78,7 @@ enum MVHEVCError: Error, LocalizedError {
     case readerInitFailed(String)
     case encodingFailed(String)
     case frameSplitFailed
+    case simulatorNotSupported
 
     var errorDescription: String? {
         switch self {
@@ -97,8 +98,19 @@ enum MVHEVCError: Error, LocalizedError {
             return "Encoding failed: \(msg)"
         case .frameSplitFailed:
             return "Failed to split stereoscopic frame"
+        case .simulatorNotSupported:
+            return "MV-HEVC encoding requires a physical device. The visionOS Simulator does not support stereoscopic video encoding."
         }
     }
+}
+
+/// Check if running in simulator
+private var isSimulator: Bool {
+    #if targetEnvironment(simulator)
+    return true
+    #else
+    return false
+    #endif
 }
 
 /// Converts SBS/OU video chunks to MV-HEVC format
@@ -116,7 +128,162 @@ actor MVHEVCConverter {
         pixelBufferPool = nil // Will be created per-conversion with correct dimensions
     }
 
-    /// Convert a downloaded chunk to MV-HEVC
+    /// Convert a full video file to MV-HEVC
+    /// - Parameters:
+    ///   - sourceURL: URL to the source video file
+    ///   - config: Conversion configuration
+    ///   - videoId: Unique identifier for the video (for file naming)
+    ///   - progressHandler: Callback for conversion progress (0.0 to 1.0)
+    /// - Returns: URL to the converted MV-HEVC file
+    func convertFullVideo(
+        sourceURL: URL,
+        config: MVHEVCConversionConfig,
+        videoId: String,
+        progressHandler: @escaping @Sendable (Double) -> Void
+    ) async throws -> URL {
+        // MV-HEVC encoding is not supported in the Simulator
+        #if targetEnvironment(simulator)
+        throw MVHEVCError.simulatorNotSupported
+        #else
+
+        let outputURL = tempDirectory.appendingPathComponent("mvhevc_\(videoId).mov")
+
+        // Clean up any existing output file
+        try? FileManager.default.removeItem(at: outputURL)
+
+        // Setup asset reader
+        let asset = AVURLAsset(url: sourceURL)
+
+        let videoTracks = try await asset.loadTracks(withMediaType: .video)
+        guard let videoTrack = videoTracks.first else {
+            throw MVHEVCError.noVideoTrack
+        }
+
+        // Get actual frame rate and duration from source
+        let nominalFrameRate = try await videoTrack.load(.nominalFrameRate)
+        let actualFrameRate = nominalFrameRate > 0 ? Double(nominalFrameRate) : config.frameRate
+
+        let duration = try await asset.load(.duration)
+        let totalFrames = Int(duration.seconds * actualFrameRate)
+
+        let reader: AVAssetReader
+        do {
+            reader = try AVAssetReader(asset: asset)
+        } catch {
+            throw MVHEVCError.readerInitFailed(error.localizedDescription)
+        }
+
+        let readerOutputSettings: [String: Any] = [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+        ]
+
+        let readerOutput = AVAssetReaderTrackOutput(track: videoTrack, outputSettings: readerOutputSettings)
+        readerOutput.alwaysCopiesSampleData = false
+
+        guard reader.canAdd(readerOutput) else {
+            throw MVHEVCError.readerInitFailed("Cannot add reader output")
+        }
+        reader.add(readerOutput)
+
+        // Setup asset writer with MV-HEVC
+        let writer: AVAssetWriter
+        do {
+            writer = try AVAssetWriter(outputURL: outputURL, fileType: .mov)
+        } catch {
+            throw MVHEVCError.writerInitFailed(error.localizedDescription)
+        }
+
+        let videoSettings = createMVHEVCVideoSettings(config: config)
+        let writerInput = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
+        writerInput.expectsMediaDataInRealTime = false
+
+        // Create tagged buffer adaptor for stereo frames
+        let sourcePixelBufferAttributes: [String: Any] = [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferWidthKey as String: config.outputWidth,
+            kCVPixelBufferHeightKey as String: config.outputHeight,
+            kCVPixelBufferIOSurfacePropertiesKey as String: [:] as [String: Any]
+        ]
+
+        let adaptor = AVAssetWriterInputTaggedPixelBufferGroupAdaptor(
+            assetWriterInput: writerInput,
+            sourcePixelBufferAttributes: sourcePixelBufferAttributes
+        )
+
+        guard writer.canAdd(writerInput) else {
+            throw MVHEVCError.writerInitFailed("Cannot add writer input")
+        }
+        writer.add(writerInput)
+
+        // Start processing
+        guard reader.startReading() else {
+            throw MVHEVCError.readerInitFailed(reader.error?.localizedDescription ?? "Unknown error")
+        }
+
+        guard writer.startWriting() else {
+            throw MVHEVCError.writerInitFailed(writer.error?.localizedDescription ?? "Unknown error")
+        }
+
+        writer.startSession(atSourceTime: .zero)
+
+        // Process frames
+        var frameCount = 0
+        let frameDuration = CMTime(value: 1, timescale: CMTimeScale(actualFrameRate))
+
+        while reader.status == .reading {
+            guard writerInput.isReadyForMoreMediaData else {
+                try await Task.sleep(for: .milliseconds(10))
+                continue
+            }
+
+            guard let sampleBuffer = readerOutput.copyNextSampleBuffer(),
+                  let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
+                break
+            }
+
+            // Split frame into left and right eye
+            let (leftEye, rightEye) = try splitStereoFrame(
+                pixelBuffer: pixelBuffer,
+                format: config.format,
+                outputWidth: config.outputWidth,
+                outputHeight: config.outputHeight
+            )
+
+            // Create tagged buffers and append
+            let presentationTime = CMTimeMultiply(frameDuration, multiplier: Int32(frameCount))
+
+            let taggedBuffers = createTaggedBuffers(
+                leftEye: leftEye,
+                rightEye: rightEye
+            )
+
+            guard adaptor.appendTaggedBuffers(taggedBuffers, withPresentationTime: presentationTime) else {
+                throw MVHEVCError.encodingFailed("Failed to append frame \(frameCount)")
+            }
+
+            frameCount += 1
+
+            // Report progress every 10 frames
+            if frameCount % 10 == 0 {
+                let progress = totalFrames > 0 ? Double(frameCount) / Double(totalFrames) : 0
+                progressHandler(min(progress, 1.0))
+            }
+        }
+
+        // Finish writing
+        writerInput.markAsFinished()
+        await writer.finishWriting()
+
+        guard writer.status == .completed else {
+            throw MVHEVCError.encodingFailed(writer.error?.localizedDescription ?? "Unknown error")
+        }
+
+        progressHandler(1.0)
+        return outputURL
+        #endif
+    }
+
+    /// Convert a downloaded chunk to MV-HEVC (legacy method for chunked approach)
     /// - Parameters:
     ///   - chunkData: Raw video data from the chunk
     ///   - chunkIndex: Index of this chunk

@@ -105,11 +105,19 @@ struct StereoscopicVideoView: View {
     @ViewBuilder
     private var overlayContent: some View {
         switch player.state {
-        case .loading:
-            loadingOverlay(message: "Loading stereoscopic video...")
+        case .downloading(let progress):
+            progressOverlay(
+                title: "Downloading Video",
+                progress: progress,
+                detail: player.currentChunkInfo
+            )
 
-        case .buffering(let progress):
-            bufferingOverlay(progress: progress)
+        case .converting(let progress):
+            progressOverlay(
+                title: "Converting to 3D",
+                progress: progress,
+                detail: player.currentChunkInfo
+            )
 
         case .error(let message):
             errorOverlay(message: message)
@@ -136,61 +144,70 @@ struct StereoscopicVideoView: View {
         }
     }
 
-    private func loadingOverlay(message: String) -> some View {
+    private func progressOverlay(title: String, progress: Double, detail: String) -> some View {
         VStack(spacing: 16) {
-            ProgressView()
-                .scaleEffect(1.5)
-                .tint(.white)
-            Text(message)
+            Text(title)
                 .font(.headline)
                 .foregroundColor(.white)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.black.opacity(0.7))
-    }
 
-    private func bufferingOverlay(progress: Double) -> some View {
-        VStack(spacing: 12) {
             ProgressView(value: progress)
                 .progressViewStyle(.linear)
-                .frame(width: 200)
+                .frame(width: 250)
                 .tint(.white)
-            Text("Buffering... \(Int(progress * 100))%")
-                .font(.caption)
+
+            Text("\(Int(progress * 100))%")
+                .font(.title2)
+                .fontWeight(.medium)
                 .foregroundColor(.white)
-            Text(player.currentChunkInfo)
-                .font(.caption2)
-                .foregroundColor(.secondary)
+
+            if !detail.isEmpty {
+                Text(detail)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
         }
-        .padding(24)
+        .padding(32)
         .background(.ultraThinMaterial)
-        .cornerRadius(16)
+        .cornerRadius(20)
     }
 
     private func errorOverlay(message: String) -> some View {
-        VStack(spacing: 16) {
-            Image(systemName: "exclamationmark.triangle.fill")
+        let isSimulatorError = message.contains("Simulator") || message.contains("physical device")
+
+        return VStack(spacing: 16) {
+            Image(systemName: isSimulatorError ? "visionpro" : "exclamationmark.triangle.fill")
                 .font(.system(size: 48))
-                .foregroundColor(.orange)
-            Text("Playback Error")
+                .foregroundColor(isSimulatorError ? .blue : .orange)
+
+            Text(isSimulatorError ? "Device Required" : "Playback Error")
                 .font(.title2)
                 .fontWeight(.semibold)
-            Text(message)
+
+            Text(isSimulatorError
+                 ? "Stereoscopic 3D video conversion requires a physical Apple Vision Pro. The Simulator cannot encode MV-HEVC video."
+                 : message)
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
-                .frame(maxWidth: 300)
+                .frame(maxWidth: 320)
 
-            HStack(spacing: 16) {
-                Button("Retry") {
-                    startPlayback()
-                }
-                .buttonStyle(.bordered)
-
-                Button("Play as 2D") {
+            if isSimulatorError {
+                Button("Play as 2D Instead") {
                     fallbackTo2D = true
                 }
                 .buttonStyle(.borderedProminent)
+            } else {
+                HStack(spacing: 16) {
+                    Button("Retry") {
+                        startPlayback()
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button("Play as 2D") {
+                        fallbackTo2D = true
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
             }
         }
         .padding(32)
@@ -320,17 +337,12 @@ struct StereoscopicVideoView: View {
             return
         }
 
-        do {
-            // Create VideoMaterial from the AVPlayer
-            let videoMaterial = try await VideoMaterial(avPlayer: avPlayer)
+        // Create VideoMaterial from the AVPlayer
+        let videoMaterial = VideoMaterial(avPlayer: avPlayer)
 
-            // Apply the material to the entity
-            modelComponent.materials = [videoMaterial]
-            entity.components.set(modelComponent)
-
-        } catch {
-            print("[StereoscopicVideoView] Failed to create VideoMaterial: \(error)")
-        }
+        // Apply the material to the entity
+        modelComponent.materials = [videoMaterial]
+        entity.components.set(modelComponent)
     }
 }
 
