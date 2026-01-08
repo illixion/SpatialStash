@@ -801,6 +801,7 @@ class AppModel {
         // Track that this image was converted
         if let url = imageURL {
             await Spatial3DConversionTracker.shared.markAsConverted(url: url)
+            await Spatial3DConversionTracker.shared.setLastViewingMode(url: url, mode: .spatial3D)
         }
 
         if let aspectRatio = imagePresentationComponent.aspectRatio(for: .spatial3D) {
@@ -813,6 +814,12 @@ class AppModel {
         guard let url = imageURL,
               !isAnimatedGIF,
               spatial3DImageState == .notGenerated else {
+            return
+        }
+
+        // Respect the user's last-used mode for this image
+        if let lastMode = await Spatial3DConversionTracker.shared.lastViewingMode(url: url), lastMode == .mono {
+            print("[AppModel] Skipping auto-generation; last mode was 2D")
             return
         }
 

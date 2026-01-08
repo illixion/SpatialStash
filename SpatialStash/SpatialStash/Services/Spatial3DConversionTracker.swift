@@ -7,11 +7,18 @@
 
 import Foundation
 
+enum ViewingModePreference: String {
+    case mono
+    case spatial3D
+}
+
 actor Spatial3DConversionTracker {
     static let shared = Spatial3DConversionTracker()
 
     private let userDefaultsKey = "spatial3DConvertedImages"
+    private let lastModeKey = "spatial3DLastViewingMode"
     private var convertedImageURLs: Set<String>
+    private var lastViewingModeByURL: [String: String]
 
     private init() {
         // Load from UserDefaults
@@ -20,6 +27,12 @@ actor Spatial3DConversionTracker {
             print("[Spatial3DTracker] Loaded \(convertedImageURLs.count) previously converted images")
         } else {
             convertedImageURLs = []
+        }
+
+        if let dict = UserDefaults.standard.dictionary(forKey: lastModeKey) as? [String: String] {
+            lastViewingModeByURL = dict
+        } else {
+            lastViewingModeByURL = [:]
         }
     }
 
@@ -44,6 +57,7 @@ actor Spatial3DConversionTracker {
     /// Clear all conversion tracking data
     func clearAll() {
         convertedImageURLs.removeAll()
+        lastViewingModeByURL.removeAll()
         save()
     }
 
@@ -54,5 +68,18 @@ actor Spatial3DConversionTracker {
 
     private func save() {
         UserDefaults.standard.set(Array(convertedImageURLs), forKey: userDefaultsKey)
+        UserDefaults.standard.set(lastViewingModeByURL, forKey: lastModeKey)
+    }
+
+    // MARK: - Last Viewing Mode Tracking
+
+    func setLastViewingMode(url: URL, mode: ViewingModePreference) {
+        lastViewingModeByURL[url.absoluteString] = mode.rawValue
+        save()
+    }
+
+    func lastViewingMode(url: URL) -> ViewingModePreference? {
+        guard let raw = lastViewingModeByURL[url.absoluteString] else { return nil }
+        return ViewingModePreference(rawValue: raw)
     }
 }

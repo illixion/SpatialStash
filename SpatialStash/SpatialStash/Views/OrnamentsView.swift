@@ -64,12 +64,16 @@ struct OrnamentsView: View {
                             print("Unable to find ImagePresentationComponent.")
                             return
                         }
+                        let currentURL = appModel.imageURL
                         switch ipc.viewingMode {
                         case .mono:
                             switch appModel.spatial3DImageState {
                             case .generated:
                                 ipc.desiredViewingMode = .spatial3D
                                 appModel.contentEntity.components.set(ipc)
+                                if let url = currentURL {
+                                    Task { await Spatial3DConversionTracker.shared.setLastViewingMode(url: url, mode: .spatial3D) }
+                                }
                             case .notGenerated:
                                 Task {
                                     do {
@@ -86,6 +90,9 @@ struct OrnamentsView: View {
                         case .spatial3D:
                             ipc.desiredViewingMode = .mono
                             appModel.contentEntity.components.set(ipc)
+                            if let url = currentURL {
+                                Task { await Spatial3DConversionTracker.shared.setLastViewingMode(url: url, mode: .mono) }
+                            }
                         default:
                             print("Unhandled viewing mode: \(ipc.viewingMode)")
                         }
