@@ -2,6 +2,7 @@
  Spatial Stash - Filters Tab View
 
  Filter and sort configuration with saved views management.
+ Supports both image and video (scene) filtering based on the last viewed content tab.
  */
 
 import SwiftUI
@@ -11,87 +12,129 @@ struct FiltersTabView: View {
     @State private var showingSaveViewSheet = false
     @State private var newViewName = ""
 
+    /// Whether we're filtering videos (scenes) or images
+    private var isVideoFilter: Bool {
+        appModel.lastContentTab == .videos
+    }
+
     var body: some View {
         @Bindable var appModel = appModel
 
         NavigationStack {
             List {
-                // Saved Views Section
-                Section("Saved Views") {
-                    if appModel.savedViews.isEmpty {
-                        Text("No saved views")
-                            .foregroundColor(.secondary)
-                            .italic()
-                    } else {
-                        ForEach(appModel.savedViews) { view in
-                            SavedViewRow(view: view, isSelected: appModel.selectedSavedView?.id == view.id)
-                                .contentShape(Rectangle())
-                                .onTapGesture {
-                                    appModel.applySavedView(view)
-                                }
-                        }
-                        .onDelete { indexSet in
-                            for index in indexSet {
-                                appModel.deleteSavedView(appModel.savedViews[index])
-                            }
-                        }
-                    }
-
-                    Button {
-                        showingSaveViewSheet = true
-                    } label: {
-                        Label("Save Current View", systemImage: "plus.circle")
+                // Context indicator
+                Section {
+                    HStack {
+                        Image(systemName: isVideoFilter ? "video" : "photo.stack")
+                            .foregroundColor(.accentColor)
+                        Text("Filtering \(isVideoFilter ? "Videos" : "Pictures")")
+                            .font(.headline)
                     }
                 }
 
-                // Sort Section
-                Section("Sort") {
-                    Picker("Sort By", selection: $appModel.currentFilter.sortField) {
-                        ForEach(ImageSortField.allCases) { field in
-                            Text(field.displayName).tag(field)
+                // Saved Views Section (only for images currently)
+                if !isVideoFilter {
+                    Section("Saved Views") {
+                        if appModel.savedViews.isEmpty {
+                            Text("No saved views")
+                                .foregroundColor(.secondary)
+                                .italic()
+                        } else {
+                            ForEach(appModel.savedViews) { view in
+                                SavedViewRow(view: view, isSelected: appModel.selectedSavedView?.id == view.id)
+                                    .contentShape(Rectangle())
+                                    .onTapGesture {
+                                        appModel.applySavedView(view)
+                                    }
+                            }
+                            .onDelete { indexSet in
+                                for index in indexSet {
+                                    appModel.deleteSavedView(appModel.savedViews[index])
+                                }
+                            }
+                        }
+
+                        Button {
+                            showingSaveViewSheet = true
+                        } label: {
+                            Label("Save Current View", systemImage: "plus.circle")
                         }
                     }
+                }
 
-                    Picker("Direction", selection: $appModel.currentFilter.sortDirection) {
-                        ForEach(SortDirection.allCases) { direction in
-                            Label(direction.displayName, systemImage: direction.icon)
-                                .tag(direction)
+                // Sort Section - different fields for images vs videos
+                Section("Sort") {
+                    if isVideoFilter {
+                        Picker("Sort By", selection: $appModel.currentVideoFilter.sortField) {
+                            ForEach(SceneSortField.allCases) { field in
+                                Text(field.displayName).tag(field)
+                            }
+                        }
+
+                        Picker("Direction", selection: $appModel.currentVideoFilter.sortDirection) {
+                            ForEach(SortDirection.allCases) { direction in
+                                Label(direction.displayName, systemImage: direction.icon)
+                                    .tag(direction)
+                            }
+                        }
+                    } else {
+                        Picker("Sort By", selection: $appModel.currentFilter.sortField) {
+                            ForEach(ImageSortField.allCases) { field in
+                                Text(field.displayName).tag(field)
+                            }
+                        }
+
+                        Picker("Direction", selection: $appModel.currentFilter.sortDirection) {
+                            ForEach(SortDirection.allCases) { direction in
+                                Label(direction.displayName, systemImage: direction.icon)
+                                    .tag(direction)
+                            }
                         }
                     }
                 }
 
                 // Search Section
                 Section("Search") {
-                    TextField("Search titles...", text: $appModel.currentFilter.searchTerm)
-                        .textFieldStyle(.plain)
-                        .autocorrectionDisabled()
+                    if isVideoFilter {
+                        TextField("Search titles...", text: $appModel.currentVideoFilter.searchTerm)
+                            .textFieldStyle(.plain)
+                            .autocorrectionDisabled()
+                    } else {
+                        TextField("Search titles...", text: $appModel.currentFilter.searchTerm)
+                            .textFieldStyle(.plain)
+                            .autocorrectionDisabled()
+                    }
                 }
 
                 // Galleries Filter
                 Section("Galleries") {
-                    GalleryFilterView()
+                    GalleryFilterView(isVideoFilter: isVideoFilter)
                 }
 
                 // Tags Filter
                 Section("Tags") {
-                    TagFilterView()
+                    TagFilterView(isVideoFilter: isVideoFilter)
                 }
 
                 // O Count Filter
                 Section("O Count") {
-                    OCountFilterView()
+                    OCountFilterView(isVideoFilter: isVideoFilter)
                 }
 
                 // Rating Filter
                 Section("Rating") {
-                    RatingFilterView()
+                    RatingFilterView(isVideoFilter: isVideoFilter)
                 }
 
                 // Actions Section
                 Section {
                     Button {
                         Task {
-                            await appModel.applyFilter()
+                            if isVideoFilter {
+                                await appModel.applyVideoFilter()
+                            } else {
+                                await appModel.applyFilter()
+                            }
                         }
                     } label: {
                         HStack {
@@ -103,10 +146,14 @@ struct FiltersTabView: View {
                     }
                     .disabled(appModel.mediaSourceType != .stashServer)
 
-                    if appModel.currentFilter.hasActiveFilters {
+                    if isVideoFilter ? appModel.currentVideoFilter.hasActiveFilters : appModel.currentFilter.hasActiveFilters {
                         Button(role: .destructive) {
                             Task {
-                                await appModel.clearFilters()
+                                if isVideoFilter {
+                                    await appModel.clearVideoFilters()
+                                } else {
+                                    await appModel.clearFilters()
+                                }
                             }
                         } label: {
                             HStack {
@@ -131,7 +178,7 @@ struct FiltersTabView: View {
                     }
                 }
             }
-            .navigationTitle("Filters")
+            .navigationTitle(isVideoFilter ? "Video Filters" : "Picture Filters")
             .task {
                 await appModel.loadAutocompleteData()
             }
@@ -233,18 +280,32 @@ struct SaveViewSheet: View {
 struct GalleryFilterView: View {
     @Environment(AppModel.self) private var appModel
     @State private var searchText = ""
+    let isVideoFilter: Bool
+
+    private var selectedGalleries: [AutocompleteItem] {
+        isVideoFilter ? appModel.currentVideoFilter.selectedGalleries : appModel.currentFilter.selectedGalleries
+    }
 
     var body: some View {
         @Bindable var appModel = appModel
 
         VStack(alignment: .leading, spacing: 12) {
             // Modifier picker
-            Picker("Match", selection: $appModel.currentFilter.galleryModifier) {
-                ForEach(CriterionModifier.multiModifiers) { modifier in
-                    Text(modifier.displayName).tag(modifier)
+            if isVideoFilter {
+                Picker("Match", selection: $appModel.currentVideoFilter.galleryModifier) {
+                    ForEach(CriterionModifier.multiModifiers) { modifier in
+                        Text(modifier.displayName).tag(modifier)
+                    }
                 }
+                .pickerStyle(.menu)
+            } else {
+                Picker("Match", selection: $appModel.currentFilter.galleryModifier) {
+                    ForEach(CriterionModifier.multiModifiers) { modifier in
+                        Text(modifier.displayName).tag(modifier)
+                    }
+                }
+                .pickerStyle(.menu)
             }
-            .pickerStyle(.menu)
 
             // Search field
             TextField("Search galleries...", text: $searchText)
@@ -256,13 +317,17 @@ struct GalleryFilterView: View {
                     }
                 }
 
-            // Selected galleries - now using selectedGalleries which stores full items
-            if !appModel.currentFilter.selectedGalleries.isEmpty {
+            // Selected galleries
+            if !selectedGalleries.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack {
-                        ForEach(appModel.currentFilter.selectedGalleries) { gallery in
+                        ForEach(selectedGalleries) { gallery in
                             SelectedItemChip(name: gallery.name) {
-                                appModel.currentFilter.selectedGalleries.removeAll { $0.id == gallery.id }
+                                if isVideoFilter {
+                                    appModel.currentVideoFilter.selectedGalleries.removeAll { $0.id == gallery.id }
+                                } else {
+                                    appModel.currentFilter.selectedGalleries.removeAll { $0.id == gallery.id }
+                                }
                             }
                         }
                     }
@@ -274,14 +339,18 @@ struct GalleryFilterView: View {
                 ProgressView()
                     .frame(maxWidth: .infinity)
             } else if !appModel.availableGalleries.isEmpty {
-                let selectedIds = Set(appModel.currentFilter.selectedGalleries.map { $0.id })
+                let selectedIds = Set(selectedGalleries.map { $0.id })
                 let availableToSelect = appModel.availableGalleries.filter { !selectedIds.contains($0.id) }
                 if !availableToSelect.isEmpty {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack {
                             ForEach(availableToSelect) { gallery in
                                 Button {
-                                    appModel.currentFilter.selectedGalleries.append(gallery)
+                                    if isVideoFilter {
+                                        appModel.currentVideoFilter.selectedGalleries.append(gallery)
+                                    } else {
+                                        appModel.currentFilter.selectedGalleries.append(gallery)
+                                    }
                                 } label: {
                                     Text(gallery.name)
                                         .font(.caption)
@@ -305,18 +374,32 @@ struct GalleryFilterView: View {
 struct TagFilterView: View {
     @Environment(AppModel.self) private var appModel
     @State private var searchText = ""
+    let isVideoFilter: Bool
+
+    private var selectedTags: [AutocompleteItem] {
+        isVideoFilter ? appModel.currentVideoFilter.selectedTags : appModel.currentFilter.selectedTags
+    }
 
     var body: some View {
         @Bindable var appModel = appModel
 
         VStack(alignment: .leading, spacing: 12) {
             // Modifier picker
-            Picker("Match", selection: $appModel.currentFilter.tagModifier) {
-                ForEach(CriterionModifier.multiModifiers) { modifier in
-                    Text(modifier.displayName).tag(modifier)
+            if isVideoFilter {
+                Picker("Match", selection: $appModel.currentVideoFilter.tagModifier) {
+                    ForEach(CriterionModifier.multiModifiers) { modifier in
+                        Text(modifier.displayName).tag(modifier)
+                    }
                 }
+                .pickerStyle(.menu)
+            } else {
+                Picker("Match", selection: $appModel.currentFilter.tagModifier) {
+                    ForEach(CriterionModifier.multiModifiers) { modifier in
+                        Text(modifier.displayName).tag(modifier)
+                    }
+                }
+                .pickerStyle(.menu)
             }
-            .pickerStyle(.menu)
 
             // Search field
             TextField("Search tags...", text: $searchText)
@@ -328,13 +411,17 @@ struct TagFilterView: View {
                     }
                 }
 
-            // Selected tags - now using selectedTags which stores full items
-            if !appModel.currentFilter.selectedTags.isEmpty {
+            // Selected tags
+            if !selectedTags.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack {
-                        ForEach(appModel.currentFilter.selectedTags) { tag in
+                        ForEach(selectedTags) { tag in
                             SelectedItemChip(name: tag.name) {
-                                appModel.currentFilter.selectedTags.removeAll { $0.id == tag.id }
+                                if isVideoFilter {
+                                    appModel.currentVideoFilter.selectedTags.removeAll { $0.id == tag.id }
+                                } else {
+                                    appModel.currentFilter.selectedTags.removeAll { $0.id == tag.id }
+                                }
                             }
                         }
                     }
@@ -346,14 +433,18 @@ struct TagFilterView: View {
                 ProgressView()
                     .frame(maxWidth: .infinity)
             } else if !appModel.availableTags.isEmpty {
-                let selectedIds = Set(appModel.currentFilter.selectedTags.map { $0.id })
+                let selectedIds = Set(selectedTags.map { $0.id })
                 let availableToSelect = appModel.availableTags.filter { !selectedIds.contains($0.id) }
                 if !availableToSelect.isEmpty {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack {
                             ForEach(availableToSelect) { tag in
                                 Button {
-                                    appModel.currentFilter.selectedTags.append(tag)
+                                    if isVideoFilter {
+                                        appModel.currentVideoFilter.selectedTags.append(tag)
+                                    } else {
+                                        appModel.currentFilter.selectedTags.append(tag)
+                                    }
                                 } label: {
                                     Text(tag.name)
                                         .font(.caption)
@@ -401,40 +492,78 @@ struct SelectedItemChip: View {
 
 struct OCountFilterView: View {
     @Environment(AppModel.self) private var appModel
+    let isVideoFilter: Bool
+
+    private var oCountEnabled: Bool {
+        isVideoFilter ? appModel.currentVideoFilter.oCountEnabled : appModel.currentFilter.oCountEnabled
+    }
+
+    private var oCountModifier: CriterionModifier {
+        isVideoFilter ? appModel.currentVideoFilter.oCountModifier : appModel.currentFilter.oCountModifier
+    }
 
     var body: some View {
         @Bindable var appModel = appModel
 
         VStack(alignment: .leading, spacing: 12) {
-            Toggle("Enable Filter", isOn: $appModel.currentFilter.oCountEnabled)
+            if isVideoFilter {
+                Toggle("Enable Filter", isOn: $appModel.currentVideoFilter.oCountEnabled)
+            } else {
+                Toggle("Enable Filter", isOn: $appModel.currentFilter.oCountEnabled)
+            }
 
-            if appModel.currentFilter.oCountEnabled {
+            if oCountEnabled {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Condition")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
-                    Picker("Condition", selection: $appModel.currentFilter.oCountModifier) {
-                        ForEach(CriterionModifier.numberModifiers) { modifier in
-                            Text(modifier.displayName).tag(modifier)
+                    if isVideoFilter {
+                        Picker("Condition", selection: $appModel.currentVideoFilter.oCountModifier) {
+                            ForEach(CriterionModifier.numberModifiers) { modifier in
+                                Text(modifier.displayName).tag(modifier)
+                            }
                         }
+                        .pickerStyle(.segmented)
+                    } else {
+                        Picker("Condition", selection: $appModel.currentFilter.oCountModifier) {
+                            ForEach(CriterionModifier.numberModifiers) { modifier in
+                                Text(modifier.displayName).tag(modifier)
+                            }
+                        }
+                        .pickerStyle(.segmented)
                     }
-                    .pickerStyle(.segmented)
                 }
 
-                if appModel.currentFilter.oCountModifier.requiresRange {
+                if oCountModifier.requiresRange {
                     HStack {
-                        TextField("Min", value: $appModel.currentFilter.oCountRange.min, format: .number)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 80)
-                        Text("to")
-                        TextField("Max", value: $appModel.currentFilter.oCountRange.max, format: .number)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 80)
+                        if isVideoFilter {
+                            TextField("Min", value: $appModel.currentVideoFilter.oCountRange.min, format: .number)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 80)
+                            Text("to")
+                            TextField("Max", value: $appModel.currentVideoFilter.oCountRange.max, format: .number)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 80)
+                        } else {
+                            TextField("Min", value: $appModel.currentFilter.oCountRange.min, format: .number)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 80)
+                            Text("to")
+                            TextField("Max", value: $appModel.currentFilter.oCountRange.max, format: .number)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 80)
+                        }
                     }
-                } else if appModel.currentFilter.oCountModifier.requiresValue {
-                    TextField("Value", value: $appModel.currentFilter.oCountValue, format: .number)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 100)
+                } else if oCountModifier.requiresValue {
+                    if isVideoFilter {
+                        TextField("Value", value: $appModel.currentVideoFilter.oCountValue, format: .number)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 100)
+                    } else {
+                        TextField("Value", value: $appModel.currentFilter.oCountValue, format: .number)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 100)
+                    }
                 }
             }
         }
@@ -445,48 +574,97 @@ struct OCountFilterView: View {
 
 struct RatingFilterView: View {
     @Environment(AppModel.self) private var appModel
+    let isVideoFilter: Bool
+
+    private var ratingEnabled: Bool {
+        isVideoFilter ? appModel.currentVideoFilter.ratingEnabled : appModel.currentFilter.ratingEnabled
+    }
+
+    private var ratingModifier: CriterionModifier {
+        isVideoFilter ? appModel.currentVideoFilter.ratingModifier : appModel.currentFilter.ratingModifier
+    }
 
     var body: some View {
         @Bindable var appModel = appModel
 
         VStack(alignment: .leading, spacing: 12) {
-            Toggle("Enable Filter", isOn: $appModel.currentFilter.ratingEnabled)
+            if isVideoFilter {
+                Toggle("Enable Filter", isOn: $appModel.currentVideoFilter.ratingEnabled)
+            } else {
+                Toggle("Enable Filter", isOn: $appModel.currentFilter.ratingEnabled)
+            }
 
-            if appModel.currentFilter.ratingEnabled {
+            if ratingEnabled {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Condition")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
-                    Picker("Condition", selection: $appModel.currentFilter.ratingModifier) {
-                        ForEach(CriterionModifier.numberModifiers) { modifier in
-                            Text(modifier.displayName).tag(modifier)
+                    if isVideoFilter {
+                        Picker("Condition", selection: $appModel.currentVideoFilter.ratingModifier) {
+                            ForEach(CriterionModifier.numberModifiers) { modifier in
+                                Text(modifier.displayName).tag(modifier)
+                            }
                         }
+                        .pickerStyle(.segmented)
+                    } else {
+                        Picker("Condition", selection: $appModel.currentFilter.ratingModifier) {
+                            ForEach(CriterionModifier.numberModifiers) { modifier in
+                                Text(modifier.displayName).tag(modifier)
+                            }
+                        }
+                        .pickerStyle(.segmented)
                     }
-                    .pickerStyle(.segmented)
                 }
 
-                if appModel.currentFilter.ratingModifier.requiresRange {
-                    HStack {
-                        Text("Min:")
-                        StarRatingPicker(rating: Binding(
-                            get: { appModel.currentFilter.ratingRange.min ?? 1 },
-                            set: { appModel.currentFilter.ratingRange.min = $0 }
-                        ))
+                if ratingModifier.requiresRange {
+                    if isVideoFilter {
+                        HStack {
+                            Text("Min:")
+                            StarRatingPicker(rating: Binding(
+                                get: { appModel.currentVideoFilter.ratingRange.min ?? 1 },
+                                set: { appModel.currentVideoFilter.ratingRange.min = $0 }
+                            ))
+                        }
+                        HStack {
+                            Text("Max:")
+                            StarRatingPicker(rating: Binding(
+                                get: { appModel.currentVideoFilter.ratingRange.max ?? 5 },
+                                set: { appModel.currentVideoFilter.ratingRange.max = $0 }
+                            ))
+                        }
+                    } else {
+                        HStack {
+                            Text("Min:")
+                            StarRatingPicker(rating: Binding(
+                                get: { appModel.currentFilter.ratingRange.min ?? 1 },
+                                set: { appModel.currentFilter.ratingRange.min = $0 }
+                            ))
+                        }
+                        HStack {
+                            Text("Max:")
+                            StarRatingPicker(rating: Binding(
+                                get: { appModel.currentFilter.ratingRange.max ?? 5 },
+                                set: { appModel.currentFilter.ratingRange.max = $0 }
+                            ))
+                        }
                     }
-                    HStack {
-                        Text("Max:")
-                        StarRatingPicker(rating: Binding(
-                            get: { appModel.currentFilter.ratingRange.max ?? 5 },
-                            set: { appModel.currentFilter.ratingRange.max = $0 }
-                        ))
-                    }
-                } else if appModel.currentFilter.ratingModifier.requiresValue {
-                    HStack {
-                        Text("Rating:")
-                        StarRatingPicker(rating: Binding(
-                            get: { appModel.currentFilter.ratingValue ?? 3 },
-                            set: { appModel.currentFilter.ratingValue = $0 }
-                        ))
+                } else if ratingModifier.requiresValue {
+                    if isVideoFilter {
+                        HStack {
+                            Text("Rating:")
+                            StarRatingPicker(rating: Binding(
+                                get: { appModel.currentVideoFilter.ratingValue ?? 3 },
+                                set: { appModel.currentVideoFilter.ratingValue = $0 }
+                            ))
+                        }
+                    } else {
+                        HStack {
+                            Text("Rating:")
+                            StarRatingPicker(rating: Binding(
+                                get: { appModel.currentFilter.ratingValue ?? 3 },
+                                set: { appModel.currentFilter.ratingValue = $0 }
+                            ))
+                        }
                     }
                 }
             }

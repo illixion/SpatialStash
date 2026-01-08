@@ -15,11 +15,15 @@ final class GraphQLVideoSource: VideoSource, @unchecked Sendable {
     }
 
     func fetchVideos(page: Int, pageSize: Int) async throws -> VideoFetchResult {
+        try await fetchVideos(page: page, pageSize: pageSize, filter: nil)
+    }
+
+    func fetchVideos(page: Int, pageSize: Int, filter: SceneFilterCriteria?) async throws -> VideoFetchResult {
         // Stash uses 1-indexed pages
         let stashPage = page + 1
-        print("[GraphQLVideoSource] Fetching videos page \(stashPage), pageSize \(pageSize)")
+        print("[GraphQLVideoSource] Fetching videos page \(stashPage), pageSize \(pageSize), hasFilter: \(filter != nil)")
 
-        let result = try await apiClient.findScenes(page: stashPage, perPage: pageSize)
+        let result = try await apiClient.findScenes(page: stashPage, perPage: pageSize, filter: filter)
         print("[GraphQLVideoSource] Got \(result.scenes.count) scenes, total: \(result.count)")
 
         let videos = result.scenes.compactMap { scene -> GalleryVideo? in
@@ -38,13 +42,33 @@ final class GraphQLVideoSource: VideoSource, @unchecked Sendable {
             }
 
             let duration = scene.files?.first?.duration
+            let sourceWidth = scene.files?.first?.width
+            let sourceHeight = scene.files?.first?.height
+
+            // Detect stereoscopic format from tags
+            let tagNames = scene.tags?.map { $0.name } ?? []
+            let (isStereoscopic, stereoscopicFormat) = StereoscopicFormat.detect(from: tagNames)
+
+            // Check for eyes reversed tag (for videos with swapped left/right eyes)
+            let eyesReversed = tagNames.contains { tag in
+                let lowercased = tag.lowercased()
+                return lowercased == "stereo_eyes_reversed" ||
+                       lowercased == "stereo-eyes-reversed" ||
+                       lowercased == "eyes_reversed" ||
+                       lowercased == "eyes-reversed"
+            }
 
             return GalleryVideo(
                 stashId: scene.id,
                 thumbnailURL: thumbnailURL,
                 streamURL: streamURL,
                 title: scene.title,
-                duration: duration
+                duration: duration,
+                isStereoscopic: isStereoscopic,
+                stereoscopicFormat: stereoscopicFormat,
+                sourceWidth: sourceWidth,
+                sourceHeight: sourceHeight,
+                eyesReversed: eyesReversed
             )
         }
 

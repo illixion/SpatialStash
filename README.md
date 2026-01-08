@@ -21,7 +21,7 @@ A visionOS app for Apple Vision Pro that transforms your 2D images into immersiv
 
 - Apple Vision Pro or visionOS Simulator
 - Xcode 15.0+
-- visionOS 1.0+
+- visionOS 26.0+
 - (Optional) [Stash](https://github.com/stashapp/stash) server for media library integration
 
 ## Installation

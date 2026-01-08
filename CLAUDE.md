@@ -51,3 +51,7 @@ Uses RealityKit's `ImagePresentationComponent` for 2D→3D conversion. States tr
 - Async/await for all network and image generation operations
 - Protocol-based data sources for swappable implementations
 - UserDefaults for persisting server config and saved filter views
+
+# Stash GraphQL API
+
+You can find the Stash GraphQL API documentation in `internal_docs/Stash_Api_Docs`. **Important:** Claude Code prevents access to this folder while it is in .gitignore, therefore you must temporarily remove it from .gitignore to access the documentation and for your search tool to be able to see it. Undo changes to .gitignore after you are done.

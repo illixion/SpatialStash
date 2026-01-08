@@ -39,7 +39,13 @@ actor ImageLoader {
             return cached.image
         }
 
-        // Check disk cache
+        // Handle local file URLs directly
+        if url.isFileURL {
+            let result = try await loadLocalImageWithData(from: url)
+            return result?.image
+        }
+
+        // Check disk cache for remote URLs
         if let diskData = await DiskImageCache.shared.loadData(for: url),
            let image = UIImage(data: diskData) {
             // Restore to memory cache
@@ -53,7 +59,7 @@ actor ImageLoader {
             return try await existingTask.value?.image
         }
 
-        // Start new load task
+        // Start new load task for remote URLs
         let task = Task<CachedImageData?, Error> {
             let (data, response) = try await URLSession.shared.data(from: url)
 
@@ -98,7 +104,13 @@ actor ImageLoader {
             return cached.data
         }
 
-        // Check disk cache
+        // Handle local file URLs directly
+        if url.isFileURL {
+            let result = try await loadLocalImageWithData(from: url)
+            return result?.data
+        }
+
+        // Check disk cache for remote URLs
         if let diskData = await DiskImageCache.shared.loadData(for: url),
            let image = UIImage(data: diskData) {
             // Restore to memory cache
@@ -112,7 +124,7 @@ actor ImageLoader {
             return try await existingTask.value?.data
         }
 
-        // Start new load task
+        // Start new load task for remote URLs
         let task = Task<CachedImageData?, Error> {
             let (data, response) = try await URLSession.shared.data(from: url)
 
@@ -157,7 +169,12 @@ actor ImageLoader {
             return (cached.image, cached.data)
         }
 
-        // Check disk cache
+        // Handle local file URLs directly
+        if url.isFileURL {
+            return try await loadLocalImageWithData(from: url)
+        }
+
+        // Check disk cache for remote URLs
         if let diskData = await DiskImageCache.shared.loadData(for: url),
            let image = UIImage(data: diskData) {
             // Restore to memory cache
@@ -174,7 +191,7 @@ actor ImageLoader {
             return nil
         }
 
-        // Start new load task
+        // Start new load task for remote URLs
         let task = Task<CachedImageData?, Error> {
             let (data, response) = try await URLSession.shared.data(from: url)
 
@@ -211,6 +228,23 @@ actor ImageLoader {
             return (result.image, result.data)
         }
         return nil
+    }
+
+    /// Load image from a local file URL
+    private func loadLocalImageWithData(from url: URL) async throws -> (image: UIImage, data: Data)? {
+        // Read data from local file
+        let data = try Data(contentsOf: url)
+
+        guard let image = UIImage(data: data) else {
+            print("[ImageLoader] Failed to create UIImage from local file: \(url.lastPathComponent)")
+            return nil
+        }
+
+        // Cache in memory (but not to disk since it's already local)
+        let cachedData = CachedImageData(image: image, data: data)
+        cache.setObject(cachedData, forKey: url as NSURL, cost: data.count)
+
+        return (image, data)
     }
 
     /// Clear the image cache (both memory and disk)

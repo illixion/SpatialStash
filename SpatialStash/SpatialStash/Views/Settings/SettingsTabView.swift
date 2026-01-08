@@ -8,8 +8,10 @@ import SwiftUI
 
 struct SettingsTabView: View {
     @Environment(AppModel.self) private var appModel
-    @State private var cacheStats: (fileCount: Int, totalSize: Int64) = (0, 0)
-    @State private var isClearingCache = false
+    @State private var imageCacheStats: (fileCount: Int, totalSize: Int64) = (0, 0)
+    @State private var videoCacheStats: (fileCount: Int, totalSize: Int64) = (0, 0)
+    @State private var isClearingImageCache = false
+    @State private var isClearingVideoCache = false
 
     var body: some View {
         @Bindable var appModel = appModel
@@ -83,28 +85,35 @@ struct SettingsTabView: View {
                     }
                 }
 
-                Section("Image Cache") {
+                Section("Cache") {
                     HStack {
-                        Text("Cached Images")
+                        Text("Images")
                         Spacer()
-                        Text("\(cacheStats.fileCount)")
+                        Text("\(imageCacheStats.fileCount) items, \(formatBytes(imageCacheStats.totalSize))")
                             .foregroundColor(.secondary)
                     }
                     HStack {
-                        Text("Cache Size")
+                        Text("Videos")
                         Spacer()
-                        Text(formatBytes(cacheStats.totalSize))
+                        Text("\(videoCacheStats.fileCount) items, \(formatBytes(videoCacheStats.totalSize))")
                             .foregroundColor(.secondary)
+                    }
+                    HStack {
+                        Text("Total")
+                        Spacer()
+                        Text(formatBytes(imageCacheStats.totalSize + videoCacheStats.totalSize))
+                            .foregroundColor(.secondary)
+                            .fontWeight(.medium)
                     }
                     Button(role: .destructive) {
-                        isClearingCache = true
+                        isClearingImageCache = true
                         Task {
-                            await ImageLoader.shared.clearCache()
+                            await clearImageCache()
                             await refreshCacheStats()
-                            isClearingCache = false
+                            isClearingImageCache = false
                         }
                     } label: {
-                        if isClearingCache {
+                        if isClearingImageCache {
                             HStack {
                                 ProgressView()
                                     .scaleEffect(0.8)
@@ -114,7 +123,27 @@ struct SettingsTabView: View {
                             Text("Clear Image Cache")
                         }
                     }
-                    .disabled(isClearingCache || cacheStats.fileCount == 0)
+                    .disabled(isClearingImageCache || imageCacheStats.fileCount == 0)
+
+                    Button(role: .destructive) {
+                        isClearingVideoCache = true
+                        Task {
+                            await clearVideoCache()
+                            await refreshCacheStats()
+                            isClearingVideoCache = false
+                        }
+                    } label: {
+                        if isClearingVideoCache {
+                            HStack {
+                                ProgressView()
+                                    .scaleEffect(0.8)
+                                Text("Clearing...")
+                            }
+                        } else {
+                            Text("Clear Video Cache")
+                        }
+                    }
+                    .disabled(isClearingVideoCache || videoCacheStats.fileCount == 0)
                 }
 
                 Section {
@@ -163,7 +192,16 @@ struct SettingsTabView: View {
     }
 
     private func refreshCacheStats() async {
-        cacheStats = await DiskImageCache.shared.getCacheStats()
+        imageCacheStats = await DiskImageCache.shared.getCacheStats()
+        videoCacheStats = await DiskVideoCache.shared.getCacheStats()
+    }
+
+    private func clearImageCache() async {
+        await ImageLoader.shared.clearCache()
+    }
+
+    private func clearVideoCache() async {
+        await DiskVideoCache.shared.clearCache()
     }
 
     private func formatBytes(_ bytes: Int64) -> String {

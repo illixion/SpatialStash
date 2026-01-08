@@ -18,6 +18,7 @@ enum Spatial3DImageState {
 enum MediaSourceType: String, CaseIterable {
     case staticURLs = "Static URLs (Demo)"
     case stashServer = "Stash Server"
+    case localFiles = "Local Files"
 }
 
 @MainActor
@@ -28,6 +29,9 @@ class AppModel {
     var selectedTab: Tab = .pictures
     var isShowingDetailView: Bool = false
     var isShowingVideoDetail: Bool = false
+
+    /// Tracks the last content tab (pictures or videos) for filter context
+    var lastContentTab: Tab = .pictures
 
     // MARK: - Server Configuration (with UserDefaults persistence)
 
@@ -55,6 +59,7 @@ class AppModel {
                 UserDefaults.standard.set(mediaSourceType.rawValue, forKey: "mediaSourceType")
                 print("[AppModel] Media source changed to: \(mediaSourceType.rawValue)")
                 rebuildImageSource()
+                rebuildVideoSource()
                 Task {
                     await reloadAllGalleries()
                 }
@@ -93,9 +98,24 @@ class AppModel {
     var currentVideoPage: Int = 0
     var hasMoreVideoPages: Bool = true
 
+    // MARK: - Stereoscopic Video Immersive State
+
+    /// Whether the stereoscopic video immersive space is currently shown
+    var isStereoscopicImmersiveSpaceShown: Bool = false
+
+    /// The video currently being played in immersive mode
+    var immersiveVideo: GalleryVideo?
+
+    /// URL of the converted MV-HEVC file for immersive playback
+    var immersiveVideoURL: URL?
+
+    /// Override for stereoscopic video viewing mode: nil = auto (stereo for 3D content), false = force mono (left eye only)
+    var videoStereoscopicOverride: Bool? = nil
+
     // MARK: - Filter State
 
     var currentFilter: ImageFilterCriteria = ImageFilterCriteria()
+    var currentVideoFilter: SceneFilterCriteria = SceneFilterCriteria()
     var savedViews: [SavedView] = []
     var selectedSavedView: SavedView?
 
@@ -122,12 +142,19 @@ class AppModel {
             imageSource = StaticURLImageSource()
         case .stashServer:
             imageSource = GraphQLImageSource(apiClient: apiClient)
+        case .localFiles:
+            imageSource = LocalImageSource()
         }
     }
 
-    /// Rebuild video source (always uses GraphQL)
+    /// Rebuild video source based on media type
     private func rebuildVideoSource() {
-        videoSource = GraphQLVideoSource(apiClient: apiClient)
+        switch mediaSourceType {
+        case .localFiles:
+            videoSource = LocalVideoSource()
+        default:
+            videoSource = GraphQLVideoSource(apiClient: apiClient)
+        }
     }
 
     // MARK: - Selected Items for Detail View
@@ -256,10 +283,17 @@ class AppModel {
             self.imageSource = StaticURLImageSource()
         case .stashServer:
             self.imageSource = GraphQLImageSource(apiClient: client)
+        case .localFiles:
+            self.imageSource = LocalImageSource()
         }
 
-        // Initialize video source (always GraphQL)
-        self.videoSource = GraphQLVideoSource(apiClient: client)
+        // Initialize video source based on media source type
+        switch loadedSourceType {
+        case .localFiles:
+            self.videoSource = LocalVideoSource()
+        default:
+            self.videoSource = GraphQLVideoSource(apiClient: client)
+        }
 
         // Now all stored properties are initialized, we can use self
         print("[AppModel] Init - Server URL: \(self.stashServerURL)")
@@ -615,7 +649,9 @@ class AppModel {
         defer { isLoadingVideos = false }
 
         do {
-            let result = try await videoSource.fetchVideos(page: currentVideoPage, pageSize: pageSize)
+            // Use filter if we're on Stash server, otherwise ignore
+            let filter: SceneFilterCriteria? = (mediaSourceType == .stashServer) ? currentVideoFilter : nil
+            let result = try await videoSource.fetchVideos(page: currentVideoPage, pageSize: pageSize, filter: filter)
             print("[AppModel] loadNextVideoPage got \(result.videos.count) videos, hasMore: \(result.hasMore)")
             galleryVideos.append(contentsOf: result.videos)
             hasMoreVideoPages = result.hasMore
@@ -625,17 +661,32 @@ class AppModel {
         }
     }
 
+    /// Apply current video filter and reload videos
+    func applyVideoFilter() async {
+        selectedSavedView = nil  // Clear saved view selection when manually filtering
+        await loadInitialVideos()
+    }
+
+    /// Clear all video filters and reload
+    func clearVideoFilters() async {
+        currentVideoFilter.clearFilters()
+        selectedSavedView = nil
+        await loadInitialVideos()
+    }
+
     /// Select a video to play
     func selectVideoForDetail(_ video: GalleryVideo) {
         selectedVideo = video
         lastViewedVideoId = video.id
         isShowingVideoDetail = true
+        videoStereoscopicOverride = nil
     }
 
     /// Dismiss video player
     func dismissVideoDetail() {
         isShowingVideoDetail = false
         selectedVideo = nil
+        videoStereoscopicOverride = nil
     }
 
     /// Navigate to next video

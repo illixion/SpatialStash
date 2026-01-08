@@ -11,5 +11,41 @@
 		<key>UISceneConfigurations</key>
 		<dict/>
 	</dict>
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Image</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.image</string>
+				<string>public.jpeg</string>
+				<string>public.png</string>
+				<string>public.heic</string>
+				<string>com.compuserve.gif</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Video</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.movie</string>
+				<string>public.mpeg-4</string>
+				<string>com.apple.quicktime-movie</string>
+				<string>public.avi</string>
+				<string>org.matroska.mkv</string>
+				<string>org.webmproject.webm</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

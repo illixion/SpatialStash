@@ -15,9 +15,17 @@ struct SpatialStashApp: App {
         WindowGroup {
             ContentView()
                 .environment(appModel)
-                .frame(minWidth: 600, maxWidth: 2000, minHeight: 600, maxHeight: 2000)
+                .frame(minWidth: 320, maxWidth: 2000, minHeight: 320, maxHeight: 2000)
         }
-        .windowResizability(.contentSize)
+        .defaultSize(width: 1200, height: 800)
+        .windowResizability(.contentMinSize)
         .windowStyle(.plain)
+
+        // Immersive space for stereoscopic 3D video playback
+        ImmersiveSpace(id: "StereoscopicVideoSpace") {
+            ImmersiveVideoView()
+                .environment(appModel)
+        }
+        .immersionStyle(selection: .constant(.full), in: .full)
     }
 }

@@ -13,6 +13,10 @@ struct TabBarOrnament: View {
         HStack(spacing: 24) {
             ForEach(Tab.allCases) { tab in
                 Button {
+                    // Track last content tab for filter context
+                    if tab == .pictures || tab == .videos {
+                        appModel.lastContentTab = tab
+                    }
                     appModel.selectedTab = tab
                 } label: {
                     VStack(spacing: 4) {

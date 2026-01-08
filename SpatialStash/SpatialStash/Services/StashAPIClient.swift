@@ -382,6 +382,12 @@ actor StashAPIClient {
         let date: String?
         let paths: StashScenePaths
         let files: [StashSceneFile]?
+        let tags: [StashSceneTag]?
+    }
+
+    struct StashSceneTag: Decodable {
+        let id: String
+        let name: String
     }
 
     struct StashScenePaths: Decodable {
@@ -396,9 +402,13 @@ actor StashAPIClient {
     }
 
     func findScenes(page: Int, perPage: Int, query: String? = nil) async throws -> FindScenesResult {
+        try await findScenes(page: page, perPage: perPage, filter: nil, query: query)
+    }
+
+    func findScenes(page: Int, perPage: Int, filter: SceneFilterCriteria?, query: String? = nil) async throws -> FindScenesResult {
         let graphQLQuery = """
-        query FindScenes($filter: FindFilterType) {
-            findScenes(filter: $filter) {
+        query FindScenes($filter: FindFilterType, $scene_filter: SceneFilterType) {
+            findScenes(filter: $filter, scene_filter: $scene_filter) {
                 count
                 scenes {
                     id
@@ -414,23 +424,93 @@ actor StashAPIClient {
                         height
                         duration
                     }
+                    tags {
+                        id
+                        name
+                    }
                 }
             }
         }
         """
 
+        // Build FindFilterType
         var filterVariables: [String: Any] = [
             "page": page,
-            "per_page": perPage,
-            "sort": "created_at",
-            "direction": "DESC"
+            "per_page": perPage
         ]
 
-        if let query = query, !query.isEmpty {
-            filterVariables["q"] = query
+        // Apply sort from filter or use defaults
+        if let filter = filter {
+            filterVariables["sort"] = filter.sortField.rawValue
+            filterVariables["direction"] = filter.sortDirection.rawValue
+
+            // Search term goes in FindFilterType.q
+            if !filter.searchTerm.isEmpty {
+                filterVariables["q"] = filter.searchTerm
+            }
+        } else {
+            filterVariables["sort"] = "created_at"
+            filterVariables["direction"] = "DESC"
+
+            if let query = query, !query.isEmpty {
+                filterVariables["q"] = query
+            }
         }
 
-        let variables: [String: Any] = ["filter": filterVariables]
+        var variables: [String: Any] = ["filter": filterVariables]
+
+        // Build SceneFilterType if we have filter criteria
+        if let filter = filter, filter.hasActiveFilters {
+            var sceneFilter: [String: Any] = [:]
+
+            // Gallery filter (scenes use 'galleries' field like images)
+            if !filter.galleryIds.isEmpty {
+                sceneFilter["galleries"] = [
+                    "value": filter.galleryIds,
+                    "modifier": filter.galleryModifier.rawValue
+                ]
+            }
+
+            // O Count filter
+            if filter.oCountEnabled {
+                var oCountCriterion: [String: Any] = [
+                    "modifier": filter.oCountModifier.rawValue
+                ]
+                if filter.oCountModifier.requiresRange {
+                    oCountCriterion["value"] = filter.oCountRange.min ?? 0
+                    oCountCriterion["value2"] = filter.oCountRange.max ?? 0
+                } else if filter.oCountModifier.requiresValue, let value = filter.oCountValue {
+                    oCountCriterion["value"] = value
+                }
+                sceneFilter["o_counter"] = oCountCriterion
+            }
+
+            // Rating filter (uses rating100 in API, 1-100 scale)
+            if filter.ratingEnabled {
+                var ratingCriterion: [String: Any] = [
+                    "modifier": filter.ratingModifier.rawValue
+                ]
+                if filter.ratingModifier.requiresRange {
+                    ratingCriterion["value"] = SceneFilterCriteria.ratingToAPI(filter.ratingRange.min ?? 1)
+                    ratingCriterion["value2"] = SceneFilterCriteria.ratingToAPI(filter.ratingRange.max ?? 5)
+                } else if filter.ratingModifier.requiresValue, let value = filter.ratingValue {
+                    ratingCriterion["value"] = SceneFilterCriteria.ratingToAPI(value)
+                }
+                sceneFilter["rating100"] = ratingCriterion
+            }
+
+            // Tags filter
+            if !filter.tagIds.isEmpty {
+                sceneFilter["tags"] = [
+                    "value": filter.tagIds,
+                    "modifier": filter.tagModifier.rawValue
+                ]
+            }
+
+            if !sceneFilter.isEmpty {
+                variables["scene_filter"] = sceneFilter
+            }
+        }
 
         let response: FindScenesResponse = try await self.query(graphQLQuery, variables: variables)
         return response.findScenes
