@@ -52,6 +52,12 @@ actor DiskImageCache {
         return cacheDirectory.appendingPathComponent(key)
     }
 
+    /// Return cached file URL if present
+    func cachedFileURL(for url: URL) -> URL? {
+        let fileURL = cacheFileURL(for: url)
+        return fileManager.fileExists(atPath: fileURL.path) ? fileURL : nil
+    }
+
     /// Check if an image is cached
     func isCached(url: URL) -> Bool {
         let fileURL = cacheFileURL(for: url)

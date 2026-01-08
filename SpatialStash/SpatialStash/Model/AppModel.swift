@@ -737,7 +737,14 @@ class AppModel {
         spatial3DImageState = .notGenerated
         spatial3DImage = nil
         do {
-            spatial3DImage = try await ImagePresentationComponent.Spatial3DImage(contentsOf: imageURL)
+            // Prefer cached file URL to avoid network when reopening
+            let sourceURL: URL
+            if !imageURL.isFileURL, let cached = await DiskImageCache.shared.cachedFileURL(for: imageURL) {
+                sourceURL = cached
+            } else {
+                sourceURL = imageURL
+            }
+            spatial3DImage = try await ImagePresentationComponent.Spatial3DImage(contentsOf: sourceURL)
         } catch {
             print("Unable to initialize spatial 3D image: \(error.localizedDescription)")
             isLoadingDetailImage = false
