@@ -77,6 +77,18 @@ struct FiltersTabView: View {
                                     .tag(direction)
                             }
                         }
+
+                        // Shuffle button for random sort
+                        if appModel.currentVideoFilter.sortField == .random {
+                            Button {
+                                appModel.currentVideoFilter.shuffleRandomSort()
+                            } label: {
+                                HStack {
+                                    Image(systemName: "shuffle")
+                                    Text("Shuffle")
+                                }
+                            }
+                        }
                     } else {
                         Picker("Sort By", selection: $appModel.currentFilter.sortField) {
                             ForEach(ImageSortField.allCases) { field in
@@ -88,6 +100,18 @@ struct FiltersTabView: View {
                             ForEach(SortDirection.allCases) { direction in
                                 Label(direction.displayName, systemImage: direction.icon)
                                     .tag(direction)
+                            }
+                        }
+
+                        // Shuffle button for random sort
+                        if appModel.currentFilter.sortField == .random {
+                            Button {
+                                appModel.currentFilter.shuffleRandomSort()
+                            } label: {
+                                HStack {
+                                    Image(systemName: "shuffle")
+                                    Text("Shuffle")
+                                }
                             }
                         }
                     }

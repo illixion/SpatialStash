@@ -206,6 +206,7 @@ struct ImageFilterCriteria: Codable, Equatable {
     // Sort options
     var sortField: ImageSortField = .createdAt
     var sortDirection: SortDirection = .descending
+    var randomSeed: Int? = nil  // Random seed for consistent pagination when sorting by random
 
     /// Get gallery IDs for API queries
     var galleryIds: [String] {
@@ -241,6 +242,11 @@ struct ImageFilterCriteria: Codable, Equatable {
         ratingRange = NumberRange()
         selectedTags = []
         tagModifier = .includes
+    }
+
+    /// Generate a new random seed for random sort
+    mutating func shuffleRandomSort() {
+        randomSeed = Int.random(in: 10_000_000..<100_000_000)
     }
 
     /// Convert rating value (1-5 stars) to API value (1-100)
@@ -286,6 +292,7 @@ struct SceneFilterCriteria: Codable, Equatable {
     // Sort options (scene-specific)
     var sortField: SceneSortField = .createdAt
     var sortDirection: SortDirection = .descending
+    var randomSeed: Int? = nil  // Random seed for consistent pagination when sorting by random
 
     /// Get gallery IDs for API queries
     var galleryIds: [String] {
@@ -321,6 +328,11 @@ struct SceneFilterCriteria: Codable, Equatable {
         ratingRange = NumberRange()
         selectedTags = []
         tagModifier = .includes
+    }
+
+    /// Generate a new random seed for random sort
+    mutating func shuffleRandomSort() {
+        randomSeed = Int.random(in: 10_000_000..<100_000_000)
     }
 
     /// Convert rating value (1-5 stars) to API value (1-100)

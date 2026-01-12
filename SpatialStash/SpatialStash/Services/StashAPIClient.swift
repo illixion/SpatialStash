@@ -185,7 +185,13 @@ actor StashAPIClient {
 
         // Apply sort from filter or use defaults
         if let filter = filter {
-            filterVariables["sort"] = filter.sortField.rawValue
+            // Handle random sort with seed
+            if filter.sortField == .random {
+                let seed = filter.randomSeed ?? Int.random(in: 10_000_000..<100_000_000)
+                filterVariables["sort"] = "random_\(seed)"
+            } else {
+                filterVariables["sort"] = filter.sortField.rawValue
+            }
             filterVariables["direction"] = filter.sortDirection.rawValue
 
             // Search term goes in FindFilterType.q
@@ -441,7 +447,13 @@ actor StashAPIClient {
 
         // Apply sort from filter or use defaults
         if let filter = filter {
-            filterVariables["sort"] = filter.sortField.rawValue
+            // Handle random sort with seed
+            if filter.sortField == .random {
+                let seed = filter.randomSeed ?? Int.random(in: 10_000_000..<100_000_000)
+                filterVariables["sort"] = "random_\(seed)"
+            } else {
+                filterVariables["sort"] = filter.sortField.rawValue
+            }
             filterVariables["direction"] = filter.sortDirection.rawValue
 
             // Search term goes in FindFilterType.q
