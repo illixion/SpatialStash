@@ -292,7 +292,7 @@ actor StashAPIClient {
         let path: String
     }
 
-    func findGalleries(query: String? = nil, page: Int = 1, perPage: Int = 25) async throws -> FindGalleriesResult {
+    func findGalleries(query: String? = nil, page: Int = 1, perPage: Int? = nil) async throws -> FindGalleriesResult {
         let graphQLQuery = """
         query FindGalleries($filter: FindFilterType) {
             findGalleries(filter: $filter) {
@@ -311,9 +311,11 @@ actor StashAPIClient {
         }
         """
 
+        // Determine page size: use larger limit when searching to ensure comprehensive results
+        let pageSize = perPage ?? (query != nil && !(query?.isEmpty ?? true) ? 100 : 25)
         var filterVariables: [String: Any] = [
             "page": page,
-            "per_page": perPage,
+            "per_page": pageSize,
             "sort": "title",
             "direction": "ASC"
         ]
@@ -342,7 +344,7 @@ actor StashAPIClient {
         let name: String
     }
 
-    func findTags(query: String? = nil, page: Int = 1, perPage: Int = 25) async throws -> FindTagsResult {
+    func findTags(query: String? = nil, page: Int = 1, perPage: Int? = nil) async throws -> FindTagsResult {
         let graphQLQuery = """
         query FindTags($filter: FindFilterType) {
             findTags(filter: $filter) {
@@ -355,9 +357,11 @@ actor StashAPIClient {
         }
         """
 
+        // Determine page size: use larger limit when searching to ensure comprehensive results
+        let pageSize = perPage ?? (query != nil && !(query?.isEmpty ?? true) ? 100 : 25)
         var filterVariables: [String: Any] = [
             "page": page,
-            "per_page": perPage,
+            "per_page": pageSize,
             "sort": "name",
             "direction": "ASC"
         ]

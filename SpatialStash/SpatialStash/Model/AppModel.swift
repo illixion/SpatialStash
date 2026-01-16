@@ -445,6 +445,7 @@ class AppModel {
 
         do {
             let result = try await apiClient.findGalleries(query: query.isEmpty ? nil : query)
+            let lowercasedQuery = query.lowercased()
             availableGalleries = result.galleries.map { gallery in
                 // Try title first, then folder path, then first file path, then fallback to ID
                 let name: String
@@ -468,6 +469,38 @@ class AppModel {
                     name = "Gallery \(gallery.id)"
                 }
                 return AutocompleteItem(id: gallery.id, name: name)
+            }.sorted {
+                let name1 = $0.name.lowercased()
+                let name2 = $1.name.lowercased()
+
+                let name1IsExactMatch = (name1 == lowercasedQuery)
+                let name2IsExactMatch = (name2 == lowercasedQuery)
+
+                if name1IsExactMatch, !name2IsExactMatch { return true }
+                if !name1IsExactMatch, name2IsExactMatch { return false }
+
+                let name1HasPrefix = name1.hasPrefix(lowercasedQuery)
+                let name2HasPrefix = name2.hasPrefix(lowercasedQuery)
+
+                if name1HasPrefix, !name2HasPrefix {
+                    return true
+                } else if !name1HasPrefix, name2HasPrefix {
+                    return false
+                } else if name1HasPrefix, name2HasPrefix {
+                    // Both have prefix match: prioritize shorter names and those without separators
+                    let name1HasSeparator = name1.contains("_") || name1.contains("-")
+                    let name2HasSeparator = name2.contains("_") || name2.contains("-")
+                    if name1HasSeparator != name2HasSeparator {
+                        return !name1HasSeparator
+                    }
+                    // Both have same separator status: sort by length then alphabetically
+                    if name1.count != name2.count {
+                        return name1.count < name2.count
+                    }
+                    return name1 < name2
+                } else {
+                    return name1 < name2
+                }
             }
             print("[AppModel] Loaded \(availableGalleries.count) galleries for autocomplete")
         } catch {
@@ -484,7 +517,41 @@ class AppModel {
 
         do {
             let result = try await apiClient.findTags(query: query.isEmpty ? nil : query)
+            let lowercasedQuery = query.lowercased()
             availableTags = result.tags.map { AutocompleteItem(id: $0.id, name: $0.name) }
+                .sorted {
+                    let name1 = $0.name.lowercased()
+                    let name2 = $1.name.lowercased()
+
+                    let name1IsExactMatch = (name1 == lowercasedQuery)
+                    let name2IsExactMatch = (name2 == lowercasedQuery)
+
+                    if name1IsExactMatch, !name2IsExactMatch { return true }
+                    if !name1IsExactMatch, name2IsExactMatch { return false }
+
+                    let name1HasPrefix = name1.hasPrefix(lowercasedQuery)
+                    let name2HasPrefix = name2.hasPrefix(lowercasedQuery)
+
+                    if name1HasPrefix, !name2HasPrefix {
+                        return true
+                    } else if !name1HasPrefix, name2HasPrefix {
+                        return false
+                    } else if name1HasPrefix, name2HasPrefix {
+                        // Both have prefix match: prioritize shorter names and those without separators
+                        let name1HasSeparator = name1.contains("_") || name1.contains("-")
+                        let name2HasSeparator = name2.contains("_") || name2.contains("-")
+                        if name1HasSeparator != name2HasSeparator {
+                            return !name1HasSeparator
+                        }
+                        // Both have same separator status: sort by length then alphabetically
+                        if name1.count != name2.count {
+                            return name1.count < name2.count
+                        }
+                        return name1 < name2
+                    } else {
+                        return name1 < name2
+                    }
+                }
         } catch {
             print("[AppModel] Failed to search tags: \(error)")
         }

@@ -150,45 +150,6 @@ struct FiltersTabView: View {
                     RatingFilterView(isVideoFilter: isVideoFilter)
                 }
 
-                // Actions Section
-                Section {
-                    Button {
-                        Task {
-                            if isVideoFilter {
-                                await appModel.applyVideoFilter()
-                            } else {
-                                await appModel.applyFilter()
-                            }
-                        }
-                    } label: {
-                        HStack {
-                            Spacer()
-                            Label("Apply Filters", systemImage: "checkmark.circle")
-                                .font(.headline)
-                            Spacer()
-                        }
-                    }
-                    .disabled(appModel.mediaSourceType != .stashServer)
-
-                    if isVideoFilter ? appModel.currentVideoFilter.hasActiveFilters : appModel.currentFilter.hasActiveFilters {
-                        Button(role: .destructive) {
-                            Task {
-                                if isVideoFilter {
-                                    await appModel.clearVideoFilters()
-                                } else {
-                                    await appModel.clearFilters()
-                                }
-                            }
-                        } label: {
-                            HStack {
-                                Spacer()
-                                Label("Clear All Filters", systemImage: "xmark.circle")
-                                Spacer()
-                            }
-                        }
-                    }
-                }
-
                 // Info Section
                 if appModel.mediaSourceType != .stashServer {
                     Section {
@@ -205,6 +166,15 @@ struct FiltersTabView: View {
             .navigationTitle(isVideoFilter ? "Video Filters" : "Picture Filters")
             .task {
                 await appModel.loadAutocompleteData()
+            }
+            .onDisappear {
+                Task {
+                    if isVideoFilter {
+                        await appModel.applyVideoFilter()
+                    } else {
+                        await appModel.applyFilter()
+                    }
+                }
             }
             .sheet(isPresented: $showingSaveViewSheet) {
                 SaveViewSheet(viewName: $newViewName) {
@@ -362,7 +332,7 @@ struct GalleryFilterView: View {
             if appModel.isLoadingGalleries {
                 ProgressView()
                     .frame(maxWidth: .infinity)
-            } else if !appModel.availableGalleries.isEmpty {
+            } else {
                 let selectedIds = Set(selectedGalleries.map { $0.id })
                 let availableToSelect = appModel.availableGalleries.filter { !selectedIds.contains($0.id) }
                 if !availableToSelect.isEmpty {
@@ -456,7 +426,7 @@ struct TagFilterView: View {
             if appModel.isLoadingTags {
                 ProgressView()
                     .frame(maxWidth: .infinity)
-            } else if !appModel.availableTags.isEmpty {
+            } else {
                 let selectedIds = Set(selectedTags.map { $0.id })
                 let availableToSelect = appModel.availableTags.filter { !selectedIds.contains($0.id) }
                 if !availableToSelect.isEmpty {
