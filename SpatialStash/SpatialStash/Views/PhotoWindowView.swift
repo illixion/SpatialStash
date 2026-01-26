@@ -180,9 +180,25 @@ struct PhotoWindowView: View {
 /// Ornament for photo window controls
 struct PhotoWindowOrnament: View {
     @Bindable var windowModel: PhotoWindowModel
+    @Environment(\.openWindow) private var openWindow
     
     var body: some View {
         HStack(spacing: 20) {
+            // Open main window button
+            Button {
+                openWindow(id: "main")
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "square.grid.2x2")
+                    Text("Gallery")
+                }
+                .font(.title3)
+            }
+            .buttonStyle(.borderless)
+            
+            Divider()
+                .frame(height: 24)
+            
             // Generate/Toggle 3D button
             Button {
                 Task {
@@ -207,6 +223,9 @@ struct PhotoWindowOrnament: View {
             }
             .buttonStyle(.borderless)
             .disabled(windowModel.spatial3DImageState == .generating || windowModel.isAnimatedGIF)
+            
+            Divider()
+                .frame(height: 24)
             
             // Hide UI button
             Button {
