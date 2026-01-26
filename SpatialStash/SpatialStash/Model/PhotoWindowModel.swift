@@ -1,0 +1,245 @@
+/*
+ Spatial Stash - Photo Window Model
+
+ Per-window model for individual photo display windows.
+ Each photo window gets its own instance with independent state.
+ */
+
+import RealityKit
+import SwiftUI
+
+@MainActor
+@Observable
+class PhotoWindowModel {
+    // MARK: - Window-specific Image State
+    
+    var image: GalleryImage
+    var imageURL: URL
+    var imageAspectRatio: CGFloat = 1.0
+    var contentEntity: Entity = Entity()
+    var spatial3DImageState: Spatial3DImageState = .notGenerated
+    var spatial3DImage: ImagePresentationComponent.Spatial3DImage? = nil
+    var isLoadingDetailImage: Bool = false
+    
+    // MARK: - GIF Support
+    
+    var isAnimatedGIF: Bool = false
+    var currentImageData: Data? = nil
+    
+    // MARK: - UI Visibility State
+    
+    var isUIHidden: Bool = false
+    private var autoHideTask: Task<Void, Never>?
+    
+    // MARK: - Shared References
+    
+    var appModel: AppModel
+    
+    // MARK: - Initialization
+    
+    init(image: GalleryImage, appModel: AppModel) {
+        self.image = image
+        self.imageURL = image.fullSizeURL
+        self.appModel = appModel
+        self.isLoadingDetailImage = true
+        
+        // Load image data to detect if it's a GIF
+        Task {
+            await loadImageDataForDetail(url: image.fullSizeURL)
+        }
+    }
+    
+    // MARK: - Image Loading
+    
+    /// Load image data for the detail view and detect if it's an animated GIF
+    private func loadImageDataForDetail(url: URL) async {
+        do {
+            if let data = try await ImageLoader.shared.loadImageData(from: url) {
+                currentImageData = data
+                isAnimatedGIF = data.isAnimatedGIF
+                
+                if isAnimatedGIF {
+                    // For GIFs, calculate aspect ratio from the image data
+                    if let image = UIImage(data: data) {
+                        imageAspectRatio = image.size.width / image.size.height
+                    }
+                    isLoadingDetailImage = false
+                }
+            }
+        } catch {
+            print("[PhotoWindowModel] Error loading image data: \(error)")
+            isLoadingDetailImage = false
+        }
+    }
+    
+    // MARK: - Image Presentation Component
+    
+    /// Create the ImagePresentationComponent for the current image
+    func createImagePresentationComponent() async {
+        // Reset state
+        spatial3DImageState = .notGenerated
+        spatial3DImage = nil
+        contentEntity.components.remove(ImagePresentationComponent.self)
+        
+        guard !isAnimatedGIF else {
+            isLoadingDetailImage = false
+            return
+        }
+        
+        isLoadingDetailImage = true
+        
+        do {
+            // Prefer cached file URL to avoid network when reopening
+            let sourceURL: URL
+            if !imageURL.isFileURL, let cached = await DiskImageCache.shared.cachedFileURL(for: imageURL) {
+                sourceURL = cached
+            } else {
+                sourceURL = imageURL
+            }
+            
+            spatial3DImage = try await ImagePresentationComponent.Spatial3DImage(contentsOf: sourceURL)
+        } catch {
+            print("[PhotoWindowModel] Unable to initialize spatial 3D image: \(error.localizedDescription)")
+            isLoadingDetailImage = false
+            
+            // Enhanced error handling for network scenarios
+            if let urlError = error as? URLError {
+                switch urlError.code {
+                case .notConnectedToInternet:
+                    print("No internet connection available.")
+                case .timedOut:
+                    print("Request timed out.")
+                case .cannotFindHost:
+                    print("Cannot find host.")
+                default:
+                    print("URL error: \(urlError.code)")
+                }
+            }
+            return
+        }
+        
+        guard let spatial3DImage else {
+            print("[PhotoWindowModel] Spatial3DImage is nil.")
+            isLoadingDetailImage = false
+            return
+        }
+        
+        let imagePresentationComponent = ImagePresentationComponent(spatial3DImage: spatial3DImage)
+        contentEntity.components.set(imagePresentationComponent)
+        if let aspectRatio = imagePresentationComponent.aspectRatio(for: .mono) {
+            imageAspectRatio = CGFloat(aspectRatio)
+        }
+        isLoadingDetailImage = false
+        
+        // Auto-generate spatial 3D if this image was previously converted
+        await autoGenerateSpatial3DIfPreviouslyConverted()
+    }
+    
+    // MARK: - 3D Generation
+    
+    /// Generate spatial 3D image (depth map)
+    func generateSpatial3DImage() async {
+        guard spatial3DImageState == .notGenerated else { return }
+        guard let spatial3DImage else {
+            print("[PhotoWindowModel] spatial3DImage is nil, cannot generate")
+            return
+        }
+        guard var imagePresentationComponent = contentEntity.components[ImagePresentationComponent.self] else {
+            print("[PhotoWindowModel] ImagePresentationComponent is missing from the entity.")
+            return
+        }
+        
+        // Set the desired viewing mode before generating so that it will trigger the
+        // generation animation.
+        imagePresentationComponent.desiredViewingMode = .spatial3D
+        contentEntity.components.set(imagePresentationComponent)
+        
+        spatial3DImageState = .generating
+        
+        do {
+            // Generate the Spatial3DImage scene.
+            try await spatial3DImage.generate()
+            spatial3DImageState = .generated
+            
+            // Track that this image was converted
+            await Spatial3DConversionTracker.shared.markAsConverted(url: imageURL)
+            await Spatial3DConversionTracker.shared.setLastViewingMode(url: imageURL, mode: .spatial3D)
+            
+            if let aspectRatio = imagePresentationComponent.aspectRatio(for: .spatial3D) {
+                imageAspectRatio = CGFloat(aspectRatio)
+            }
+        } catch {
+            print("[PhotoWindowModel] Error generating spatial 3D image: \(error)")
+            spatial3DImageState = .notGenerated
+        }
+    }
+    
+    /// Toggle 2D/3D view
+    func toggleSpatial3DView() {
+        guard var imagePresentationComponent = contentEntity.components[ImagePresentationComponent.self] else {
+            return
+        }
+        
+        // Toggle viewing mode
+        if imagePresentationComponent.viewingMode == .spatial3D {
+            imagePresentationComponent.desiredViewingMode = .mono
+            contentEntity.components.set(imagePresentationComponent)
+            Task {
+                await Spatial3DConversionTracker.shared.setLastViewingMode(url: imageURL, mode: .mono)
+            }
+        } else if spatial3DImageState == .generated {
+            imagePresentationComponent.desiredViewingMode = .spatial3D
+            contentEntity.components.set(imagePresentationComponent)
+            Task {
+                await Spatial3DConversionTracker.shared.setLastViewingMode(url: imageURL, mode: .spatial3D)
+            }
+        }
+    }
+    
+    /// Check if the current image was previously converted and auto-generate if so
+    private func autoGenerateSpatial3DIfPreviouslyConverted() async {
+        guard !isAnimatedGIF,
+              spatial3DImageState == .notGenerated else {
+            return
+        }
+        
+        // Respect the user's last-used mode for this image
+        if let lastMode = await Spatial3DConversionTracker.shared.lastViewingMode(url: imageURL), lastMode == .mono {
+            print("[PhotoWindowModel] Skipping auto-generation; last mode was 2D")
+            return
+        }
+        
+        let wasConverted = await Spatial3DConversionTracker.shared.wasConverted(url: imageURL)
+        if wasConverted {
+            print("[PhotoWindowModel] Auto-generating spatial 3D for previously converted image")
+            await generateSpatial3DImage()
+        }
+    }
+    
+    // MARK: - UI Auto-Hide
+    
+    func startAutoHideTimer() {
+        cancelAutoHideTimer()
+        
+        guard appModel.autoHideDelay > 0 else { return }
+        
+        autoHideTask = Task {
+            try? await Task.sleep(for: .seconds(appModel.autoHideDelay))
+            if !Task.isCancelled {
+                isUIHidden = true
+            }
+        }
+    }
+    
+    func cancelAutoHideTimer() {
+        autoHideTask?.cancel()
+        autoHideTask = nil
+    }
+    
+    func toggleUIVisibility() {
+        isUIHidden.toggle()
+        if !isUIHidden {
+            startAutoHideTimer()
+        }
+    }
+}

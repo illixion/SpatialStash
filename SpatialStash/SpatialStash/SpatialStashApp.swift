@@ -12,7 +12,7 @@ struct SpatialStashApp: App {
     @UIApplicationDelegateAdaptor private var appDelegate: AppDelegate
 
     var body: some Scene {
-        WindowGroup {
+        WindowGroup(id: "main") {
             ContentView()
                 .environment(appModel)
                 .frame(minWidth: 320, maxWidth: 2000, minHeight: 320, maxHeight: 2000)
@@ -20,6 +20,16 @@ struct SpatialStashApp: App {
         .defaultSize(width: 1200, height: 800)
         .windowResizability(.contentMinSize)
         .windowStyle(.plain)
+        
+        // Individual photo window - supports multiple instances
+        WindowGroup(id: "photo-detail", for: GalleryImage.self) { $image in
+            if let image = image {
+                PhotoWindowView(image: image, appModel: appModel)
+                    .environment(appModel)
+            }
+        }
+        .windowStyle(.plain)
+        .defaultSize(width: 800, height: 600)
 
         // Immersive space for stereoscopic 3D video playback
         ImmersiveSpace(id: "StereoscopicVideoSpace") {

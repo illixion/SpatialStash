@@ -6,7 +6,7 @@
 
 import Foundation
 
-struct GalleryImage: Identifiable, Equatable, Hashable {
+struct GalleryImage: Identifiable, Equatable, Hashable, Codable {
     let id: UUID
     let thumbnailURL: URL
     let fullSizeURL: URL
