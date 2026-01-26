@@ -20,6 +20,7 @@ class PhotoWindowModel {
     var spatial3DImageState: Spatial3DImageState = .notGenerated
     var spatial3DImage: ImagePresentationComponent.Spatial3DImage? = nil
     var isLoadingDetailImage: Bool = false
+    var inputPlaneEntity: Entity = Entity()
     
     // MARK: - GIF Support
     
@@ -80,6 +81,7 @@ class PhotoWindowModel {
         spatial3DImageState = .notGenerated
         spatial3DImage = nil
         contentEntity.components.remove(ImagePresentationComponent.self)
+        inputPlaneEntity = Entity()
         
         guard !isAnimatedGIF else {
             isLoadingDetailImage = false
@@ -133,6 +135,22 @@ class PhotoWindowModel {
         
         // Auto-generate spatial 3D if this image was previously converted
         await autoGenerateSpatial3DIfPreviouslyConverted()
+    }
+
+    // MARK: - Input Plane
+
+    func ensureInputPlaneReady() {
+        guard inputPlaneEntity.components[InputTargetComponent.self] == nil else { return }
+
+        inputPlaneEntity = Entity()
+        inputPlaneEntity.components.set(InputTargetComponent())
+        inputPlaneEntity.components.set(
+            CollisionComponent(
+                shapes: [.generateBox(size: SIMD3<Float>(1.0, 1.0, 0.01))],
+                mode: .default,
+                filter: .default
+            )
+        )
     }
     
     // MARK: - 3D Generation

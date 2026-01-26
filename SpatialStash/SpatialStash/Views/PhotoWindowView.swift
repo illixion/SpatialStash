@@ -7,10 +7,11 @@
 
 import RealityKit
 import SwiftUI
+import UIKit
 
 struct PhotoWindowView: View {
     @State private var windowModel: PhotoWindowModel
-    @Environment(SceneDelegate.self) private var sceneDelegate
+    @Environment(SceneDelegate.self) private var sceneDelegate: SceneDelegate?
     
     init(image: GalleryImage, appModel: AppModel) {
         _windowModel = State(initialValue: PhotoWindowModel(image: image, appModel: appModel))
@@ -21,6 +22,12 @@ struct PhotoWindowView: View {
             if windowModel.isAnimatedGIF, let gifData = windowModel.currentImageData {
                 // Display animated GIF without RealityKit (no 3D conversion possible)
                 AnimatedGIFDetailView(imageData: gifData)
+                .contentShape(.rect)
+                .onTapGesture {
+                    if windowModel.isUIHidden {
+                        windowModel.toggleUIVisibility()
+                    }
+                }
                 .onAppear {
                     setupWindowForGIF()
                 }
@@ -36,6 +43,11 @@ struct PhotoWindowView: View {
                         let availableBounds = content.convert(geometry.frame(in: .local), from: .local, to: .scene)
                         scaleImagePresentationToFit(in: availableBounds)
                         content.add(windowModel.contentEntity)
+                        windowModel.ensureInputPlaneReady()
+                        updateInputPlane(in: availableBounds)
+                        if windowModel.inputPlaneEntity.parent == nil {
+                            content.add(windowModel.inputPlaneEntity)
+                        }
                         // Resize window to match initial aspect ratio
                         resizeWindowToAspectRatio(windowModel.imageAspectRatio)
                     } update: { content in
@@ -52,9 +64,14 @@ struct PhotoWindowView: View {
                         // Scale the entity to fit in the bounds.
                         let availableBounds = content.convert(geometry.frame(in: .local), from: .local, to: .scene)
                         scaleImagePresentationToFit(in: availableBounds)
+                        windowModel.ensureInputPlaneReady()
+                        updateInputPlane(in: availableBounds)
+                        if windowModel.inputPlaneEntity.parent == nil {
+                            content.add(windowModel.inputPlaneEntity)
+                        }
                     }
                     .onAppear() {
-                        guard let windowScene = sceneDelegate.windowScene else {
+                        guard let windowScene = resolvedWindowScene else {
                             print("Unable to get the window scene. Unable to set the resizing restrictions.")
                             return
                         }
@@ -73,6 +90,15 @@ struct PhotoWindowView: View {
                             resizeWindowToAspectRatio(windowModel.imageAspectRatio)
                         }
                     }
+                    .gesture(
+                        TapGesture()
+                            .targetedToAnyEntity()
+                            .onEnded { _ in
+                                if windowModel.isUIHidden {
+                                    windowModel.toggleUIVisibility()
+                                }
+                            }
+                    )
                 }
                 .aspectRatio(windowModel.imageAspectRatio, contentMode: .fit)
             }
@@ -98,20 +124,13 @@ struct PhotoWindowView: View {
                 PhotoWindowOrnament(windowModel: windowModel)
             }
         )
-        .ornament(
-            visibility: windowModel.isUIHidden ? .visible : .hidden,
-            attachmentAnchor: .scene(.bottomFront),
-            ornament: {
-                Button {
-                    windowModel.toggleUIVisibility()
-                } label: {
-                    Image(systemName: "ellipsis.circle.fill")
-                        .font(.title)
+        .simultaneousGesture(
+            SpatialTapGesture()
+                .onEnded { _ in
+                    if windowModel.isUIHidden {
+                        windowModel.toggleUIVisibility()
+                    }
                 }
-                .buttonStyle(.borderless)
-                .padding(8)
-                .glassBackgroundEffect()
-            }
         )
         .onAppear {
             windowModel.startAutoHideTimer()
@@ -129,19 +148,19 @@ struct PhotoWindowView: View {
     }
     
     private func setupWindowForGIF() {
-        guard let windowScene = sceneDelegate.windowScene else { return }
+        guard let windowScene = resolvedWindowScene else { return }
         windowScene.requestGeometryUpdate(.Vision(resizingRestrictions: .uniform))
         resizeWindowToAspectRatio(windowModel.imageAspectRatio)
     }
     
     private func resetWindowRestrictions() {
-        guard let windowScene = sceneDelegate.windowScene else { return }
+        guard let windowScene = resolvedWindowScene else { return }
         windowScene.requestGeometryUpdate(.Vision(resizingRestrictions: .freeform))
     }
     
     /// Resize the window to match the given aspect ratio
     private func resizeWindowToAspectRatio(_ aspectRatio: CGFloat) {
-        guard let windowScene = sceneDelegate.windowScene else {
+        guard let windowScene = resolvedWindowScene else {
             print("Unable to get the window scene. Resizing is not possible.")
             return
         }
@@ -174,6 +193,27 @@ struct PhotoWindowView: View {
         )
         
         windowModel.contentEntity.scale = SIMD3<Float>(scale, scale, 1.0)
+    }
+
+    /// Match the input plane to the current window bounds for hit-testing.
+    func updateInputPlane(in boundsInMeters: BoundingBox) {
+        let scale = SIMD3<Float>(boundsInMeters.extents.x, boundsInMeters.extents.y, 1.0)
+        windowModel.inputPlaneEntity.scale = scale
+        let center = boundsInMeters.center
+        windowModel.inputPlaneEntity.setPosition(
+            SIMD3<Float>(center.x, center.y, 0.01),
+            relativeTo: nil
+        )
+    }
+
+    private var resolvedWindowScene: UIWindowScene? {
+        if let sceneDelegate {
+            return sceneDelegate.windowScene
+        }
+
+        return UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive }
     }
 }
 

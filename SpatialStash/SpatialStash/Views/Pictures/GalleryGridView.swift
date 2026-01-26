@@ -5,10 +5,11 @@
  */
 
 import SwiftUI
+import UIKit
 
 struct GalleryGridView: View {
     @Environment(AppModel.self) private var appModel
-    @Environment(SceneDelegate.self) private var sceneDelegate
+    @Environment(SceneDelegate.self) private var sceneDelegate: SceneDelegate?
     @Environment(\.openWindow) private var openWindow
 
     let columns = [
@@ -70,7 +71,7 @@ struct GalleryGridView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
             // Ensure freeform resizing in gallery view
-            if let windowScene = sceneDelegate.windowScene {
+            if let windowScene = resolvedWindowScene {
                 windowScene.requestGeometryUpdate(.Vision(resizingRestrictions: .freeform))
             }
         }
@@ -79,5 +80,15 @@ struct GalleryGridView: View {
                 await appModel.loadInitialGallery()
             }
         }
+    }
+
+    private var resolvedWindowScene: UIWindowScene? {
+        if let sceneDelegate {
+            return sceneDelegate.windowScene
+        }
+
+        return UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive }
     }
 }

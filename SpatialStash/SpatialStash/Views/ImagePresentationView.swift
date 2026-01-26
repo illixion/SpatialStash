@@ -8,10 +8,11 @@ Handles both static images (with spatial 3D conversion) and animated GIFs.
 
 import RealityKit
 import SwiftUI
+import UIKit
 
 struct ImagePresentationView: View {
     @Environment(AppModel.self) private var appModel
-    @Environment(SceneDelegate.self) private var sceneDelegate
+    @Environment(SceneDelegate.self) private var sceneDelegate: SceneDelegate?
 
     var body: some View {
         ZStack {
@@ -51,7 +52,7 @@ struct ImagePresentationView: View {
                         scaleImagePresentationToFit(in: availableBounds)
                     }
                     .onAppear() {
-                        guard let windowScene = sceneDelegate.windowScene else {
+                        guard let windowScene = resolvedWindowScene else {
                             print("Unable to get the window scene. Unable to set the resizing restrictions.")
                             return
                         }
@@ -114,19 +115,19 @@ struct ImagePresentationView: View {
     }
 
     private func setupWindowForGIF() {
-        guard let windowScene = sceneDelegate.windowScene else { return }
+        guard let windowScene = resolvedWindowScene else { return }
         windowScene.requestGeometryUpdate(.Vision(resizingRestrictions: .uniform))
         resizeWindowToAspectRatio(appModel.imageAspectRatio)
     }
 
     private func resetWindowRestrictions() {
-        guard let windowScene = sceneDelegate.windowScene else { return }
+        guard let windowScene = resolvedWindowScene else { return }
         windowScene.requestGeometryUpdate(.Vision(resizingRestrictions: .freeform))
     }
 
     /// Resize the window to match the given aspect ratio
     private func resizeWindowToAspectRatio(_ aspectRatio: CGFloat) {
-        guard let windowScene = sceneDelegate.windowScene else {
+        guard let windowScene = resolvedWindowScene else {
             print("Unable to get the window scene. Resizing is not possible.")
             return
         }
@@ -159,5 +160,15 @@ struct ImagePresentationView: View {
         )
 
         appModel.contentEntity.scale = SIMD3<Float>(scale, scale, 1.0)
+    }
+
+    private var resolvedWindowScene: UIWindowScene? {
+        if let sceneDelegate {
+            return sceneDelegate.windowScene
+        }
+
+        return UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive }
     }
 }
