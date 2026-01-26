@@ -14,33 +14,21 @@ struct VideoThumbnailView: View {
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
+            // Background
+            Rectangle()
+                .fill(Color.secondary.opacity(0.2))
+            
             // Thumbnail image
-            ZStack {
-                if let loadedImage {
-                    Image(uiImage: loadedImage)
-                        .resizable()
-                        .aspectRatio(16/9, contentMode: .fill)
-                        .frame(height: 150)
-                        .clipped()
-                } else if isLoading {
-                    Rectangle()
-                        .fill(Color.secondary.opacity(0.2))
-                        .aspectRatio(16/9, contentMode: .fill)
-                        .frame(height: 150)
-                        .overlay {
-                            ProgressView()
-                        }
-                } else {
-                    Rectangle()
-                        .fill(Color.secondary.opacity(0.2))
-                        .aspectRatio(16/9, contentMode: .fill)
-                        .frame(height: 150)
-                        .overlay {
-                            Image(systemName: "video")
-                                .font(.largeTitle)
-                                .foregroundColor(.secondary)
-                        }
-                }
+            if let loadedImage {
+                Image(uiImage: loadedImage)
+                    .resizable()
+                    .scaledToFill()
+            } else if isLoading {
+                ProgressView()
+            } else {
+                Image(systemName: "video")
+                    .font(.largeTitle)
+                    .foregroundColor(.secondary)
             }
 
             // Play button overlay
@@ -90,9 +78,11 @@ struct VideoThumbnailView: View {
             }
             .padding(8)
         }
-        .background(Color.secondary.opacity(0.2))
+        .aspectRatio(16/9, contentMode: .fit)
         .cornerRadius(12)
-        .hoverEffect(.lift)
+        .clipped()
+        .contentShape(Rectangle())
+        .hoverEffect(ScaleHoverEffect())
         .task {
             await loadThumbnail()
         }
@@ -100,8 +90,10 @@ struct VideoThumbnailView: View {
 
     private func loadThumbnail() async {
         do {
-            loadedImage = try await ImageLoader.shared.loadImage(from: video.thumbnailURL)
-            if loadedImage == nil {
+            if let image = try await ImageLoader.shared.loadImage(from: video.thumbnailURL) {
+                // Crop to 16:9
+                loadedImage = cropTo16x9(image)
+            } else {
                 loadFailed = true
             }
         } catch {
@@ -109,5 +101,30 @@ struct VideoThumbnailView: View {
             loadFailed = true
         }
         isLoading = false
+    }
+    
+    private func cropTo16x9(_ image: UIImage) -> UIImage {
+        let targetAspect: CGFloat = 16.0 / 9.0
+        let imageAspect = image.size.width / image.size.height
+        
+        var cropRect: CGRect
+        
+        if imageAspect > targetAspect {
+            // Image is wider than 16:9, crop width
+            let targetWidth = image.size.height * targetAspect
+            let xOffset = (image.size.width - targetWidth) / 2
+            cropRect = CGRect(x: xOffset, y: 0, width: targetWidth, height: image.size.height)
+        } else {
+            // Image is taller than 16:9, crop height
+            let targetHeight = image.size.width / targetAspect
+            let yOffset = (image.size.height - targetHeight) / 2
+            cropRect = CGRect(x: 0, y: yOffset, width: image.size.width, height: targetHeight)
+        }
+        
+        guard let cgImage = image.cgImage?.cropping(to: cropRect) else {
+            return image
+        }
+        
+        return UIImage(cgImage: cgImage, scale: image.scale, orientation: image.imageOrientation)
     }
 }

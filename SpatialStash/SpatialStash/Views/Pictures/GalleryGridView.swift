@@ -43,18 +43,18 @@ struct GalleryGridView: View {
                 ScrollView {
                     LazyVGrid(columns: columns, spacing: 16) {
                         ForEach(appModel.galleryImages) { image in
-                            GalleryThumbnailView(image: image)
-                                .onTapGesture {
-                                    openWindow(id: "photo-detail", value: image)
-                                }
-                                .onAppear {
-                                    // Lazy loading trigger - load more when last item appears
-                                    if image == appModel.galleryImages.last && appModel.hasMorePages {
-                                        Task {
-                                            await appModel.loadNextPage()
-                                        }
+                            GalleryThumbnailView(image: image) {
+                                openWindow(id: "photo-detail", value: image)
+                            }
+                            .id(image.id)
+                            .onAppear {
+                                // Lazy loading trigger - load more when last item appears
+                                if image == appModel.galleryImages.last && appModel.hasMorePages {
+                                    Task {
+                                        await appModel.loadNextPage()
                                     }
                                 }
+                            }
                         }
 
                         if appModel.isLoadingGallery {

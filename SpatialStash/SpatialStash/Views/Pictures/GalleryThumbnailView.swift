@@ -9,6 +9,7 @@ import SwiftUI
 
 struct GalleryThumbnailView: View {
     let image: GalleryImage
+    var onTap: (() -> Void)? = nil
     @State private var loadedImage: UIImage?
     @State private var imageData: Data?
     @State private var isLoading = true
@@ -17,6 +18,9 @@ struct GalleryThumbnailView: View {
 
     var body: some View {
         ZStack {
+            // Background
+            Color.secondary.opacity(0.2)
+            
             if let imageData, isAnimatedGIF {
                 // Display animated GIF
                 AnimatedImageView(data: imageData, contentMode: .scaleAspectFill)
@@ -25,12 +29,9 @@ struct GalleryThumbnailView: View {
                 // Display static image
                 Image(uiImage: loadedImage)
                     .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(width: 200, height: 200)
-                    .clipped()
+                    .scaledToFill()
             } else if isLoading {
                 ProgressView()
-                    .frame(width: 200, height: 200)
             } else {
                 // Error state
                 VStack(spacing: 8) {
@@ -43,13 +44,16 @@ struct GalleryThumbnailView: View {
                             .foregroundColor(.secondary)
                     }
                 }
-                .frame(width: 200, height: 200)
             }
         }
-        .background(Color.secondary.opacity(0.2))
+        .frame(width: 200, height: 200)
         .cornerRadius(12)
         .clipped()
-        .hoverEffect(.lift)
+        .contentShape(Rectangle())
+        .hoverEffect(ScaleHoverEffect())
+        .onTapGesture {
+            onTap?()
+        }
         .task {
             await loadThumbnail()
         }
@@ -58,7 +62,8 @@ struct GalleryThumbnailView: View {
     private func loadThumbnail() async {
         do {
             if let result = try await ImageLoader.shared.loadImageWithData(from: image.thumbnailURL) {
-                loadedImage = result.image
+                // Crop to square
+                loadedImage = cropToSquare(result.image)
                 imageData = result.data
                 isAnimatedGIF = result.data.isAnimatedGIF
             } else {
@@ -69,5 +74,19 @@ struct GalleryThumbnailView: View {
             loadFailed = true
         }
         isLoading = false
+    }
+    
+    private func cropToSquare(_ image: UIImage) -> UIImage {
+        let side = min(image.size.width, image.size.height)
+        let xOffset = (image.size.width - side) / 2
+        let yOffset = (image.size.height - side) / 2
+        
+        let cropRect = CGRect(x: xOffset, y: yOffset, width: side, height: side)
+        
+        guard let cgImage = image.cgImage?.cropping(to: cropRect) else {
+            return image
+        }
+        
+        return UIImage(cgImage: cgImage, scale: image.scale, orientation: image.imageOrientation)
     }
 }
