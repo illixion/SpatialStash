@@ -8,11 +8,10 @@ Spatial Stash is a visionOS app for Apple Vision Pro that displays images and vi
 
 ## Build Commands
 
-Open `SpatialStash/SpatialStash.xcodeproj` in Xcode. Build and run using:
-- **Cmd+B** to build
-- **Cmd+R** to run on visionOS Simulator or device
-
-Set your development team in Xcode for bundle identifier configuration (uses `SAMPLE_CODE_DISAMBIGUATOR` from Configuration/SpatialStash.xcconfig).
+Run this command to test your changes:
+```bash
+xcodebuild -quiet -project SpatialStash/SpatialStash.xcodeproj -scheme SpatialStash -destination 'platform=visionOS Simulator,name=Apple Vision Pro' build
+```
 
 ## Architecture
 
