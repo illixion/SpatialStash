@@ -8,6 +8,8 @@ A visionOS app for Apple Vision Pro that transforms your 2D images into immersiv
 - **Stash Server Integration** - Connect to your Stash media server via GraphQL API to browse images and videos
 - **Advanced Filtering** - Filter by galleries, tags, ratings, and O-count with saved filter presets
 - **Video Playback** - Stream videos directly from your Stash server
+- **VR Video Support** - View VR videos in side-by-side or over-under formats, configurable via tags or in-app settings
+- **Unlimited Windows** - Open multiple image viewer windows that persist in your space, you can even use pictures as virtual decorations
 - **Demo Mode** - Try the app with bundled sample images without server setup
 
 ## Screenshots
@@ -72,7 +74,7 @@ Create complex queries to filter your media (Stash server only):
 - Filter by galleries and tags
 - Filter by rating (1-5 stars) or O-count
 - Sort by date, title, rating, or random
-- Save filter combinations as presets for quick access
+- Save filter combinations as presets for quick access or as default views
 
 ### Settings Tab
 Configure your media source and server connection. View statistics about loaded content.
