@@ -26,9 +26,7 @@ struct PhotoWindowView: View {
                 .aspectRatio(windowModel.imageAspectRatio, contentMode: .fit)
                 .contentShape(.rect)
                 .onTapGesture {
-                    if windowModel.isUIHidden {
-                        windowModel.toggleUIVisibility()
-                    }
+                    windowModel.toggleUIVisibility()
                 }
                 .onAppear {
                     setupWindowForGIF()
@@ -98,9 +96,7 @@ struct PhotoWindowView: View {
                         TapGesture()
                             .targetedToAnyEntity()
                             .onEnded { _ in
-                                if windowModel.isUIHidden {
-                                    windowModel.toggleUIVisibility()
-                                }
+                                windowModel.toggleUIVisibility()
                             }
                     )
                 }
@@ -114,14 +110,6 @@ struct PhotoWindowView: View {
             ornament: {
                 PhotoWindowOrnament(windowModel: windowModel)
             }
-        )
-        .simultaneousGesture(
-            SpatialTapGesture()
-                .onEnded { _ in
-                    if windowModel.isUIHidden {
-                        windowModel.toggleUIVisibility()
-                    }
-                }
         )
         .onAppear {
             windowModel.startAutoHideTimer()
@@ -260,18 +248,6 @@ struct PhotoWindowOrnament: View {
             }
             .buttonStyle(.borderless)
             .disabled(windowModel.spatial3DImageState == .generating || windowModel.isAnimatedGIF)
-            
-            Divider()
-                .frame(height: 24)
-            
-            // Hide UI button
-            Button {
-                windowModel.toggleUIVisibility()
-            } label: {
-                Image(systemName: "eye.slash")
-                    .font(.title2)
-            }
-            .buttonStyle(.borderless)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
