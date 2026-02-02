@@ -95,6 +95,13 @@ struct FiltersTabView: View {
                                 Text(field.displayName).tag(field)
                             }
                         }
+                        .onChange(of: appModel.currentVideoFilter.sortField) { _, newValue in
+                            // Set random seed when Random is first selected to ensure consistent results
+                            // until user explicitly presses Shuffle
+                            if newValue == .random && appModel.currentVideoFilter.randomSeed == nil {
+                                appModel.currentVideoFilter.shuffleRandomSort()
+                            }
+                        }
 
                         Picker("Direction", selection: $appModel.currentVideoFilter.sortDirection) {
                             ForEach(SortDirection.allCases) { direction in
@@ -118,6 +125,13 @@ struct FiltersTabView: View {
                         Picker("Sort By", selection: $appModel.currentFilter.sortField) {
                             ForEach(ImageSortField.allCases) { field in
                                 Text(field.displayName).tag(field)
+                            }
+                        }
+                        .onChange(of: appModel.currentFilter.sortField) { _, newValue in
+                            // Set random seed when Random is first selected to ensure consistent results
+                            // until user explicitly presses Shuffle
+                            if newValue == .random && appModel.currentFilter.randomSeed == nil {
+                                appModel.currentFilter.shuffleRandomSort()
                             }
                         }
 
