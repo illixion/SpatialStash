@@ -187,6 +187,28 @@ actor DiskVideoCache {
         try? fileManager.removeItem(at: metadataURL)
     }
 
+    /// Remove all cached versions of a video (all formats and settings combinations)
+    /// Used when 3D settings change and we need to re-convert
+    func removeAllCachedVersions(videoId: String) {
+        // Scan cache directory for any files starting with videoId_
+        let prefix = "\(videoId)_"
+
+        // Remove from video cache
+        if let cacheContents = try? fileManager.contentsOfDirectory(at: cacheDirectory, includingPropertiesForKeys: nil) {
+            for fileURL in cacheContents where fileURL.lastPathComponent.hasPrefix(prefix) {
+                try? fileManager.removeItem(at: fileURL)
+                AppLogger.videoCache.info("Removed cached video: \(fileURL.lastPathComponent, privacy: .public)")
+            }
+        }
+
+        // Remove from metadata cache
+        if let metadataContents = try? fileManager.contentsOfDirectory(at: metadataDirectory, includingPropertiesForKeys: nil) {
+            for fileURL in metadataContents where fileURL.lastPathComponent.hasPrefix(prefix) {
+                try? fileManager.removeItem(at: fileURL)
+            }
+        }
+    }
+
     /// Get total cache size in bytes
     private func getCacheSize() -> Int64 {
         guard let enumerator = fileManager.enumerator(

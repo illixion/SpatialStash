@@ -115,6 +115,12 @@ class AppModel {
     /// Override for stereoscopic video viewing mode: nil = auto (stereo for 3D content), false = force mono (left eye only)
     var videoStereoscopicOverride: Bool? = nil
 
+    /// Custom 3D settings for the current video (used when manually enabling 3D mode)
+    var video3DSettings: Video3DSettings?
+
+    /// Whether to show the 3D settings sheet
+    var showVideo3DSettingsSheet: Bool = false
+
     // MARK: - Filter State
 
     var currentFilter: ImageFilterCriteria = ImageFilterCriteria()
@@ -736,6 +742,7 @@ class AppModel {
         lastViewedVideoId = video.id
         isShowingVideoDetail = true
         videoStereoscopicOverride = nil
+        video3DSettings = nil
     }
 
     /// Dismiss video player
@@ -743,6 +750,7 @@ class AppModel {
         isShowingVideoDetail = false
         selectedVideo = nil
         videoStereoscopicOverride = nil
+        video3DSettings = nil
     }
 
     /// Navigate to next video

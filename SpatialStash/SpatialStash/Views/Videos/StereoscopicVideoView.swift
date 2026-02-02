@@ -3,6 +3,7 @@
 
  View for displaying stereoscopic 3D video converted to MV-HEVC.
  Handles download and conversion, then launches immersive space for 3D playback.
+ Controls (Edit Settings, Revert to 2D) are in VideoOrnamentsView.
  */
 
 import AVFoundation
@@ -19,8 +20,18 @@ struct StereoscopicVideoView: View {
     @StateObject private var player = StereoscopicVideoPlayer()
     @State private var fallbackTo2D = false
     @State private var hasEnteredImmersiveSpace = false
+    @State private var currentSettings: Video3DSettings?
 
     let video: GalleryVideo
+
+    /// Optional initial settings (if provided, uses these instead of tag-detected)
+    var initialSettings: Video3DSettings?
+
+    /// Callback when user wants to revert to 2D mode
+    var onRevertTo2D: (() -> Void)?
+
+    /// Callback when settings change (so parent can track)
+    var onSettingsChanged: ((Video3DSettings) -> Void)?
 
     var body: some View {
         ZStack {
@@ -42,7 +53,10 @@ struct StereoscopicVideoView: View {
             }
         }
         .onAppear {
-            startPlayback()
+            // Use initial settings if provided, otherwise load from tracker or use tag defaults
+            Task {
+                await loadSettingsAndStartPlayback()
+            }
         }
         .onDisappear {
             Task {
@@ -56,6 +70,12 @@ struct StereoscopicVideoView: View {
                 Task {
                     await enterImmersiveSpace()
                 }
+            }
+        }
+        .onChange(of: appModel.video3DSettings) { oldSettings, newSettings in
+            // Handle settings change from ornament's Edit Settings
+            if let newSettings = newSettings, newSettings != currentSettings {
+                applyNewSettings(newSettings)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .stereoscopicFallbackTo2D)) { notification in
@@ -183,18 +203,20 @@ struct StereoscopicVideoView: View {
 
             if isSimulatorError {
                 Button("Play as 2D Instead") {
-                    fallbackTo2D = true
+                    revertTo2D()
                 }
                 .buttonStyle(.borderedProminent)
             } else {
                 HStack(spacing: 16) {
                     Button("Retry") {
-                        startPlayback()
+                        Task {
+                            await startPlaybackWithSettings()
+                        }
                     }
                     .buttonStyle(.bordered)
 
                     Button("Play as 2D") {
-                        fallbackTo2D = true
+                        revertTo2D()
                     }
                     .buttonStyle(.borderedProminent)
                 }
@@ -208,7 +230,9 @@ struct StereoscopicVideoView: View {
     private var formatBadge: some View {
         HStack(spacing: 6) {
             Image(systemName: "view.3d")
-            if let format = video.stereoscopicFormat {
+            if let settings = currentSettings {
+                Text(settings.format.shortLabel)
+            } else if let format = video.stereoscopicFormat {
                 Text(format.shortLabel)
             } else {
                 Text("3D")
@@ -224,15 +248,98 @@ struct StereoscopicVideoView: View {
 
     // MARK: - Helpers
 
-    private func startPlayback() {
+    private func loadSettingsAndStartPlayback() async {
+        // Priority: initialSettings > saved settings > tag-detected defaults
+        if let initial = initialSettings {
+            currentSettings = initial
+        } else if let saved = await Video3DSettingsTracker.shared.loadSettings(videoId: video.stashId) {
+            currentSettings = saved
+        } else if let tagSettings = Video3DSettings.from(video: video) {
+            currentSettings = tagSettings
+        } else {
+            // No tags and no saved settings - this shouldn't happen in normal flow
+            // but provide a default just in case
+            currentSettings = Video3DSettings.defaults(for: .sideBySide)
+        }
+
+        await startPlaybackWithSettings()
+    }
+
+    private func startPlaybackWithSettings() async {
         fallbackTo2D = false
         hasEnteredImmersiveSpace = false
-        Task {
+
+        guard let settings = currentSettings else {
+            // Fallback to tag-based playback if somehow settings are nil
             await player.play(
                 video: video,
                 apiKey: appModel.stashAPIKey.isEmpty ? nil : appModel.stashAPIKey
             )
+            return
         }
+
+        await player.play(
+            video: video,
+            apiKey: appModel.stashAPIKey.isEmpty ? nil : appModel.stashAPIKey,
+            customSettings: settings
+        )
+    }
+
+    private func applyNewSettings(_ newSettings: Video3DSettings) {
+        // Check if settings actually changed
+        guard newSettings != currentSettings else {
+            AppLogger.stereoscopicPlayer.info("Settings unchanged, skipping apply")
+            return
+        }
+
+        AppLogger.stereoscopicPlayer.info("Applying new 3D settings: format=\(newSettings.format.rawValue), eyesReversed=\(newSettings.eyesReversed), cacheKey=\(newSettings.cacheKey)")
+
+        // Reset fallbackTo2D IMMEDIATELY (before async task) to show progress UI
+        fallbackTo2D = false
+
+        currentSettings = newSettings
+
+        // Save to tracker for future sessions
+        Task {
+            await Video3DSettingsTracker.shared.saveSettings(
+                videoId: video.stashId,
+                settings: newSettings
+            )
+        }
+
+        // Note: Don't call onSettingsChanged here - the change came FROM appModel.video3DSettings
+        // Calling it would create a circular update loop
+
+        // Invalidate cache and restart playback
+        Task {
+            AppLogger.stereoscopicPlayer.info("Starting settings change task...")
+
+            // Exit immersive space first if we're in it
+            // This allows re-entry when new conversion completes
+            await exitImmersiveSpace()
+
+            // Stop current playback
+            player.stop()
+
+            // Remove cached versions (settings changed)
+            AppLogger.stereoscopicPlayer.info("Removing cached versions...")
+            await DiskVideoCache.shared.removeAllCachedVersions(videoId: video.stashId)
+
+            // Restart with new settings
+            AppLogger.stereoscopicPlayer.info("Restarting playback with new settings...")
+            await startPlaybackWithSettings()
+
+            AppLogger.stereoscopicPlayer.info("Settings change task completed")
+        }
+    }
+
+    private func revertTo2D() {
+        Task {
+            await exitImmersiveSpace()
+        }
+        player.stop()
+        fallbackTo2D = true
+        onRevertTo2D?()
     }
 
     private func enterImmersiveSpace() async {

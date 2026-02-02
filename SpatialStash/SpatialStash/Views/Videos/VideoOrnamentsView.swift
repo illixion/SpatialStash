@@ -50,9 +50,12 @@ struct VideoOrnamentsView: View {
                 }
                 .disabled(!appModel.hasNextVideo)
 
-                // Stereoscopic format toggle (for 3D videos)
-                if let video = appModel.selectedVideo, video.isStereoscopic {
-                    stereoscopicToggle(for: video)
+                // View mode toggle (2D/3D for all videos)
+                if let video = appModel.selectedVideo {
+                    Divider()
+                        .frame(height: 24)
+
+                    viewModeMenu(for: video)
                 }
 
                 // Video title if available
@@ -71,30 +74,42 @@ struct VideoOrnamentsView: View {
     }
 
     @ViewBuilder
-    private func stereoscopicToggle(for video: GalleryVideo) -> some View {
-        Divider()
-            .frame(height: 24)
-
+    private func viewModeMenu(for video: GalleryVideo) -> some View {
         Menu {
+            // 2D Mode option
             Button {
-                appModel.videoStereoscopicOverride = nil
+                appModel.videoStereoscopicOverride = false
             } label: {
                 HStack {
-                    Text("3D (Stereo)")
-                    if appModel.videoStereoscopicOverride == nil {
+                    Text("2D")
+                    if !shouldUse3DMode {
                         Image(systemName: "checkmark")
                     }
                 }
             }
 
+            Divider()
+
+            // 3D Mode option
             Button {
-                appModel.videoStereoscopicOverride = false
+                enable3DMode(for: video)
             } label: {
                 HStack {
-                    Text("2D (Left Eye)")
-                    if appModel.videoStereoscopicOverride == false {
+                    Text("3D")
+                    if shouldUse3DMode {
                         Image(systemName: "checkmark")
                     }
+                }
+            }
+
+            // Edit 3D Settings (only show when in 3D mode)
+            if shouldUse3DMode {
+                Divider()
+
+                Button {
+                    appModel.showVideo3DSettingsSheet = true
+                } label: {
+                    Label("Edit 3D Settings", systemImage: "slider.horizontal.3")
                 }
             }
         } label: {
@@ -102,31 +117,72 @@ struct VideoOrnamentsView: View {
                 Image(systemName: currentModeIcon)
                 Text(currentModeLabel)
                     .font(.caption)
+                // Show format badge
+                if shouldUse3DMode {
+                    if let settings = appModel.video3DSettings {
+                        Text("(\(settings.format.shortLabel))")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    } else if let format = video.stereoscopicFormat {
+                        Text("(\(format.shortLabel))")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(Color.secondary.opacity(0.2))
             .cornerRadius(6)
         }
+    }
 
-        // Format badge for stereoscopic videos
-        if let format = video.stereoscopicFormat {
-            Text(format.shortLabel)
-                .font(.caption2)
-                .fontWeight(.medium)
-                .foregroundColor(.secondary)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Color.secondary.opacity(0.15))
-                .cornerRadius(4)
+    /// Whether the current mode is 3D (either auto-detected or forced)
+    private var shouldUse3DMode: Bool {
+        // Explicitly set to 2D
+        if appModel.videoStereoscopicOverride == false {
+            return false
+        }
+        // Explicitly set to 3D or has custom settings
+        if appModel.videoStereoscopicOverride == true || appModel.video3DSettings != nil {
+            return true
+        }
+        // Auto-detect from video tags
+        return appModel.selectedVideo?.isStereoscopic ?? false
+    }
+
+    private func enable3DMode(for video: GalleryVideo) {
+        Task {
+            // Check for saved settings first
+            if let savedSettings = await Video3DSettingsTracker.shared.loadSettings(videoId: video.stashId) {
+                await MainActor.run {
+                    appModel.video3DSettings = savedSettings
+                    appModel.videoStereoscopicOverride = true
+                }
+                return
+            }
+
+            // Check for tag-detected settings
+            if let tagSettings = Video3DSettings.from(video: video) {
+                await MainActor.run {
+                    appModel.video3DSettings = tagSettings
+                    appModel.videoStereoscopicOverride = true
+                }
+                return
+            }
+
+            // No saved or tag settings - show settings sheet
+            await MainActor.run {
+                appModel.showVideo3DSettingsSheet = true
+            }
         }
     }
 
     private var currentModeIcon: String {
-        appModel.videoStereoscopicOverride == false ? "view.2d" : "view.3d"
+        shouldUse3DMode ? "view.3d" : "view.2d"
     }
 
     private var currentModeLabel: String {
-        appModel.videoStereoscopicOverride == false ? "2D" : "3D"
+        shouldUse3DMode ? "3D" : "2D"
     }
 }

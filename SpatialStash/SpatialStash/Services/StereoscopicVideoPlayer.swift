@@ -67,6 +67,9 @@ class StereoscopicVideoPlayer: ObservableObject {
     @Published private(set) var convertedFileURL: URL?
     private var isUsingCachedVideo: Bool = false
 
+    /// Current 3D settings being used (nil if using tag-detected defaults)
+    @Published private(set) var currentSettings: Video3DSettings?
+
     // Tasks
     private var processingTask: Task<Void, Never>?
     private var timeObserver: Any?
@@ -81,7 +84,7 @@ class StereoscopicVideoPlayer: ObservableObject {
 
     // MARK: - Public API
 
-    /// Start playing a stereoscopic video
+    /// Start playing a stereoscopic video using tag-detected format
     /// - Parameters:
     ///   - video: The video to play
     ///   - apiKey: Optional API key for authentication
@@ -92,21 +95,40 @@ class StereoscopicVideoPlayer: ObservableObject {
             return
         }
 
+        // Create settings from tag-detected format
+        let settings = Video3DSettings(
+            format: format,
+            eyesReversed: video.eyesReversed,
+            horizontalFieldOfView: 90.0,
+            horizontalDisparityAdjustment: 200.0
+        )
+
+        await play(video: video, apiKey: apiKey, customSettings: settings)
+    }
+
+    /// Start playing a video with custom 3D settings
+    /// - Parameters:
+    ///   - video: The video to play
+    ///   - apiKey: Optional API key for authentication
+    ///   - customSettings: Custom 3D conversion settings
+    func play(video: GalleryVideo, apiKey: String?, customSettings: Video3DSettings) async {
         // Stop any existing playback
         stop()
 
         currentVideo = video
         self.apiKey = apiKey
+        currentSettings = customSettings
         isUsingCachedVideo = false
 
-        let formatString = format.rawValue
+        // Use full settings cache key (includes format, eyesReversed, FOV, disparity)
+        let settingsCacheKey = customSettings.cacheKey
 
         processingTask = Task {
             do {
                 // Check cache first
-                if let cachedURL = await videoCache.getCachedVideoURL(videoId: video.stashId, format: formatString) {
+                if let cachedURL = await videoCache.getCachedVideoURL(videoId: video.stashId, format: settingsCacheKey) {
                     // Cache hit! Use cached converted video
-                    AppLogger.stereoscopicPlayer.info("Cache hit for video: \(video.stashId, privacy: .private)")
+                    AppLogger.stereoscopicPlayer.info("Cache hit for video: \(video.stashId, privacy: .private) with settings: \(settingsCacheKey, privacy: .public)")
 
                     await MainActor.run {
                         self.currentChunkInfo = "Loading from cache..."
@@ -125,7 +147,7 @@ class StereoscopicVideoPlayer: ObservableObject {
                 }
 
                 // Cache miss - need to download and convert
-                AppLogger.stereoscopicPlayer.info("Cache miss for video: \(video.stashId, privacy: .private), downloading...")
+                AppLogger.stereoscopicPlayer.info("Cache miss for video: \(video.stashId, privacy: .private) with settings: \(settingsCacheKey, privacy: .public), downloading...")
 
                 await MainActor.run {
                     self.state = .downloading(progress: 0)
@@ -135,23 +157,68 @@ class StereoscopicVideoPlayer: ObservableObject {
                 // Step 1: Download the complete video
                 let localVideoURL = try await downloadVideo(video: video, apiKey: apiKey)
 
-                if Task.isCancelled { return }
+                AppLogger.stereoscopicPlayer.info("Download completed: \(localVideoURL.lastPathComponent)")
 
-                // Step 2: Get video duration
-                let asset = AVURLAsset(url: localVideoURL)
-                let durationCM = try await asset.load(.duration)
-                let videoDuration = durationCM.seconds
-                await MainActor.run {
-                    self.duration = videoDuration
+                if Task.isCancelled {
+                    AppLogger.stereoscopicPlayer.info("Task cancelled after download")
+                    return
                 }
 
-                // Step 3: Convert to MV-HEVC
+                // Step 2: Validate video format and get duration
+                let asset = AVURLAsset(url: localVideoURL)
+                var videoDuration: TimeInterval = 0
+
+                // Check if AVFoundation can read this video format
+                // This may throw for unsupported formats like WebM
+                do {
+                    let isReadable = try await asset.load(.isReadable)
+                    if !isReadable {
+                        throw StereoscopicPlayerError.conversionFailed("Video format cannot be read")
+                    }
+
+                    // Also check that we have video tracks
+                    let tracks = try await asset.load(.tracks)
+                    let videoTracks = tracks.filter { $0.mediaType == .video }
+                    if videoTracks.isEmpty {
+                        throw StereoscopicPlayerError.conversionFailed("No video tracks found in file")
+                    }
+
+                    // Try to get duration
+                    let durationCM = try await asset.load(.duration)
+                    videoDuration = durationCM.seconds
+                    await MainActor.run {
+                        self.duration = videoDuration
+                    }
+                    AppLogger.stereoscopicPlayer.info("Video validated: \(videoTracks.count) video track(s), duration: \(videoDuration) seconds")
+
+                } catch let playerError as StereoscopicPlayerError {
+                    // Re-throw our custom errors
+                    throw playerError
+                } catch {
+                    // AVFoundation couldn't read the file - likely unsupported format
+                    let urlExtension = video.streamURL.pathExtension.lowercased()
+                    let unsupportedFormats = ["webm", "mkv", "flv", "avi", "wmv"]
+
+                    AppLogger.stereoscopicPlayer.error("AVFoundation cannot read video: \(error.localizedDescription)")
+
+                    if unsupportedFormats.contains(urlExtension) {
+                        throw StereoscopicPlayerError.conversionFailed(
+                            "\(urlExtension.uppercased()) format is not supported for 3D conversion. Only MP4/MOV videos can be converted."
+                        )
+                    } else {
+                        throw StereoscopicPlayerError.conversionFailed(
+                            "This video format is not supported for 3D conversion. Only MP4/MOV videos can be converted. (Error: \(error.localizedDescription))"
+                        )
+                    }
+                }
+
+                // Step 3: Convert to MV-HEVC using custom settings
                 await MainActor.run {
                     self.state = .converting(progress: 0)
                     self.currentChunkInfo = "Converting to 3D..."
                 }
 
-                let config = MVHEVCConversionConfig.from(video: video, format: format)
+                let config = MVHEVCConversionConfig.from(video: video, settings: customSettings)
                 let convertedURL = try await converter.convertFullVideo(
                     sourceURL: localVideoURL,
                     config: config,
@@ -164,7 +231,12 @@ class StereoscopicVideoPlayer: ObservableObject {
                     }
                 )
 
-                if Task.isCancelled { return }
+                AppLogger.stereoscopicPlayer.info("Conversion completed: \(convertedURL.lastPathComponent)")
+
+                if Task.isCancelled {
+                    AppLogger.stereoscopicPlayer.info("Task cancelled after conversion")
+                    return
+                }
 
                 // Clean up downloaded source file
                 try? FileManager.default.removeItem(at: localVideoURL)
@@ -176,7 +248,7 @@ class StereoscopicVideoPlayer: ObservableObject {
                 let metadata = CachedVideoMetadata(
                     videoId: video.stashId,
                     originalURL: video.streamURL.absoluteString,
-                    stereoscopicFormat: formatString,
+                    stereoscopicFormat: settingsCacheKey,
                     sourceWidth: video.sourceWidth ?? 0,
                     sourceHeight: video.sourceHeight ?? 0,
                     duration: videoDuration,
@@ -188,7 +260,7 @@ class StereoscopicVideoPlayer: ObservableObject {
                 let cachedURL = try await videoCache.moveVideoToCache(
                     from: convertedURL,
                     videoId: video.stashId,
-                    format: formatString,
+                    format: settingsCacheKey,
                     metadata: metadata
                 )
 
@@ -202,9 +274,36 @@ class StereoscopicVideoPlayer: ObservableObject {
                 }
 
             } catch {
+                // Ignore cancellation errors (happen when settings change mid-download)
+                if Task.isCancelled {
+                    AppLogger.stereoscopicPlayer.info("Playback task cancelled (Task.isCancelled), ignoring error")
+                    return
+                }
+
+                // Check for Swift CancellationError
+                if error is CancellationError {
+                    AppLogger.stereoscopicPlayer.info("Playback task cancelled (CancellationError), ignoring error")
+                    return
+                }
+
+                // Also check for URLSession cancellation
+                let nsError = error as NSError
+                if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled {
+                    AppLogger.stereoscopicPlayer.info("Download cancelled (NSURLErrorCancelled), ignoring error")
+                    return
+                }
+
+                // Log detailed error info for debugging
+                AppLogger.stereoscopicPlayer.error("Playback error: \(error.localizedDescription)")
+                AppLogger.stereoscopicPlayer.error("Error type: \(type(of: error))")
+                AppLogger.stereoscopicPlayer.error("NSError domain: \(nsError.domain), code: \(nsError.code)")
+
+                // Set error state - don't immediately fall back to 2D
+                // The error overlay will show with options to retry or play as 2D
                 await MainActor.run {
                     self.state = .error(error.localizedDescription)
-                    self.postFallbackNotification(reason: .conversionFailed(error))
+                    // Note: Don't call postFallbackNotification here - let user see the error first
+                    // The error overlay has a "Play as 2D" button that will trigger the fallback
                 }
             }
         }
@@ -276,6 +375,7 @@ class StereoscopicVideoPlayer: ObservableObject {
         }
 
         currentVideo = nil
+        currentSettings = nil
         isUsingCachedVideo = false
         state = .idle
         currentTime = 0
