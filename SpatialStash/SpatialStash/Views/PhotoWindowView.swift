@@ -23,6 +23,7 @@ struct PhotoWindowView: View {
             if windowModel.isAnimatedGIF, let gifData = windowModel.currentImageData {
                 // Display animated GIF without RealityKit (no 3D conversion possible)
                 AnimatedGIFDetailView(imageData: gifData)
+                .aspectRatio(windowModel.imageAspectRatio, contentMode: .fit)
                 .contentShape(.rect)
                 .onTapGesture {
                     if windowModel.isUIHidden {
