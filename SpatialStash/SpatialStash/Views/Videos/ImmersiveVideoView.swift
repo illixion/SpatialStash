@@ -6,9 +6,10 @@
  */
 
 import AVKit
+import CoreMedia
+import os
 import RealityKit
 import SwiftUI
-import CoreMedia
 
 struct ImmersiveVideoView: View {
     @Environment(AppModel.self) private var appModel
@@ -22,7 +23,7 @@ struct ImmersiveVideoView: View {
     var body: some View {
         RealityView { content in
             guard let videoURL = appModel.immersiveVideoURL else {
-                print("[ImmersiveVideoView] No video URL available")
+                AppLogger.immersiveVideo.warning("No video URL available")
                 return
             }
 
@@ -31,13 +32,13 @@ struct ImmersiveVideoView: View {
 
             // Get video info for mesh generation
             guard let videoInfo = await getVideoInfo(asset: asset) else {
-                print("[ImmersiveVideoView] Failed to get video info")
+                AppLogger.immersiveVideo.error("Failed to get video info")
                 return
             }
 
             // Generate mesh based on video dimensions
             guard let (mesh, transform) = await makeVideoMesh(videoInfo: videoInfo) else {
-                print("[ImmersiveVideoView] Failed to create video mesh")
+                AppLogger.immersiveVideo.error("Failed to create video mesh")
                 return
             }
 
@@ -98,7 +99,7 @@ struct ImmersiveVideoView: View {
 
     private func getVideoInfo(asset: AVAsset) async -> VideoInfo? {
         guard let videoTrack = try? await asset.loadTracks(withMediaType: .video).first else {
-            print("[ImmersiveVideoView] No video track found")
+            AppLogger.immersiveVideo.error("No video track found")
             return nil
         }
 
@@ -106,7 +107,7 @@ struct ImmersiveVideoView: View {
             .naturalSize, .formatDescriptions, .mediaCharacteristics
         ),
               let formatDescription = formatDescriptions.first else {
-            print("[ImmersiveVideoView] Failed to load video properties")
+            AppLogger.immersiveVideo.error("Failed to load video properties")
             return nil
         }
 

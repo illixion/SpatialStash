@@ -5,6 +5,7 @@ Abstract:
 The delegate class for the scene.
 */
 
+import os
 import SwiftUI
 
 @Observable class SceneDelegate: NSObject, UIWindowSceneDelegate {
@@ -12,7 +13,7 @@ import SwiftUI
     
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
         guard let windowScene = scene as? UIWindowScene else {
-            print("Unable to get the window scene in the Scene Delegate")
+            AppLogger.views.warning("Unable to get the window scene in the Scene Delegate")
             return
         }
         self.windowScene = windowScene

@@ -5,9 +5,10 @@
  Handles download and conversion, then launches immersive space for 3D playback.
  */
 
-import SwiftUI
 import AVFoundation
 import AVKit
+import os
+import SwiftUI
 
 struct StereoscopicVideoView: View {
     @Environment(AppModel.self) private var appModel
@@ -236,7 +237,7 @@ struct StereoscopicVideoView: View {
 
     private func enterImmersiveSpace() async {
         guard let convertedURL = player.convertedFileURL else {
-            print("[StereoscopicVideoView] No converted URL available for immersive playback")
+            AppLogger.immersiveVideo.warning("No converted URL available for immersive playback")
             return
         }
 
@@ -252,15 +253,15 @@ struct StereoscopicVideoView: View {
         case .opened:
             hasEnteredImmersiveSpace = true
             appModel.isStereoscopicImmersiveSpaceShown = true
-            print("[StereoscopicVideoView] Immersive space opened successfully")
+            AppLogger.immersiveVideo.info("Immersive space opened successfully")
         case .error:
-            print("[StereoscopicVideoView] Failed to open immersive space")
+            AppLogger.immersiveVideo.error("Failed to open immersive space")
             fallbackTo2D = true
         case .userCancelled:
-            print("[StereoscopicVideoView] User cancelled immersive space")
+            AppLogger.immersiveVideo.info("User cancelled immersive space")
             fallbackTo2D = true
         @unknown default:
-            print("[StereoscopicVideoView] Unknown immersive space result")
+            AppLogger.immersiveVideo.warning("Unknown immersive space result")
             fallbackTo2D = true
         }
     }

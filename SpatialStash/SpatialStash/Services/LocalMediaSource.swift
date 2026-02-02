@@ -6,6 +6,7 @@
  */
 
 import Foundation
+import os
 import UniformTypeIdentifiers
 
 /// Represents a local media file
@@ -112,7 +113,7 @@ actor LocalMediaSource {
         let fileManager = FileManager.default
         var mediaFiles: [LocalMediaFile] = []
 
-        print("[LocalMediaSource] Scanning directory: \(directory.path)")
+        AppLogger.localMedia.debug("Scanning directory: \(directory.path, privacy: .private)")
 
         let resourceKeys: [URLResourceKey] = [
             .isDirectoryKey,
@@ -127,7 +128,7 @@ actor LocalMediaSource {
             includingPropertiesForKeys: resourceKeys,
             options: recursive ? [.skipsHiddenFiles] : [.skipsHiddenFiles, .skipsSubdirectoryDescendants]
         ) else {
-            print("[LocalMediaSource] Failed to create enumerator for \(directory.path)")
+            AppLogger.localMedia.error("Failed to create enumerator for directory")
             return []
         }
 
@@ -137,7 +138,7 @@ actor LocalMediaSource {
             }
         }
 
-        print("[LocalMediaSource] Found \(mediaFiles.count) media files")
+        AppLogger.localMedia.info("Found \(mediaFiles.count, privacy: .public) media files")
 
         // Sort by creation date (newest first), falling back to modification date
         return mediaFiles.sorted { $0.createdDate > $1.createdDate }
@@ -208,7 +209,7 @@ actor LocalMediaSource {
             fileSize: fileSize
         )
 
-        print("[LocalMediaSource] Found \(type == .image ? "image" : "video"): \(url.lastPathComponent), created: \(createdDate)")
+        AppLogger.localMedia.debug("Found \(type == .image ? "image" : "video", privacy: .public): \(url.lastPathComponent, privacy: .private)")
 
         return mediaFile
     }
@@ -219,16 +220,16 @@ actor LocalMediaSource {
 /// ImageSource implementation for local files
 final class LocalImageSource: ImageSource, @unchecked Sendable {
     func fetchImages(page: Int, pageSize: Int) async throws -> ImageFetchResult {
-        print("[LocalImageSource] Fetching images page \(page), pageSize \(pageSize)")
+        AppLogger.localMedia.debug("Fetching images page \(page, privacy: .public), pageSize \(pageSize, privacy: .public)")
 
         let allImages = await LocalMediaSource.shared.scanImages()
-        print("[LocalImageSource] Total images found: \(allImages.count)")
+        AppLogger.localMedia.debug("Total images found: \(allImages.count, privacy: .public)")
 
         let startIndex = page * pageSize
         let endIndex = min(startIndex + pageSize, allImages.count)
 
         guard startIndex < allImages.count else {
-            print("[LocalImageSource] No more images (startIndex \(startIndex) >= count \(allImages.count))")
+            AppLogger.localMedia.debug("No more images (startIndex \(startIndex, privacy: .public) >= count \(allImages.count, privacy: .public))")
             return ImageFetchResult(images: [], hasMore: false, totalCount: allImages.count)
         }
 
@@ -242,7 +243,7 @@ final class LocalImageSource: ImageSource, @unchecked Sendable {
             )
         }
 
-        print("[LocalImageSource] Returning \(galleryImages.count) images for page \(page)")
+        AppLogger.localMedia.debug("Returning \(galleryImages.count, privacy: .public) images for page \(page, privacy: .public)")
 
         return ImageFetchResult(
             images: galleryImages,

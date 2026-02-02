@@ -5,6 +5,7 @@
  Each photo window gets its own instance with independent state.
  */
 
+import os
 import RealityKit
 import SwiftUI
 
@@ -68,7 +69,7 @@ class PhotoWindowModel {
                 }
             }
         } catch {
-            print("[PhotoWindowModel] Error loading image data: \(error)")
+            AppLogger.photoWindow.error("Error loading image data: \(error.localizedDescription, privacy: .public)")
             isLoadingDetailImage = false
         }
     }
@@ -101,27 +102,27 @@ class PhotoWindowModel {
             
             spatial3DImage = try await ImagePresentationComponent.Spatial3DImage(contentsOf: sourceURL)
         } catch {
-            print("[PhotoWindowModel] Unable to initialize spatial 3D image: \(error.localizedDescription)")
+            AppLogger.photoWindow.error("Unable to initialize spatial 3D image: \(error.localizedDescription, privacy: .public)")
             isLoadingDetailImage = false
-            
+
             // Enhanced error handling for network scenarios
             if let urlError = error as? URLError {
                 switch urlError.code {
                 case .notConnectedToInternet:
-                    print("No internet connection available.")
+                    AppLogger.photoWindow.error("No internet connection available.")
                 case .timedOut:
-                    print("Request timed out.")
+                    AppLogger.photoWindow.error("Request timed out.")
                 case .cannotFindHost:
-                    print("Cannot find host.")
+                    AppLogger.photoWindow.error("Cannot find host.")
                 default:
-                    print("URL error: \(urlError.code)")
+                    AppLogger.photoWindow.error("URL error code: \(urlError.code.rawValue, privacy: .public)")
                 }
             }
             return
         }
         
         guard let spatial3DImage else {
-            print("[PhotoWindowModel] Spatial3DImage is nil.")
+            AppLogger.photoWindow.warning("Spatial3DImage is nil.")
             isLoadingDetailImage = false
             return
         }
@@ -159,11 +160,11 @@ class PhotoWindowModel {
     func generateSpatial3DImage() async {
         guard spatial3DImageState == .notGenerated else { return }
         guard let spatial3DImage else {
-            print("[PhotoWindowModel] spatial3DImage is nil, cannot generate")
+            AppLogger.photoWindow.warning("spatial3DImage is nil, cannot generate")
             return
         }
         guard var imagePresentationComponent = contentEntity.components[ImagePresentationComponent.self] else {
-            print("[PhotoWindowModel] ImagePresentationComponent is missing from the entity.")
+            AppLogger.photoWindow.warning("ImagePresentationComponent is missing from the entity.")
             return
         }
         
@@ -187,7 +188,7 @@ class PhotoWindowModel {
                 imageAspectRatio = CGFloat(aspectRatio)
             }
         } catch {
-            print("[PhotoWindowModel] Error generating spatial 3D image: \(error)")
+            AppLogger.photoWindow.error("Error generating spatial 3D image: \(error.localizedDescription, privacy: .public)")
             spatial3DImageState = .notGenerated
         }
     }
@@ -223,13 +224,13 @@ class PhotoWindowModel {
         
         // Respect the user's last-used mode for this image
         if let lastMode = await Spatial3DConversionTracker.shared.lastViewingMode(url: imageURL), lastMode == .mono {
-            print("[PhotoWindowModel] Skipping auto-generation; last mode was 2D")
+            AppLogger.photoWindow.debug("Skipping auto-generation; last mode was 2D")
             return
         }
-        
+
         let wasConverted = await Spatial3DConversionTracker.shared.wasConverted(url: imageURL)
         if wasConverted {
-            print("[PhotoWindowModel] Auto-generating spatial 3D for previously converted image")
+            AppLogger.photoWindow.debug("Auto-generating spatial 3D for previously converted image")
             await generateSpatial3DImage()
         }
     }

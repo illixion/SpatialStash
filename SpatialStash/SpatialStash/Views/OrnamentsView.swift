@@ -4,6 +4,7 @@
  Controls for the detail image view including navigation, 2D/3D toggle, and back button.
  */
 
+import os
 import RealityKit
 import SwiftUI
 
@@ -61,7 +62,7 @@ struct OrnamentsView: View {
 
                     Button {
                         guard var ipc = appModel.contentEntity.components[ImagePresentationComponent.self] else {
-                            print("Unable to find ImagePresentationComponent.")
+                            AppLogger.views.warning("Unable to find ImagePresentationComponent.")
                             return
                         }
                         let currentURL = appModel.imageURL
@@ -79,12 +80,12 @@ struct OrnamentsView: View {
                                     do {
                                         try await appModel.generateSpatial3DImage()
                                     } catch {
-                                        print("Spatial3DImage generation failed: \(error.localizedDescription)")
+                                        AppLogger.views.error("Spatial3DImage generation failed: \(error.localizedDescription, privacy: .public)")
                                         appModel.spatial3DImageState = .notGenerated
                                     }
                                 }
                             case .generating:
-                                print("Spatial 3D Image is still generating...")
+                                AppLogger.views.debug("Spatial 3D Image is still generating...")
                                 return
                             }
                         case .spatial3D:
@@ -94,7 +95,7 @@ struct OrnamentsView: View {
                                 Task { await Spatial3DConversionTracker.shared.setLastViewingMode(url: url, mode: .mono) }
                             }
                         default:
-                            print("Unhandled viewing mode: \(ipc.viewingMode)")
+                            AppLogger.views.debug("Unhandled viewing mode: \(String(describing: ipc.viewingMode), privacy: .public)")
                         }
                     } label: {
                         // Show loading state or current viewing mode

@@ -4,6 +4,7 @@
  Vision Pro app for viewing photos with 2D to 3D spatial conversion.
  */
 
+import os
 import SwiftUI
 
 @main
@@ -18,7 +19,7 @@ struct SpatialStashApp: App {
                 .frame(minWidth: 320, maxWidth: 2000, minHeight: 320, maxHeight: 2000)
                 .onAppear {
                     // Ensure main window is visible when app launches
-                    print("[App] Main window appeared")
+                    AppLogger.app.info("Main window appeared")
                 }
         }
         .defaultSize(width: 1200, height: 800)

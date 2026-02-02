@@ -4,6 +4,7 @@
  Settings view with server configuration and source selection.
  */
 
+import os
 import SwiftUI
 
 struct SettingsTabView: View {
@@ -148,13 +149,13 @@ struct SettingsTabView: View {
 
                 Section {
                     Button("Refresh All Content") {
-                        print("[Settings] Refresh button pressed, source: \(appModel.mediaSourceType)")
+                        AppLogger.settings.debug("Refresh button pressed, source: \(appModel.mediaSourceType.rawValue, privacy: .public)")
                         Task {
-                            print("[Settings] Starting gallery refresh...")
+                            AppLogger.settings.debug("Starting gallery refresh...")
                             await appModel.loadInitialGallery()
-                            print("[Settings] Gallery refresh complete, images: \(appModel.galleryImages.count)")
+                            AppLogger.settings.debug("Gallery refresh complete, images: \(appModel.galleryImages.count, privacy: .public)")
                             await appModel.loadInitialVideos()
-                            print("[Settings] Video refresh complete, videos: \(appModel.galleryVideos.count)")
+                            AppLogger.settings.debug("Video refresh complete, videos: \(appModel.galleryVideos.count, privacy: .public)")
                         }
                     }
                 }
@@ -185,9 +186,9 @@ struct SettingsTabView: View {
         // Simple connection test - try to fetch first page
         do {
             _ = try await appModel.imageSource.fetchImages(page: 0, pageSize: 1)
-            print("Connection successful!")
+            AppLogger.settings.info("Connection successful!")
         } catch {
-            print("Connection failed: \(error)")
+            AppLogger.settings.error("Connection failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 

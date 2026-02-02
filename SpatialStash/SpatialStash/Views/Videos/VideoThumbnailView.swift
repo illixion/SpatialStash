@@ -4,6 +4,7 @@
  Individual video thumbnail with duration overlay.
  */
 
+import os
 import SwiftUI
 
 struct VideoThumbnailView: View {
@@ -97,7 +98,7 @@ struct VideoThumbnailView: View {
                 loadFailed = true
             }
         } catch {
-            print("Failed to load video thumbnail: \(error)")
+            AppLogger.views.warning("Failed to load video thumbnail: \(error.localizedDescription, privacy: .public)")
             loadFailed = true
         }
         isLoading = false

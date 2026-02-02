@@ -6,6 +6,7 @@
  */
 
 import Foundation
+import os
 
 enum ViewingModePreference: String {
     case mono
@@ -24,7 +25,8 @@ actor Spatial3DConversionTracker {
         // Load from UserDefaults
         if let saved = UserDefaults.standard.array(forKey: userDefaultsKey) as? [String] {
             convertedImageURLs = Set(saved)
-            print("[Spatial3DTracker] Loaded \(convertedImageURLs.count) previously converted images")
+            let count = convertedImageURLs.count
+            AppLogger.spatial3DTracker.info("Loaded \(count, privacy: .public) previously converted images")
         } else {
             convertedImageURLs = []
         }

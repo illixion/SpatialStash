@@ -5,6 +5,7 @@
  and visionOS hover effects.
  */
 
+import os
 import SwiftUI
 
 struct GalleryThumbnailView: View {
@@ -70,7 +71,7 @@ struct GalleryThumbnailView: View {
                 loadFailed = true
             }
         } catch {
-            print("Failed to load thumbnail: \(error)")
+            AppLogger.views.warning("Failed to load thumbnail: \(error.localizedDescription, privacy: .public)")
             loadFailed = true
         }
         isLoading = false

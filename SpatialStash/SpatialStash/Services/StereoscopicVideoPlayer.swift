@@ -7,6 +7,7 @@
 
 import AVFoundation
 import Combine
+import os
 import RealityKit
 
 /// Player state for stereoscopic video
@@ -105,7 +106,7 @@ class StereoscopicVideoPlayer: ObservableObject {
                 // Check cache first
                 if let cachedURL = await videoCache.getCachedVideoURL(videoId: video.stashId, format: formatString) {
                     // Cache hit! Use cached converted video
-                    print("[StereoscopicPlayer] Cache hit for video: \(video.stashId)")
+                    AppLogger.stereoscopicPlayer.info("Cache hit for video: \(video.stashId, privacy: .private)")
 
                     await MainActor.run {
                         self.currentChunkInfo = "Loading from cache..."
@@ -124,7 +125,7 @@ class StereoscopicVideoPlayer: ObservableObject {
                 }
 
                 // Cache miss - need to download and convert
-                print("[StereoscopicPlayer] Cache miss for video: \(video.stashId), downloading...")
+                AppLogger.stereoscopicPlayer.info("Cache miss for video: \(video.stashId, privacy: .private), downloading...")
 
                 await MainActor.run {
                     self.state = .downloading(progress: 0)

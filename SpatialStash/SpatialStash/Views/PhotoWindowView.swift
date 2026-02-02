@@ -5,6 +5,7 @@
  Each photo opens in its own window with independent state.
  */
 
+import os
 import RealityKit
 import SwiftUI
 import UIKit
@@ -72,7 +73,7 @@ struct PhotoWindowView: View {
                     }
                     .onAppear() {
                         guard let windowScene = resolvedWindowScene else {
-                            print("Unable to get the window scene. Unable to set the resizing restrictions.")
+                            AppLogger.views.warning("Unable to get the window scene. Unable to set the resizing restrictions.")
                             return
                         }
                         // Ensure that the scene resizes uniformly on X and Y axes.
@@ -161,7 +162,7 @@ struct PhotoWindowView: View {
     /// Resize the window to match the given aspect ratio
     private func resizeWindowToAspectRatio(_ aspectRatio: CGFloat) {
         guard let windowScene = resolvedWindowScene else {
-            print("Unable to get the window scene. Resizing is not possible.")
+            AppLogger.views.warning("Unable to get the window scene. Resizing is not possible.")
             return
         }
         

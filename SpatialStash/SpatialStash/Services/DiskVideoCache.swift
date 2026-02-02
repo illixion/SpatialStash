@@ -7,6 +7,7 @@
  */
 
 import Foundation
+import os
 
 /// Metadata about a cached video
 struct CachedVideoMetadata: Codable {
@@ -126,7 +127,7 @@ actor DiskVideoCache {
             await self.cleanupIfNeeded()
         }
 
-        print("[VideoCache] Cached video: \(videoId) (\(format))")
+        AppLogger.videoCache.info("Cached video: \(videoId, privacy: .private) (\(format, privacy: .public))")
         return destinationURL
     }
 
@@ -160,7 +161,7 @@ actor DiskVideoCache {
             await self.cleanupIfNeeded()
         }
 
-        print("[VideoCache] Cached video (moved): \(videoId) (\(format))")
+        AppLogger.videoCache.info("Cached video (moved): \(videoId, privacy: .private) (\(format, privacy: .public))")
         return destinationURL
     }
 
@@ -212,7 +213,7 @@ actor DiskVideoCache {
 
         guard currentSize > maxCacheSize else { return }
 
-        print("[VideoCache] Cache size (\(currentSize / 1024 / 1024) MB) exceeds limit, cleaning up...")
+        AppLogger.videoCache.notice("Cache size (\(currentSize / 1024 / 1024, privacy: .public) MB) exceeds limit, cleaning up...")
 
         // Get all cached files with their modification dates
         guard let enumerator = fileManager.enumerator(
@@ -255,11 +256,11 @@ actor DiskVideoCache {
                 try? fileManager.removeItem(at: metadataURL)
                 freedSize += file.size
             } catch {
-                print("[VideoCache] Failed to remove \(file.url): \(error)")
+                AppLogger.videoCache.warning("Failed to remove file: \(error.localizedDescription, privacy: .public)")
             }
         }
 
-        print("[VideoCache] Freed \(freedSize / 1024 / 1024) MB")
+        AppLogger.videoCache.info("Freed \(freedSize / 1024 / 1024, privacy: .public) MB")
     }
 
     /// Clear entire cache
@@ -268,7 +269,7 @@ actor DiskVideoCache {
         try? fileManager.removeItem(at: metadataDirectory)
         try? fileManager.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
         try? fileManager.createDirectory(at: metadataDirectory, withIntermediateDirectories: true)
-        print("[VideoCache] Cache cleared")
+        AppLogger.videoCache.notice("Cache cleared")
     }
 
     /// Get cache statistics

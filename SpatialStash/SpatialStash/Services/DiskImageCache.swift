@@ -6,6 +6,7 @@
  */
 
 import Foundation
+import os
 import UIKit
 
 actor DiskImageCache {
@@ -93,7 +94,7 @@ actor DiskImageCache {
                 await self.cleanupIfNeeded()
             }
         } catch {
-            print("[DiskCache] Failed to save data: \(error)")
+            AppLogger.diskCache.error("Failed to save data: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -123,7 +124,7 @@ actor DiskImageCache {
 
         guard currentSize > maxCacheSize else { return }
 
-        print("[DiskCache] Cache size (\(currentSize / 1024 / 1024) MB) exceeds limit, cleaning up...")
+        AppLogger.diskCache.notice("Cache size (\(currentSize / 1024 / 1024, privacy: .public) MB) exceeds limit, cleaning up...")
 
         // Get all cached files with their modification dates
         guard let enumerator = fileManager.enumerator(
@@ -161,18 +162,18 @@ actor DiskImageCache {
                 try fileManager.removeItem(at: file.url)
                 freedSize += file.size
             } catch {
-                print("[DiskCache] Failed to remove \(file.url): \(error)")
+                AppLogger.diskCache.warning("Failed to remove file: \(error.localizedDescription, privacy: .public)")
             }
         }
 
-        print("[DiskCache] Freed \(freedSize / 1024 / 1024) MB")
+        AppLogger.diskCache.info("Freed \(freedSize / 1024 / 1024, privacy: .public) MB")
     }
 
     /// Clear entire cache
     func clearCache() {
         try? fileManager.removeItem(at: cacheDirectory)
         try? fileManager.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
-        print("[DiskCache] Cache cleared")
+        AppLogger.diskCache.notice("Cache cleared")
     }
 
     /// Get cache statistics

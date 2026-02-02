@@ -5,6 +5,7 @@
  Includes navigation state, gallery management, and spatial image handling.
  */
 
+import os
 import RealityKit
 import SwiftUI
 
@@ -57,7 +58,8 @@ class AppModel {
         didSet {
             if mediaSourceType != oldValue {
                 UserDefaults.standard.set(mediaSourceType.rawValue, forKey: "mediaSourceType")
-                print("[AppModel] Media source changed to: \(mediaSourceType.rawValue)")
+                let sourceType = mediaSourceType.rawValue
+                AppLogger.appModel.notice("Media source changed to: \(sourceType, privacy: .public)")
                 rebuildImageSource()
                 rebuildVideoSource()
                 Task {
@@ -83,7 +85,8 @@ class AppModel {
         didSet {
             if pageSize != oldValue {
                 UserDefaults.standard.set(pageSize, forKey: "pageSize")
-                print("[AppModel] Page size changed to: \(pageSize)")
+                let size = pageSize
+                AppLogger.appModel.info("Page size changed to: \(size, privacy: .public)")
             }
         }
     }
@@ -136,7 +139,8 @@ class AppModel {
 
     /// Rebuild image source when media type changes
     private func rebuildImageSource() {
-        print("[AppModel] Rebuilding image source for: \(mediaSourceType.rawValue)")
+        let sourceTypeRaw = mediaSourceType.rawValue
+        AppLogger.appModel.debug("Rebuilding image source for: \(sourceTypeRaw, privacy: .public)")
         switch mediaSourceType {
         case .staticURLs:
             imageSource = StaticURLImageSource()
@@ -181,7 +185,7 @@ class AppModel {
         var urls: [URL] = []
         for imageName in imageNames {
             guard let imageURL = Bundle.main.url(forResource: imageName, withExtension: ".jpeg") else {
-                print("Unable to find image \(imageName) in bundle.")
+                AppLogger.appModel.warning("Unable to find image \(imageName, privacy: .public) in bundle.")
                 continue
             }
             urls.append(imageURL)
@@ -296,11 +300,11 @@ class AppModel {
         }
 
         // Now all stored properties are initialized, we can use self
-        print("[AppModel] Init - Server URL: \(self.stashServerURL)")
-        print("[AppModel] Init - Has API Key: \(!self.stashAPIKey.isEmpty)")
-        print("[AppModel] Init - Media Source: \(self.mediaSourceType.rawValue)")
-        print("[AppModel] Init - Page Size: \(self.pageSize)")
-        print("[AppModel] Init - Image source: \(type(of: self.imageSource))")
+        AppLogger.appModel.info("Init - Server URL: \(self.stashServerURL, privacy: .private)")
+        AppLogger.appModel.info("Init - Has API Key: \(!self.stashAPIKey.isEmpty, privacy: .public)")
+        AppLogger.appModel.info("Init - Media Source: \(self.mediaSourceType.rawValue, privacy: .public)")
+        AppLogger.appModel.info("Init - Page Size: \(self.pageSize, privacy: .public)")
+        AppLogger.appModel.info("Init - Image source: \(String(describing: type(of: self.imageSource)), privacy: .public)")
 
         // Set initial image URL from bundled images (fallback)
         if let firstBundled = bundledImageURLs.first {
@@ -319,14 +323,15 @@ class AppModel {
         if let data = UserDefaults.standard.data(forKey: Self.savedViewsKey),
            let views = try? JSONDecoder().decode([SavedView].self, from: data) {
             savedViews = views
-            print("[AppModel] Loaded \(views.count) saved views")
+            AppLogger.appModel.info("Loaded \(views.count, privacy: .public) saved views")
         }
     }
 
     func saveSavedViews() {
         if let data = try? JSONEncoder().encode(savedViews) {
             UserDefaults.standard.set(data, forKey: Self.savedViewsKey)
-            print("[AppModel] Saved \(savedViews.count) views")
+            let count = savedViews.count
+            AppLogger.appModel.info("Saved \(count, privacy: .public) views")
         }
     }
 
@@ -363,14 +368,16 @@ class AppModel {
 
     func updateAPIClient() {
         guard let url = URL(string: stashServerURL) else {
-            print("[AppModel] Invalid server URL: \(stashServerURL)")
+            let serverURL = stashServerURL
+            AppLogger.appModel.warning("Invalid server URL: \(serverURL, privacy: .private)")
             return
         }
         let config = StashServerConfig(
             serverURL: url,
             apiKey: stashAPIKey.isEmpty ? nil : stashAPIKey
         )
-        print("[AppModel] Updating API client with URL: \(url), hasAPIKey: \(!stashAPIKey.isEmpty)")
+        let hasKey = !stashAPIKey.isEmpty
+        AppLogger.appModel.info("Updating API client with URL: \(url, privacy: .private), hasAPIKey: \(hasKey, privacy: .public)")
         Task {
             await apiClient.updateConfig(config)
             // Rebuild sources with updated client
@@ -390,7 +397,8 @@ class AppModel {
 
     /// Load the initial gallery page
     func loadInitialGallery() async {
-        print("[AppModel] loadInitialGallery called, source: \(type(of: imageSource))")
+        let sourceType = String(describing: type(of: imageSource))
+        AppLogger.appModel.debug("loadInitialGallery called, source: \(sourceType, privacy: .public)")
         currentPage = 0
         galleryImages = []
         hasMorePages = true
@@ -400,11 +408,15 @@ class AppModel {
     /// Load the next page of gallery images
     func loadNextPage() async {
         guard !isLoadingGallery && hasMorePages else {
-            print("[AppModel] loadNextPage skipped - isLoading: \(isLoadingGallery), hasMore: \(hasMorePages)")
+            let loading = isLoadingGallery
+            let hasMore = hasMorePages
+            AppLogger.appModel.debug("loadNextPage skipped - isLoading: \(loading, privacy: .public), hasMore: \(hasMore, privacy: .public)")
             return
         }
 
-        print("[AppModel] loadNextPage starting, page: \(currentPage), source: \(type(of: imageSource))")
+        let page = currentPage
+        let sourceTypeName = String(describing: type(of: imageSource))
+        AppLogger.appModel.debug("loadNextPage starting, page: \(page, privacy: .public), source: \(sourceTypeName, privacy: .public)")
         isLoadingGallery = true
         defer { isLoadingGallery = false }
 
@@ -412,12 +424,12 @@ class AppModel {
             // Use filter if we're on Stash server, otherwise ignore
             let filter: ImageFilterCriteria? = (mediaSourceType == .stashServer) ? currentFilter : nil
             let result = try await imageSource.fetchImages(page: currentPage, pageSize: pageSize, filter: filter)
-            print("[AppModel] loadNextPage got \(result.images.count) images, hasMore: \(result.hasMore)")
+            AppLogger.appModel.debug("loadNextPage got \(result.images.count, privacy: .public) images, hasMore: \(result.hasMore, privacy: .public)")
             galleryImages.append(contentsOf: result.images)
             hasMorePages = result.hasMore
             currentPage += 1
         } catch {
-            print("[AppModel] Failed to load gallery page: \(error)")
+            AppLogger.appModel.error("Failed to load gallery page: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -502,9 +514,10 @@ class AppModel {
                     return name1 < name2
                 }
             }
-            print("[AppModel] Loaded \(availableGalleries.count) galleries for autocomplete")
+            let galleriesCount = availableGalleries.count
+            AppLogger.appModel.debug("Loaded \(galleriesCount, privacy: .public) galleries for autocomplete")
         } catch {
-            print("[AppModel] Failed to search galleries: \(error)")
+            AppLogger.appModel.error("Failed to search galleries: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -553,7 +566,7 @@ class AppModel {
                     }
                 }
         } catch {
-            print("[AppModel] Failed to search tags: \(error)")
+            AppLogger.appModel.error("Failed to search tags: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -599,7 +612,7 @@ class AppModel {
                 }
             }
         } catch {
-            print("[AppModel] Failed to load image data: \(error)")
+            AppLogger.appModel.error("Failed to load image data: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -697,7 +710,7 @@ class AppModel {
 
     /// Load the initial video gallery page
     func loadInitialVideos() async {
-        print("[AppModel] loadInitialVideos called")
+        AppLogger.appModel.debug("loadInitialVideos called")
         currentVideoPage = 0
         galleryVideos = []
         hasMoreVideoPages = true
@@ -707,11 +720,14 @@ class AppModel {
     /// Load the next page of videos
     func loadNextVideoPage() async {
         guard !isLoadingVideos && hasMoreVideoPages else {
-            print("[AppModel] loadNextVideoPage skipped - isLoading: \(isLoadingVideos), hasMore: \(hasMoreVideoPages)")
+            let loadingVideos = isLoadingVideos
+            let hasMoreVideo = hasMoreVideoPages
+            AppLogger.appModel.debug("loadNextVideoPage skipped - isLoading: \(loadingVideos, privacy: .public), hasMore: \(hasMoreVideo, privacy: .public)")
             return
         }
 
-        print("[AppModel] loadNextVideoPage starting, page: \(currentVideoPage)")
+        let videoPage = currentVideoPage
+        AppLogger.appModel.debug("loadNextVideoPage starting, page: \(videoPage, privacy: .public)")
         isLoadingVideos = true
         defer { isLoadingVideos = false }
 
@@ -719,12 +735,12 @@ class AppModel {
             // Use filter if we're on Stash server, otherwise ignore
             let filter: SceneFilterCriteria? = (mediaSourceType == .stashServer) ? currentVideoFilter : nil
             let result = try await videoSource.fetchVideos(page: currentVideoPage, pageSize: pageSize, filter: filter)
-            print("[AppModel] loadNextVideoPage got \(result.videos.count) videos, hasMore: \(result.hasMore)")
+            AppLogger.appModel.debug("loadNextVideoPage got \(result.videos.count, privacy: .public) videos, hasMore: \(result.hasMore, privacy: .public)")
             galleryVideos.append(contentsOf: result.videos)
             hasMoreVideoPages = result.hasMore
             currentVideoPage += 1
         } catch {
-            print("[AppModel] Failed to load video page: \(error)")
+            AppLogger.appModel.error("Failed to load video page: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -796,7 +812,7 @@ class AppModel {
 
     func createImagePresentationComponent() async {
         guard let imageURL else {
-            print("ImageURL is nil.")
+            AppLogger.appModel.warning("ImageURL is nil.")
             isLoadingDetailImage = false
             return
         }
@@ -813,27 +829,27 @@ class AppModel {
             }
             spatial3DImage = try await ImagePresentationComponent.Spatial3DImage(contentsOf: sourceURL)
         } catch {
-            print("Unable to initialize spatial 3D image: \(error.localizedDescription)")
+            AppLogger.appModel.error("Unable to initialize spatial 3D image: \(error.localizedDescription, privacy: .public)")
             isLoadingDetailImage = false
 
             // Enhanced error handling for network scenarios
             if let urlError = error as? URLError {
                 switch urlError.code {
                 case .notConnectedToInternet:
-                    print("No internet connection available.")
+                    AppLogger.appModel.error("No internet connection available.")
                 case .timedOut:
-                    print("Request timed out.")
+                    AppLogger.appModel.error("Request timed out.")
                 case .cannotFindHost:
-                    print("Cannot find host.")
+                    AppLogger.appModel.error("Cannot find host.")
                 default:
-                    print("URL error: \(urlError.code)")
+                    AppLogger.appModel.error("URL error code: \(urlError.code.rawValue, privacy: .public)")
                 }
             }
             return
         }
 
         guard let spatial3DImage else {
-            print("Spatial3DImage is nil.")
+            AppLogger.appModel.warning("Spatial3DImage is nil.")
             isLoadingDetailImage = false
             return
         }
@@ -851,15 +867,15 @@ class AppModel {
 
     func generateSpatial3DImage() async throws {
         guard spatial3DImageState == .notGenerated else {
-            print("Spatial 3D image already generated or generation is in progress.")
+            AppLogger.appModel.debug("Spatial 3D image already generated or generation is in progress.")
             return
         }
         guard let spatial3DImage else {
-            print("createImagePresentationComponent.")
+            AppLogger.appModel.warning("createImagePresentationComponent not called.")
             return
         }
         guard var imagePresentationComponent = contentEntity.components[ImagePresentationComponent.self] else {
-            print("ImagePresentationComponent is missing from the entity.")
+            AppLogger.appModel.warning("ImagePresentationComponent is missing from the entity.")
             return
         }
         // Set the desired viewing mode before generating so that it will trigger the
@@ -893,17 +909,17 @@ class AppModel {
 
         // Respect the user's last-used mode for this image
         if let lastMode = await Spatial3DConversionTracker.shared.lastViewingMode(url: url), lastMode == .mono {
-            print("[AppModel] Skipping auto-generation; last mode was 2D")
+            AppLogger.appModel.debug("Skipping auto-generation; last mode was 2D")
             return
         }
 
         let wasConverted = await Spatial3DConversionTracker.shared.wasConverted(url: url)
         if wasConverted {
-            print("[AppModel] Auto-generating spatial 3D for previously converted image")
+            AppLogger.appModel.debug("Auto-generating spatial 3D for previously converted image")
             do {
                 try await generateSpatial3DImage()
             } catch {
-                print("[AppModel] Auto-generation failed: \(error)")
+                AppLogger.appModel.error("Auto-generation failed: \(error.localizedDescription, privacy: .public)")
             }
         }
     }

@@ -5,6 +5,7 @@
  */
 
 import Foundation
+import os
 
 /// Configuration for Stash server connection
 struct StashServerConfig {
@@ -58,7 +59,7 @@ actor StashAPIClient {
 
     func query<T: Decodable>(_ query: String, variables: [String: Any]? = nil) async throws -> T {
         let endpoint = graphQLEndpoint
-        print("[StashAPI] Making request to: \(endpoint)")
+        AppLogger.stashAPI.debug("Making request to: \(endpoint, privacy: .private)")
 
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
@@ -66,7 +67,7 @@ actor StashAPIClient {
 
         if let apiKey = config.apiKey, !apiKey.isEmpty {
             request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-            print("[StashAPI] Using API key authentication")
+            AppLogger.stashAPI.debug("Using API key authentication")
         }
 
         var body: [String: Any] = ["query": query]
@@ -77,49 +78,49 @@ actor StashAPIClient {
         let bodyData = try JSONSerialization.data(withJSONObject: body)
         request.httpBody = bodyData
 
-        print("[StashAPI] Request body: \(String(data: bodyData, encoding: .utf8) ?? "nil")")
+        AppLogger.stashAPI.debug("Request body: \(String(data: bodyData, encoding: .utf8) ?? "nil", privacy: .private)")
 
         do {
             let (data, response) = try await session.data(for: request)
 
             guard let httpResponse = response as? HTTPURLResponse else {
-                print("[StashAPI] Invalid response type")
+                AppLogger.stashAPI.error("Invalid response type")
                 throw StashAPIError.invalidResponse
             }
 
-            print("[StashAPI] Response status: \(httpResponse.statusCode)")
+            AppLogger.stashAPI.debug("Response status: \(httpResponse.statusCode, privacy: .public)")
 
             guard (200...299).contains(httpResponse.statusCode) else {
-                print("[StashAPI] HTTP error: \(httpResponse.statusCode)")
+                AppLogger.stashAPI.error("HTTP error: \(httpResponse.statusCode, privacy: .public)")
                 if let responseString = String(data: data, encoding: .utf8) {
-                    print("[StashAPI] Response body: \(responseString)")
+                    AppLogger.stashAPI.debug("Response body: \(responseString, privacy: .private)")
                 }
                 throw StashAPIError.httpError(statusCode: httpResponse.statusCode)
             }
 
             if let responseString = String(data: data, encoding: .utf8) {
-                print("[StashAPI] Response: \(responseString.prefix(500))...")
+                AppLogger.stashAPI.debug("Response: \(responseString.prefix(500), privacy: .private)...")
             }
 
             let decoder = JSONDecoder()
             let graphQLResponse = try decoder.decode(GraphQLResponse<T>.self, from: data)
 
             if let errors = graphQLResponse.errors, !errors.isEmpty {
-                print("[StashAPI] GraphQL errors: \(errors.map { $0.message })")
+                AppLogger.stashAPI.error("GraphQL errors: \(errors.map { $0.message }, privacy: .public)")
                 throw StashAPIError.graphQLErrors(errors)
             }
 
             guard let responseData = graphQLResponse.data else {
-                print("[StashAPI] No data in response")
+                AppLogger.stashAPI.error("No data in response")
                 throw StashAPIError.noData
             }
 
-            print("[StashAPI] Query successful")
+            AppLogger.stashAPI.debug("Query successful")
             return responseData
         } catch let error as StashAPIError {
             throw error
         } catch {
-            print("[StashAPI] Network error: \(error)")
+            AppLogger.stashAPI.error("Network error: \(error.localizedDescription, privacy: .public)")
             throw error
         }
     }

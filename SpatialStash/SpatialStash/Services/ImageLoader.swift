@@ -5,6 +5,7 @@
  Supports both static images and animated GIFs.
  */
 
+import os
 import SwiftUI
 
 /// Wrapper class to store image data in NSCache
@@ -236,7 +237,7 @@ actor ImageLoader {
         let data = try Data(contentsOf: url)
 
         guard let image = UIImage(data: data) else {
-            print("[ImageLoader] Failed to create UIImage from local file: \(url.lastPathComponent)")
+            AppLogger.imageLoader.warning("Failed to create UIImage from local file: \(url.lastPathComponent, privacy: .private)")
             return nil
         }
 
