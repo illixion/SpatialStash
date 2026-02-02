@@ -31,6 +31,31 @@ actor ImageLoader {
         cache.totalCostLimit = 100 * 1024 * 1024 // 100 MB
     }
 
+    /// Normalize an image by redrawing it to avoid Core Graphics decoding issues
+    /// with certain 24-bit image formats (rdar://143602439)
+    private nonisolated func normalizeImage(_ image: UIImage) -> UIImage {
+        // Skip normalization for animated images or images without cgImage
+        guard let cgImage = image.cgImage else {
+            return image
+        }
+
+        // Redraw the image in a new graphics context with a compatible pixel format
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = image.scale
+        format.opaque = false
+
+        let renderer = UIGraphicsImageRenderer(
+            size: CGSize(width: cgImage.width, height: cgImage.height),
+            format: format
+        )
+
+        return renderer.image { context in
+            // Draw the original image into the new context
+            UIImage(cgImage: cgImage, scale: 1.0, orientation: image.imageOrientation)
+                .draw(in: CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height))
+        }
+    }
+
     /// Load an image from a URL, using cache if available
     /// - Parameter url: The URL to load the image from
     /// - Returns: The loaded image, or nil if loading failed
@@ -48,7 +73,9 @@ actor ImageLoader {
 
         // Check disk cache for remote URLs
         if let diskData = await DiskImageCache.shared.loadData(for: url),
-           let image = UIImage(data: diskData) {
+           let rawImage = UIImage(data: diskData) {
+            // Normalize the image to avoid Core Graphics decoding issues
+            let image = normalizeImage(rawImage)
             // Restore to memory cache
             let cachedData = CachedImageData(image: image, data: diskData)
             cache.setObject(cachedData, forKey: url as NSURL, cost: diskData.count)
@@ -61,7 +88,7 @@ actor ImageLoader {
         }
 
         // Start new load task for remote URLs
-        let task = Task<CachedImageData?, Error> {
+        let task = Task<CachedImageData?, Error> { [self] in
             let (data, response) = try await URLSession.shared.data(from: url)
 
             // Validate response
@@ -70,9 +97,12 @@ actor ImageLoader {
                 return nil
             }
 
-            guard let image = UIImage(data: data) else {
+            guard let rawImage = UIImage(data: data) else {
                 return nil
             }
+
+            // Normalize the image to avoid Core Graphics decoding issues
+            let image = normalizeImage(rawImage)
 
             // Create cached data wrapper
             let cachedData = CachedImageData(image: image, data: data)
@@ -113,7 +143,9 @@ actor ImageLoader {
 
         // Check disk cache for remote URLs
         if let diskData = await DiskImageCache.shared.loadData(for: url),
-           let image = UIImage(data: diskData) {
+           let rawImage = UIImage(data: diskData) {
+            // Normalize the image to avoid Core Graphics decoding issues
+            let image = normalizeImage(rawImage)
             // Restore to memory cache
             let cachedData = CachedImageData(image: image, data: diskData)
             cache.setObject(cachedData, forKey: url as NSURL, cost: diskData.count)
@@ -126,7 +158,7 @@ actor ImageLoader {
         }
 
         // Start new load task for remote URLs
-        let task = Task<CachedImageData?, Error> {
+        let task = Task<CachedImageData?, Error> { [self] in
             let (data, response) = try await URLSession.shared.data(from: url)
 
             // Validate response
@@ -135,9 +167,12 @@ actor ImageLoader {
                 return nil
             }
 
-            guard let image = UIImage(data: data) else {
+            guard let rawImage = UIImage(data: data) else {
                 return nil
             }
+
+            // Normalize the image to avoid Core Graphics decoding issues
+            let image = normalizeImage(rawImage)
 
             // Create cached data wrapper
             let cachedData = CachedImageData(image: image, data: data)
@@ -177,7 +212,9 @@ actor ImageLoader {
 
         // Check disk cache for remote URLs
         if let diskData = await DiskImageCache.shared.loadData(for: url),
-           let image = UIImage(data: diskData) {
+           let rawImage = UIImage(data: diskData) {
+            // Normalize the image to avoid Core Graphics decoding issues
+            let image = normalizeImage(rawImage)
             // Restore to memory cache
             let cachedData = CachedImageData(image: image, data: diskData)
             cache.setObject(cachedData, forKey: url as NSURL, cost: diskData.count)
@@ -193,7 +230,7 @@ actor ImageLoader {
         }
 
         // Start new load task for remote URLs
-        let task = Task<CachedImageData?, Error> {
+        let task = Task<CachedImageData?, Error> { [self] in
             let (data, response) = try await URLSession.shared.data(from: url)
 
             // Validate response
@@ -202,9 +239,12 @@ actor ImageLoader {
                 return nil
             }
 
-            guard let image = UIImage(data: data) else {
+            guard let rawImage = UIImage(data: data) else {
                 return nil
             }
+
+            // Normalize the image to avoid Core Graphics decoding issues
+            let image = normalizeImage(rawImage)
 
             // Create cached data wrapper
             let cachedData = CachedImageData(image: image, data: data)
@@ -236,10 +276,13 @@ actor ImageLoader {
         // Read data from local file
         let data = try Data(contentsOf: url)
 
-        guard let image = UIImage(data: data) else {
+        guard let rawImage = UIImage(data: data) else {
             AppLogger.imageLoader.warning("Failed to create UIImage from local file: \(url.lastPathComponent, privacy: .private)")
             return nil
         }
+
+        // Normalize the image to avoid Core Graphics decoding issues
+        let image = normalizeImage(rawImage)
 
         // Cache in memory (but not to disk since it's already local)
         let cachedData = CachedImageData(image: image, data: data)

@@ -51,6 +51,8 @@ struct PhotoWindowView: View {
                         }
                         // Resize window to match initial aspect ratio
                         resizeWindowToAspectRatio(windowModel.imageAspectRatio)
+                        // Auto-generate spatial 3D after entity is added to scene
+                        await windowModel.autoGenerateSpatial3DIfNeeded()
                     } update: { content in
                         guard let presentationScreenSize = windowModel
                             .contentEntity

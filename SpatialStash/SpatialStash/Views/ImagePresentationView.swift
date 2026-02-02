@@ -37,6 +37,8 @@ struct ImagePresentationView: View {
                         content.add(appModel.contentEntity)
                         // Resize window to match initial aspect ratio
                         resizeWindowToAspectRatio(appModel.imageAspectRatio)
+                        // Auto-generate spatial 3D after entity is added to scene
+                        await appModel.autoGenerateSpatial3DIfNeeded()
                     } update: { content in
                         guard let presentationScreenSize = appModel
                             .contentEntity

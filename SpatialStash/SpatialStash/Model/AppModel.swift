@@ -171,28 +171,6 @@ class AppModel {
     var lastViewedImageId: UUID?
     var lastViewedVideoId: UUID?
 
-    // MARK: - Bundled Images (Legacy - kept for reference)
-
-    let imageNames: [String] = [
-        "architecture-windmill-tulips",
-        "food-lemon-tree",
-        "animals-cat-sleeping-in-ruins",
-        "animals-bee-on-purple-flower",
-        "architecture-hampi-india"
-    ]
-
-    var bundledImageURLs: [URL] {
-        var urls: [URL] = []
-        for imageName in imageNames {
-            guard let imageURL = Bundle.main.url(forResource: imageName, withExtension: ".jpeg") else {
-                AppLogger.appModel.warning("Unable to find image \(imageName, privacy: .public) in bundle.")
-                continue
-            }
-            urls.append(imageURL)
-        }
-        return urls
-    }
-
     // MARK: - Spatial Image State (Existing)
 
     var imageIndex: Int = 0
@@ -305,11 +283,6 @@ class AppModel {
         AppLogger.appModel.info("Init - Media Source: \(self.mediaSourceType.rawValue, privacy: .public)")
         AppLogger.appModel.info("Init - Page Size: \(self.pageSize, privacy: .public)")
         AppLogger.appModel.info("Init - Image source: \(String(describing: type(of: self.imageSource)), privacy: .public)")
-
-        // Set initial image URL from bundled images (fallback)
-        if let firstBundled = bundledImageURLs.first {
-            imageURL = firstBundled
-        }
 
         // Load saved views from UserDefaults
         loadSavedViews()
@@ -860,8 +833,11 @@ class AppModel {
             imageAspectRatio = CGFloat(aspectRatio)
         }
         isLoadingDetailImage = false
+        // Note: Auto-generation is handled by ImagePresentationView after entity is added to scene
+    }
 
-        // Auto-generate spatial 3D if this image was previously converted
+    /// Called after the entity is added to the RealityKit scene to auto-generate spatial 3D
+    func autoGenerateSpatial3DIfNeeded() async {
         await autoGenerateSpatial3DIfPreviouslyConverted()
     }
 

@@ -133,8 +133,11 @@ class PhotoWindowModel {
             imageAspectRatio = CGFloat(aspectRatio)
         }
         isLoadingDetailImage = false
-        
-        // Auto-generate spatial 3D if this image was previously converted
+        // Note: Auto-generation is handled by PhotoWindowView after entity is added to scene
+    }
+
+    /// Called after the entity is added to the RealityKit scene to auto-generate spatial 3D
+    func autoGenerateSpatial3DIfNeeded() async {
         await autoGenerateSpatial3DIfPreviouslyConverted()
     }
 
