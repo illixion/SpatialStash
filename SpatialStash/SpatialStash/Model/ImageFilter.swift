@@ -348,23 +348,51 @@ struct SceneFilterCriteria: Codable, Equatable {
 
 // MARK: - Saved View
 
-/// A saved filter/sort configuration
+/// A saved filter/sort configuration for images
 struct SavedView: Identifiable, Codable, Equatable {
     let id: UUID
     var name: String
     var filter: ImageFilterCriteria
     var createdAt: Date
     var updatedAt: Date
+    var isDefault: Bool
 
-    init(id: UUID = UUID(), name: String, filter: ImageFilterCriteria = ImageFilterCriteria()) {
+    init(id: UUID = UUID(), name: String, filter: ImageFilterCriteria = ImageFilterCriteria(), isDefault: Bool = false) {
         self.id = id
         self.name = name
         self.filter = filter
         self.createdAt = Date()
         self.updatedAt = Date()
+        self.isDefault = isDefault
     }
 
     mutating func updateFilter(_ newFilter: ImageFilterCriteria) {
+        self.filter = newFilter
+        self.updatedAt = Date()
+    }
+}
+
+// MARK: - Saved Video View
+
+/// A saved filter/sort configuration for videos
+struct SavedVideoView: Identifiable, Codable, Equatable {
+    let id: UUID
+    var name: String
+    var filter: SceneFilterCriteria
+    var createdAt: Date
+    var updatedAt: Date
+    var isDefault: Bool
+
+    init(id: UUID = UUID(), name: String, filter: SceneFilterCriteria = SceneFilterCriteria(), isDefault: Bool = false) {
+        self.id = id
+        self.name = name
+        self.filter = filter
+        self.createdAt = Date()
+        self.updatedAt = Date()
+        self.isDefault = isDefault
+    }
+
+    mutating func updateFilter(_ newFilter: SceneFilterCriteria) {
         self.filter = newFilter
         self.updatedAt = Date()
     }

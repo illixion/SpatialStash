@@ -32,33 +32,58 @@ struct FiltersTabView: View {
                     }
                 }
 
-                // Saved Views Section (only for images currently)
-                if !isVideoFilter {
-                    Section("Saved Views") {
+                // Saved Views Section
+                Section {
+                    if isVideoFilter {
+                        // Video saved views
+                        if appModel.savedVideoViews.isEmpty {
+                            Text("No saved views")
+                                .foregroundColor(.secondary)
+                                .italic()
+                        } else {
+                            ForEach(appModel.savedVideoViews) { view in
+                                SavedVideoViewRow(
+                                    view: view,
+                                    isSelected: appModel.selectedSavedVideoView?.id == view.id,
+                                    onApply: { appModel.applySavedVideoView(view) },
+                                    onDeselect: { appModel.deselectVideoView() },
+                                    onSetDefault: { appModel.setDefaultVideoView(view) },
+                                    onClearDefault: { appModel.clearDefaultVideoView() },
+                                    onDelete: { appModel.deleteSavedVideoView(view) }
+                                )
+                            }
+                        }
+                    } else {
+                        // Image saved views
                         if appModel.savedViews.isEmpty {
                             Text("No saved views")
                                 .foregroundColor(.secondary)
                                 .italic()
                         } else {
                             ForEach(appModel.savedViews) { view in
-                                SavedViewRow(view: view, isSelected: appModel.selectedSavedView?.id == view.id)
-                                    .contentShape(Rectangle())
-                                    .onTapGesture {
-                                        appModel.applySavedView(view)
-                                    }
-                            }
-                            .onDelete { indexSet in
-                                for index in indexSet {
-                                    appModel.deleteSavedView(appModel.savedViews[index])
-                                }
+                                SavedViewRow(
+                                    view: view,
+                                    isSelected: appModel.selectedSavedView?.id == view.id,
+                                    onApply: { appModel.applySavedView(view) },
+                                    onDeselect: { appModel.deselectView() },
+                                    onSetDefault: { appModel.setDefaultView(view) },
+                                    onClearDefault: { appModel.clearDefaultView() },
+                                    onDelete: { appModel.deleteSavedView(view) }
+                                )
                             }
                         }
-
+                    }
+                } header: {
+                    HStack {
+                        Text("Saved Views")
+                        Spacer()
                         Button {
                             showingSaveViewSheet = true
                         } label: {
-                            Label("Save Current View", systemImage: "plus.circle")
+                            Image(systemName: "plus.circle")
+                                .font(.title2)
                         }
+                        .buttonStyle(.plain)
                     }
                 }
 
@@ -168,18 +193,28 @@ struct FiltersTabView: View {
                 await appModel.loadAutocompleteData()
             }
             .onDisappear {
+                // Only reload if no saved view is selected (user manually changed filters)
+                // If a saved view is selected, it was already applied when selected
                 Task {
                     if isVideoFilter {
-                        await appModel.applyVideoFilter()
+                        if appModel.selectedSavedVideoView == nil {
+                            await appModel.applyVideoFilter()
+                        }
                     } else {
-                        await appModel.applyFilter()
+                        if appModel.selectedSavedView == nil {
+                            await appModel.applyFilter()
+                        }
                     }
                 }
             }
             .sheet(isPresented: $showingSaveViewSheet) {
                 SaveViewSheet(viewName: $newViewName) {
                     if !newViewName.isEmpty {
-                        appModel.createSavedView(name: newViewName)
+                        if isVideoFilter {
+                            appModel.createSavedVideoView(name: newViewName)
+                        } else {
+                            appModel.createSavedView(name: newViewName)
+                        }
                         newViewName = ""
                     }
                     showingSaveViewSheet = false
@@ -194,22 +229,171 @@ struct FiltersTabView: View {
 struct SavedViewRow: View {
     let view: SavedView
     let isSelected: Bool
+    let onApply: () -> Void
+    let onDeselect: () -> Void
+    let onSetDefault: () -> Void
+    let onClearDefault: () -> Void
+    let onDelete: () -> Void
 
     var body: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(view.name)
-                    .font(.headline)
-                Text(filterSummary)
-                    .font(.caption)
+        HStack(spacing: 12) {
+            Button {
+                if isSelected {
+                    onDeselect()
+                } else {
+                    onApply()
+                }
+            } label: {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Text(view.name)
+                                .font(.headline)
+                            if view.isDefault {
+                                Image(systemName: "star.fill")
+                                    .font(.caption)
+                                    .foregroundColor(.yellow)
+                            }
+                        }
+                        Text(filterSummary)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer()
+                    if isSelected {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.accentColor)
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            Menu {
+                if view.isDefault {
+                    Button {
+                        onClearDefault()
+                    } label: {
+                        Label("Remove as Default", systemImage: "star.slash")
+                    }
+                } else {
+                    Button {
+                        onSetDefault()
+                    } label: {
+                        Label("Set as Default", systemImage: "star")
+                    }
+                }
+                Divider()
+                Button(role: .destructive) {
+                    onDelete()
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .font(.title2)
                     .foregroundColor(.secondary)
-                    .lineLimit(1)
             }
-            Spacer()
-            if isSelected {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundColor(.accentColor)
+            .buttonStyle(.plain)
+        }
+        .padding(.vertical, 4)
+    }
+
+    private var filterSummary: String {
+        var parts: [String] = []
+        if !view.filter.searchTerm.isEmpty {
+            parts.append("Search: \(view.filter.searchTerm)")
+        }
+        if !view.filter.selectedTags.isEmpty {
+            parts.append("\(view.filter.selectedTags.count) tags")
+        }
+        if !view.filter.selectedGalleries.isEmpty {
+            parts.append("\(view.filter.selectedGalleries.count) galleries")
+        }
+        if view.filter.ratingEnabled {
+            parts.append("Rating filter")
+        }
+        if view.filter.oCountEnabled {
+            parts.append("O Count filter")
+        }
+        parts.append("\(view.filter.sortField.displayName) \(view.filter.sortDirection.displayName)")
+        return parts.joined(separator: " | ")
+    }
+}
+
+// MARK: - Saved Video View Row
+
+struct SavedVideoViewRow: View {
+    let view: SavedVideoView
+    let isSelected: Bool
+    let onApply: () -> Void
+    let onDeselect: () -> Void
+    let onSetDefault: () -> Void
+    let onClearDefault: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Button {
+                if isSelected {
+                    onDeselect()
+                } else {
+                    onApply()
+                }
+            } label: {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Text(view.name)
+                                .font(.headline)
+                            if view.isDefault {
+                                Image(systemName: "star.fill")
+                                    .font(.caption)
+                                    .foregroundColor(.yellow)
+                            }
+                        }
+                        Text(filterSummary)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer()
+                    if isSelected {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.accentColor)
+                    }
+                }
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+
+            Menu {
+                if view.isDefault {
+                    Button {
+                        onClearDefault()
+                    } label: {
+                        Label("Remove as Default", systemImage: "star.slash")
+                    }
+                } else {
+                    Button {
+                        onSetDefault()
+                    } label: {
+                        Label("Set as Default", systemImage: "star")
+                    }
+                }
+                Divider()
+                Button(role: .destructive) {
+                    onDelete()
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .font(.title2)
+                    .foregroundColor(.secondary)
+            }
+            .buttonStyle(.plain)
         }
         .padding(.vertical, 4)
     }

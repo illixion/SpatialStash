@@ -127,6 +127,8 @@ class AppModel {
     var currentVideoFilter: SceneFilterCriteria = SceneFilterCriteria()
     var savedViews: [SavedView] = []
     var selectedSavedView: SavedView?
+    var savedVideoViews: [SavedVideoView] = []
+    var selectedSavedVideoView: SavedVideoView?
 
     // MARK: - Autocomplete State
 
@@ -292,6 +294,10 @@ class AppModel {
 
         // Load saved views from UserDefaults
         loadSavedViews()
+        loadSavedVideoViews()
+
+        // Apply default views on startup
+        applyDefaultViewsOnStartup()
     }
 
     // MARK: - Saved Views Persistence
@@ -340,6 +346,127 @@ class AppModel {
         selectedSavedView = view
         Task {
             await loadInitialGallery()
+        }
+    }
+
+    func deselectView() {
+        currentFilter = ImageFilterCriteria()
+        selectedSavedView = nil
+        Task {
+            await loadInitialGallery()
+        }
+    }
+
+    func setDefaultView(_ view: SavedView) {
+        // Clear any existing default
+        for index in savedViews.indices {
+            savedViews[index].isDefault = false
+        }
+        // Set the new default
+        if let index = savedViews.firstIndex(where: { $0.id == view.id }) {
+            savedViews[index].isDefault = true
+        }
+        saveSavedViews()
+    }
+
+    func clearDefaultView() {
+        for index in savedViews.indices {
+            savedViews[index].isDefault = false
+        }
+        saveSavedViews()
+    }
+
+    // MARK: - Saved Video Views Persistence
+
+    private static let savedVideoViewsKey = "savedVideoViews"
+
+    private func loadSavedVideoViews() {
+        if let data = UserDefaults.standard.data(forKey: Self.savedVideoViewsKey),
+           let views = try? JSONDecoder().decode([SavedVideoView].self, from: data) {
+            savedVideoViews = views
+            AppLogger.appModel.info("Loaded \(views.count, privacy: .public) saved video views")
+        }
+    }
+
+    func saveSavedVideoViews() {
+        if let data = try? JSONEncoder().encode(savedVideoViews) {
+            UserDefaults.standard.set(data, forKey: Self.savedVideoViewsKey)
+            let count = savedVideoViews.count
+            AppLogger.appModel.info("Saved \(count, privacy: .public) video views")
+        }
+    }
+
+    func createSavedVideoView(name: String) {
+        let view = SavedVideoView(name: name, filter: currentVideoFilter)
+        savedVideoViews.append(view)
+        saveSavedVideoViews()
+    }
+
+    func updateSavedVideoView(_ view: SavedVideoView, with filter: SceneFilterCriteria) {
+        if let index = savedVideoViews.firstIndex(where: { $0.id == view.id }) {
+            savedVideoViews[index].updateFilter(filter)
+            saveSavedVideoViews()
+        }
+    }
+
+    func deleteSavedVideoView(_ view: SavedVideoView) {
+        savedVideoViews.removeAll { $0.id == view.id }
+        if selectedSavedVideoView?.id == view.id {
+            selectedSavedVideoView = nil
+        }
+        saveSavedVideoViews()
+    }
+
+    func applySavedVideoView(_ view: SavedVideoView) {
+        currentVideoFilter = view.filter
+        selectedSavedVideoView = view
+        Task {
+            await loadInitialVideos()
+        }
+    }
+
+    func deselectVideoView() {
+        currentVideoFilter = SceneFilterCriteria()
+        selectedSavedVideoView = nil
+        Task {
+            await loadInitialVideos()
+        }
+    }
+
+    func setDefaultVideoView(_ view: SavedVideoView) {
+        // Clear any existing default
+        for index in savedVideoViews.indices {
+            savedVideoViews[index].isDefault = false
+        }
+        // Set the new default
+        if let index = savedVideoViews.firstIndex(where: { $0.id == view.id }) {
+            savedVideoViews[index].isDefault = true
+        }
+        saveSavedVideoViews()
+    }
+
+    func clearDefaultVideoView() {
+        for index in savedVideoViews.indices {
+            savedVideoViews[index].isDefault = false
+        }
+        saveSavedVideoViews()
+    }
+
+    // MARK: - Default Views Application
+
+    private func applyDefaultViewsOnStartup() {
+        // Apply default image view if one exists
+        if let defaultImageView = savedViews.first(where: { $0.isDefault }) {
+            currentFilter = defaultImageView.filter
+            selectedSavedView = defaultImageView
+            AppLogger.appModel.info("Applied default image view: \(defaultImageView.name, privacy: .public)")
+        }
+
+        // Apply default video view if one exists
+        if let defaultVideoView = savedVideoViews.first(where: { $0.isDefault }) {
+            currentVideoFilter = defaultVideoView.filter
+            selectedSavedVideoView = defaultVideoView
+            AppLogger.appModel.info("Applied default video view: \(defaultVideoView.name, privacy: .public)")
         }
     }
 
@@ -725,14 +852,14 @@ class AppModel {
 
     /// Apply current video filter and reload videos
     func applyVideoFilter() async {
-        selectedSavedView = nil  // Clear saved view selection when manually filtering
+        selectedSavedVideoView = nil  // Clear saved video view selection when manually filtering
         await loadInitialVideos()
     }
 
     /// Clear all video filters and reload
     func clearVideoFilters() async {
         currentVideoFilter.clearFilters()
-        selectedSavedView = nil
+        selectedSavedVideoView = nil
         await loadInitialVideos()
     }
 
