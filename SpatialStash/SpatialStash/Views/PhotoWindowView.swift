@@ -107,19 +107,6 @@ struct PhotoWindowView: View {
                 .aspectRatio(windowModel.imageAspectRatio, contentMode: .fit)
             }
             
-            // Loading overlay
-            if windowModel.isLoadingDetailImage {
-                Color.black.opacity(0.5)
-                    .ignoresSafeArea()
-                VStack(spacing: 16) {
-                    ProgressView()
-                        .scaleEffect(2)
-                        .tint(.white)
-                    Text("Loading image...")
-                        .font(.title3)
-                        .foregroundColor(.white)
-                }
-            }
         }
         .ornament(
             visibility: windowModel.isUIHidden ? .hidden : .visible,
@@ -168,16 +155,22 @@ struct PhotoWindowView: View {
             AppLogger.views.warning("Unable to get the window scene. Resizing is not possible.")
             return
         }
-        
+
         let windowSceneSize = windowScene.effectiveGeometry.coordinateSpace.bounds.size
-        
+
+        // Skip resizing if already at the correct aspect ratio (allows state restoration to persist)
+        let currentAspectRatio = windowSceneSize.width / windowSceneSize.height
+        if abs(currentAspectRatio - aspectRatio) < 0.01 {
+            return
+        }
+
         //  width / height = aspect ratio
         // Change ONLY the width to match the aspect ratio.
         let width = aspectRatio * windowSceneSize.height
-        
+
         // Keep the height the same.
         let size = CGSize(width: width, height: UIProposedSceneSizeNoPreference)
-        
+
         UIView.performWithoutAnimation {
             // Update the scene size.
             windowScene.requestGeometryUpdate(.Vision(size: size))

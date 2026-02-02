@@ -35,7 +35,7 @@ struct SpatialStashApp: App {
             }
         }
         .windowStyle(.plain)
-        .defaultSize(width: 800, height: 600)
+        .defaultSize(width: 1200, height: 900)
         .defaultLaunchBehavior(.suppressed)
 
         // Immersive space for stereoscopic 3D video playback
