@@ -27,6 +27,8 @@ struct AnimatedImageView: UIViewRepresentable {
         webView.scrollView.backgroundColor = .clear
         webView.scrollView.isScrollEnabled = false
         webView.scrollView.bounces = false
+        // Disable user interaction so taps pass through to SwiftUI for UI toggle
+        webView.isUserInteractionEnabled = false
 
         return webView
     }

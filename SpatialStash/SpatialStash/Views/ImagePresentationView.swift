@@ -23,8 +23,14 @@ struct ImagePresentationView: View {
                 .onAppear {
                     setupWindowForGIF()
                 }
-                .onDisappear {
-                    resetWindowRestrictions()
+                .onChange(of: appModel.imageAspectRatio) { _, newAspectRatio in
+                    resizeWindowForGIF(newAspectRatio)
+                }
+                .onChange(of: appModel.isLoadingDetailImage) { wasLoading, isLoading in
+                    // When loading finishes, ensure window is resized to match the new image
+                    if wasLoading && !isLoading {
+                        resizeWindowForGIF(appModel.imageAspectRatio)
+                    }
                 }
             } else {
                 // Display static image with RealityKit for potential 3D conversion
@@ -61,9 +67,6 @@ struct ImagePresentationView: View {
                         }
                         // Ensure that the scene resizes uniformly on X and Y axes.
                         windowScene.requestGeometryUpdate(.Vision(resizingRestrictions: .uniform))
-                    }
-                    .onDisappear() {
-                        resetWindowRestrictions()
                     }
                     .onChange(of: appModel.imageAspectRatio) { _, newAspectRatio in
                         resizeWindowToAspectRatio(newAspectRatio)
@@ -102,6 +105,7 @@ struct ImagePresentationView: View {
         }
         .onDisappear {
             appModel.cancelAutoHideTimer()
+            resetWindowRestrictions()
         }
         .onChange(of: appModel.isLoadingDetailImage) { wasLoading, isLoading in
             // Start auto-hide timer when loading finishes
@@ -118,9 +122,30 @@ struct ImagePresentationView: View {
     }
 
     private func setupWindowForGIF() {
+        resizeWindowForGIF(appModel.imageAspectRatio)
+    }
+
+    /// Resize window for GIF, always including uniform restriction to maintain aspect ratio
+    private func resizeWindowForGIF(_ aspectRatio: CGFloat) {
         guard let windowScene = resolvedWindowScene else { return }
-        windowScene.requestGeometryUpdate(.Vision(resizingRestrictions: .uniform))
-        resizeWindowToAspectRatio(appModel.imageAspectRatio)
+
+        let windowSceneSize = windowScene.effectiveGeometry.coordinateSpace.bounds.size
+
+        // Skip resizing if already at the correct aspect ratio
+        let currentAspectRatio = windowSceneSize.width / windowSceneSize.height
+        if abs(currentAspectRatio - aspectRatio) < 0.01 {
+            // Still ensure uniform restriction is set even if size is correct
+            windowScene.requestGeometryUpdate(.Vision(resizingRestrictions: .uniform))
+            return
+        }
+
+        let width = aspectRatio * windowSceneSize.height
+        let size = CGSize(width: width, height: UIProposedSceneSizeNoPreference)
+
+        UIView.performWithoutAnimation {
+            // Combine size and uniform restriction in single call to prevent override
+            windowScene.requestGeometryUpdate(.Vision(size: size, resizingRestrictions: .uniform))
+        }
     }
 
     private func resetWindowRestrictions() {
