@@ -96,8 +96,8 @@ struct FiltersTabView: View {
                             }
                         }
                         .onChange(of: appModel.currentVideoFilter.sortField) { _, newValue in
-                            // Set random seed when Random is first selected to ensure consistent results
-                            // until user explicitly presses Shuffle
+                            appModel.resetVideoFiltersKeeping(\.sortField, value: newValue)
+                            // Set random seed when Random is first selected
                             if newValue == .random && appModel.currentVideoFilter.randomSeed == nil {
                                 appModel.currentVideoFilter.shuffleRandomSort()
                             }
@@ -109,10 +109,14 @@ struct FiltersTabView: View {
                                     .tag(direction)
                             }
                         }
+                        .onChange(of: appModel.currentVideoFilter.sortDirection) { _, newValue in
+                            appModel.resetVideoFiltersKeeping(\.sortDirection, value: newValue)
+                        }
 
                         // Shuffle button for random sort
                         if appModel.currentVideoFilter.sortField == .random {
                             Button {
+                                appModel.deselectSavedVideoViewIfNeeded()
                                 appModel.currentVideoFilter.shuffleRandomSort()
                             } label: {
                                 HStack {
@@ -128,8 +132,8 @@ struct FiltersTabView: View {
                             }
                         }
                         .onChange(of: appModel.currentFilter.sortField) { _, newValue in
-                            // Set random seed when Random is first selected to ensure consistent results
-                            // until user explicitly presses Shuffle
+                            appModel.resetImageFiltersKeeping(\.sortField, value: newValue)
+                            // Set random seed when Random is first selected
                             if newValue == .random && appModel.currentFilter.randomSeed == nil {
                                 appModel.currentFilter.shuffleRandomSort()
                             }
@@ -141,10 +145,14 @@ struct FiltersTabView: View {
                                     .tag(direction)
                             }
                         }
+                        .onChange(of: appModel.currentFilter.sortDirection) { _, newValue in
+                            appModel.resetImageFiltersKeeping(\.sortDirection, value: newValue)
+                        }
 
                         // Shuffle button for random sort
                         if appModel.currentFilter.sortField == .random {
                             Button {
+                                appModel.deselectSavedViewIfNeeded()
                                 appModel.currentFilter.shuffleRandomSort()
                             } label: {
                                 HStack {
@@ -162,10 +170,16 @@ struct FiltersTabView: View {
                         TextField("Search titles...", text: $appModel.currentVideoFilter.searchTerm)
                             .textFieldStyle(.plain)
                             .autocorrectionDisabled()
+                            .onChange(of: appModel.currentVideoFilter.searchTerm) { _, newValue in
+                                appModel.resetVideoFiltersKeeping(\.searchTerm, value: newValue)
+                            }
                     } else {
                         TextField("Search titles...", text: $appModel.currentFilter.searchTerm)
                             .textFieldStyle(.plain)
                             .autocorrectionDisabled()
+                            .onChange(of: appModel.currentFilter.searchTerm) { _, newValue in
+                                appModel.resetImageFiltersKeeping(\.searchTerm, value: newValue)
+                            }
                     }
                 }
 
@@ -490,6 +504,9 @@ struct GalleryFilterView: View {
                     }
                 }
                 .pickerStyle(.menu)
+                .onChange(of: appModel.currentVideoFilter.galleryModifier) { _, newValue in
+                    appModel.resetVideoFiltersKeeping(\.galleryModifier, value: newValue)
+                }
             } else {
                 Picker("Match", selection: $appModel.currentFilter.galleryModifier) {
                     ForEach(CriterionModifier.multiModifiers) { modifier in
@@ -497,6 +514,9 @@ struct GalleryFilterView: View {
                     }
                 }
                 .pickerStyle(.menu)
+                .onChange(of: appModel.currentFilter.galleryModifier) { _, newValue in
+                    appModel.resetImageFiltersKeeping(\.galleryModifier, value: newValue)
+                }
             }
 
             // Search field
@@ -516,8 +536,10 @@ struct GalleryFilterView: View {
                         ForEach(selectedGalleries) { gallery in
                             SelectedItemChip(name: gallery.name) {
                                 if isVideoFilter {
+                                    appModel.deselectSavedVideoViewIfNeeded()
                                     appModel.currentVideoFilter.selectedGalleries.removeAll { $0.id == gallery.id }
                                 } else {
+                                    appModel.deselectSavedViewIfNeeded()
                                     appModel.currentFilter.selectedGalleries.removeAll { $0.id == gallery.id }
                                 }
                             }
@@ -539,8 +561,10 @@ struct GalleryFilterView: View {
                             ForEach(availableToSelect) { gallery in
                                 Button {
                                     if isVideoFilter {
+                                        appModel.deselectSavedVideoViewIfNeeded()
                                         appModel.currentVideoFilter.selectedGalleries.append(gallery)
                                     } else {
+                                        appModel.deselectSavedViewIfNeeded()
                                         appModel.currentFilter.selectedGalleries.append(gallery)
                                     }
                                 } label: {
@@ -584,6 +608,9 @@ struct TagFilterView: View {
                     }
                 }
                 .pickerStyle(.menu)
+                .onChange(of: appModel.currentVideoFilter.tagModifier) { _, newValue in
+                    appModel.resetVideoFiltersKeeping(\.tagModifier, value: newValue)
+                }
             } else {
                 Picker("Match", selection: $appModel.currentFilter.tagModifier) {
                     ForEach(CriterionModifier.multiModifiers) { modifier in
@@ -591,6 +618,9 @@ struct TagFilterView: View {
                     }
                 }
                 .pickerStyle(.menu)
+                .onChange(of: appModel.currentFilter.tagModifier) { _, newValue in
+                    appModel.resetImageFiltersKeeping(\.tagModifier, value: newValue)
+                }
             }
 
             // Search field
@@ -610,8 +640,10 @@ struct TagFilterView: View {
                         ForEach(selectedTags) { tag in
                             SelectedItemChip(name: tag.name) {
                                 if isVideoFilter {
+                                    appModel.deselectSavedVideoViewIfNeeded()
                                     appModel.currentVideoFilter.selectedTags.removeAll { $0.id == tag.id }
                                 } else {
+                                    appModel.deselectSavedViewIfNeeded()
                                     appModel.currentFilter.selectedTags.removeAll { $0.id == tag.id }
                                 }
                             }
@@ -633,8 +665,10 @@ struct TagFilterView: View {
                             ForEach(availableToSelect) { tag in
                                 Button {
                                     if isVideoFilter {
+                                        appModel.deselectSavedVideoViewIfNeeded()
                                         appModel.currentVideoFilter.selectedTags.append(tag)
                                     } else {
+                                        appModel.deselectSavedViewIfNeeded()
                                         appModel.currentFilter.selectedTags.append(tag)
                                     }
                                 } label: {
@@ -700,8 +734,14 @@ struct OCountFilterView: View {
         VStack(alignment: .leading, spacing: 12) {
             if isVideoFilter {
                 Toggle("Enable Filter", isOn: $appModel.currentVideoFilter.oCountEnabled)
+                    .onChange(of: appModel.currentVideoFilter.oCountEnabled) { _, newValue in
+                        appModel.resetVideoFiltersKeeping(\.oCountEnabled, value: newValue)
+                    }
             } else {
                 Toggle("Enable Filter", isOn: $appModel.currentFilter.oCountEnabled)
+                    .onChange(of: appModel.currentFilter.oCountEnabled) { _, newValue in
+                        appModel.resetImageFiltersKeeping(\.oCountEnabled, value: newValue)
+                    }
             }
 
             if oCountEnabled {
@@ -716,6 +756,9 @@ struct OCountFilterView: View {
                             }
                         }
                         .pickerStyle(.segmented)
+                        .onChange(of: appModel.currentVideoFilter.oCountModifier) { _, newValue in
+                            appModel.resetVideoFiltersKeeping(\.oCountModifier, value: newValue)
+                        }
                     } else {
                         Picker("Condition", selection: $appModel.currentFilter.oCountModifier) {
                             ForEach(CriterionModifier.numberModifiers) { modifier in
@@ -723,6 +766,9 @@ struct OCountFilterView: View {
                             }
                         }
                         .pickerStyle(.segmented)
+                        .onChange(of: appModel.currentFilter.oCountModifier) { _, newValue in
+                            appModel.resetImageFiltersKeeping(\.oCountModifier, value: newValue)
+                        }
                     }
                 }
 
@@ -732,18 +778,30 @@ struct OCountFilterView: View {
                             TextField("Min", value: $appModel.currentVideoFilter.oCountRange.min, format: .number)
                                 .textFieldStyle(.roundedBorder)
                                 .frame(width: 80)
+                                .onChange(of: appModel.currentVideoFilter.oCountRange.min) { _, newValue in
+                                    appModel.resetVideoFiltersKeeping(\.oCountRange.min, value: newValue)
+                                }
                             Text("to")
                             TextField("Max", value: $appModel.currentVideoFilter.oCountRange.max, format: .number)
                                 .textFieldStyle(.roundedBorder)
                                 .frame(width: 80)
+                                .onChange(of: appModel.currentVideoFilter.oCountRange.max) { _, newValue in
+                                    appModel.resetVideoFiltersKeeping(\.oCountRange.max, value: newValue)
+                                }
                         } else {
                             TextField("Min", value: $appModel.currentFilter.oCountRange.min, format: .number)
                                 .textFieldStyle(.roundedBorder)
                                 .frame(width: 80)
+                                .onChange(of: appModel.currentFilter.oCountRange.min) { _, newValue in
+                                    appModel.resetImageFiltersKeeping(\.oCountRange.min, value: newValue)
+                                }
                             Text("to")
                             TextField("Max", value: $appModel.currentFilter.oCountRange.max, format: .number)
                                 .textFieldStyle(.roundedBorder)
                                 .frame(width: 80)
+                                .onChange(of: appModel.currentFilter.oCountRange.max) { _, newValue in
+                                    appModel.resetImageFiltersKeeping(\.oCountRange.max, value: newValue)
+                                }
                         }
                     }
                 } else if oCountModifier.requiresValue {
@@ -751,10 +809,16 @@ struct OCountFilterView: View {
                         TextField("Value", value: $appModel.currentVideoFilter.oCountValue, format: .number)
                             .textFieldStyle(.roundedBorder)
                             .frame(width: 100)
+                            .onChange(of: appModel.currentVideoFilter.oCountValue) { _, newValue in
+                                appModel.resetVideoFiltersKeeping(\.oCountValue, value: newValue)
+                            }
                     } else {
                         TextField("Value", value: $appModel.currentFilter.oCountValue, format: .number)
                             .textFieldStyle(.roundedBorder)
                             .frame(width: 100)
+                            .onChange(of: appModel.currentFilter.oCountValue) { _, newValue in
+                                appModel.resetImageFiltersKeeping(\.oCountValue, value: newValue)
+                            }
                     }
                 }
             }
@@ -782,8 +846,14 @@ struct RatingFilterView: View {
         VStack(alignment: .leading, spacing: 12) {
             if isVideoFilter {
                 Toggle("Enable Filter", isOn: $appModel.currentVideoFilter.ratingEnabled)
+                    .onChange(of: appModel.currentVideoFilter.ratingEnabled) { _, newValue in
+                        appModel.resetVideoFiltersKeeping(\.ratingEnabled, value: newValue)
+                    }
             } else {
                 Toggle("Enable Filter", isOn: $appModel.currentFilter.ratingEnabled)
+                    .onChange(of: appModel.currentFilter.ratingEnabled) { _, newValue in
+                        appModel.resetImageFiltersKeeping(\.ratingEnabled, value: newValue)
+                    }
             }
 
             if ratingEnabled {
@@ -798,6 +868,9 @@ struct RatingFilterView: View {
                             }
                         }
                         .pickerStyle(.segmented)
+                        .onChange(of: appModel.currentVideoFilter.ratingModifier) { _, newValue in
+                            appModel.resetVideoFiltersKeeping(\.ratingModifier, value: newValue)
+                        }
                     } else {
                         Picker("Condition", selection: $appModel.currentFilter.ratingModifier) {
                             ForEach(CriterionModifier.numberModifiers) { modifier in
@@ -805,6 +878,9 @@ struct RatingFilterView: View {
                             }
                         }
                         .pickerStyle(.segmented)
+                        .onChange(of: appModel.currentFilter.ratingModifier) { _, newValue in
+                            appModel.resetImageFiltersKeeping(\.ratingModifier, value: newValue)
+                        }
                     }
                 }
 
@@ -814,14 +890,20 @@ struct RatingFilterView: View {
                             Text("Min:")
                             StarRatingPicker(rating: Binding(
                                 get: { appModel.currentVideoFilter.ratingRange.min ?? 1 },
-                                set: { appModel.currentVideoFilter.ratingRange.min = $0 }
+                                set: {
+                                    appModel.deselectSavedVideoViewIfNeeded()
+                                    appModel.currentVideoFilter.ratingRange.min = $0
+                                }
                             ))
                         }
                         HStack {
                             Text("Max:")
                             StarRatingPicker(rating: Binding(
                                 get: { appModel.currentVideoFilter.ratingRange.max ?? 5 },
-                                set: { appModel.currentVideoFilter.ratingRange.max = $0 }
+                                set: {
+                                    appModel.deselectSavedVideoViewIfNeeded()
+                                    appModel.currentVideoFilter.ratingRange.max = $0
+                                }
                             ))
                         }
                     } else {
@@ -829,14 +911,20 @@ struct RatingFilterView: View {
                             Text("Min:")
                             StarRatingPicker(rating: Binding(
                                 get: { appModel.currentFilter.ratingRange.min ?? 1 },
-                                set: { appModel.currentFilter.ratingRange.min = $0 }
+                                set: {
+                                    appModel.deselectSavedViewIfNeeded()
+                                    appModel.currentFilter.ratingRange.min = $0
+                                }
                             ))
                         }
                         HStack {
                             Text("Max:")
                             StarRatingPicker(rating: Binding(
                                 get: { appModel.currentFilter.ratingRange.max ?? 5 },
-                                set: { appModel.currentFilter.ratingRange.max = $0 }
+                                set: {
+                                    appModel.deselectSavedViewIfNeeded()
+                                    appModel.currentFilter.ratingRange.max = $0
+                                }
                             ))
                         }
                     }
@@ -846,7 +934,10 @@ struct RatingFilterView: View {
                             Text("Rating:")
                             StarRatingPicker(rating: Binding(
                                 get: { appModel.currentVideoFilter.ratingValue ?? 3 },
-                                set: { appModel.currentVideoFilter.ratingValue = $0 }
+                                set: {
+                                    appModel.deselectSavedVideoViewIfNeeded()
+                                    appModel.currentVideoFilter.ratingValue = $0
+                                }
                             ))
                         }
                     } else {
@@ -854,7 +945,10 @@ struct RatingFilterView: View {
                             Text("Rating:")
                             StarRatingPicker(rating: Binding(
                                 get: { appModel.currentFilter.ratingValue ?? 3 },
-                                set: { appModel.currentFilter.ratingValue = $0 }
+                                set: {
+                                    appModel.deselectSavedViewIfNeeded()
+                                    appModel.currentFilter.ratingValue = $0
+                                }
                             ))
                         }
                     }
