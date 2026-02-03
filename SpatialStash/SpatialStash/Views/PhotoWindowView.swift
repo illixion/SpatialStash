@@ -231,48 +231,159 @@ struct PhotoWindowView: View {
 struct PhotoWindowOrnament: View {
     @Bindable var windowModel: PhotoWindowModel
     @Environment(\.openWindow) private var openWindow
-    
+
     var body: some View {
-        HStack(spacing: 20) {
-            // Open main window button
+        HStack(spacing: 16) {
+            // Open main window button - icon only in slideshow mode
             Button {
+                if windowModel.isSlideshowActive {
+                    windowModel.stopSlideshow()
+                }
                 openWindow(id: "main")
             } label: {
-                HStack(spacing: 8) {
+                if windowModel.isSlideshowActive {
                     Image(systemName: "square.grid.2x2")
-                    Text("Gallery")
+                        .font(.title3)
+                } else {
+                    HStack(spacing: 8) {
+                        Image(systemName: "square.grid.2x2")
+                        Text("Gallery")
+                    }
+                    .font(.title3)
                 }
-                .font(.title3)
             }
             .buttonStyle(.borderless)
-            
+
             Divider()
                 .frame(height: 24)
-            
-            // Generate/Toggle 3D button
-            Button {
-                Task {
-                    if windowModel.spatial3DImageState == .notGenerated {
-                        await windowModel.generateSpatial3DImage()
-                    } else {
-                        windowModel.toggleSpatial3DView()
+
+            if windowModel.isSlideshowActive {
+                // Slideshow controls
+                Button {
+                    Task {
+                        await windowModel.previousSlideshowImage()
                     }
+                } label: {
+                    Image(systemName: "backward.fill")
+                        .font(.title3)
                 }
-            } label: {
-                HStack(spacing: 8) {
-                    if windowModel.spatial3DImageState == .generating {
-                        ProgressView()
-                            .scaleEffect(0.8)
-                    } else {
-                        Image(systemName: windowModel.spatial3DImageState == .generated ? "view.3d" : "wand.and.stars")
-                    }
-                    Text(windowModel.spatial3DImageState == .notGenerated ? "Generate 3D" : 
-                         windowModel.spatial3DImageState == .generating ? "Generating..." : "Toggle 3D")
+                .buttonStyle(.borderless)
+                .disabled(!windowModel.hasPreviousSlideshowImage || windowModel.isLoadingDetailImage)
+
+                // Slideshow indicator
+                HStack(spacing: 6) {
+                    Image(systemName: "play.circle.fill")
+                    Text("Slideshow")
                 }
                 .font(.title3)
+                .foregroundColor(.secondary)
+
+                Button {
+                    Task {
+                        await windowModel.nextSlideshowImage()
+                    }
+                } label: {
+                    Image(systemName: "forward.fill")
+                        .font(.title3)
+                }
+                .buttonStyle(.borderless)
+                .disabled(windowModel.isLoadingDetailImage)
+
+                Divider()
+                    .frame(height: 24)
+
+                // Stop slideshow button
+                Button {
+                    windowModel.stopSlideshow()
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "stop.fill")
+                        Text("Stop")
+                    }
+                    .font(.title3)
+                }
+                .buttonStyle(.borderless)
+            } else {
+                // Gallery navigation controls
+                Button {
+                    Task {
+                        await windowModel.previousGalleryImage()
+                    }
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.title3)
+                }
+                .buttonStyle(.borderless)
+                .disabled(!windowModel.hasPreviousGalleryImage || windowModel.isLoadingDetailImage)
+
+                // Image counter
+                if windowModel.isLoadingDetailImage {
+                    ProgressView()
+                        .frame(minWidth: 60)
+                } else {
+                    Text("\(windowModel.currentGalleryPosition) / \(windowModel.galleryImageCount)")
+                        .font(.callout)
+                        .foregroundColor(.secondary)
+                        .frame(minWidth: 60)
+                }
+
+                Button {
+                    Task {
+                        await windowModel.nextGalleryImage()
+                    }
+                } label: {
+                    Image(systemName: "chevron.right")
+                        .font(.title3)
+                }
+                .buttonStyle(.borderless)
+                .disabled(!windowModel.hasNextGalleryImage || windowModel.isLoadingDetailImage)
+
+                Divider()
+                    .frame(height: 24)
+
+                // Start slideshow button
+                Button {
+                    Task {
+                        await windowModel.startSlideshow()
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "play.fill")
+                        Text("Slideshow")
+                    }
+                    .font(.title3)
+                }
+                .buttonStyle(.borderless)
+                .disabled(windowModel.isLoadingDetailImage)
+
+                Divider()
+                    .frame(height: 24)
+
+                // Generate/Toggle 3D button
+                Button {
+                    Task {
+                        if windowModel.spatial3DImageState == .notGenerated {
+                            await windowModel.generateSpatial3DImage()
+                        } else {
+                            windowModel.toggleSpatial3DView()
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        if windowModel.spatial3DImageState == .generating {
+                            ProgressView()
+                                .scaleEffect(0.8)
+                        } else {
+                            Image(systemName: windowModel.spatial3DImageState == .generated ? "view.3d" : "wand.and.stars")
+                        }
+                        Text(windowModel.spatial3DImageState == .notGenerated ? "Generate 3D" :
+                             windowModel.spatial3DImageState == .generating ? "Generating..." : "Toggle 3D")
+                    }
+                    .font(.title3)
+                }
+                .buttonStyle(.borderless)
+                .disabled(windowModel.spatial3DImageState == .generating || windowModel.isAnimatedGIF)
             }
-            .buttonStyle(.borderless)
-            .disabled(windowModel.spatial3DImageState == .generating || windowModel.isAnimatedGIF)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)

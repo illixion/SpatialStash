@@ -29,22 +29,42 @@ class PhotoWindowModel {
     var currentImageData: Data? = nil
     
     // MARK: - UI Visibility State
-    
+
     var isUIHidden: Bool = false
     private var autoHideTask: Task<Void, Never>?
-    
+
+    // MARK: - Slideshow State
+
+    var isSlideshowActive: Bool = false
+    var slideshowImages: [GalleryImage] = []
+    var slideshowIndex: Int = 0
+    private var slideshowTask: Task<Void, Never>?
+    private var slideshowHistory: [GalleryImage] = []
+
+    // MARK: - Gallery Navigation State
+
+    /// Snapshot of gallery images when this window was opened
+    private var galleryImages: [GalleryImage] = []
+
+    /// Current index in the gallery
+    private var currentGalleryIndex: Int = 0
+
     // MARK: - Shared References
-    
+
     var appModel: AppModel
-    
+
     // MARK: - Initialization
-    
+
     init(image: GalleryImage, appModel: AppModel) {
         self.image = image
         self.imageURL = image.fullSizeURL
         self.appModel = appModel
         self.isLoadingDetailImage = true
-        
+
+        // Capture snapshot of gallery images for navigation
+        self.galleryImages = appModel.galleryImages
+        self.currentGalleryIndex = galleryImages.firstIndex(of: image) ?? 0
+
         // Load image data to detect if it's a GIF
         Task {
             await loadImageDataForDetail(url: image.fullSizeURL)
@@ -263,5 +283,168 @@ class PhotoWindowModel {
         if !isUIHidden {
             startAutoHideTimer()
         }
+    }
+
+    // MARK: - Slideshow
+
+    /// Start a random slideshow in this window
+    func startSlideshow() async {
+        guard !isSlideshowActive else { return }
+
+        isSlideshowActive = true
+        slideshowHistory = [image]  // Start with current image in history
+        slideshowImages = []
+        slideshowIndex = 0
+
+        // Fetch initial batch of random images (no seed for true randomness)
+        await fetchRandomSlideshowImages()
+
+        // Start the slideshow timer
+        startSlideshowTimer()
+    }
+
+    /// Fetch a batch of random images for the slideshow
+    private func fetchRandomSlideshowImages() async {
+        // Create a filter with random sort and no seed (unseeded = different order each time)
+        var randomFilter = ImageFilterCriteria()
+        randomFilter.sortField = .random
+        randomFilter.randomSeed = nil  // Unseeded for true random
+
+        do {
+            let result = try await appModel.imageSource.fetchImages(page: 0, pageSize: 10, filter: randomFilter)
+            slideshowImages = result.images
+            AppLogger.photoWindow.debug("Fetched \(result.images.count, privacy: .public) random images for slideshow")
+        } catch {
+            AppLogger.photoWindow.error("Failed to fetch slideshow images: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Start the slideshow timer
+    private func startSlideshowTimer() {
+        slideshowTask?.cancel()
+        slideshowTask = Task { @MainActor in
+            while isSlideshowActive && !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(appModel.slideshowDelay))
+                if !Task.isCancelled && isSlideshowActive {
+                    await advanceSlideshow()
+                }
+            }
+        }
+    }
+
+    /// Advance to the next slideshow image
+    private func advanceSlideshow() async {
+        slideshowIndex += 1
+
+        // If we've gone through all fetched images, fetch more
+        if slideshowIndex >= slideshowImages.count {
+            await fetchRandomSlideshowImages()
+            slideshowIndex = 0
+        }
+
+        if slideshowIndex < slideshowImages.count {
+            let nextImage = slideshowImages[slideshowIndex]
+            await switchToImage(nextImage)
+            slideshowHistory.append(nextImage)
+        }
+    }
+
+    /// Switch to displaying a different image
+    private func switchToImage(_ newImage: GalleryImage) async {
+        image = newImage
+        imageURL = newImage.fullSizeURL
+        isLoadingDetailImage = true
+        spatial3DImageState = .notGenerated
+        spatial3DImage = nil
+        isAnimatedGIF = false
+        currentImageData = nil
+        contentEntity.components.remove(ImagePresentationComponent.self)
+
+        // Load image data to detect if it's a GIF
+        await loadImageDataForDetail(url: newImage.fullSizeURL)
+
+        // Create the presentation component if not a GIF
+        if !isAnimatedGIF {
+            await createImagePresentationComponent()
+        }
+    }
+
+    /// Go to the next slideshow image manually
+    func nextSlideshowImage() async {
+        guard isSlideshowActive else { return }
+
+        // Reset the timer since user manually advanced
+        startSlideshowTimer()
+
+        await advanceSlideshow()
+    }
+
+    /// Go to the previous slideshow image
+    func previousSlideshowImage() async {
+        guard isSlideshowActive, slideshowHistory.count > 1 else { return }
+
+        // Reset the timer since user manually navigated
+        startSlideshowTimer()
+
+        // Remove current image from history
+        slideshowHistory.removeLast()
+
+        // Go back to the previous image
+        if let previousImage = slideshowHistory.last {
+            await switchToImage(previousImage)
+        }
+    }
+
+    /// Stop the slideshow
+    func stopSlideshow() {
+        isSlideshowActive = false
+        slideshowTask?.cancel()
+        slideshowTask = nil
+        slideshowImages = []
+        slideshowHistory = []
+        slideshowIndex = 0
+    }
+
+    /// Check if there's a previous slideshow image available
+    var hasPreviousSlideshowImage: Bool {
+        slideshowHistory.count > 1
+    }
+
+    // MARK: - Gallery Navigation
+
+    /// Navigate to next image in gallery
+    func nextGalleryImage() async {
+        guard hasNextGalleryImage else { return }
+        currentGalleryIndex += 1
+        let nextImage = galleryImages[currentGalleryIndex]
+        await switchToImage(nextImage)
+    }
+
+    /// Navigate to previous image in gallery
+    func previousGalleryImage() async {
+        guard hasPreviousGalleryImage else { return }
+        currentGalleryIndex -= 1
+        let prevImage = galleryImages[currentGalleryIndex]
+        await switchToImage(prevImage)
+    }
+
+    /// Check if there's a next image in gallery
+    var hasNextGalleryImage: Bool {
+        currentGalleryIndex + 1 < galleryImages.count
+    }
+
+    /// Check if there's a previous image in gallery
+    var hasPreviousGalleryImage: Bool {
+        currentGalleryIndex > 0
+    }
+
+    /// Current position in gallery (1-indexed for display)
+    var currentGalleryPosition: Int {
+        currentGalleryIndex + 1
+    }
+
+    /// Total images in gallery
+    var galleryImageCount: Int {
+        galleryImages.count
     }
 }

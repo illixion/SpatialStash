@@ -44,6 +44,22 @@ struct SettingsTabView: View {
                     .pickerStyle(.menu)
                 }
 
+                Section("Slideshow") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("Delay Between Images")
+                            Spacer()
+                            Text(formatSlideshowDelay(appModel.slideshowDelay))
+                                .foregroundColor(.secondary)
+                        }
+                        Slider(
+                            value: $appModel.slideshowDelay,
+                            in: 3...120,
+                            step: 1
+                        )
+                    }
+                }
+
                 Section("Stash Server") {
                     TextField("Server URL", text: $appModel.stashServerURL)
                         .textFieldStyle(.plain)
@@ -210,5 +226,20 @@ struct SettingsTabView: View {
         formatter.allowedUnits = [.useKB, .useMB, .useGB]
         formatter.countStyle = .file
         return formatter.string(fromByteCount: bytes)
+    }
+
+    private func formatSlideshowDelay(_ seconds: TimeInterval) -> String {
+        let intSeconds = Int(seconds)
+        if intSeconds >= 60 {
+            let minutes = intSeconds / 60
+            let remainingSeconds = intSeconds % 60
+            if remainingSeconds == 0 {
+                return "\(minutes) min"
+            } else {
+                return "\(minutes) min \(remainingSeconds) sec"
+            }
+        } else {
+            return "\(intSeconds) seconds"
+        }
     }
 }

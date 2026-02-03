@@ -15,8 +15,11 @@ struct OrnamentsView: View {
     var body: some View {
         VStack {
             HStack(spacing: 16) {
-                // Back to Gallery button
+                // Back to Gallery button (also stops slideshow)
                 Button {
+                    if appModel.isSlideshowActive {
+                        appModel.stopSlideshow()
+                    }
                     appModel.dismissDetailView()
                 } label: {
                     HStack(spacing: 4) {
@@ -28,32 +31,90 @@ struct OrnamentsView: View {
                 Divider()
                     .frame(height: 24)
 
-                // Previous image
-                Button {
-                    appModel.previousImage()
-                } label: {
-                    Image(systemName: "arrow.left.circle")
-                }
-                .disabled(!appModel.hasPreviousImage || appModel.isLoadingDetailImage)
+                if appModel.isSlideshowActive {
+                    // Slideshow controls
+                    Button {
+                        appModel.previousSlideshowImage()
+                    } label: {
+                        Image(systemName: "backward.fill")
+                    }
+                    .disabled(!appModel.hasPreviousSlideshowImage || appModel.isLoadingDetailImage)
 
-                // Image counter or loading indicator
-                if appModel.isLoadingDetailImage {
-                    ProgressView()
-                        .frame(minWidth: 60)
-                } else if appModel.currentImagePosition > 0 {
-                    Text("\(appModel.currentImagePosition) / \(imageCount)")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .frame(minWidth: 60)
-                }
+                    // Slideshow indicator
+                    HStack(spacing: 4) {
+                        Image(systemName: "play.circle.fill")
+                        Text("Slideshow")
+                    }
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .frame(minWidth: 80)
 
-                // Next image
-                Button {
-                    appModel.nextImage()
-                } label: {
-                    Image(systemName: "arrow.right.circle")
+                    Button {
+                        Task {
+                            await appModel.nextSlideshowImage()
+                        }
+                    } label: {
+                        Image(systemName: "forward.fill")
+                    }
+                    .disabled(appModel.isLoadingDetailImage)
+
+                    Divider()
+                        .frame(height: 24)
+
+                    // Stop slideshow button
+                    Button {
+                        appModel.stopSlideshow()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "stop.fill")
+                            Text("Stop")
+                        }
+                    }
+                } else {
+                    // Normal navigation controls
+                    // Previous image
+                    Button {
+                        appModel.previousImage()
+                    } label: {
+                        Image(systemName: "arrow.left.circle")
+                    }
+                    .disabled(!appModel.hasPreviousImage || appModel.isLoadingDetailImage)
+
+                    // Image counter or loading indicator
+                    if appModel.isLoadingDetailImage {
+                        ProgressView()
+                            .frame(minWidth: 60)
+                    } else if appModel.currentImagePosition > 0 {
+                        Text("\(appModel.currentImagePosition) / \(imageCount)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .frame(minWidth: 60)
+                    }
+
+                    // Next image
+                    Button {
+                        appModel.nextImage()
+                    } label: {
+                        Image(systemName: "arrow.right.circle")
+                    }
+                    .disabled(!appModel.hasNextImage || appModel.isLoadingDetailImage)
+
+                    Divider()
+                        .frame(height: 24)
+
+                    // Start slideshow button
+                    Button {
+                        Task {
+                            await appModel.startSlideshow()
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "play.fill")
+                            Text("Slideshow")
+                        }
+                    }
+                    .disabled(appModel.isLoadingDetailImage)
                 }
-                .disabled(!appModel.hasNextImage || appModel.isLoadingDetailImage)
 
                 // 2D/3D Toggle - only show for non-GIF images
                 if !appModel.isAnimatedGIF {

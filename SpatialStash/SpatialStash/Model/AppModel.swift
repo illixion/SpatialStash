@@ -220,6 +220,37 @@ class AppModel {
         ("10 seconds", 10)
     ]
 
+    // MARK: - Slideshow State
+
+    /// Whether a slideshow is currently active
+    var isSlideshowActive: Bool = false
+
+    /// Slideshow delay between images (in seconds)
+    var slideshowDelay: TimeInterval {
+        didSet {
+            if slideshowDelay != oldValue {
+                UserDefaults.standard.set(slideshowDelay, forKey: "slideshowDelay")
+            }
+        }
+    }
+
+    /// Available slideshow delay options (in seconds)
+    static let slideshowDelayOptions: [TimeInterval] = [
+        3, 5, 10, 15, 20, 30, 45, 60, 90, 120
+    ]
+
+    /// Images for the current slideshow (fetched with random filter)
+    var slideshowImages: [GalleryImage] = []
+
+    /// Current index in the slideshow
+    var slideshowIndex: Int = 0
+
+    /// Task for the slideshow timer
+    private var slideshowTask: Task<Void, Never>?
+
+    /// History of visited slideshow images for going back
+    private var slideshowHistory: [GalleryImage] = []
+
     // MARK: - Initialization
 
     init() {
@@ -228,6 +259,7 @@ class AppModel {
         let defaultAPIKey = ""
         let defaultPageSize = 20
         let defaultAutoHideDelay: TimeInterval = 3.0
+        let defaultSlideshowDelay: TimeInterval = 5.0
 
         let loadedServerURL = UserDefaults.standard.string(forKey: "stashServerURL") ?? defaultServerURL
         let loadedAPIKey = UserDefaults.standard.string(forKey: "stashAPIKey") ?? defaultAPIKey
@@ -247,12 +279,17 @@ class AppModel {
         let savedAutoHideDelay = UserDefaults.standard.double(forKey: "autoHideDelay")
         let loadedAutoHideDelay = UserDefaults.standard.object(forKey: "autoHideDelay") != nil ? savedAutoHideDelay : defaultAutoHideDelay
 
+        // Load slideshow delay
+        let savedSlideshowDelay = UserDefaults.standard.double(forKey: "slideshowDelay")
+        let loadedSlideshowDelay = UserDefaults.standard.object(forKey: "slideshowDelay") != nil ? savedSlideshowDelay : defaultSlideshowDelay
+
         // Initialize stored properties
         self.stashServerURL = loadedServerURL
         self.stashAPIKey = loadedAPIKey
         self.mediaSourceType = loadedSourceType
         self.pageSize = loadedPageSize
         self.autoHideDelay = loadedAutoHideDelay
+        self.slideshowDelay = loadedSlideshowDelay
 
         // Initialize API client with config
         let initialConfig: StashServerConfig
@@ -810,6 +847,118 @@ class AppModel {
         guard let currentImage = selectedImage,
               let currentIndex = galleryImages.firstIndex(of: currentImage) else { return 0 }
         return currentIndex + 1
+    }
+
+    // MARK: - Slideshow Methods
+
+    /// Start a random slideshow
+    func startSlideshow() async {
+        guard !isSlideshowActive else { return }
+
+        isSlideshowActive = true
+        slideshowHistory = []
+        slideshowImages = []
+        slideshowIndex = 0
+
+        // Fetch initial batch of random images (no seed for true randomness)
+        await fetchRandomSlideshowImages()
+
+        // Start with the first image if we have any
+        if let firstImage = slideshowImages.first {
+            selectImageForDetail(firstImage)
+            slideshowHistory.append(firstImage)
+            isShowingDetailView = true
+        }
+
+        // Start the slideshow timer
+        startSlideshowTimer()
+    }
+
+    /// Fetch a batch of random images for the slideshow
+    private func fetchRandomSlideshowImages() async {
+        // Create a filter with random sort and no seed (unseeded = different order each time)
+        var randomFilter = ImageFilterCriteria()
+        randomFilter.sortField = .random
+        randomFilter.randomSeed = nil  // Unseeded for true random
+
+        do {
+            let result = try await imageSource.fetchImages(page: 0, pageSize: 10, filter: randomFilter)
+            slideshowImages = result.images
+            AppLogger.appModel.debug("Fetched \(result.images.count, privacy: .public) random images for slideshow")
+        } catch {
+            AppLogger.appModel.error("Failed to fetch slideshow images: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Start the slideshow timer
+    private func startSlideshowTimer() {
+        slideshowTask?.cancel()
+        slideshowTask = Task { @MainActor in
+            while isSlideshowActive && !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(slideshowDelay))
+                if !Task.isCancelled && isSlideshowActive {
+                    await advanceSlideshow()
+                }
+            }
+        }
+    }
+
+    /// Advance to the next slideshow image
+    private func advanceSlideshow() async {
+        slideshowIndex += 1
+
+        // If we've gone through all fetched images, fetch more
+        if slideshowIndex >= slideshowImages.count {
+            await fetchRandomSlideshowImages()
+            slideshowIndex = 0
+        }
+
+        if slideshowIndex < slideshowImages.count {
+            let nextImage = slideshowImages[slideshowIndex]
+            selectImageForDetail(nextImage)
+            slideshowHistory.append(nextImage)
+        }
+    }
+
+    /// Go to the next slideshow image manually
+    func nextSlideshowImage() async {
+        guard isSlideshowActive else { return }
+
+        // Reset the timer since user manually advanced
+        startSlideshowTimer()
+
+        await advanceSlideshow()
+    }
+
+    /// Go to the previous slideshow image
+    func previousSlideshowImage() {
+        guard isSlideshowActive, slideshowHistory.count > 1 else { return }
+
+        // Reset the timer since user manually navigated
+        startSlideshowTimer()
+
+        // Remove current image from history
+        slideshowHistory.removeLast()
+
+        // Go back to the previous image
+        if let previousImage = slideshowHistory.last {
+            selectImageForDetail(previousImage)
+        }
+    }
+
+    /// Stop the slideshow
+    func stopSlideshow() {
+        isSlideshowActive = false
+        slideshowTask?.cancel()
+        slideshowTask = nil
+        slideshowImages = []
+        slideshowHistory = []
+        slideshowIndex = 0
+    }
+
+    /// Check if there's a previous slideshow image available
+    var hasPreviousSlideshowImage: Bool {
+        slideshowHistory.count > 1
     }
 
     // MARK: - Video Gallery Methods
