@@ -44,6 +44,11 @@ struct PushedPictureView: View {
                 // Display static image with RealityKit for potential 3D conversion
                 GeometryReader3D { geometry in
                     RealityView { content in
+                        // Ensure AppModel state is initialized for this image before loading
+                        // (onAppear may not have run yet when make closure executes)
+                        if appModel.selectedImage?.id != image.id {
+                            appModel.selectImageForDetail(image)
+                        }
                         await appModel.createImagePresentationComponent()
                         let availableBounds = content.convert(geometry.frame(in: .local), from: .local, to: .scene)
                         scaleImagePresentationToFit(in: availableBounds)
@@ -128,8 +133,10 @@ struct PushedPictureView: View {
             }
         )
         .onAppear {
-            // Initialize AppModel state for this image
-            appModel.selectImageForDetail(image)
+            // Initialize AppModel state for this image (if not already done by RealityView make closure)
+            if appModel.selectedImage?.id != image.id {
+                appModel.selectImageForDetail(image)
+            }
             appModel.startAutoHideTimer()
         }
         .onDisappear {
