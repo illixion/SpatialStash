@@ -410,12 +410,16 @@ class PhotoWindowModel {
                     imageAspectRatio = CGFloat(aspectRatio)
                 }
                 isLoadingDetailImage = false
+                // Restore cached 2D/3D state for the new image
+                await autoGenerateSpatial3DIfPreviouslyConverted()
             } else {
                 // Preloaded data but no presentation component, create it
                 isLoadingDetailImage = true
                 contentEntity.components.remove(ImagePresentationComponent.self)
                 spatial3DImage = nil
                 await createImagePresentationComponent()
+                // Restore cached 2D/3D state for the new image
+                await autoGenerateSpatial3DIfPreviouslyConverted()
             }
 
             // Remove used preloaded data
@@ -437,6 +441,8 @@ class PhotoWindowModel {
             // Create the presentation component if not a GIF
             if !isAnimatedGIF {
                 await createImagePresentationComponent()
+                // Restore cached 2D/3D state for the new image
+                await autoGenerateSpatial3DIfPreviouslyConverted()
             }
         }
     }

@@ -99,6 +99,8 @@ struct ImagePresentationView: View {
                     .onChange(of: appModel.imageURL) {
                         Task {
                             await appModel.createImagePresentationComponent()
+                            // Restore cached 2D/3D state for the new image
+                            await appModel.autoGenerateSpatial3DIfNeeded()
                         }
                     }
                     .onChange(of: appModel.isLoadingDetailImage) { wasLoading, isLoading in
