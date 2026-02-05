@@ -10,6 +10,7 @@ import UIKit
 struct GalleryGridView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(SceneDelegate.self) private var sceneDelegate: SceneDelegate?
+    @Environment(\.pushWindow) private var pushWindow
 
     let columns = [
         GridItem(.adaptive(minimum: 200, maximum: 300), spacing: 16)
@@ -44,7 +45,7 @@ struct GalleryGridView: View {
                     LazyVGrid(columns: columns, spacing: 16) {
                         ForEach(appModel.galleryImages) { image in
                             GalleryThumbnailView(image: image) {
-                                appModel.selectImageForDetail(image)
+                                pushWindow(id: "pushed-picture", value: image)
                             }
                             .id(image.id)
                             .onAppear {

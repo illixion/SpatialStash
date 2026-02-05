@@ -4,7 +4,6 @@
  Root view with tab-based content switching and ornament navigation.
  */
 
-import RealityKit
 import SwiftUI
 
 struct ContentView: View {
@@ -28,10 +27,7 @@ struct ContentView: View {
             visibility: shouldShowOrnament ? .visible : .hidden,
             attachmentAnchor: .scene(.bottomFront),
             ornament: {
-                if appModel.selectedTab == .pictures && appModel.isShowingDetailView {
-                    // Show picture viewer controls
-                    PictureOrnamentsView(imageCount: appModel.galleryImages.count)
-                } else if appModel.selectedTab == .videos && appModel.isShowingVideoDetail {
+                if appModel.selectedTab == .videos && appModel.isShowingVideoDetail {
                     // Show video player controls
                     VideoOrnamentsView(videoCount: appModel.galleryVideos.count)
                 } else {
@@ -58,12 +54,8 @@ struct ContentView: View {
     }
 
     private var shouldShowOrnament: Bool {
-        // Hide ornament during 3D generation animation
-        if appModel.spatial3DImageState == .generating {
-            return false
-        }
-        // Hide ornament when user has hidden UI in detail views
-        if (appModel.isShowingDetailView || appModel.isShowingVideoDetail) && appModel.isUIHidden {
+        // Hide ornament when user has hidden UI in video detail view
+        if appModel.isShowingVideoDetail && appModel.isUIHidden {
             return false
         }
         return true

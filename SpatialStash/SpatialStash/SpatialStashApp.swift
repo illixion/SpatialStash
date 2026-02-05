@@ -27,7 +27,17 @@ struct SpatialStashApp: App {
         .windowStyle(.plain)
         .defaultLaunchBehavior(.presented)
         
-        // Individual photo window - supports multiple instances
+        // Pushed picture viewer - replaces main window temporarily
+        WindowGroup(id: "pushed-picture", for: GalleryImage.self) { $image in
+            if let image = image {
+                PushedPictureView(image: image)
+                    .environment(appModel)
+            }
+        }
+        .windowStyle(.plain)
+        .defaultLaunchBehavior(.suppressed)
+
+        // Individual photo window - supports multiple pop-out instances
         WindowGroup(id: "photo-detail", for: GalleryImage.self) { $image in
             if let image = image {
                 PhotoWindowView(image: image, appModel: appModel)
