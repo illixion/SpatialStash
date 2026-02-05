@@ -47,6 +47,7 @@ struct FiltersTabView: View {
                                     isSelected: appModel.selectedSavedVideoView?.id == view.id,
                                     onApply: { appModel.applySavedVideoView(view) },
                                     onDeselect: { appModel.deselectVideoView() },
+                                    onSave: { appModel.updateSavedVideoView(view, with: appModel.currentVideoFilter) },
                                     onSetDefault: { appModel.setDefaultVideoView(view) },
                                     onClearDefault: { appModel.clearDefaultVideoView() },
                                     onDelete: { appModel.deleteSavedVideoView(view) }
@@ -66,6 +67,7 @@ struct FiltersTabView: View {
                                     isSelected: appModel.selectedSavedView?.id == view.id,
                                     onApply: { appModel.applySavedView(view) },
                                     onDeselect: { appModel.deselectView() },
+                                    onSave: { appModel.updateSavedView(view, with: appModel.currentFilter) },
                                     onSetDefault: { appModel.setDefaultView(view) },
                                     onClearDefault: { appModel.clearDefaultView() },
                                     onDelete: { appModel.deleteSavedView(view) }
@@ -207,17 +209,13 @@ struct FiltersTabView: View {
                 await appModel.loadAutocompleteData()
             }
             .onDisappear {
-                // Only reload if no saved view is selected (user manually changed filters)
-                // If a saved view is selected, it was already applied when selected
+                // Always apply the current filter when leaving the filter tab
+                // This ensures any modifications (even with a saved view selected) are applied
                 Task {
                     if isVideoFilter {
-                        if appModel.selectedSavedVideoView == nil {
-                            await appModel.applyVideoFilter()
-                        }
+                        await appModel.loadInitialVideos()
                     } else {
-                        if appModel.selectedSavedView == nil {
-                            await appModel.applyFilter()
-                        }
+                        await appModel.loadInitialGallery()
                     }
                 }
             }
@@ -245,6 +243,7 @@ struct SavedViewRow: View {
     let isSelected: Bool
     let onApply: () -> Void
     let onDeselect: () -> Void
+    let onSave: () -> Void
     let onSetDefault: () -> Void
     let onClearDefault: () -> Void
     let onDelete: () -> Void
@@ -285,6 +284,12 @@ struct SavedViewRow: View {
             .buttonStyle(.plain)
 
             Menu {
+                Button {
+                    onSave()
+                } label: {
+                    Label("Save Current Filters", systemImage: "square.and.arrow.down")
+                }
+                Divider()
                 if view.isDefault {
                     Button {
                         onClearDefault()
@@ -343,6 +348,7 @@ struct SavedVideoViewRow: View {
     let isSelected: Bool
     let onApply: () -> Void
     let onDeselect: () -> Void
+    let onSave: () -> Void
     let onSetDefault: () -> Void
     let onClearDefault: () -> Void
     let onDelete: () -> Void
@@ -383,6 +389,12 @@ struct SavedVideoViewRow: View {
             .buttonStyle(.plain)
 
             Menu {
+                Button {
+                    onSave()
+                } label: {
+                    Label("Save Current Filters", systemImage: "square.and.arrow.down")
+                }
+                Divider()
                 if view.isDefault {
                     Button {
                         onClearDefault()
