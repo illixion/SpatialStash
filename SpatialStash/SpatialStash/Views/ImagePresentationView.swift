@@ -15,11 +15,19 @@ struct ImagePresentationView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(SceneDelegate.self) private var sceneDelegate: SceneDelegate?
 
+    /// Input plane entity for tap gesture hit-testing
+    @State private var inputPlaneEntity: Entity = Entity()
+
     var body: some View {
         ZStack {
             if appModel.isAnimatedGIF, let gifData = appModel.currentImageData {
                 // Display animated GIF without RealityKit (no 3D conversion possible)
                 AnimatedGIFDetailView(imageData: gifData)
+                .aspectRatio(appModel.imageAspectRatio, contentMode: .fit)
+                .contentShape(.rect)
+                .onTapGesture {
+                    appModel.toggleUIVisibility()
+                }
                 .onAppear {
                     setupWindowForGIF()
                 }
@@ -41,6 +49,11 @@ struct ImagePresentationView: View {
                         let availableBounds = content.convert(geometry.frame(in: .local), from: .local, to: .scene)
                         scaleImagePresentationToFit(in: availableBounds)
                         content.add(appModel.contentEntity)
+                        ensureInputPlaneReady()
+                        updateInputPlane(in: availableBounds)
+                        if inputPlaneEntity.parent == nil {
+                            content.add(inputPlaneEntity)
+                        }
                         // Resize window to match initial aspect ratio
                         resizeWindowToAspectRatio(appModel.imageAspectRatio)
                         // Auto-generate spatial 3D after entity is added to scene
@@ -59,7 +72,19 @@ struct ImagePresentationView: View {
                         // Scale the entity to fit in the bounds.
                         let availableBounds = content.convert(geometry.frame(in: .local), from: .local, to: .scene)
                         scaleImagePresentationToFit(in: availableBounds)
+                        ensureInputPlaneReady()
+                        updateInputPlane(in: availableBounds)
+                        if inputPlaneEntity.parent == nil {
+                            content.add(inputPlaneEntity)
+                        }
                     }
+                    .gesture(
+                        TapGesture()
+                            .targetedToAnyEntity()
+                            .onEnded { _ in
+                                appModel.toggleUIVisibility()
+                            }
+                    )
                     .onAppear() {
                         guard let windowScene = resolvedWindowScene else {
                             AppLogger.views.warning("Unable to get the window scene. Unable to set the resizing restrictions.")
@@ -198,5 +223,33 @@ struct ImagePresentationView: View {
         return UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
             .first { $0.activationState == .foregroundActive }
+    }
+
+    // MARK: - Input Plane for Tap Gestures
+
+    /// Ensure the input plane entity has the required components for hit-testing
+    private func ensureInputPlaneReady() {
+        guard inputPlaneEntity.components[InputTargetComponent.self] == nil else { return }
+
+        inputPlaneEntity = Entity()
+        inputPlaneEntity.components.set(InputTargetComponent())
+        inputPlaneEntity.components.set(
+            CollisionComponent(
+                shapes: [.generateBox(size: SIMD3<Float>(1.0, 1.0, 0.01))],
+                mode: .default,
+                filter: .default
+            )
+        )
+    }
+
+    /// Match the input plane to the current window bounds for hit-testing
+    private func updateInputPlane(in boundsInMeters: BoundingBox) {
+        let scale = SIMD3<Float>(boundsInMeters.extents.x, boundsInMeters.extents.y, 1.0)
+        inputPlaneEntity.scale = scale
+        let center = boundsInMeters.center
+        inputPlaneEntity.setPosition(
+            SIMD3<Float>(center.x, center.y, 0.01),
+            relativeTo: nil
+        )
     }
 }

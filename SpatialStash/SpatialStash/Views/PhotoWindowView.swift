@@ -234,7 +234,7 @@ struct PhotoWindowOrnament: View {
 
     var body: some View {
         HStack(spacing: 16) {
-            // Open main window button - icon only in slideshow mode
+            // Show main gallery window button - icon only in slideshow mode
             Button {
                 if windowModel.isSlideshowActive {
                     windowModel.stopSlideshow()
@@ -247,7 +247,7 @@ struct PhotoWindowOrnament: View {
                 } else {
                     HStack(spacing: 8) {
                         Image(systemName: "square.grid.2x2")
-                        Text("Gallery")
+                        Text("Show Gallery")
                     }
                     .font(.title3)
                 }
