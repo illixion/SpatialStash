@@ -394,22 +394,6 @@ class AppModel {
         }
     }
 
-    /// Reset all image filters to defaults while preserving a single changed property
-    func resetImageFiltersKeeping<T>(_ keyPath: WritableKeyPath<ImageFilterCriteria, T>, value: T) {
-        guard selectedSavedView != nil else { return }
-        currentFilter = ImageFilterCriteria()
-        currentFilter[keyPath: keyPath] = value
-        selectedSavedView = nil
-    }
-
-    /// Deselect saved view without resetting filters (for complex multi-property changes)
-    func deselectSavedViewIfNeeded() {
-        if selectedSavedView != nil {
-            currentFilter = ImageFilterCriteria()
-            selectedSavedView = nil
-        }
-    }
-
     func setDefaultView(_ view: SavedView) {
         // Clear any existing default
         for index in savedViews.indices {
@@ -483,22 +467,6 @@ class AppModel {
         selectedSavedVideoView = nil
         Task {
             await loadInitialVideos()
-        }
-    }
-
-    /// Reset all video filters to defaults while preserving a single changed property
-    func resetVideoFiltersKeeping<T>(_ keyPath: WritableKeyPath<SceneFilterCriteria, T>, value: T) {
-        guard selectedSavedVideoView != nil else { return }
-        currentVideoFilter = SceneFilterCriteria()
-        currentVideoFilter[keyPath: keyPath] = value
-        selectedSavedVideoView = nil
-    }
-
-    /// Deselect saved video view without resetting filters (for complex multi-property changes)
-    func deselectSavedVideoViewIfNeeded() {
-        if selectedSavedVideoView != nil {
-            currentVideoFilter = SceneFilterCriteria()
-            selectedSavedVideoView = nil
         }
     }
 
