@@ -61,17 +61,14 @@ struct GalleryThumbnailView: View {
     }
 
     private func loadThumbnail() async {
-        do {
-            if let result = try await ImageLoader.shared.loadImageWithData(from: image.thumbnailURL) {
-                // Crop to square
-                loadedImage = cropToSquare(result.image)
-                imageData = result.data
-                isAnimatedGIF = result.data.isAnimatedGIF
-            } else {
-                loadFailed = true
-            }
-        } catch {
-            AppLogger.views.warning("Failed to load thumbnail: \(error.localizedDescription, privacy: .public)")
+        // Use efficient thumbnail loading (downsamples local files during decode)
+        if let result = await ImageLoader.shared.loadThumbnailWithData(from: image.thumbnailURL) {
+            // Crop to square
+            loadedImage = cropToSquare(result.image)
+            imageData = result.data
+            isAnimatedGIF = result.isAnimatedGIF
+        } else {
+            AppLogger.views.warning("Failed to load thumbnail for: \(image.thumbnailURL.lastPathComponent, privacy: .private)")
             loadFailed = true
         }
         isLoading = false

@@ -90,15 +90,12 @@ struct VideoThumbnailView: View {
     }
 
     private func loadThumbnail() async {
-        do {
-            if let image = try await ImageLoader.shared.loadImage(from: video.thumbnailURL) {
-                // Crop to 16:9
-                loadedImage = cropTo16x9(image)
-            } else {
-                loadFailed = true
-            }
-        } catch {
-            AppLogger.views.warning("Failed to load video thumbnail: \(error.localizedDescription, privacy: .public)")
+        // Use efficient thumbnail loading
+        if let image = await ImageLoader.shared.loadThumbnail(from: video.thumbnailURL) {
+            // Crop to 16:9
+            loadedImage = cropTo16x9(image)
+        } else {
+            AppLogger.views.warning("Failed to load video thumbnail: \(video.thumbnailURL.lastPathComponent, privacy: .private)")
             loadFailed = true
         }
         isLoading = false

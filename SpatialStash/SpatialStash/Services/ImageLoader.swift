@@ -301,4 +301,82 @@ actor ImageLoader {
     func removeFromCache(url: URL) {
         cache.removeObject(forKey: url as NSURL)
     }
+
+    // MARK: - Thumbnail Loading (Memory Efficient)
+
+    /// Load a thumbnail for display in gallery views
+    /// Uses memory-efficient downsampling for local files
+    /// - Parameters:
+    ///   - url: The image URL
+    ///   - maxSize: Maximum thumbnail dimension (default 400px for 2x display)
+    /// - Returns: A downsampled UIImage suitable for thumbnails
+    func loadThumbnail(from url: URL, maxSize: CGFloat = ThumbnailGenerator.defaultThumbnailSize) async -> UIImage? {
+        // For local files, use the efficient thumbnail system
+        if url.isFileURL {
+            return await loadLocalThumbnail(from: url, maxSize: maxSize)
+        }
+
+        // For remote URLs, use the regular loading (they're already thumbnails from server)
+        return try? await loadImage(from: url)
+    }
+
+    /// Load a thumbnail with data (for animated GIF detection)
+    /// - Parameters:
+    ///   - url: The image URL
+    ///   - maxSize: Maximum thumbnail dimension
+    /// - Returns: Tuple of (thumbnail image, original data for GIF detection)
+    func loadThumbnailWithData(from url: URL, maxSize: CGFloat = ThumbnailGenerator.defaultThumbnailSize) async -> (image: UIImage, data: Data, isAnimatedGIF: Bool)? {
+        // For local files, use efficient thumbnail loading
+        if url.isFileURL {
+            // Check if it's an animated GIF first (without loading full image)
+            let isAnimated = ThumbnailGenerator.shared.isAnimatedGIF(at: url)
+
+            if isAnimated {
+                // For animated GIFs, we need the full data for playback
+                // But we can still be memory-efficient by not caching the full image
+                guard let data = try? Data(contentsOf: url) else {
+                    return nil
+                }
+                // Create a small preview image for non-animated display
+                if let thumbnail = await loadLocalThumbnail(from: url, maxSize: maxSize) {
+                    return (thumbnail, data, true)
+                }
+                return nil
+            } else {
+                // For static images, use efficient thumbnail
+                if let thumbnail = await loadLocalThumbnail(from: url, maxSize: maxSize) {
+                    // We don't need the original data for static thumbnails
+                    // Return empty data since it won't be used
+                    return (thumbnail, Data(), false)
+                }
+                return nil
+            }
+        }
+
+        // For remote URLs, use existing loading
+        if let result = try? await loadImageWithData(from: url) {
+            let isAnimated = result.data.isAnimatedGIF
+            return (result.image, result.data, isAnimated)
+        }
+        return nil
+    }
+
+    /// Load thumbnail for a local file using memory-efficient downsampling
+    private func loadLocalThumbnail(from url: URL, maxSize: CGFloat) async -> UIImage? {
+        // Check thumbnail cache first
+        if let cached = await ThumbnailCache.shared.loadThumbnail(for: url) {
+            return cached
+        }
+
+        // Generate thumbnail using efficient downsampling
+        guard let thumbnail = await ThumbnailGenerator.shared.generateThumbnail(for: url, maxSize: maxSize) else {
+            AppLogger.imageLoader.warning("Failed to generate thumbnail for: \(url.lastPathComponent, privacy: .private)")
+            return nil
+        }
+
+        // Cache the generated thumbnail
+        await ThumbnailCache.shared.saveThumbnail(thumbnail, for: url)
+
+        return thumbnail
+    }
 }
