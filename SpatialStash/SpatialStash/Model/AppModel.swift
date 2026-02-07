@@ -79,6 +79,7 @@ class AppModel {
     var isLoadingGallery: Bool = false
     var currentPage: Int = 0
     var hasMorePages: Bool = true
+    private var isInitialGalleryLoadInProgress: Bool = false
 
     /// Number of images/videos to fetch per page (configurable in settings)
     var pageSize: Int {
@@ -100,6 +101,7 @@ class AppModel {
     var isLoadingVideos: Bool = false
     var currentVideoPage: Int = 0
     var hasMoreVideoPages: Bool = true
+    private var isInitialVideoLoadInProgress: Bool = false
 
     // MARK: - Stereoscopic Video Immersive State
 
@@ -557,6 +559,11 @@ class AppModel {
 
     /// Load the initial gallery page
     func loadInitialGallery() async {
+        // Prevent overlapping initial loads (e.g. applySavedView + FiltersTabView onDisappear)
+        guard !isInitialGalleryLoadInProgress else { return }
+        isInitialGalleryLoadInProgress = true
+        defer { isInitialGalleryLoadInProgress = false }
+
         let sourceType = String(describing: type(of: imageSource))
         AppLogger.appModel.debug("loadInitialGallery called, source: \(sourceType, privacy: .public)")
         // Ensure random sort has a seed for consistent pagination
@@ -1023,6 +1030,11 @@ class AppModel {
 
     /// Load the initial video gallery page
     func loadInitialVideos() async {
+        // Prevent overlapping initial loads
+        guard !isInitialVideoLoadInProgress else { return }
+        isInitialVideoLoadInProgress = true
+        defer { isInitialVideoLoadInProgress = false }
+
         AppLogger.appModel.debug("loadInitialVideos called")
         // Ensure random sort has a seed for consistent pagination
         if currentVideoFilter.sortField == .random && currentVideoFilter.randomSeed == nil {
