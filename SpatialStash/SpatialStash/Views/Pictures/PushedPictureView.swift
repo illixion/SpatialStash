@@ -259,18 +259,11 @@ struct PushedPictureOrnament: View {
                 }
                 dismissWindow()
             } label: {
-                if appModel.isSlideshowActive {
-                    Image(systemName: "square.grid.2x2")
-                        .font(.title3)
-                } else {
-                    HStack(spacing: 8) {
-                        Image(systemName: "chevron.left")
-                        Text("Pictures")
-                    }
+                Image(systemName: "square.grid.2x2")
                     .font(.title3)
-                }
             }
             .buttonStyle(.borderless)
+            .help("Pictures")
 
             Divider()
                 .frame(height: 24)
@@ -310,13 +303,11 @@ struct PushedPictureOrnament: View {
                 Button {
                     appModel.stopSlideshow()
                 } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "stop.fill")
-                        Text("Stop")
-                    }
-                    .font(.title3)
+                    Image(systemName: "stop.fill")
+                        .font(.title3)
                 }
                 .buttonStyle(.borderless)
+                .help("Stop Slideshow")
             } else {
                 // Gallery navigation controls
                 Button {
@@ -356,14 +347,12 @@ struct PushedPictureOrnament: View {
                         await appModel.startSlideshow()
                     }
                 } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "play.fill")
-                        Text("Slideshow")
-                    }
-                    .font(.title3)
+                    Image(systemName: "play.fill")
+                        .font(.title3)
                 }
                 .buttonStyle(.borderless)
                 .disabled(appModel.isLoadingDetailImage)
+                .help("Slideshow")
 
                 Divider()
                     .frame(height: 24)
@@ -378,20 +367,20 @@ struct PushedPictureOrnament: View {
                         }
                     }
                 } label: {
-                    HStack(spacing: 8) {
+                    Group {
                         if appModel.spatial3DImageState == .generating {
                             ProgressView()
                                 .scaleEffect(0.8)
                         } else {
                             Image(systemName: appModel.spatial3DImageState == .generated ? "view.3d" : "wand.and.stars")
                         }
-                        Text(appModel.spatial3DImageState == .notGenerated ? "Generate 3D" :
-                                appModel.spatial3DImageState == .generating ? "Generating..." : "Toggle 3D")
                     }
                     .font(.title3)
                 }
                 .buttonStyle(.borderless)
                 .disabled(appModel.spatial3DImageState == .generating || appModel.isAnimatedGIF)
+                .help(appModel.spatial3DImageState == .notGenerated ? "Generate 3D" :
+                      appModel.spatial3DImageState == .generating ? "Generating..." : "Toggle 3D")
 
                 Divider()
                     .frame(height: 24)
@@ -402,14 +391,12 @@ struct PushedPictureOrnament: View {
                         openWindow(id: "photo-detail", value: image)
                     }
                 } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "rectangle.portrait.on.rectangle.portrait")
-                        Text("Pop Out")
-                    }
-                    .font(.title3)
+                    Image(systemName: "rectangle.portrait.on.rectangle.portrait")
+                        .font(.title3)
                 }
                 .buttonStyle(.borderless)
                 .disabled(appModel.isLoadingDetailImage)
+                .help("Pop Out")
             }
         }
         .padding(.horizontal, 20)

@@ -234,25 +234,18 @@ struct PhotoWindowOrnament: View {
 
     var body: some View {
         HStack(spacing: 16) {
-            // Show main gallery window button - icon only in slideshow mode
+            // Show main gallery window button
             Button {
                 if windowModel.isSlideshowActive {
                     windowModel.stopSlideshow()
                 }
                 openWindow(id: "main")
             } label: {
-                if windowModel.isSlideshowActive {
-                    Image(systemName: "square.grid.2x2")
-                        .font(.title3)
-                } else {
-                    HStack(spacing: 8) {
-                        Image(systemName: "square.grid.2x2")
-                        Text("Show Gallery")
-                    }
+                Image(systemName: "square.grid.2x2")
                     .font(.title3)
-                }
             }
             .buttonStyle(.borderless)
+            .help("Show Gallery")
 
             Divider()
                 .frame(height: 24)
@@ -296,13 +289,11 @@ struct PhotoWindowOrnament: View {
                 Button {
                     windowModel.stopSlideshow()
                 } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "stop.fill")
-                        Text("Stop")
-                    }
-                    .font(.title3)
+                    Image(systemName: "stop.fill")
+                        .font(.title3)
                 }
                 .buttonStyle(.borderless)
+                .help("Stop Slideshow")
             } else {
                 // Gallery navigation controls
                 Button {
@@ -347,14 +338,12 @@ struct PhotoWindowOrnament: View {
                         await windowModel.startSlideshow()
                     }
                 } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "play.fill")
-                        Text("Slideshow")
-                    }
-                    .font(.title3)
+                    Image(systemName: "play.fill")
+                        .font(.title3)
                 }
                 .buttonStyle(.borderless)
                 .disabled(windowModel.isLoadingDetailImage)
+                .help("Slideshow")
 
                 Divider()
                     .frame(height: 24)
@@ -369,20 +358,20 @@ struct PhotoWindowOrnament: View {
                         }
                     }
                 } label: {
-                    HStack(spacing: 8) {
+                    Group {
                         if windowModel.spatial3DImageState == .generating {
                             ProgressView()
                                 .scaleEffect(0.8)
                         } else {
                             Image(systemName: windowModel.spatial3DImageState == .generated ? "view.3d" : "wand.and.stars")
                         }
-                        Text(windowModel.spatial3DImageState == .notGenerated ? "Generate 3D" :
-                             windowModel.spatial3DImageState == .generating ? "Generating..." : "Toggle 3D")
                     }
                     .font(.title3)
                 }
                 .buttonStyle(.borderless)
                 .disabled(windowModel.spatial3DImageState == .generating || windowModel.isAnimatedGIF)
+                .help(windowModel.spatial3DImageState == .notGenerated ? "Generate 3D" :
+                      windowModel.spatial3DImageState == .generating ? "Generating..." : "Toggle 3D")
             }
         }
         .padding(.horizontal, 20)

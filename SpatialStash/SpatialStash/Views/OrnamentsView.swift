@@ -22,11 +22,9 @@ struct OrnamentsView: View {
                     }
                     appModel.dismissDetailView()
                 } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "chevron.left")
-                        Text("Gallery")
-                    }
+                    Image(systemName: "chevron.left")
                 }
+                .help("Gallery")
 
                 Divider()
                     .frame(height: 24)
@@ -65,11 +63,9 @@ struct OrnamentsView: View {
                     Button {
                         appModel.stopSlideshow()
                     } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "stop.fill")
-                            Text("Stop")
-                        }
+                        Image(systemName: "stop.fill")
                     }
+                    .help("Stop Slideshow")
                 } else {
                     // Normal navigation controls
                     // Previous image
@@ -108,12 +104,10 @@ struct OrnamentsView: View {
                             await appModel.startSlideshow()
                         }
                     } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "play.fill")
-                            Text("Slideshow")
-                        }
+                        Image(systemName: "play.fill")
                     }
                     .disabled(appModel.isLoadingDetailImage)
+                    .help("Slideshow")
                 }
 
                 // 2D/3D Toggle - only show for non-GIF images
@@ -159,50 +153,38 @@ struct OrnamentsView: View {
                             AppLogger.views.debug("Unhandled viewing mode: \(String(describing: ipc.viewingMode), privacy: .public)")
                         }
                     } label: {
-                        // Show loading state or current viewing mode
                         if appModel.isLoadingDetailImage {
-                            HStack(spacing: 4) {
-                                ProgressView()
-                                    .scaleEffect(0.7)
-                                Text("Loading...")
-                            }
+                            ProgressView()
+                                .scaleEffect(0.7)
                         } else if let viewingMode = appModel.contentEntity.observable.components[ImagePresentationComponent.self]?.viewingMode {
                             switch viewingMode {
                             case .mono:
-                                HStack(spacing: 4) {
-                                    Image(systemName: "cube")
-                                    Text(appModel.spatial3DImageState == .generated ? "Show 3D" : "Convert to 3D")
-                                }
+                                Image(systemName: "cube")
                             case .spatial3D:
-                                HStack(spacing: 4) {
-                                    Image(systemName: "square")
-                                    Text("Show 2D")
-                                }
+                                Image(systemName: "square")
                             default:
-                                HStack(spacing: 4) {
-                                    Image(systemName: "cube")
-                                    Text("Convert to 3D")
-                                }
+                                Image(systemName: "cube")
                             }
                         } else {
-                            // Component not loaded yet - show default state
-                            HStack(spacing: 4) {
-                                Image(systemName: "cube")
-                                Text("Convert to 3D")
-                            }
+                            Image(systemName: "cube")
                         }
                     }
                     .disabled(appModel.isLoadingDetailImage)
+                    .help({
+                        if let viewingMode = appModel.contentEntity.observable.components[ImagePresentationComponent.self]?.viewingMode,
+                           viewingMode == .spatial3D {
+                            return "Show 2D"
+                        }
+                        return appModel.spatial3DImageState == .generated ? "Show 3D" : "Convert to 3D"
+                    }())
                 } else {
                     // Show GIF indicator instead of 3D button
                     Divider()
                         .frame(height: 24)
 
-                    HStack(spacing: 4) {
-                        Image(systemName: "play.circle")
-                        Text("Animated GIF")
-                    }
-                    .foregroundColor(.secondary)
+                    Image(systemName: "play.circle")
+                        .foregroundColor(.secondary)
+                        .help("Animated GIF")
                 }
             }
             .padding()
