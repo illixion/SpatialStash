@@ -220,6 +220,23 @@ class AppModel {
         ("10 seconds", 10)
     ]
 
+    // MARK: - Viewer Lazy Loading State
+
+    /// Snapshotted image filter for viewer navigation (captured when viewer opens)
+    private var viewerImageFilter: ImageFilterCriteria?
+
+    /// Snapshotted video filter for viewer navigation (captured when viewer opens)
+    private var viewerVideoFilter: SceneFilterCriteria?
+
+    /// Whether a viewer page load is in progress (separate from gallery grid loading)
+    private(set) var isLoadingViewerPage: Bool = false
+
+    /// Whether a video viewer page load is in progress
+    private(set) var isLoadingVideoViewerPage: Bool = false
+
+    /// How close to the end of the loaded set before triggering a load
+    private let viewerPrefetchThreshold: Int = 5
+
     // MARK: - Slideshow State
 
     /// Whether a slideshow is currently active
@@ -550,7 +567,7 @@ class AppModel {
 
     /// Load the next page of gallery images
     func loadNextPage() async {
-        guard !isLoadingGallery && hasMorePages else {
+        guard !isLoadingGallery && !isLoadingViewerPage && hasMorePages else {
             let loading = isLoadingGallery
             let hasMore = hasMorePages
             AppLogger.appModel.debug("loadNextPage skipped - isLoading: \(loading, privacy: .public), hasMore: \(hasMore, privacy: .public)")
@@ -573,6 +590,34 @@ class AppModel {
             currentPage += 1
         } catch {
             AppLogger.appModel.error("Failed to load gallery page: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Load more images for the viewer using the snapshotted filter
+    func loadMoreImagesForViewer() async {
+        guard !isLoadingGallery && !isLoadingViewerPage && hasMorePages else { return }
+
+        isLoadingViewerPage = true
+        defer { isLoadingViewerPage = false }
+
+        do {
+            let result = try await imageSource.fetchImages(page: currentPage, pageSize: pageSize, filter: viewerImageFilter)
+            AppLogger.appModel.debug("Viewer loaded \(result.images.count, privacy: .public) more images")
+            galleryImages.append(contentsOf: result.images)
+            hasMorePages = result.hasMore
+            currentPage += 1
+        } catch {
+            AppLogger.appModel.error("Failed to load viewer image page: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Check if more images should be loaded based on proximity to end
+    private func checkAndLoadMoreImagesIfNeeded(currentIndex: Int) {
+        let remaining = galleryImages.count - currentIndex - 1
+        if remaining <= viewerPrefetchThreshold && hasMorePages && !isLoadingGallery && !isLoadingViewerPage {
+            Task {
+                await loadMoreImagesForViewer()
+            }
         }
     }
 
@@ -733,6 +778,11 @@ class AppModel {
         // Reset content entity to clear previous image
         contentEntity.components.remove(ImagePresentationComponent.self)
 
+        // Snapshot the filter on first entry to the viewer
+        if viewerImageFilter == nil {
+            viewerImageFilter = (mediaSourceType == .stashServer) ? currentFilter : nil
+        }
+
         // Load image data to detect if it's a GIF
         Task {
             await loadImageDataForDetail(url: image.fullSizeURL)
@@ -765,6 +815,8 @@ class AppModel {
         selectedImage = nil
         spatial3DImageState = .notGenerated
         spatial3DImage = nil
+        // Clear the snapshotted viewer filter
+        viewerImageFilter = nil
         // Reset UI visibility when leaving detail view
         cancelAutoHideTimer()
         isUIHidden = false
@@ -816,7 +868,9 @@ class AppModel {
               let currentIndex = galleryImages.firstIndex(of: currentImage),
               currentIndex + 1 < galleryImages.count else { return }
 
-        selectImageForDetail(galleryImages[currentIndex + 1])
+        let nextIndex = currentIndex + 1
+        checkAndLoadMoreImagesIfNeeded(currentIndex: nextIndex)
+        selectImageForDetail(galleryImages[nextIndex])
     }
 
     /// Navigate to previous image in gallery while in detail view
@@ -974,7 +1028,7 @@ class AppModel {
 
     /// Load the next page of videos
     func loadNextVideoPage() async {
-        guard !isLoadingVideos && hasMoreVideoPages else {
+        guard !isLoadingVideos && !isLoadingVideoViewerPage && hasMoreVideoPages else {
             let loadingVideos = isLoadingVideos
             let hasMoreVideo = hasMoreVideoPages
             AppLogger.appModel.debug("loadNextVideoPage skipped - isLoading: \(loadingVideos, privacy: .public), hasMore: \(hasMoreVideo, privacy: .public)")
@@ -999,6 +1053,34 @@ class AppModel {
         }
     }
 
+    /// Load more videos for the viewer using the snapshotted filter
+    func loadMoreVideosForViewer() async {
+        guard !isLoadingVideos && !isLoadingVideoViewerPage && hasMoreVideoPages else { return }
+
+        isLoadingVideoViewerPage = true
+        defer { isLoadingVideoViewerPage = false }
+
+        do {
+            let result = try await videoSource.fetchVideos(page: currentVideoPage, pageSize: pageSize, filter: viewerVideoFilter)
+            AppLogger.appModel.debug("Viewer loaded \(result.videos.count, privacy: .public) more videos")
+            galleryVideos.append(contentsOf: result.videos)
+            hasMoreVideoPages = result.hasMore
+            currentVideoPage += 1
+        } catch {
+            AppLogger.appModel.error("Failed to load viewer video page: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Check if more videos should be loaded based on proximity to end
+    private func checkAndLoadMoreVideosIfNeeded(currentIndex: Int) {
+        let remaining = galleryVideos.count - currentIndex - 1
+        if remaining <= viewerPrefetchThreshold && hasMoreVideoPages && !isLoadingVideos && !isLoadingVideoViewerPage {
+            Task {
+                await loadMoreVideosForViewer()
+            }
+        }
+    }
+
     /// Apply current video filter and reload videos
     func applyVideoFilter() async {
         selectedSavedVideoView = nil  // Clear saved video view selection when manually filtering
@@ -1019,6 +1101,11 @@ class AppModel {
         isShowingVideoDetail = true
         videoStereoscopicOverride = nil
         video3DSettings = nil
+
+        // Snapshot the filter on first entry to the viewer
+        if viewerVideoFilter == nil {
+            viewerVideoFilter = (mediaSourceType == .stashServer) ? currentVideoFilter : nil
+        }
     }
 
     /// Dismiss video player
@@ -1027,6 +1114,8 @@ class AppModel {
         selectedVideo = nil
         videoStereoscopicOverride = nil
         video3DSettings = nil
+        // Clear the snapshotted viewer filter
+        viewerVideoFilter = nil
     }
 
     /// Navigate to next video
@@ -1035,7 +1124,9 @@ class AppModel {
               let currentIndex = galleryVideos.firstIndex(of: currentVideo),
               currentIndex + 1 < galleryVideos.count else { return }
 
-        selectVideoForDetail(galleryVideos[currentIndex + 1])
+        let nextIndex = currentIndex + 1
+        checkAndLoadMoreVideosIfNeeded(currentIndex: nextIndex)
+        selectVideoForDetail(galleryVideos[nextIndex])
     }
 
     /// Navigate to previous video

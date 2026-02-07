@@ -65,6 +65,29 @@ class PhotoWindowModel {
         let spatial3DImage: ImagePresentationComponent.Spatial3DImage?
     }
 
+    // MARK: - Lazy Loading State
+
+    /// Image source for loading more pages
+    private let imageSource: any ImageSource
+
+    /// Snapshotted filter from when the window was opened
+    private let snapshotFilter: ImageFilterCriteria?
+
+    /// Current page for this window's pagination
+    private var currentPage: Int
+
+    /// Whether there are more pages to load
+    private var hasMorePages: Bool
+
+    /// Page size for pagination
+    private let pageSize: Int
+
+    /// Whether a page load is in progress
+    private(set) var isLoadingMoreImages: Bool = false
+
+    /// How close to the end of the loaded set before triggering a load
+    private let prefetchThreshold: Int = 5
+
     // MARK: - Shared References
 
     var appModel: AppModel
@@ -76,6 +99,13 @@ class PhotoWindowModel {
         self.imageURL = image.fullSizeURL
         self.appModel = appModel
         self.isLoadingDetailImage = true
+
+        // Capture pagination state for lazy loading (must be before galleryImages access)
+        self.imageSource = appModel.imageSource
+        self.snapshotFilter = (appModel.mediaSourceType == .stashServer) ? appModel.currentFilter : nil
+        self.currentPage = appModel.currentPage
+        self.hasMorePages = appModel.hasMorePages
+        self.pageSize = appModel.pageSize
 
         // Capture snapshot of gallery images for navigation
         self.galleryImages = appModel.galleryImages
@@ -559,8 +589,15 @@ class PhotoWindowModel {
     func nextGalleryImage() async {
         guard hasNextGalleryImage else { return }
         currentGalleryIndex += 1
+
+        // Trigger prefetch if approaching end
+        checkAndLoadMoreIfNeeded()
+
         let nextImage = galleryImages[currentGalleryIndex]
         await switchToImage(nextImage)
+
+        // Preload upcoming gallery images
+        preloadNextImages(from: galleryImages, startIndex: currentGalleryIndex + 1)
     }
 
     /// Navigate to previous image in gallery
@@ -589,5 +626,35 @@ class PhotoWindowModel {
     /// Total images in gallery
     var galleryImageCount: Int {
         galleryImages.count
+    }
+
+    // MARK: - Viewer Lazy Loading
+
+    /// Load more images using the snapshotted filter
+    private func loadMoreImages() async {
+        guard !isLoadingMoreImages && hasMorePages else { return }
+
+        isLoadingMoreImages = true
+        defer { isLoadingMoreImages = false }
+
+        do {
+            let result = try await imageSource.fetchImages(page: currentPage, pageSize: pageSize, filter: snapshotFilter)
+            galleryImages.append(contentsOf: result.images)
+            hasMorePages = result.hasMore
+            currentPage += 1
+            AppLogger.photoWindow.debug("Loaded \(result.images.count, privacy: .public) more images for window, total: \(self.galleryImages.count, privacy: .public)")
+        } catch {
+            AppLogger.photoWindow.error("Failed to load more images for window: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Check if more images should be loaded based on current position
+    private func checkAndLoadMoreIfNeeded() {
+        let remaining = galleryImages.count - currentGalleryIndex - 1
+        if remaining <= prefetchThreshold && hasMorePages && !isLoadingMoreImages {
+            Task {
+                await loadMoreImages()
+            }
+        }
     }
 }
