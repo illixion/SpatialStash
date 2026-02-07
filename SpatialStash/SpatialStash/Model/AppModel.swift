@@ -559,6 +559,10 @@ class AppModel {
     func loadInitialGallery() async {
         let sourceType = String(describing: type(of: imageSource))
         AppLogger.appModel.debug("loadInitialGallery called, source: \(sourceType, privacy: .public)")
+        // Ensure random sort has a seed for consistent pagination
+        if currentFilter.sortField == .random && currentFilter.randomSeed == nil {
+            currentFilter.shuffleRandomSort()
+        }
         currentPage = 0
         galleryImages = []
         hasMorePages = true
@@ -1020,6 +1024,10 @@ class AppModel {
     /// Load the initial video gallery page
     func loadInitialVideos() async {
         AppLogger.appModel.debug("loadInitialVideos called")
+        // Ensure random sort has a seed for consistent pagination
+        if currentVideoFilter.sortField == .random && currentVideoFilter.randomSeed == nil {
+            currentVideoFilter.shuffleRandomSort()
+        }
         currentVideoPage = 0
         galleryVideos = []
         hasMoreVideoPages = true
