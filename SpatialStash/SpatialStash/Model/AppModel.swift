@@ -79,7 +79,8 @@ class AppModel {
     var isLoadingGallery: Bool = false
     var currentPage: Int = 0
     var hasMorePages: Bool = true
-    private var isInitialGalleryLoadInProgress: Bool = false
+    /// Incremented on each loadInitialGallery; stale loadNextPage results are discarded
+    private var galleryLoadGeneration: Int = 0
 
     /// Number of images/videos to fetch per page (configurable in settings)
     var pageSize: Int {
@@ -101,7 +102,8 @@ class AppModel {
     var isLoadingVideos: Bool = false
     var currentVideoPage: Int = 0
     var hasMoreVideoPages: Bool = true
-    private var isInitialVideoLoadInProgress: Bool = false
+    /// Incremented on each loadInitialVideos; stale loadNextVideoPage results are discarded
+    private var videoLoadGeneration: Int = 0
 
     // MARK: - Stereoscopic Video Immersive State
 
@@ -190,6 +192,10 @@ class AppModel {
     var spatial3DImageState: Spatial3DImageState = .notGenerated
     var spatial3DImage: ImagePresentationComponent.Spatial3DImage? = nil
     var isLoadingDetailImage: Bool = false
+
+    // MARK: - Main Window Size Tracking
+
+    var mainWindowSize: CGSize = CGSize(width: 1200, height: 800)
 
     // MARK: - GIF Support
 
@@ -559,10 +565,8 @@ class AppModel {
 
     /// Load the initial gallery page
     func loadInitialGallery() async {
-        // Prevent overlapping initial loads (e.g. applySavedView + FiltersTabView onDisappear)
-        guard !isInitialGalleryLoadInProgress else { return }
-        isInitialGalleryLoadInProgress = true
-        defer { isInitialGalleryLoadInProgress = false }
+        // Bump generation so any in-flight loadNextPage from a prior load discards its results
+        galleryLoadGeneration += 1
 
         let sourceType = String(describing: type(of: imageSource))
         AppLogger.appModel.debug("loadInitialGallery called, source: \(sourceType, privacy: .public)")
@@ -573,6 +577,9 @@ class AppModel {
         currentPage = 0
         galleryImages = []
         hasMorePages = true
+        // Force-reset loading flags so the new load can proceed even if a prior load is in-flight
+        isLoadingGallery = false
+        isLoadingViewerPage = false
         await loadNextPage()
     }
 
@@ -585,16 +592,26 @@ class AppModel {
             return
         }
 
+        let generation = galleryLoadGeneration
         let page = currentPage
         let sourceTypeName = String(describing: type(of: imageSource))
         AppLogger.appModel.debug("loadNextPage starting, page: \(page, privacy: .public), source: \(sourceTypeName, privacy: .public)")
         isLoadingGallery = true
-        defer { isLoadingGallery = false }
+        defer {
+            if generation == galleryLoadGeneration {
+                isLoadingGallery = false
+            }
+        }
 
         do {
             // Use filter if we're on Stash server, otherwise ignore
             let filter: ImageFilterCriteria? = (mediaSourceType == .stashServer) ? currentFilter : nil
             let result = try await imageSource.fetchImages(page: currentPage, pageSize: pageSize, filter: filter)
+            // Discard results if a new loadInitialGallery was called while fetching
+            guard generation == galleryLoadGeneration else {
+                AppLogger.appModel.debug("loadNextPage discarding stale results (generation \(generation, privacy: .public) != \(self.galleryLoadGeneration, privacy: .public))")
+                return
+            }
             AppLogger.appModel.debug("loadNextPage got \(result.images.count, privacy: .public) images, hasMore: \(result.hasMore, privacy: .public)")
             galleryImages.append(contentsOf: result.images)
             hasMorePages = result.hasMore
@@ -608,11 +625,17 @@ class AppModel {
     func loadMoreImagesForViewer() async {
         guard !isLoadingGallery && !isLoadingViewerPage && hasMorePages else { return }
 
+        let generation = galleryLoadGeneration
         isLoadingViewerPage = true
-        defer { isLoadingViewerPage = false }
+        defer {
+            if generation == galleryLoadGeneration {
+                isLoadingViewerPage = false
+            }
+        }
 
         do {
             let result = try await imageSource.fetchImages(page: currentPage, pageSize: pageSize, filter: viewerImageFilter)
+            guard generation == galleryLoadGeneration else { return }
             AppLogger.appModel.debug("Viewer loaded \(result.images.count, privacy: .public) more images")
             galleryImages.append(contentsOf: result.images)
             hasMorePages = result.hasMore
@@ -1030,10 +1053,8 @@ class AppModel {
 
     /// Load the initial video gallery page
     func loadInitialVideos() async {
-        // Prevent overlapping initial loads
-        guard !isInitialVideoLoadInProgress else { return }
-        isInitialVideoLoadInProgress = true
-        defer { isInitialVideoLoadInProgress = false }
+        // Bump generation so any in-flight loadNextVideoPage discards its results
+        videoLoadGeneration += 1
 
         AppLogger.appModel.debug("loadInitialVideos called")
         // Ensure random sort has a seed for consistent pagination
@@ -1043,6 +1064,9 @@ class AppModel {
         currentVideoPage = 0
         galleryVideos = []
         hasMoreVideoPages = true
+        // Force-reset loading flags so the new load can proceed even if a prior load is in-flight
+        isLoadingVideos = false
+        isLoadingVideoViewerPage = false
         await loadNextVideoPage()
     }
 
@@ -1055,15 +1079,25 @@ class AppModel {
             return
         }
 
+        let generation = videoLoadGeneration
         let videoPage = currentVideoPage
         AppLogger.appModel.debug("loadNextVideoPage starting, page: \(videoPage, privacy: .public)")
         isLoadingVideos = true
-        defer { isLoadingVideos = false }
+        defer {
+            if generation == videoLoadGeneration {
+                isLoadingVideos = false
+            }
+        }
 
         do {
             // Use filter if we're on Stash server, otherwise ignore
             let filter: SceneFilterCriteria? = (mediaSourceType == .stashServer) ? currentVideoFilter : nil
             let result = try await videoSource.fetchVideos(page: currentVideoPage, pageSize: pageSize, filter: filter)
+            // Discard results if a new loadInitialVideos was called while fetching
+            guard generation == videoLoadGeneration else {
+                AppLogger.appModel.debug("loadNextVideoPage discarding stale results")
+                return
+            }
             AppLogger.appModel.debug("loadNextVideoPage got \(result.videos.count, privacy: .public) videos, hasMore: \(result.hasMore, privacy: .public)")
             galleryVideos.append(contentsOf: result.videos)
             hasMoreVideoPages = result.hasMore
@@ -1077,11 +1111,17 @@ class AppModel {
     func loadMoreVideosForViewer() async {
         guard !isLoadingVideos && !isLoadingVideoViewerPage && hasMoreVideoPages else { return }
 
+        let generation = videoLoadGeneration
         isLoadingVideoViewerPage = true
-        defer { isLoadingVideoViewerPage = false }
+        defer {
+            if generation == videoLoadGeneration {
+                isLoadingVideoViewerPage = false
+            }
+        }
 
         do {
             let result = try await videoSource.fetchVideos(page: currentVideoPage, pageSize: pageSize, filter: viewerVideoFilter)
+            guard generation == videoLoadGeneration else { return }
             AppLogger.appModel.debug("Viewer loaded \(result.videos.count, privacy: .public) more videos")
             galleryVideos.append(contentsOf: result.videos)
             hasMoreVideoPages = result.hasMore

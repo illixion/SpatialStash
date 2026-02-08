@@ -36,6 +36,17 @@ struct ContentView: View {
                 }
             }
         )
+        .background(
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear {
+                        appModel.mainWindowSize = geo.size
+                    }
+                    .onChange(of: geo.size) { _, newSize in
+                        appModel.mainWindowSize = newSize
+                    }
+            }
+        )
         .ornament(
             visibility: shouldShowRestoreButton ? .visible : .hidden,
             attachmentAnchor: .scene(.bottomFront),

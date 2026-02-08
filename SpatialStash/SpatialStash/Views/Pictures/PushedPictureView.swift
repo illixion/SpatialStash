@@ -33,11 +33,11 @@ struct PushedPictureView: View {
                         setupWindowForGIF()
                     }
                     .onChange(of: appModel.imageAspectRatio) { _, newAspectRatio in
-                        resizeWindowForGIF(newAspectRatio)
+                        resizeGIFWindowToFitMainWindow(newAspectRatio)
                     }
                     .onChange(of: appModel.isLoadingDetailImage) { wasLoading, isLoading in
                         if wasLoading && !isLoading {
-                            resizeWindowForGIF(appModel.imageAspectRatio)
+                            resizeGIFWindowToFitMainWindow(appModel.imageAspectRatio)
                         }
                     }
             } else {
@@ -53,7 +53,7 @@ struct PushedPictureView: View {
                         if inputPlaneEntity.parent == nil {
                             content.add(inputPlaneEntity)
                         }
-                        resizeWindowToAspectRatio(appModel.imageAspectRatio)
+                        resizeWindowToFitMainWindow(appModel.imageAspectRatio)
                         await appModel.autoGenerateSpatial3DIfNeeded()
                     } update: { content in
                         guard let presentationScreenSize = appModel
@@ -88,7 +88,7 @@ struct PushedPictureView: View {
                         windowScene.requestGeometryUpdate(.Vision(resizingRestrictions: .uniform))
                     }
                     .onChange(of: appModel.imageAspectRatio) { _, newAspectRatio in
-                        resizeWindowToAspectRatio(newAspectRatio)
+                        resizeWindowToFitMainWindow(newAspectRatio)
                     }
                     .onChange(of: appModel.imageURL) {
                         Task {
@@ -101,7 +101,7 @@ struct PushedPictureView: View {
                     }
                     .onChange(of: appModel.isLoadingDetailImage) { wasLoading, isLoading in
                         if wasLoading && !isLoading {
-                            resizeWindowToAspectRatio(appModel.imageAspectRatio)
+                            resizeWindowToFitMainWindow(appModel.imageAspectRatio)
                         }
                     }
                 }
@@ -152,21 +152,43 @@ struct PushedPictureView: View {
     // MARK: - Window Management
 
     private func setupWindowForGIF() {
-        resizeWindowForGIF(appModel.imageAspectRatio)
+        resizeGIFWindowToFitMainWindow(appModel.imageAspectRatio)
     }
 
-    private func resizeWindowForGIF(_ aspectRatio: CGFloat) {
+    /// Resize the window to fit the image within the main window's dimensions
+    private func resizeWindowToFitMainWindow(_ aspectRatio: CGFloat) {
         guard let windowScene = resolvedWindowScene else { return }
 
-        let windowSceneSize = windowScene.effectiveGeometry.coordinateSpace.bounds.size
-        let currentAspectRatio = windowSceneSize.width / windowSceneSize.height
-        if abs(currentAspectRatio - aspectRatio) < 0.01 {
-            windowScene.requestGeometryUpdate(.Vision(resizingRestrictions: .uniform))
-            return
+        let targetSize = appModel.mainWindowSize
+        let windowAR = targetSize.width / targetSize.height
+
+        let size: CGSize
+        if aspectRatio > windowAR {
+            // Image is wider than window - fit to width
+            size = CGSize(width: targetSize.width, height: targetSize.width / aspectRatio)
+        } else {
+            // Image is taller than window - fit to height
+            size = CGSize(width: targetSize.height * aspectRatio, height: targetSize.height)
         }
 
-        let width = aspectRatio * windowSceneSize.height
-        let size = CGSize(width: width, height: UIProposedSceneSizeNoPreference)
+        UIView.performWithoutAnimation {
+            windowScene.requestGeometryUpdate(.Vision(size: size))
+        }
+    }
+
+    /// Resize GIF window to fit within main window's dimensions with uniform restrictions
+    private func resizeGIFWindowToFitMainWindow(_ aspectRatio: CGFloat) {
+        guard let windowScene = resolvedWindowScene else { return }
+
+        let targetSize = appModel.mainWindowSize
+        let windowAR = targetSize.width / targetSize.height
+
+        let size: CGSize
+        if aspectRatio > windowAR {
+            size = CGSize(width: targetSize.width, height: targetSize.width / aspectRatio)
+        } else {
+            size = CGSize(width: targetSize.height * aspectRatio, height: targetSize.height)
+        }
 
         UIView.performWithoutAnimation {
             windowScene.requestGeometryUpdate(.Vision(size: size, resizingRestrictions: .uniform))
@@ -176,21 +198,6 @@ struct PushedPictureView: View {
     private func resetWindowRestrictions() {
         guard let windowScene = resolvedWindowScene else { return }
         windowScene.requestGeometryUpdate(.Vision(resizingRestrictions: .freeform))
-    }
-
-    private func resizeWindowToAspectRatio(_ aspectRatio: CGFloat) {
-        guard let windowScene = resolvedWindowScene else {
-            AppLogger.views.warning("Unable to get the window scene. Resizing is not possible.")
-            return
-        }
-
-        let windowSceneSize = windowScene.effectiveGeometry.coordinateSpace.bounds.size
-        let width = aspectRatio * windowSceneSize.height
-        let size = CGSize(width: width, height: UIProposedSceneSizeNoPreference)
-
-        UIView.performWithoutAnimation {
-            windowScene.requestGeometryUpdate(.Vision(size: size))
-        }
     }
 
     func scaleImagePresentationToFit(in boundsInMeters: BoundingBox) {
