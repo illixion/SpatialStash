@@ -138,7 +138,7 @@ struct PhotoWindowView: View {
             windowModel.startAutoHideTimer()
         }
         .onDisappear {
-            windowModel.cancelAutoHideTimer()
+            windowModel.cleanup()
             resetWindowRestrictions()
         }
         .onChange(of: windowModel.isLoadingDetailImage) { wasLoading, isLoading in

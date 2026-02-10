@@ -26,9 +26,20 @@ actor ImageLoader {
     private var inProgressTasks: [URL: Task<CachedImageData?, Error>] = [:]
 
     private init() {
-        // Configure cache limits
-        cache.countLimit = 100 // Maximum number of cached images
-        cache.totalCostLimit = 100 * 1024 * 1024 // 100 MB
+        // Configure cache limits (costs reflect true decoded image sizes)
+        cache.countLimit = 20
+        cache.totalCostLimit = 512 * 1024 * 1024 // 512 MB
+    }
+
+    /// Estimate the actual in-memory cost of a cached image (decoded pixels + compressed data)
+    private nonisolated func estimatedMemoryCost(image: UIImage, data: Data) -> Int {
+        let pixelCost: Int
+        if let cgImage = image.cgImage {
+            pixelCost = cgImage.width * cgImage.height * 4
+        } else {
+            pixelCost = Int(image.size.width * image.size.height * image.scale * image.scale * 4)
+        }
+        return pixelCost + data.count
     }
 
     /// Normalize an image by redrawing it to avoid Core Graphics decoding issues
@@ -78,7 +89,7 @@ actor ImageLoader {
             let image = normalizeImage(rawImage)
             // Restore to memory cache
             let cachedData = CachedImageData(image: image, data: diskData)
-            cache.setObject(cachedData, forKey: url as NSURL, cost: diskData.count)
+            cache.setObject(cachedData, forKey: url as NSURL, cost: estimatedMemoryCost(image: image, data: diskData))
             return image
         }
 
@@ -108,8 +119,7 @@ actor ImageLoader {
             let cachedData = CachedImageData(image: image, data: data)
 
             // Cache in memory
-            let cost = data.count
-            cache.setObject(cachedData, forKey: url as NSURL, cost: cost)
+            cache.setObject(cachedData, forKey: url as NSURL, cost: estimatedMemoryCost(image: image, data: data))
 
             // Cache to disk
             await DiskImageCache.shared.saveData(data, for: url)
@@ -148,7 +158,7 @@ actor ImageLoader {
             let image = normalizeImage(rawImage)
             // Restore to memory cache
             let cachedData = CachedImageData(image: image, data: diskData)
-            cache.setObject(cachedData, forKey: url as NSURL, cost: diskData.count)
+            cache.setObject(cachedData, forKey: url as NSURL, cost: estimatedMemoryCost(image: image, data: diskData))
             return diskData
         }
 
@@ -178,8 +188,7 @@ actor ImageLoader {
             let cachedData = CachedImageData(image: image, data: data)
 
             // Cache in memory
-            let cost = data.count
-            cache.setObject(cachedData, forKey: url as NSURL, cost: cost)
+            cache.setObject(cachedData, forKey: url as NSURL, cost: estimatedMemoryCost(image: image, data: data))
 
             // Cache to disk
             await DiskImageCache.shared.saveData(data, for: url)
@@ -194,6 +203,39 @@ actor ImageLoader {
         }
 
         return try await task.value?.data
+    }
+
+    /// Load ONLY the raw Data for a URL without decoding to UIImage.
+    /// Avoids the expensive normalizeImage() allocation for cases where
+    /// only the bytes are needed (e.g. GIF detection).
+    func loadRawData(from url: URL) async throws -> Data? {
+        // Check memory cache first (if already loaded, return cached data)
+        if let cached = cache.object(forKey: url as NSURL) {
+            return cached.data
+        }
+
+        // Handle local file URLs directly
+        if url.isFileURL {
+            return try Data(contentsOf: url)
+        }
+
+        // Check disk cache for remote URLs
+        if let diskData = await DiskImageCache.shared.loadData(for: url) {
+            return diskData
+        }
+
+        // Download without decoding to UIImage
+        let (data, response) = try await URLSession.shared.data(from: url)
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            return nil
+        }
+
+        // Cache to disk only (skip memory cache since we're not decoding)
+        await DiskImageCache.shared.saveData(data, for: url)
+
+        return data
     }
 
     /// Load both image and data from a URL, using cache if available
@@ -217,7 +259,7 @@ actor ImageLoader {
             let image = normalizeImage(rawImage)
             // Restore to memory cache
             let cachedData = CachedImageData(image: image, data: diskData)
-            cache.setObject(cachedData, forKey: url as NSURL, cost: diskData.count)
+            cache.setObject(cachedData, forKey: url as NSURL, cost: estimatedMemoryCost(image: image, data: diskData))
             return (image, diskData)
         }
 
@@ -250,8 +292,7 @@ actor ImageLoader {
             let cachedData = CachedImageData(image: image, data: data)
 
             // Cache in memory
-            let cost = data.count
-            cache.setObject(cachedData, forKey: url as NSURL, cost: cost)
+            cache.setObject(cachedData, forKey: url as NSURL, cost: estimatedMemoryCost(image: image, data: data))
 
             // Cache to disk
             await DiskImageCache.shared.saveData(data, for: url)
@@ -286,7 +327,7 @@ actor ImageLoader {
 
         // Cache in memory (but not to disk since it's already local)
         let cachedData = CachedImageData(image: image, data: data)
-        cache.setObject(cachedData, forKey: url as NSURL, cost: data.count)
+        cache.setObject(cachedData, forKey: url as NSURL, cost: estimatedMemoryCost(image: image, data: data))
 
         return (image, data)
     }

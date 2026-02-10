@@ -826,7 +826,7 @@ class AppModel {
     /// Load image data for the detail view and detect if it's an animated GIF
     private func loadImageDataForDetail(url: URL) async {
         do {
-            if let data = try await ImageLoader.shared.loadImageData(from: url) {
+            if let data = try await ImageLoader.shared.loadRawData(from: url) {
                 currentImageData = data
                 isAnimatedGIF = data.isAnimatedGIF
 
@@ -849,6 +849,10 @@ class AppModel {
         selectedImage = nil
         spatial3DImageState = .notGenerated
         spatial3DImage = nil
+        currentImageData = nil
+        isAnimatedGIF = false
+        // Remove RealityKit components to release GPU resources
+        contentEntity.components.remove(ImagePresentationComponent.self)
         // Clear the snapshotted viewer filter
         viewerImageFilter = nil
         // Reset UI visibility when leaving detail view

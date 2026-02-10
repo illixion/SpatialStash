@@ -122,7 +122,7 @@ class PhotoWindowModel {
     /// Load image data for the detail view and detect if it's an animated GIF
     private func loadImageDataForDetail(url: URL) async {
         do {
-            if let data = try await ImageLoader.shared.loadImageData(from: url) {
+            if let data = try await ImageLoader.shared.loadRawData(from: url) {
                 currentImageData = data
                 isAnimatedGIF = data.isAnimatedGIF
                 
@@ -456,8 +456,8 @@ class PhotoWindowModel {
                 }
             }
 
-            // Remove used preloaded data
-            preloadedImages.removeValue(forKey: newImage.id)
+            // Clear all preloaded data (new preloads will be triggered after navigation)
+            preloadedImages.removeAll()
         } else {
             // No preloaded data, load normally
             image = newImage
@@ -485,12 +485,11 @@ class PhotoWindowModel {
 
     // MARK: - Image Preloading
 
-    /// Preload images for seamless transitions
+    /// Preload images for seamless transitions (limited to 1 to reduce memory pressure)
     private func preloadNextImages(from images: [GalleryImage], startIndex: Int) {
         preloadTask?.cancel()
         preloadTask = Task { @MainActor in
-            // Preload next 1-2 images
-            for i in startIndex..<min(startIndex + 2, images.count) {
+            for i in startIndex..<min(startIndex + 1, images.count) {
                 guard !Task.isCancelled else { break }
                 let imageToPreload = images[i]
 
@@ -508,7 +507,7 @@ class PhotoWindowModel {
 
         do {
             // Load image data
-            guard let data = try await ImageLoader.shared.loadImageData(from: url) else { return }
+            guard let data = try await ImageLoader.shared.loadRawData(from: url) else { return }
 
             let isGIF = data.isAnimatedGIF
             var aspectRatio: CGFloat?
@@ -587,6 +586,43 @@ class PhotoWindowModel {
     /// Check if there's a previous slideshow image available
     var hasPreviousSlideshowImage: Bool {
         slideshowHistory.count > 1
+    }
+
+    // MARK: - Resource Cleanup
+
+    /// Explicitly release large resources when the window is being dismissed.
+    /// Ensures GPU textures and image data are freed promptly rather than
+    /// waiting for ARC/deinit which may be delayed by SwiftUI state retention.
+    func cleanup() {
+        if isSlideshowActive {
+            stopSlideshow()
+        }
+
+        // Cancel all tasks
+        autoHideTask?.cancel()
+        autoHideTask = nil
+        preloadTask?.cancel()
+        preloadTask = nil
+        slideshowTask?.cancel()
+        slideshowTask = nil
+
+        // Release Spatial3DImage GPU texture
+        spatial3DImage = nil
+        spatial3DImageState = .notGenerated
+
+        // Release preloaded images (Spatial3DImage textures + data)
+        preloadedImages.removeAll()
+
+        // Release image data
+        currentImageData = nil
+
+        // Remove RealityKit components to release associated GPU resources
+        contentEntity.components.remove(ImagePresentationComponent.self)
+
+        // Clear collection references
+        galleryImages = []
+        slideshowImages = []
+        slideshowHistory = []
     }
 
     // MARK: - Gallery Navigation
