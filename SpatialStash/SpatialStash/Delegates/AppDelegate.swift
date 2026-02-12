@@ -15,6 +15,10 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         Task {
             await LocalMediaSource.shared.ensureDirectoriesExist()
         }
+        // Clean up orphaned shared media cache entries from previous sessions
+        Task {
+            await SharedMediaCache.shared.cleanupOrphanedEntries()
+        }
         return true
     }
 

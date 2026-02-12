@@ -53,4 +53,7 @@ enum AppLogger {
 
     /// General app lifecycle
     static let app = Logger(subsystem: subsystem, category: "App")
+
+    /// Shared media handling (share sheet, caching, saving)
+    static let sharedMedia = Logger(subsystem: subsystem, category: "SharedMedia")
 }
