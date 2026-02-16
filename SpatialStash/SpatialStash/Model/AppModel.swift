@@ -202,6 +202,22 @@ class AppModel {
     var isAnimatedGIF: Bool = false
     var currentImageData: Data? = nil
 
+    // MARK: - Image Preloading
+
+    /// Data structure for preloaded images
+    private struct PreloadedImageData {
+        let imageData: Data?
+        let isAnimatedGIF: Bool
+        let aspectRatio: CGFloat?
+        let spatial3DImage: ImagePresentationComponent.Spatial3DImage?
+    }
+
+    /// Preloaded image data cache (keyed by image ID)
+    private var preloadedImages: [UUID: PreloadedImageData] = [:]
+
+    /// Currently preloading task
+    private var preloadTask: Task<Void, Never>?
+
     // MARK: - UI Visibility State (for immersive image viewing)
 
     /// Whether the UI (ornaments, navbar) should be hidden in detail view
@@ -821,6 +837,9 @@ class AppModel {
         Task {
             await loadImageDataForDetail(url: image.fullSizeURL)
         }
+
+        // Preload adjacent images for instant transitions
+        preloadAdjacentImages(direction: 0)
     }
 
     /// Load image data for the detail view and detect if it's an animated GIF
@@ -843,6 +862,125 @@ class AppModel {
         }
     }
 
+    /// Select an image using preloaded data if available for instant transition
+    func selectImageForDetailFromPreload(_ image: GalleryImage) {
+        if let preloaded = preloadedImages[image.id] {
+            // Instant switch using preloaded data
+            selectedImage = image
+            lastViewedImageId = image.id
+            imageURL = image.fullSizeURL
+            isShowingDetailView = true
+            spatial3DImageState = .notGenerated
+            spatial3DImage = nil
+            currentImageData = preloaded.imageData
+            isAnimatedGIF = preloaded.isAnimatedGIF
+
+            if let aspectRatio = preloaded.aspectRatio {
+                imageAspectRatio = aspectRatio
+            }
+
+            if isAnimatedGIF {
+                contentEntity.components.remove(ImagePresentationComponent.self)
+                isLoadingDetailImage = false
+            } else if let spatial3D = preloaded.spatial3DImage {
+                contentEntity.components.remove(ImagePresentationComponent.self)
+                spatial3DImage = spatial3D
+                let component = ImagePresentationComponent(spatial3DImage: spatial3D)
+                contentEntity.components.set(component)
+                if let ar = component.aspectRatio(for: .mono) {
+                    imageAspectRatio = CGFloat(ar)
+                }
+                isLoadingDetailImage = false
+                if !isSlideshowActive {
+                    Task { await autoGenerateSpatial3DIfNeeded() }
+                }
+            } else {
+                isLoadingDetailImage = true
+                contentEntity.components.remove(ImagePresentationComponent.self)
+                Task {
+                    await createImagePresentationComponent()
+                    if !isSlideshowActive {
+                        await autoGenerateSpatial3DIfNeeded()
+                    }
+                }
+            }
+
+            // Snapshot filter if first entry
+            if viewerImageFilter == nil {
+                viewerImageFilter = (mediaSourceType == .stashServer) ? currentFilter : nil
+            }
+
+            // Clear used preloaded data
+            preloadedImages.removeValue(forKey: image.id)
+        } else {
+            // Fall back to full reload
+            selectImageForDetail(image)
+        }
+    }
+
+    /// Preload images adjacent to the current image for instant transitions
+    /// - Parameter direction: +1 for forward, -1 for backward, 0 for both directions
+    func preloadAdjacentImages(direction: Int = 0) {
+        guard let currentImage = selectedImage,
+              let currentIndex = galleryImages.firstIndex(of: currentImage) else { return }
+
+        preloadTask?.cancel()
+        preloadTask = Task { @MainActor in
+            var indicesToPreload: [Int] = []
+
+            if direction >= 0, currentIndex + 1 < galleryImages.count {
+                indicesToPreload.append(currentIndex + 1)
+            }
+            if direction <= 0, currentIndex - 1 >= 0 {
+                indicesToPreload.append(currentIndex - 1)
+            }
+
+            for index in indicesToPreload {
+                guard !Task.isCancelled else { break }
+                let imageToPreload = galleryImages[index]
+                guard preloadedImages[imageToPreload.id] == nil else { continue }
+                await preloadImage(imageToPreload)
+            }
+        }
+    }
+
+    /// Preload a single image's data and spatial 3D image
+    private func preloadImage(_ galleryImage: GalleryImage) async {
+        let url = galleryImage.fullSizeURL
+
+        do {
+            guard let data = try await ImageLoader.shared.loadRawData(from: url) else { return }
+
+            let isGIF = data.isAnimatedGIF
+            var aspectRatio: CGFloat?
+            var spatial3D: ImagePresentationComponent.Spatial3DImage?
+
+            if isGIF {
+                if let uiImage = UIImage(data: data) {
+                    aspectRatio = uiImage.size.width / uiImage.size.height
+                }
+            } else {
+                let sourceURL: URL
+                if !url.isFileURL, let cached = await DiskImageCache.shared.cachedFileURL(for: url) {
+                    sourceURL = cached
+                } else {
+                    sourceURL = url
+                }
+                spatial3D = try await ImagePresentationComponent.Spatial3DImage(contentsOf: sourceURL)
+            }
+
+            preloadedImages[galleryImage.id] = PreloadedImageData(
+                imageData: data,
+                isAnimatedGIF: isGIF,
+                aspectRatio: aspectRatio,
+                spatial3DImage: spatial3D
+            )
+            AppLogger.appModel.debug("Preloaded image: \(galleryImage.id, privacy: .public)")
+        } catch {
+            AppLogger.appModel.debug("Failed to preload: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
     /// Dismiss the detail view and return to gallery
     func dismissDetailView() {
         isShowingDetailView = false
@@ -855,6 +993,10 @@ class AppModel {
         contentEntity.components.remove(ImagePresentationComponent.self)
         // Clear the snapshotted viewer filter
         viewerImageFilter = nil
+        // Clean up preloaded images
+        preloadTask?.cancel()
+        preloadTask = nil
+        preloadedImages.removeAll()
         // Reset UI visibility when leaving detail view
         cancelAutoHideTimer()
         isUIHidden = false
@@ -908,7 +1050,8 @@ class AppModel {
 
         let nextIndex = currentIndex + 1
         checkAndLoadMoreImagesIfNeeded(currentIndex: nextIndex)
-        selectImageForDetail(galleryImages[nextIndex])
+        selectImageForDetailFromPreload(galleryImages[nextIndex])
+        preloadAdjacentImages(direction: 1)
     }
 
     /// Navigate to previous image in gallery while in detail view
@@ -917,7 +1060,8 @@ class AppModel {
               let currentIndex = galleryImages.firstIndex(of: currentImage),
               currentIndex > 0 else { return }
 
-        selectImageForDetail(galleryImages[currentIndex - 1])
+        selectImageForDetailFromPreload(galleryImages[currentIndex - 1])
+        preloadAdjacentImages(direction: -1)
     }
 
     /// Check if there's a next image available

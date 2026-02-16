@@ -648,6 +648,11 @@ class PhotoWindowModel {
         currentGalleryIndex -= 1
         let prevImage = galleryImages[currentGalleryIndex]
         await switchToImage(prevImage)
+
+        // Preload previous gallery image for continued backward navigation
+        if currentGalleryIndex > 0 {
+            preloadNextImages(from: galleryImages, startIndex: currentGalleryIndex - 1)
+        }
     }
 
     /// Check if there's a next image in gallery

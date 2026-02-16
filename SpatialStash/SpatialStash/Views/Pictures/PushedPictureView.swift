@@ -22,6 +22,23 @@ struct PushedPictureView: View {
     /// Tracks the viewer window's current size (updated live via GeometryReader)
     @State private var viewerWindowSize: CGSize?
 
+    // MARK: - Swipe Gesture State
+
+    /// Horizontal drag offset during swipe gesture
+    @State private var dragOffset: CGFloat = 0
+
+    /// Whether a swipe transition animation is in progress
+    @State private var isSwipeTransitioning: Bool = false
+
+    /// The width of the view for swipe threshold calculations
+    @State private var containerWidth: CGFloat = 0
+
+    /// Suppresses window resize during swipe transitions
+    @State private var suppressWindowResize: Bool = false
+
+    /// Minimum drag fraction of container width to trigger swipe
+    private let swipeThresholdFraction: CGFloat = 0.15
+
     /// The bounds used to fit images into — starts as main window size, then tracks viewer size
     private var currentBounds: CGSize {
         viewerWindowSize ?? appModel.mainWindowSize
@@ -29,95 +46,11 @@ struct PushedPictureView: View {
 
     var body: some View {
         ZStack {
-            if appModel.isAnimatedGIF, let gifData = appModel.currentImageData {
-                // Display animated GIF without RealityKit (no 3D conversion possible)
-                AnimatedGIFDetailView(imageData: gifData)
-                    .aspectRatio(appModel.imageAspectRatio, contentMode: .fit)
-                    .contentShape(.rect)
-                    .onTapGesture {
-                        appModel.toggleUIVisibility()
-                    }
-                    .onAppear {
-                        resizeGIFWindowToFit(appModel.imageAspectRatio, within: appModel.mainWindowSize)
-                    }
-                    .onChange(of: appModel.imageAspectRatio) { _, newAspectRatio in
-                        resizeGIFWindowToFit(newAspectRatio, within: currentBounds)
-                    }
-                    .onChange(of: appModel.isLoadingDetailImage) { wasLoading, isLoading in
-                        if wasLoading && !isLoading {
-                            resizeGIFWindowToFit(appModel.imageAspectRatio, within: currentBounds)
-                        }
-                    }
-            } else {
-                // Display static image with RealityKit for potential 3D conversion
-                GeometryReader3D { geometry in
-                    RealityView { content in
-                        await appModel.createImagePresentationComponent()
-                        let availableBounds = content.convert(geometry.frame(in: .local), from: .local, to: .scene)
-                        scaleImagePresentationToFit(in: availableBounds)
-                        content.add(appModel.contentEntity)
-                        ensureInputPlaneReady()
-                        updateInputPlane(in: availableBounds)
-                        if inputPlaneEntity.parent == nil {
-                            content.add(inputPlaneEntity)
-                        }
-                        resizeWindowToFit(appModel.imageAspectRatio, within: appModel.mainWindowSize)
-                        await appModel.autoGenerateSpatial3DIfNeeded()
-                    } update: { content in
-                        guard let presentationScreenSize = appModel
-                            .contentEntity
-                            .observable
-                            .components[ImagePresentationComponent.self]?
-                            .presentationScreenSize, presentationScreenSize != .zero else {
-                            return
-                        }
-                        let originalPosition = appModel.contentEntity.position(relativeTo: nil)
-                        appModel.contentEntity.setPosition(SIMD3<Float>(originalPosition.x, originalPosition.y, 0.0), relativeTo: nil)
-                        let availableBounds = content.convert(geometry.frame(in: .local), from: .local, to: .scene)
-                        scaleImagePresentationToFit(in: availableBounds)
-                        ensureInputPlaneReady()
-                        updateInputPlane(in: availableBounds)
-                        if inputPlaneEntity.parent == nil {
-                            content.add(inputPlaneEntity)
-                        }
-                    }
-                    .gesture(
-                        TapGesture()
-                            .targetedToAnyEntity()
-                            .onEnded { _ in
-                                appModel.toggleUIVisibility()
-                            }
-                    )
-                    .onAppear {
-                        guard let windowScene = resolvedWindowScene else {
-                            AppLogger.views.warning("Unable to get the window scene. Unable to set the resizing restrictions.")
-                            return
-                        }
-                        windowScene.requestGeometryUpdate(.Vision(resizingRestrictions: .uniform))
-                    }
-                    .onChange(of: appModel.imageAspectRatio) { _, newAspectRatio in
-                        resizeWindowToFit(newAspectRatio, within: currentBounds)
-                    }
-                    .onChange(of: appModel.imageURL) {
-                        Task {
-                            await appModel.createImagePresentationComponent()
-                            // Restore cached 2D/3D state for the new image (skip during slideshow)
-                            if !appModel.isSlideshowActive {
-                                await appModel.autoGenerateSpatial3DIfNeeded()
-                            }
-                        }
-                    }
-                    .onChange(of: appModel.isLoadingDetailImage) { wasLoading, isLoading in
-                        if wasLoading && !isLoading {
-                            resizeWindowToFit(appModel.imageAspectRatio, within: currentBounds)
-                        }
-                    }
-                }
-                .aspectRatio(appModel.imageAspectRatio, contentMode: .fit)
-            }
+            imageContent
+                .offset(x: dragOffset)
 
-            // Loading overlay
-            if appModel.isLoadingDetailImage {
+            // Loading overlay (stays in place, not offset with swipe)
+            if appModel.isLoadingDetailImage && !isSwipeTransitioning {
                 Color.black.opacity(0.5)
                     .ignoresSafeArea()
                 VStack(spacing: 16) {
@@ -135,9 +68,11 @@ struct PushedPictureView: View {
                 Color.clear
                     .onAppear {
                         viewerWindowSize = geo.size
+                        containerWidth = geo.size.width
                     }
                     .onChange(of: geo.size) { _, newSize in
                         viewerWindowSize = newSize
+                        containerWidth = newSize.width
                     }
             }
         )
@@ -165,6 +100,200 @@ struct PushedPictureView: View {
         .onChange(of: appModel.selectedImage?.id) {
             appModel.isUIHidden = false
             appModel.startAutoHideTimer()
+        }
+    }
+
+    // MARK: - Image Content
+
+    @ViewBuilder
+    private var imageContent: some View {
+        if appModel.isAnimatedGIF, let gifData = appModel.currentImageData {
+            // Display animated GIF without RealityKit (no 3D conversion possible)
+            AnimatedGIFDetailView(imageData: gifData)
+                .aspectRatio(appModel.imageAspectRatio, contentMode: .fit)
+                .contentShape(.rect)
+                .onTapGesture {
+                    appModel.toggleUIVisibility()
+                }
+                .gesture(
+                    DragGesture(minimumDistance: 30)
+                        .onChanged { value in
+                            handleDragChanged(translation: value.translation.width)
+                        }
+                        .onEnded { value in
+                            handleDragEnded(
+                                translation: value.translation.width,
+                                predictedEnd: value.predictedEndTranslation.width
+                            )
+                        }
+                )
+                .onAppear {
+                    resizeGIFWindowToFit(appModel.imageAspectRatio, within: appModel.mainWindowSize)
+                }
+                .onChange(of: appModel.imageAspectRatio) { _, newAspectRatio in
+                    guard !suppressWindowResize else { return }
+                    resizeGIFWindowToFit(newAspectRatio, within: currentBounds)
+                }
+                .onChange(of: appModel.isLoadingDetailImage) { wasLoading, isLoading in
+                    if wasLoading && !isLoading {
+                        resizeGIFWindowToFit(appModel.imageAspectRatio, within: currentBounds)
+                    }
+                }
+        } else {
+            // Display static image with RealityKit for potential 3D conversion
+            GeometryReader3D { geometry in
+                RealityView { content in
+                    await appModel.createImagePresentationComponent()
+                    let availableBounds = content.convert(geometry.frame(in: .local), from: .local, to: .scene)
+                    scaleImagePresentationToFit(in: availableBounds)
+                    content.add(appModel.contentEntity)
+                    ensureInputPlaneReady()
+                    updateInputPlane(in: availableBounds)
+                    if inputPlaneEntity.parent == nil {
+                        content.add(inputPlaneEntity)
+                    }
+                    resizeWindowToFit(appModel.imageAspectRatio, within: appModel.mainWindowSize)
+                    await appModel.autoGenerateSpatial3DIfNeeded()
+                } update: { content in
+                    guard let presentationScreenSize = appModel
+                        .contentEntity
+                        .observable
+                        .components[ImagePresentationComponent.self]?
+                        .presentationScreenSize, presentationScreenSize != .zero else {
+                        return
+                    }
+                    let originalPosition = appModel.contentEntity.position(relativeTo: nil)
+                    appModel.contentEntity.setPosition(SIMD3<Float>(originalPosition.x, originalPosition.y, 0.0), relativeTo: nil)
+                    let availableBounds = content.convert(geometry.frame(in: .local), from: .local, to: .scene)
+                    scaleImagePresentationToFit(in: availableBounds)
+                    ensureInputPlaneReady()
+                    updateInputPlane(in: availableBounds)
+                    if inputPlaneEntity.parent == nil {
+                        content.add(inputPlaneEntity)
+                    }
+                }
+                .gesture(
+                    DragGesture(minimumDistance: 30)
+                        .targetedToAnyEntity()
+                        .onChanged { value in
+                            handleDragChanged(translation: value.translation.width)
+                        }
+                        .onEnded { value in
+                            handleDragEnded(
+                                translation: value.translation.width,
+                                predictedEnd: value.predictedEndTranslation.width
+                            )
+                        }
+                )
+                .gesture(
+                    TapGesture()
+                        .targetedToAnyEntity()
+                        .onEnded { _ in
+                            appModel.toggleUIVisibility()
+                        }
+                )
+                .onAppear {
+                    guard let windowScene = resolvedWindowScene else {
+                        AppLogger.views.warning("Unable to get the window scene. Unable to set the resizing restrictions.")
+                        return
+                    }
+                    windowScene.requestGeometryUpdate(.Vision(resizingRestrictions: .uniform))
+                }
+                .onChange(of: appModel.imageAspectRatio) { _, newAspectRatio in
+                    guard !suppressWindowResize else { return }
+                    resizeWindowToFit(newAspectRatio, within: currentBounds)
+                }
+                .onChange(of: appModel.imageURL) {
+                    // Skip if the image was loaded from preloaded data (not in loading state)
+                    guard appModel.isLoadingDetailImage else { return }
+                    Task {
+                        await appModel.createImagePresentationComponent()
+                        // Restore cached 2D/3D state for the new image (skip during slideshow)
+                        if !appModel.isSlideshowActive {
+                            await appModel.autoGenerateSpatial3DIfNeeded()
+                        }
+                    }
+                }
+                .onChange(of: appModel.isLoadingDetailImage) { wasLoading, isLoading in
+                    if wasLoading && !isLoading {
+                        resizeWindowToFit(appModel.imageAspectRatio, within: currentBounds)
+                    }
+                }
+            }
+            .aspectRatio(appModel.imageAspectRatio, contentMode: .fit)
+        }
+    }
+
+    // MARK: - Swipe Gesture Handling
+
+    private func handleDragChanged(translation: CGFloat) {
+        guard !isSwipeTransitioning && !appModel.isLoadingDetailImage && !appModel.isSlideshowActive else { return }
+        dragOffset = translation
+    }
+
+    private func handleDragEnded(translation: CGFloat, predictedEnd: CGFloat) {
+        guard !isSwipeTransitioning && !appModel.isLoadingDetailImage && !appModel.isSlideshowActive else {
+            withAnimation(.easeOut(duration: 0.2)) { dragOffset = 0 }
+            return
+        }
+
+        let threshold = max(containerWidth * swipeThresholdFraction, 50)
+        let shouldNavigateNext = (translation < -threshold || predictedEnd < -threshold * 2) && appModel.hasNextImage
+        let shouldNavigatePrevious = (translation > threshold || predictedEnd > threshold * 2) && appModel.hasPreviousImage
+
+        if shouldNavigateNext {
+            performSwipeTransition(direction: .next)
+        } else if shouldNavigatePrevious {
+            performSwipeTransition(direction: .previous)
+        } else {
+            // Snap back to center
+            withAnimation(.easeOut(duration: 0.25)) {
+                dragOffset = 0
+            }
+        }
+    }
+
+    private enum SwipeDirection {
+        case next
+        case previous
+    }
+
+    private func performSwipeTransition(direction: SwipeDirection) {
+        isSwipeTransitioning = true
+        suppressWindowResize = true
+        let offScreenOffset: CGFloat = direction == .next ? -containerWidth : containerWidth
+
+        // Phase 1: Animate current image off-screen
+        withAnimation(.easeIn(duration: 0.2)) {
+            dragOffset = offScreenOffset
+        }
+
+        // Phase 2: Switch image and position new image on opposite side
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
+            if direction == .next {
+                appModel.nextImage()
+            } else {
+                appModel.previousImage()
+            }
+
+            // Position new image on opposite side (no animation)
+            dragOffset = -offScreenOffset
+
+            // Phase 3: Animate new image to center
+            withAnimation(.easeOut(duration: 0.25)) {
+                dragOffset = 0
+            }
+
+            // Phase 4: Clear transition state and resize window
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.27) {
+                isSwipeTransitioning = false
+                suppressWindowResize = false
+                if appModel.isAnimatedGIF {
+                    resizeGIFWindowToFit(appModel.imageAspectRatio, within: currentBounds)
+                } else {
+                    resizeWindowToFit(appModel.imageAspectRatio, within: currentBounds)
+                }
+            }
         }
     }
 
