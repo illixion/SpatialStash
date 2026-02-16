@@ -69,7 +69,9 @@ final class GraphQLVideoSource: VideoSource, @unchecked Sendable {
                 stereoscopicFormat: stereoscopicFormat,
                 sourceWidth: sourceWidth,
                 sourceHeight: sourceHeight,
-                eyesReversed: eyesReversed
+                eyesReversed: eyesReversed,
+                rating100: scene.rating100,
+                oCounter: scene.o_counter
             )
         }
 

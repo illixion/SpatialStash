@@ -230,6 +230,8 @@ struct PhotoWindowView: View {
 struct PhotoWindowOrnament: View {
     @Bindable var windowModel: PhotoWindowModel
     @Environment(\.openWindow) private var openWindow
+    @State private var showMediaInfo = false
+    @State private var isUpdatingMediaInfo = false
 
     var body: some View {
         HStack(spacing: 16) {
@@ -371,6 +373,54 @@ struct PhotoWindowOrnament: View {
                 .disabled(windowModel.spatial3DImageState == .generating || windowModel.isAnimatedGIF)
                 .help(windowModel.spatial3DImageState == .notGenerated ? "Generate 3D" :
                       windowModel.spatial3DImageState == .generating ? "Generating..." : "Toggle 3D")
+
+                // Star rating / O counter popover button
+                if windowModel.image.stashId != nil {
+                    Divider()
+                        .frame(height: 24)
+
+                    Button {
+                        showMediaInfo.toggle()
+                    } label: {
+                        Image(systemName: windowModel.image.rating100 != nil ? "star.fill" : "star")
+                            .font(.title3)
+                            .foregroundColor(windowModel.image.rating100 != nil ? .yellow : nil)
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(windowModel.isLoadingDetailImage)
+                    .help("Rating & O Count")
+                    .popover(isPresented: $showMediaInfo) {
+                        MediaInfoPopover(
+                            currentRating100: windowModel.image.rating100,
+                            oCounter: windowModel.image.oCounter ?? 0,
+                            isUpdating: isUpdatingMediaInfo,
+                            onRate: { newRating in
+                                guard let stashId = windowModel.image.stashId else { return }
+                                isUpdatingMediaInfo = true
+                                Task {
+                                    try? await windowModel.updateImageRating(stashId: stashId, rating100: newRating)
+                                    isUpdatingMediaInfo = false
+                                }
+                            },
+                            onIncrementO: {
+                                guard let stashId = windowModel.image.stashId else { return }
+                                isUpdatingMediaInfo = true
+                                Task {
+                                    try? await windowModel.incrementImageOCounter(stashId: stashId)
+                                    isUpdatingMediaInfo = false
+                                }
+                            },
+                            onDecrementO: {
+                                guard let stashId = windowModel.image.stashId else { return }
+                                isUpdatingMediaInfo = true
+                                Task {
+                                    try? await windowModel.decrementImageOCounter(stashId: stashId)
+                                    isUpdatingMediaInfo = false
+                                }
+                            }
+                        )
+                    }
+                }
             }
         }
         .padding(.horizontal, 20)

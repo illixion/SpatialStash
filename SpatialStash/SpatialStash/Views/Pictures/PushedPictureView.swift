@@ -267,6 +267,8 @@ struct PushedPictureOrnament: View {
     @Environment(\.dismissWindow) private var dismissWindow
     @Environment(\.openWindow) private var openWindow
     let imageCount: Int
+    @State private var showMediaInfo = false
+    @State private var isUpdatingMediaInfo = false
 
     var body: some View {
         HStack(spacing: 16) {
@@ -399,6 +401,54 @@ struct PushedPictureOrnament: View {
                 .disabled(appModel.spatial3DImageState == .generating || appModel.isAnimatedGIF)
                 .help(appModel.spatial3DImageState == .notGenerated ? "Generate 3D" :
                       appModel.spatial3DImageState == .generating ? "Generating..." : "Toggle 3D")
+
+                // Star rating / O counter popover button
+                if appModel.selectedImage?.stashId != nil {
+                    Divider()
+                        .frame(height: 24)
+
+                    Button {
+                        showMediaInfo.toggle()
+                    } label: {
+                        Image(systemName: appModel.selectedImage?.rating100 != nil ? "star.fill" : "star")
+                            .font(.title3)
+                            .foregroundColor(appModel.selectedImage?.rating100 != nil ? .yellow : nil)
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(appModel.isLoadingDetailImage)
+                    .help("Rating & O Count")
+                    .popover(isPresented: $showMediaInfo) {
+                        MediaInfoPopover(
+                            currentRating100: appModel.selectedImage?.rating100,
+                            oCounter: appModel.selectedImage?.oCounter ?? 0,
+                            isUpdating: isUpdatingMediaInfo,
+                            onRate: { newRating in
+                                guard let stashId = appModel.selectedImage?.stashId else { return }
+                                isUpdatingMediaInfo = true
+                                Task {
+                                    try? await appModel.updateImageRating(stashId: stashId, rating100: newRating)
+                                    isUpdatingMediaInfo = false
+                                }
+                            },
+                            onIncrementO: {
+                                guard let stashId = appModel.selectedImage?.stashId else { return }
+                                isUpdatingMediaInfo = true
+                                Task {
+                                    try? await appModel.incrementImageOCounter(stashId: stashId)
+                                    isUpdatingMediaInfo = false
+                                }
+                            },
+                            onDecrementO: {
+                                guard let stashId = appModel.selectedImage?.stashId else { return }
+                                isUpdatingMediaInfo = true
+                                Task {
+                                    try? await appModel.decrementImageOCounter(stashId: stashId)
+                                    isUpdatingMediaInfo = false
+                                }
+                            }
+                        )
+                    }
+                }
 
                 Divider()
                     .frame(height: 24)

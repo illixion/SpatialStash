@@ -42,9 +42,12 @@ final class GraphQLImageSource: ImageSource, @unchecked Sendable {
             }
 
             return GalleryImage(
+                stashId: stashImage.id,
                 thumbnailURL: thumbnailURL,
                 fullSizeURL: imageURL,
-                title: stashImage.title
+                title: stashImage.title,
+                rating100: stashImage.rating100,
+                oCounter: stashImage.o_counter
             )
         }
 

@@ -1220,6 +1220,75 @@ class AppModel {
         return currentIndex + 1
     }
 
+    // MARK: - Rating & O Counter Mutations
+
+    func updateImageRating(stashId: String, rating100: Int?) async throws {
+        try await apiClient.updateImageRating(imageId: stashId, rating100: rating100)
+        // Update local state
+        if var image = selectedImage, image.stashId == stashId {
+            image.rating100 = rating100
+            selectedImage = image
+        }
+        if let index = galleryImages.firstIndex(where: { $0.stashId == stashId }) {
+            galleryImages[index].rating100 = rating100
+        }
+    }
+
+    func updateVideoRating(stashId: String, rating100: Int?) async throws {
+        try await apiClient.updateSceneRating(sceneId: stashId, rating100: rating100)
+        if var video = selectedVideo, video.stashId == stashId {
+            video.rating100 = rating100
+            selectedVideo = video
+        }
+        if let index = galleryVideos.firstIndex(where: { $0.stashId == stashId }) {
+            galleryVideos[index].rating100 = rating100
+        }
+    }
+
+    func incrementImageOCounter(stashId: String) async throws {
+        let newValue = try await apiClient.incrementImageOCounter(imageId: stashId)
+        if var image = selectedImage, image.stashId == stashId {
+            image.oCounter = newValue
+            selectedImage = image
+        }
+        if let index = galleryImages.firstIndex(where: { $0.stashId == stashId }) {
+            galleryImages[index].oCounter = newValue
+        }
+    }
+
+    func decrementImageOCounter(stashId: String) async throws {
+        let newValue = try await apiClient.decrementImageOCounter(imageId: stashId)
+        if var image = selectedImage, image.stashId == stashId {
+            image.oCounter = newValue
+            selectedImage = image
+        }
+        if let index = galleryImages.firstIndex(where: { $0.stashId == stashId }) {
+            galleryImages[index].oCounter = newValue
+        }
+    }
+
+    func incrementVideoOCounter(stashId: String) async throws {
+        let newValue = try await apiClient.incrementSceneOCounter(sceneId: stashId)
+        if var video = selectedVideo, video.stashId == stashId {
+            video.oCounter = newValue
+            selectedVideo = video
+        }
+        if let index = galleryVideos.firstIndex(where: { $0.stashId == stashId }) {
+            galleryVideos[index].oCounter = newValue
+        }
+    }
+
+    func decrementVideoOCounter(stashId: String) async throws {
+        let newValue = try await apiClient.decrementSceneOCounter(sceneId: stashId)
+        if var video = selectedVideo, video.stashId == stashId {
+            video.oCounter = newValue
+            selectedVideo = video
+        }
+        if let index = galleryVideos.firstIndex(where: { $0.stashId == stashId }) {
+            galleryVideos[index].oCounter = newValue
+        }
+    }
+
     // MARK: - Spatial Image Methods (Existing - Preserved)
 
     func createImagePresentationComponent() async {

@@ -9,6 +9,8 @@ import SwiftUI
 struct VideoOrnamentsView: View {
     @Environment(AppModel.self) private var appModel
     let videoCount: Int
+    @State private var showMediaInfo = false
+    @State private var isUpdatingMediaInfo = false
 
     var body: some View {
         VStack {
@@ -56,6 +58,53 @@ struct VideoOrnamentsView: View {
                         .frame(height: 24)
 
                     viewModeMenu(for: video)
+                }
+
+                // Star rating / O counter popover button
+                if appModel.selectedVideo != nil {
+                    Divider()
+                        .frame(height: 24)
+
+                    Button {
+                        showMediaInfo.toggle()
+                    } label: {
+                        Image(systemName: appModel.selectedVideo?.rating100 != nil ? "star.fill" : "star")
+                            .font(.title3)
+                            .foregroundColor(appModel.selectedVideo?.rating100 != nil ? .yellow : nil)
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Rating & O Count")
+                    .popover(isPresented: $showMediaInfo) {
+                        MediaInfoPopover(
+                            currentRating100: appModel.selectedVideo?.rating100,
+                            oCounter: appModel.selectedVideo?.oCounter ?? 0,
+                            isUpdating: isUpdatingMediaInfo,
+                            onRate: { newRating in
+                                guard let stashId = appModel.selectedVideo?.stashId else { return }
+                                isUpdatingMediaInfo = true
+                                Task {
+                                    try? await appModel.updateVideoRating(stashId: stashId, rating100: newRating)
+                                    isUpdatingMediaInfo = false
+                                }
+                            },
+                            onIncrementO: {
+                                guard let stashId = appModel.selectedVideo?.stashId else { return }
+                                isUpdatingMediaInfo = true
+                                Task {
+                                    try? await appModel.incrementVideoOCounter(stashId: stashId)
+                                    isUpdatingMediaInfo = false
+                                }
+                            },
+                            onDecrementO: {
+                                guard let stashId = appModel.selectedVideo?.stashId else { return }
+                                isUpdatingMediaInfo = true
+                                Task {
+                                    try? await appModel.decrementVideoOCounter(stashId: stashId)
+                                    isUpdatingMediaInfo = false
+                                }
+                            }
+                        )
+                    }
                 }
 
                 // Video title if available

@@ -139,6 +139,8 @@ actor StashAPIClient {
     struct StashImage: Decodable {
         let id: String
         let title: String?
+        let rating100: Int?
+        let o_counter: Int?
         let paths: StashImagePaths
         let files: [StashImageFile]?
     }
@@ -165,6 +167,8 @@ actor StashAPIClient {
                 images {
                     id
                     title
+                    rating100
+                    o_counter
                     paths {
                         thumbnail
                         image
@@ -391,6 +395,8 @@ actor StashAPIClient {
         let title: String?
         let details: String?
         let date: String?
+        let rating100: Int?
+        let o_counter: Int?
         let paths: StashScenePaths
         let files: [StashSceneFile]?
         let tags: [StashSceneTag]?
@@ -426,6 +432,8 @@ actor StashAPIClient {
                     title
                     details
                     date
+                    rating100
+                    o_counter
                     paths {
                         screenshot
                         stream
@@ -531,6 +539,128 @@ actor StashAPIClient {
 
         let response: FindScenesResponse = try await self.query(graphQLQuery, variables: variables)
         return response.findScenes
+    }
+
+    // MARK: - Image Mutations
+
+    struct ImageUpdateResponse: Decodable {
+        let imageUpdate: ImageUpdateResult
+    }
+
+    struct ImageUpdateResult: Decodable {
+        let id: String
+        let rating100: Int?
+    }
+
+    func updateImageRating(imageId: String, rating100: Int?) async throws {
+        let mutation = """
+        mutation ImageUpdate($input: ImageUpdateInput!) {
+            imageUpdate(input: $input) {
+                id
+                rating100
+            }
+        }
+        """
+
+        var input: [String: Any] = ["id": imageId]
+        if let rating100 = rating100 {
+            input["rating100"] = rating100
+        } else {
+            input["rating100"] = NSNull()
+        }
+
+        let _: ImageUpdateResponse = try await self.query(mutation, variables: ["input": input])
+    }
+
+    struct ImageIncrementOResponse: Decodable {
+        let imageIncrementO: Int
+    }
+
+    struct ImageDecrementOResponse: Decodable {
+        let imageDecrementO: Int
+    }
+
+    func incrementImageOCounter(imageId: String) async throws -> Int {
+        let mutation = """
+        mutation ImageIncrementO($id: ID!) {
+            imageIncrementO(id: $id)
+        }
+        """
+
+        let response: ImageIncrementOResponse = try await self.query(mutation, variables: ["id": imageId])
+        return response.imageIncrementO
+    }
+
+    func decrementImageOCounter(imageId: String) async throws -> Int {
+        let mutation = """
+        mutation ImageDecrementO($id: ID!) {
+            imageDecrementO(id: $id)
+        }
+        """
+
+        let response: ImageDecrementOResponse = try await self.query(mutation, variables: ["id": imageId])
+        return response.imageDecrementO
+    }
+
+    // MARK: - Scene/Video Mutations
+
+    struct SceneUpdateResponse: Decodable {
+        let sceneUpdate: SceneUpdateResult
+    }
+
+    struct SceneUpdateResult: Decodable {
+        let id: String
+        let rating100: Int?
+    }
+
+    func updateSceneRating(sceneId: String, rating100: Int?) async throws {
+        let mutation = """
+        mutation SceneUpdate($input: SceneUpdateInput!) {
+            sceneUpdate(input: $input) {
+                id
+                rating100
+            }
+        }
+        """
+
+        var input: [String: Any] = ["id": sceneId]
+        if let rating100 = rating100 {
+            input["rating100"] = rating100
+        } else {
+            input["rating100"] = NSNull()
+        }
+
+        let _: SceneUpdateResponse = try await self.query(mutation, variables: ["input": input])
+    }
+
+    struct SceneIncrementOResponse: Decodable {
+        let sceneIncrementO: Int
+    }
+
+    struct SceneDecrementOResponse: Decodable {
+        let sceneDecrementO: Int
+    }
+
+    func incrementSceneOCounter(sceneId: String) async throws -> Int {
+        let mutation = """
+        mutation SceneIncrementO($id: ID!) {
+            sceneIncrementO(id: $id)
+        }
+        """
+
+        let response: SceneIncrementOResponse = try await self.query(mutation, variables: ["id": sceneId])
+        return response.sceneIncrementO
+    }
+
+    func decrementSceneOCounter(sceneId: String) async throws -> Int {
+        let mutation = """
+        mutation SceneDecrementO($id: ID!) {
+            sceneDecrementO(id: $id)
+        }
+        """
+
+        let response: SceneDecrementOResponse = try await self.query(mutation, variables: ["id": sceneId])
+        return response.sceneDecrementO
     }
 }
 

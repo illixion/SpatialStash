@@ -699,4 +699,36 @@ class PhotoWindowModel {
             }
         }
     }
+
+    // MARK: - Rating & O Counter
+
+    func updateImageRating(stashId: String, rating100: Int?) async throws {
+        try await appModel.updateImageRating(stashId: stashId, rating100: rating100)
+        // Update local state
+        image.rating100 = rating100
+        if let index = galleryImages.firstIndex(where: { $0.stashId == stashId }) {
+            galleryImages[index].rating100 = rating100
+        }
+    }
+
+    func incrementImageOCounter(stashId: String) async throws {
+        try await appModel.incrementImageOCounter(stashId: stashId)
+        // Sync from appModel's updated value
+        if let updated = appModel.galleryImages.first(where: { $0.stashId == stashId }) {
+            image.oCounter = updated.oCounter
+        }
+        if let index = galleryImages.firstIndex(where: { $0.stashId == stashId }) {
+            galleryImages[index].oCounter = image.oCounter
+        }
+    }
+
+    func decrementImageOCounter(stashId: String) async throws {
+        try await appModel.decrementImageOCounter(stashId: stashId)
+        if let updated = appModel.galleryImages.first(where: { $0.stashId == stashId }) {
+            image.oCounter = updated.oCounter
+        }
+        if let index = galleryImages.firstIndex(where: { $0.stashId == stashId }) {
+            galleryImages[index].oCounter = image.oCounter
+        }
+    }
 }
