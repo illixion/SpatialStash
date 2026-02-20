@@ -49,22 +49,6 @@ class PhotoWindowModel {
     /// Current index in the gallery
     private var currentGalleryIndex: Int = 0
 
-    // MARK: - Image Preloading
-
-    /// Preloaded image data cache (keyed by image ID)
-    private var preloadedImages: [UUID: PreloadedImageData] = [:]
-
-    /// Currently preloading task
-    private var preloadTask: Task<Void, Never>?
-
-    /// Data structure for preloaded images
-    private struct PreloadedImageData {
-        let imageData: Data?
-        let isAnimatedGIF: Bool
-        let aspectRatio: CGFloat?
-        let spatial3DImage: ImagePresentationComponent.Spatial3DImage?
-    }
-
     // MARK: - Lazy Loading State
 
     /// Image source for loading more pages
@@ -345,11 +329,6 @@ class PhotoWindowModel {
         // Fetch initial batch of random images (no seed for true randomness)
         await fetchRandomSlideshowImages()
 
-        // Preload first images for seamless start
-        if !slideshowImages.isEmpty {
-            preloadNextImages(from: slideshowImages, startIndex: 0)
-        }
-
         // Start the slideshow timer
         startSlideshowTimer()
     }
@@ -391,156 +370,36 @@ class PhotoWindowModel {
         if slideshowIndex >= slideshowImages.count {
             await fetchRandomSlideshowImages()
             slideshowIndex = 0
-            // Preload first image of new batch
-            if !slideshowImages.isEmpty {
-                preloadNextImages(from: slideshowImages, startIndex: 0)
-            }
         }
 
         if slideshowIndex < slideshowImages.count {
             let nextImage = slideshowImages[slideshowIndex]
             await switchToImage(nextImage)
             slideshowHistory.append(nextImage)
-
-            // Preload next slideshow image
-            let nextIndex = slideshowIndex + 1
-            if nextIndex < slideshowImages.count {
-                preloadNextImages(from: slideshowImages, startIndex: nextIndex)
-            }
         }
     }
 
     /// Switch to displaying a different image
     private func switchToImage(_ newImage: GalleryImage) async {
-        // Check if we have preloaded data for this image
-        if let preloaded = preloadedImages[newImage.id] {
-            // Use preloaded data for instant switch
-            image = newImage
-            imageURL = newImage.fullSizeURL
-            spatial3DImageState = .notGenerated
-            currentImageData = preloaded.imageData
-            isAnimatedGIF = preloaded.isAnimatedGIF
+        image = newImage
+        imageURL = newImage.fullSizeURL
+        isLoadingDetailImage = true
+        spatial3DImageState = .notGenerated
+        spatial3DImage = nil
+        isAnimatedGIF = false
+        currentImageData = nil
+        contentEntity.components.remove(ImagePresentationComponent.self)
 
-            if let aspectRatio = preloaded.aspectRatio {
-                imageAspectRatio = aspectRatio
+        // Load image data to detect if it's a GIF
+        await loadImageDataForDetail(url: newImage.fullSizeURL)
+
+        // Create the presentation component if not a GIF
+        if !isAnimatedGIF {
+            await createImagePresentationComponent()
+            // Restore cached 2D/3D state for the new image (skip during slideshow)
+            if !isSlideshowActive {
+                await autoGenerateSpatial3DIfPreviouslyConverted()
             }
-
-            if isAnimatedGIF {
-                // GIF is ready to display
-                contentEntity.components.remove(ImagePresentationComponent.self)
-                spatial3DImage = nil
-                isLoadingDetailImage = false
-            } else if let spatial3D = preloaded.spatial3DImage {
-                // Static image with preloaded presentation component
-                contentEntity.components.remove(ImagePresentationComponent.self)
-                spatial3DImage = spatial3D
-                let imagePresentationComponent = ImagePresentationComponent(spatial3DImage: spatial3D)
-                contentEntity.components.set(imagePresentationComponent)
-                if let aspectRatio = imagePresentationComponent.aspectRatio(for: .mono) {
-                    imageAspectRatio = CGFloat(aspectRatio)
-                }
-                isLoadingDetailImage = false
-                // Restore cached 2D/3D state for the new image (skip during slideshow)
-                if !isSlideshowActive {
-                    await autoGenerateSpatial3DIfPreviouslyConverted()
-                }
-            } else {
-                // Preloaded data but no presentation component, create it
-                isLoadingDetailImage = true
-                contentEntity.components.remove(ImagePresentationComponent.self)
-                spatial3DImage = nil
-                await createImagePresentationComponent()
-                // Restore cached 2D/3D state for the new image (skip during slideshow)
-                if !isSlideshowActive {
-                    await autoGenerateSpatial3DIfPreviouslyConverted()
-                }
-            }
-
-            // Clear all preloaded data (new preloads will be triggered after navigation)
-            preloadedImages.removeAll()
-        } else {
-            // No preloaded data, load normally
-            image = newImage
-            imageURL = newImage.fullSizeURL
-            isLoadingDetailImage = true
-            spatial3DImageState = .notGenerated
-            spatial3DImage = nil
-            isAnimatedGIF = false
-            currentImageData = nil
-            contentEntity.components.remove(ImagePresentationComponent.self)
-
-            // Load image data to detect if it's a GIF
-            await loadImageDataForDetail(url: newImage.fullSizeURL)
-
-            // Create the presentation component if not a GIF
-            if !isAnimatedGIF {
-                await createImagePresentationComponent()
-                // Restore cached 2D/3D state for the new image (skip during slideshow)
-                if !isSlideshowActive {
-                    await autoGenerateSpatial3DIfPreviouslyConverted()
-                }
-            }
-        }
-    }
-
-    // MARK: - Image Preloading
-
-    /// Preload images for seamless transitions (limited to 1 to reduce memory pressure)
-    private func preloadNextImages(from images: [GalleryImage], startIndex: Int) {
-        preloadTask?.cancel()
-        preloadTask = Task { @MainActor in
-            for i in startIndex..<min(startIndex + 1, images.count) {
-                guard !Task.isCancelled else { break }
-                let imageToPreload = images[i]
-
-                // Skip if already preloaded
-                guard preloadedImages[imageToPreload.id] == nil else { continue }
-
-                await preloadImage(imageToPreload)
-            }
-        }
-    }
-
-    /// Preload a single image
-    private func preloadImage(_ galleryImage: GalleryImage) async {
-        let url = galleryImage.fullSizeURL
-
-        do {
-            // Load image data
-            guard let data = try await ImageLoader.shared.loadRawData(from: url) else { return }
-
-            let isGIF = data.isAnimatedGIF
-            var aspectRatio: CGFloat?
-            var spatial3D: ImagePresentationComponent.Spatial3DImage?
-
-            if isGIF {
-                // For GIFs, just get aspect ratio
-                if let uiImage = UIImage(data: data) {
-                    aspectRatio = uiImage.size.width / uiImage.size.height
-                }
-            } else {
-                // For static images, create the spatial 3D image
-                let sourceURL: URL
-                if !url.isFileURL, let cached = await DiskImageCache.shared.cachedFileURL(for: url) {
-                    sourceURL = cached
-                } else {
-                    sourceURL = url
-                }
-
-                spatial3D = try await ImagePresentationComponent.Spatial3DImage(contentsOf: sourceURL)
-            }
-
-            // Store preloaded data
-            preloadedImages[galleryImage.id] = PreloadedImageData(
-                imageData: data,
-                isAnimatedGIF: isGIF,
-                aspectRatio: aspectRatio,
-                spatial3DImage: spatial3D
-            )
-
-            AppLogger.photoWindow.debug("Preloaded image: \(galleryImage.id, privacy: .public)")
-        } catch {
-            AppLogger.photoWindow.debug("Failed to preload image: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -575,12 +434,9 @@ class PhotoWindowModel {
         isSlideshowActive = false
         slideshowTask?.cancel()
         slideshowTask = nil
-        preloadTask?.cancel()
-        preloadTask = nil
         slideshowImages = []
         slideshowHistory = []
         slideshowIndex = 0
-        preloadedImages.removeAll()
     }
 
     /// Check if there's a previous slideshow image available
@@ -601,17 +457,12 @@ class PhotoWindowModel {
         // Cancel all tasks
         autoHideTask?.cancel()
         autoHideTask = nil
-        preloadTask?.cancel()
-        preloadTask = nil
         slideshowTask?.cancel()
         slideshowTask = nil
 
         // Release Spatial3DImage GPU texture
         spatial3DImage = nil
         spatial3DImageState = .notGenerated
-
-        // Release preloaded images (Spatial3DImage textures + data)
-        preloadedImages.removeAll()
 
         // Release image data
         currentImageData = nil
@@ -637,9 +488,6 @@ class PhotoWindowModel {
 
         let nextImage = galleryImages[currentGalleryIndex]
         await switchToImage(nextImage)
-
-        // Preload upcoming gallery images
-        preloadNextImages(from: galleryImages, startIndex: currentGalleryIndex + 1)
     }
 
     /// Navigate to previous image in gallery
@@ -648,11 +496,6 @@ class PhotoWindowModel {
         currentGalleryIndex -= 1
         let prevImage = galleryImages[currentGalleryIndex]
         await switchToImage(prevImage)
-
-        // Preload previous gallery image for continued backward navigation
-        if currentGalleryIndex > 0 {
-            preloadNextImages(from: galleryImages, startIndex: currentGalleryIndex - 1)
-        }
     }
 
     /// Check if there's a next image in gallery
