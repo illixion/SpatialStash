@@ -398,6 +398,7 @@ struct PushedPictureOrnament: View {
     let imageCount: Int
     @State private var showMediaInfo = false
     @State private var isUpdatingMediaInfo = false
+    @State private var pendingPopOutImage: GalleryImage? = nil
 
     var body: some View {
         HStack(spacing: 16) {
@@ -585,7 +586,12 @@ struct PushedPictureOrnament: View {
                 // Pop-out button - opens picture in separate window
                 Button {
                     if let image = appModel.selectedImage {
-                        openWindow(id: "photo-detail", value: image)
+                        if appModel.memoryBudgetExceeded {
+                            pendingPopOutImage = image
+                            appModel.showMemoryWarningAlert = true
+                        } else {
+                            openWindow(id: "photo-detail", value: image)
+                        }
                     }
                 } label: {
                     Image(systemName: "rectangle.portrait.on.rectangle.portrait")
@@ -599,6 +605,22 @@ struct PushedPictureOrnament: View {
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
         .glassBackgroundEffect()
+        .alert(
+            "Memory Warning",
+            isPresented: Bindable(appModel).showMemoryWarningAlert
+        ) {
+            Button("Open Anyway") {
+                if let image = pendingPopOutImage {
+                    openWindow(id: "photo-detail", value: image)
+                    pendingPopOutImage = nil
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                pendingPopOutImage = nil
+            }
+        } message: {
+            Text("Opening another window may cause the app to run out of memory. You have \(appModel.openPhotoWindowCount) windows open.")
+        }
     }
 
     private func toggleSpatial3DView() {

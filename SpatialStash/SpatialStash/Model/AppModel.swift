@@ -197,6 +197,21 @@ class AppModel {
 
     var mainWindowSize: CGSize = CGSize(width: 1200, height: 800)
 
+    // MARK: - Photo Window Memory Management
+
+    /// Number of currently open pop-out photo windows
+    var openPhotoWindowCount: Int = 0
+
+    /// Whether opening another window would exceed the memory budget
+    var memoryBudgetExceeded: Bool {
+        // Each 2D window uses ~17 MB; budget threshold ~3 GB allows many windows.
+        // In practice, 3D-activated windows use ~256 MB each, so warn conservatively.
+        openPhotoWindowCount >= 40
+    }
+
+    /// Whether to show the memory warning alert
+    var showMemoryWarningAlert: Bool = false
+
     // MARK: - GIF Support
 
     var isAnimatedGIF: Bool = false
@@ -204,12 +219,11 @@ class AppModel {
 
     // MARK: - Image Preloading
 
-    /// Data structure for preloaded images
+    /// Data structure for preloaded images (lightweight — no Spatial3DImage to save memory)
     private struct PreloadedImageData {
         let imageData: Data?
         let isAnimatedGIF: Bool
         let aspectRatio: CGFloat?
-        let spatial3DImage: ImagePresentationComponent.Spatial3DImage?
     }
 
     /// Preloaded image data cache (keyed by image ID)
@@ -376,6 +390,21 @@ class AppModel {
 
         // Apply default views on startup
         applyDefaultViewsOnStartup()
+
+        // Monitor memory pressure and clear caches when warned
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didReceiveMemoryWarningNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            AppLogger.appModel.warning("Memory warning received — clearing caches")
+            Task { @MainActor [weak self] in
+                await ImageLoader.shared.clearMemoryCache()
+                self?.preloadedImages.removeAll()
+                self?.preloadTask?.cancel()
+                self?.preloadTask = nil
+            }
+        }
     }
 
     // MARK: - Saved Views Persistence
@@ -882,19 +911,8 @@ class AppModel {
             if isAnimatedGIF {
                 contentEntity.components.remove(ImagePresentationComponent.self)
                 isLoadingDetailImage = false
-            } else if let spatial3D = preloaded.spatial3DImage {
-                contentEntity.components.remove(ImagePresentationComponent.self)
-                spatial3DImage = spatial3D
-                let component = ImagePresentationComponent(spatial3DImage: spatial3D)
-                contentEntity.components.set(component)
-                if let ar = component.aspectRatio(for: .mono) {
-                    imageAspectRatio = CGFloat(ar)
-                }
-                isLoadingDetailImage = false
-                if !isSlideshowActive {
-                    Task { await autoGenerateSpatial3DIfNeeded() }
-                }
             } else {
+                // Data is already cached on disk from preloading — load Spatial3DImage on demand
                 isLoadingDetailImage = true
                 contentEntity.components.remove(ImagePresentationComponent.self)
                 Task {
@@ -945,6 +963,8 @@ class AppModel {
     }
 
     /// Preload a single image's data and spatial 3D image
+    /// Preload image data to disk cache for fast on-demand loading.
+    /// Does NOT load full-resolution Spatial3DImage to avoid ~256 MB per preloaded image.
     private func preloadImage(_ galleryImage: GalleryImage) async {
         let url = galleryImage.fullSizeURL
 
@@ -953,29 +973,19 @@ class AppModel {
 
             let isGIF = data.isAnimatedGIF
             var aspectRatio: CGFloat?
-            var spatial3D: ImagePresentationComponent.Spatial3DImage?
 
             if isGIF {
                 if let uiImage = UIImage(data: data) {
                     aspectRatio = uiImage.size.width / uiImage.size.height
                 }
-            } else {
-                let sourceURL: URL
-                if !url.isFileURL, let cached = await DiskImageCache.shared.cachedFileURL(for: url) {
-                    sourceURL = cached
-                } else {
-                    sourceURL = url
-                }
-                spatial3D = try await ImagePresentationComponent.Spatial3DImage(contentsOf: sourceURL)
             }
 
             preloadedImages[galleryImage.id] = PreloadedImageData(
                 imageData: data,
                 isAnimatedGIF: isGIF,
-                aspectRatio: aspectRatio,
-                spatial3DImage: spatial3D
+                aspectRatio: aspectRatio
             )
-            AppLogger.appModel.debug("Preloaded image: \(galleryImage.id, privacy: .public)")
+            AppLogger.appModel.debug("Preloaded image data: \(galleryImage.id, privacy: .public)")
         } catch {
             AppLogger.appModel.debug("Failed to preload: \(error.localizedDescription, privacy: .public)")
         }

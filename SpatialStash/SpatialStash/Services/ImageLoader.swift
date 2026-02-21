@@ -338,6 +338,11 @@ actor ImageLoader {
         await DiskImageCache.shared.clearCache()
     }
 
+    /// Clear only the in-memory cache, preserving disk cache
+    func clearMemoryCache() {
+        cache.removeAllObjects()
+    }
+
     /// Remove a specific image from cache
     func removeFromCache(url: URL) {
         cache.removeObject(forKey: url as NSURL)

@@ -3,6 +3,11 @@
 
  Per-window model for individual photo display windows.
  Each photo window gets its own instance with independent state.
+
+ Memory strategy: Windows open in lightweight 2D mode using a downsampled
+ UIImage via SwiftUI Image. RealityKit (full resolution) is only loaded when
+ the user explicitly activates 3D. On window resize, the 2D display image
+ is re-downsampled in memory (no temp files on disk).
  */
 
 import os
@@ -13,7 +18,7 @@ import SwiftUI
 @Observable
 class PhotoWindowModel {
     // MARK: - Window-specific Image State
-    
+
     var image: GalleryImage
     var imageURL: URL
     var imageAspectRatio: CGFloat = 1.0
@@ -22,12 +27,46 @@ class PhotoWindowModel {
     var spatial3DImage: ImagePresentationComponent.Spatial3DImage? = nil
     var isLoadingDetailImage: Bool = false
     var inputPlaneEntity: Entity = Entity()
-    
+
+    // MARK: - 2D Display Image State
+
+    /// Downsampled UIImage for lightweight 2D display (nil when in 3D mode)
+    var displayImage: UIImage? = nil
+
+    /// Whether the window is showing the RealityKit 3D view
+    var is3DMode: Bool = false
+
+    /// Set when user taps "Generate 3D" from 2D mode — the RealityView
+    /// init closure will consume this flag and start generation.
+    var pendingGenerate3D: Bool = false
+
+    /// Native image dimensions (read from file metadata without decoding)
+    private var nativeImageDimensions: CGSize?
+
+    /// The max dimension used for the current displayImage
+    private var currentDisplayMaxDimension: CGFloat = 0
+
+    /// Last known window size for resize-triggered reloads
+    private var lastWindowSize: CGSize?
+
+    /// Debounce task for window resize
+    private var resizeDebounceTask: Task<Void, Never>?
+
+    /// Whether a display image load is currently in progress (prevents concurrent loads)
+    private var isLoadingDisplayImage: Bool = false
+
+    /// Task for 3D generation (tracked so cleanup can avoid removing the component mid-generation)
+    private var generateTask: Task<Void, Never>?
+
+    /// Scale factor for converting window points to texture pixels
+    /// (visionOS rendering density + headroom)
+    private static let displayScaleFactor: CGFloat = 2.5
+
     // MARK: - GIF Support
-    
+
     var isAnimatedGIF: Bool = false
     var currentImageData: Data? = nil
-    
+
     // MARK: - UI Visibility State
 
     var isUIHidden: Bool = false
@@ -95,21 +134,23 @@ class PhotoWindowModel {
         self.galleryImages = appModel.galleryImages
         self.currentGalleryIndex = galleryImages.firstIndex(of: image) ?? 0
 
+        appModel.openPhotoWindowCount += 1
+
         // Load image data to detect if it's a GIF
         Task {
             await loadImageDataForDetail(url: image.fullSizeURL)
         }
     }
-    
+
     // MARK: - Image Loading
-    
+
     /// Load image data for the detail view and detect if it's an animated GIF
     private func loadImageDataForDetail(url: URL) async {
         do {
             if let data = try await ImageLoader.shared.loadRawData(from: url) {
                 currentImageData = data
                 isAnimatedGIF = data.isAnimatedGIF
-                
+
                 if isAnimatedGIF {
                     // For GIFs, calculate aspect ratio from the image data
                     if let image = UIImage(data: data) {
@@ -123,24 +164,161 @@ class PhotoWindowModel {
             isLoadingDetailImage = false
         }
     }
-    
+
+    // MARK: - 2D Display Image Loading
+
+    /// Load a downsampled display image sized appropriately for the given window size.
+    /// Uses CGImageSource for memory-efficient downsampling without loading
+    /// the full image into memory. No temp files are written to disk.
+    func loadDisplayImage(for windowSize: CGSize) async {
+        guard !isAnimatedGIF else { return }
+        guard !is3DMode else { return }
+        guard !isLoadingDisplayImage else { return }
+
+        isLoadingDisplayImage = true
+        defer { isLoadingDisplayImage = false }
+
+        lastWindowSize = windowSize
+
+        // Ensure raw data is downloaded to disk cache
+        if currentImageData == nil {
+            await loadImageDataForDetail(url: imageURL)
+        }
+        guard !isAnimatedGIF else { return }
+
+        // Resolve source file URL (prefer disk cache, fall back to original URL)
+        guard let sourceURL = await resolveSourceFileURL() else {
+            AppLogger.photoWindow.error("No source file available for display image")
+            isLoadingDetailImage = false
+            return
+        }
+
+        // Read native dimensions from file metadata (no decode)
+        if nativeImageDimensions == nil {
+            nativeImageDimensions = ThumbnailGenerator.shared.getImageDimensions(for: sourceURL)
+        }
+
+        let nativeMaxDim = max(nativeImageDimensions?.width ?? 8192, nativeImageDimensions?.height ?? 8192)
+
+        // Calculate target dimension: window size × scale factor, capped at native
+        let targetDimension = min(
+            max(windowSize.width, windowSize.height) * Self.displayScaleFactor,
+            nativeMaxDim
+        )
+
+        // Skip if already loaded at a similar resolution (within 20%)
+        if displayImage != nil, currentDisplayMaxDimension > 0 {
+            let ratio = targetDimension / currentDisplayMaxDimension
+            if ratio > 0.8 && ratio < 1.2 {
+                return
+            }
+        }
+
+        // Downsample off main thread to avoid blocking UI
+        let image = await Task.detached { [sourceURL, targetDimension] in
+            ThumbnailGenerator.shared.downsampleImage(at: sourceURL, maxDimension: targetDimension)
+        }.value
+
+        guard let image else {
+            AppLogger.photoWindow.warning("Failed to downsample image for display")
+            isLoadingDetailImage = false
+            return
+        }
+
+        displayImage = image
+        imageAspectRatio = image.size.width / image.size.height
+        currentDisplayMaxDimension = targetDimension
+        isLoadingDetailImage = false
+    }
+
+    /// Handle window resize with 1-second debounce. Re-downsamples the display
+    /// image in memory when the window size changes significantly.
+    func handleWindowResize(_ newSize: CGSize) {
+        guard !is3DMode, !isAnimatedGIF else { return }
+        guard !isLoadingDetailImage, !isLoadingDisplayImage else { return }
+        guard displayImage != nil else { return }
+
+        lastWindowSize = newSize
+        resizeDebounceTask?.cancel()
+        resizeDebounceTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            guard let self, !Task.isCancelled else { return }
+            await self.loadDisplayImage(for: newSize)
+        }
+    }
+
+    /// Resolve the file URL for the current image (disk cache or original file URL)
+    private func resolveSourceFileURL() async -> URL? {
+        if imageURL.isFileURL {
+            return imageURL
+        }
+        return await DiskImageCache.shared.cachedFileURL(for: imageURL)
+    }
+
+    // MARK: - 3D Mode Activation
+
+    /// Activate RealityKit 3D mode. Loads the full-resolution ImagePresentationComponent
+    /// from the disk cache and releases the lightweight 2D display image.
+    /// - Parameter generateImmediately: If true, RealityView will generate the 3D depth map
+    ///   right after creating the component (used when the user explicitly taps "Generate 3D").
+    func activate3DMode(generateImmediately: Bool = false) {
+        guard !isAnimatedGIF, !is3DMode else { return }
+        is3DMode = true
+        isLoadingDetailImage = true
+        pendingGenerate3D = generateImmediately
+        // RealityView's init closure will call createImagePresentationComponent()
+    }
+
+    /// Deactivate 3D mode and return to lightweight 2D display.
+    func deactivate3DMode() async {
+        guard is3DMode else { return }
+
+        // If generation is in progress, we MUST wait for it to finish before
+        // removing ImagePresentationComponent. RealityKit's generate() ignores
+        // Swift cooperative cancellation and crashes if the component is removed
+        // while its internal progress callback is still firing.
+        if let task = generateTask {
+            task.cancel()
+            await task.value  // Wait for generate() to actually finish
+            generateTask = nil
+        }
+
+        // Release 3D resources — safe now that generate() has completed
+        spatial3DImage = nil
+        spatial3DImageState = .notGenerated
+        pendingGenerate3D = false
+        contentEntity.components.remove(ImagePresentationComponent.self)
+
+        is3DMode = false
+
+        // Reset display dimension so the 2D reload doesn't early-exit
+        currentDisplayMaxDimension = 0
+
+        // Reload 2D display image
+        if let windowSize = lastWindowSize {
+            isLoadingDetailImage = true
+            await loadDisplayImage(for: windowSize)
+        }
+    }
+
     // MARK: - Image Presentation Component
-    
-    /// Create the ImagePresentationComponent for the current image
+
+    /// Create the ImagePresentationComponent for the current image (3D mode only).
+    /// Loads at full resolution from the disk cache.
     func createImagePresentationComponent() async {
         // Reset state
         spatial3DImageState = .notGenerated
         spatial3DImage = nil
         contentEntity.components.remove(ImagePresentationComponent.self)
         inputPlaneEntity = Entity()
-        
+
         guard !isAnimatedGIF else {
             isLoadingDetailImage = false
             return
         }
-        
+
         isLoadingDetailImage = true
-        
+
         do {
             // Prefer cached file URL to avoid network when reopening
             let sourceURL: URL
@@ -149,7 +327,7 @@ class PhotoWindowModel {
             } else {
                 sourceURL = imageURL
             }
-            
+
             spatial3DImage = try await ImagePresentationComponent.Spatial3DImage(contentsOf: sourceURL)
         } catch {
             AppLogger.photoWindow.error("Unable to initialize spatial 3D image: \(error.localizedDescription, privacy: .public)")
@@ -170,18 +348,22 @@ class PhotoWindowModel {
             }
             return
         }
-        
+
         guard let spatial3DImage else {
             AppLogger.photoWindow.warning("Spatial3DImage is nil.")
             isLoadingDetailImage = false
             return
         }
-        
+
         let imagePresentationComponent = ImagePresentationComponent(spatial3DImage: spatial3DImage)
         contentEntity.components.set(imagePresentationComponent)
         if let aspectRatio = imagePresentationComponent.aspectRatio(for: .mono) {
             imageAspectRatio = CGFloat(aspectRatio)
         }
+
+        // Release 2D display image since RealityKit is rendering now
+        displayImage = nil
+
         isLoadingDetailImage = false
         // Note: Auto-generation is handled by PhotoWindowView after entity is added to scene
     }
@@ -206,11 +388,18 @@ class PhotoWindowModel {
             )
         )
     }
-    
+
     // MARK: - 3D Generation
-    
+
     /// Generate spatial 3D image (depth map)
     func generateSpatial3DImage() async {
+        // If not in 3D mode yet, activate it first and let the RealityView
+        // handle creation + generation after its init closure runs
+        if !is3DMode {
+            activate3DMode(generateImmediately: true)
+            return
+        }
+
         guard spatial3DImageState == .notGenerated else { return }
         guard let spatial3DImage else {
             AppLogger.photoWindow.warning("spatial3DImage is nil, cannot generate")
@@ -220,38 +409,56 @@ class PhotoWindowModel {
             AppLogger.photoWindow.warning("ImagePresentationComponent is missing from the entity.")
             return
         }
-        
+
         // Set the desired viewing mode before generating so that it will trigger the
         // generation animation.
         imagePresentationComponent.desiredViewingMode = .spatial3D
         contentEntity.components.set(imagePresentationComponent)
-        
+
         spatial3DImageState = .generating
-        
-        do {
-            // Generate the Spatial3DImage scene.
-            try await spatial3DImage.generate()
-            spatial3DImageState = .generated
-            
-            // Track that this image was converted
-            await Spatial3DConversionTracker.shared.markAsConverted(url: imageURL)
-            await Spatial3DConversionTracker.shared.setLastViewingMode(url: imageURL, mode: .spatial3D)
-            
-            if let aspectRatio = imagePresentationComponent.aspectRatio(for: .spatial3D) {
-                imageAspectRatio = CGFloat(aspectRatio)
+
+        // Track the generation task so cleanup can wait for it
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                // Generate the Spatial3DImage scene.
+                try await spatial3DImage.generate()
+
+                // Check if cancelled (window closed during generation)
+                guard !Task.isCancelled else {
+                    self.spatial3DImageState = .notGenerated
+                    return
+                }
+
+                self.spatial3DImageState = .generated
+
+                // Track that this image was converted
+                await Spatial3DConversionTracker.shared.markAsConverted(url: self.imageURL)
+                await Spatial3DConversionTracker.shared.setLastViewingMode(url: self.imageURL, mode: .spatial3D)
+
+                if let aspectRatio = imagePresentationComponent.aspectRatio(for: .spatial3D) {
+                    self.imageAspectRatio = CGFloat(aspectRatio)
+                }
+            } catch {
+                if !Task.isCancelled {
+                    AppLogger.photoWindow.error("Error generating spatial 3D image: \(error.localizedDescription, privacy: .public)")
+                    self.spatial3DImageState = .notGenerated
+                }
             }
-        } catch {
-            AppLogger.photoWindow.error("Error generating spatial 3D image: \(error.localizedDescription, privacy: .public)")
-            spatial3DImageState = .notGenerated
         }
+        generateTask = task
+
+        // Wait for generation to complete
+        await task.value
+        generateTask = nil
     }
-    
+
     /// Toggle 2D/3D view
     func toggleSpatial3DView() {
         guard var imagePresentationComponent = contentEntity.components[ImagePresentationComponent.self] else {
             return
         }
-        
+
         // Toggle viewing mode
         if imagePresentationComponent.viewingMode == .spatial3D {
             imagePresentationComponent.desiredViewingMode = .mono
@@ -267,14 +474,14 @@ class PhotoWindowModel {
             }
         }
     }
-    
+
     /// Check if the current image was previously converted and auto-generate if so
     private func autoGenerateSpatial3DIfPreviouslyConverted() async {
         guard !isAnimatedGIF,
               spatial3DImageState == .notGenerated else {
             return
         }
-        
+
         // Respect the user's last-used mode for this image
         if let lastMode = await Spatial3DConversionTracker.shared.lastViewingMode(url: imageURL), lastMode == .mono {
             AppLogger.photoWindow.debug("Skipping auto-generation; last mode was 2D")
@@ -287,14 +494,14 @@ class PhotoWindowModel {
             await generateSpatial3DImage()
         }
     }
-    
+
     // MARK: - UI Auto-Hide
-    
+
     func startAutoHideTimer() {
         cancelAutoHideTimer()
-        
+
         guard appModel.autoHideDelay > 0 else { return }
-        
+
         autoHideTask = Task {
             try? await Task.sleep(for: .seconds(appModel.autoHideDelay))
             if !Task.isCancelled {
@@ -302,12 +509,12 @@ class PhotoWindowModel {
             }
         }
     }
-    
+
     func cancelAutoHideTimer() {
         autoHideTask?.cancel()
         autoHideTask = nil
     }
-    
+
     func toggleUIVisibility() {
         isUIHidden.toggle()
         if !isUIHidden {
@@ -384,22 +591,36 @@ class PhotoWindowModel {
         image = newImage
         imageURL = newImage.fullSizeURL
         isLoadingDetailImage = true
+
+        // Wait for any in-progress generation to finish before removing the
+        // component. RealityKit crashes if we remove ImagePresentationComponent
+        // while generate() is still running internally.
+        if let task = generateTask {
+            task.cancel()
+            await task.value
+            generateTask = nil
+        }
+
+        // Release all previous image resources
         spatial3DImageState = .notGenerated
         spatial3DImage = nil
         isAnimatedGIF = false
         currentImageData = nil
+        displayImage = nil
+        nativeImageDimensions = nil
+        currentDisplayMaxDimension = 0
+        isLoadingDisplayImage = false
         contentEntity.components.remove(ImagePresentationComponent.self)
+
+        // Always start in 2D mode when switching images
+        is3DMode = false
 
         // Load image data to detect if it's a GIF
         await loadImageDataForDetail(url: newImage.fullSizeURL)
 
-        // Create the presentation component if not a GIF
-        if !isAnimatedGIF {
-            await createImagePresentationComponent()
-            // Restore cached 2D/3D state for the new image (skip during slideshow)
-            if !isSlideshowActive {
-                await autoGenerateSpatial3DIfPreviouslyConverted()
-            }
+        // Load 2D display image if not a GIF
+        if !isAnimatedGIF, let windowSize = lastWindowSize {
+            await loadDisplayImage(for: windowSize)
         }
     }
 
@@ -459,6 +680,17 @@ class PhotoWindowModel {
         autoHideTask = nil
         slideshowTask?.cancel()
         slideshowTask = nil
+        resizeDebounceTask?.cancel()
+        resizeDebounceTask = nil
+
+        // If 3D generation is in progress, we CANNOT remove the
+        // ImagePresentationComponent — RealityKit's generate() ignores Swift
+        // cooperative cancellation and will crash if the component is gone when
+        // its progress callback fires. Instead, cancel the task and let the
+        // entity + component be deallocated naturally when the model is released.
+        let generationActive = generateTask != nil
+        generateTask?.cancel()
+        generateTask = nil
 
         // Release Spatial3DImage GPU texture
         spatial3DImage = nil
@@ -466,14 +698,20 @@ class PhotoWindowModel {
 
         // Release image data
         currentImageData = nil
+        displayImage = nil
 
-        // Remove RealityKit components to release associated GPU resources
-        contentEntity.components.remove(ImagePresentationComponent.self)
+        // Only remove the component if generation is NOT active.
+        // If active, the entity retains the component until ARC releases both.
+        if !generationActive {
+            contentEntity.components.remove(ImagePresentationComponent.self)
+        }
 
         // Clear collection references
         galleryImages = []
         slideshowImages = []
         slideshowHistory = []
+
+        appModel.openPhotoWindowCount -= 1
     }
 
     // MARK: - Gallery Navigation

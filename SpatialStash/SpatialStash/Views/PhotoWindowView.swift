@@ -3,6 +3,11 @@
 
  Standalone window view for displaying individual photos.
  Each photo opens in its own window with independent state.
+
+ Memory strategy: Images display in lightweight 2D mode (SwiftUI Image with
+ downsampled UIImage) by default. RealityKit is only activated when the user
+ explicitly requests 3D. On window resize, the 2D image is re-downsampled
+ in memory with a 1-second debounce.
  */
 
 import os
@@ -73,6 +78,7 @@ struct PhotoWindowView: View {
                     .onChange(of: geo.size) { _, newSize in
                         viewerWindowSize = newSize
                         containerWidth = newSize.width
+                        windowModel.handleWindowResize(newSize)
                     }
             }
         )
@@ -85,6 +91,12 @@ struct PhotoWindowView: View {
         )
         .onAppear {
             windowModel.startAutoHideTimer()
+            // Load initial 2D display image at the default window size
+            if !windowModel.isAnimatedGIF && windowModel.displayImage == nil && !windowModel.is3DMode {
+                Task {
+                    await windowModel.loadDisplayImage(for: appModel.mainWindowSize)
+                }
+            }
         }
         .onDisappear {
             windowModel.cleanup()
@@ -107,6 +119,7 @@ struct PhotoWindowView: View {
             // Display animated GIF without RealityKit (no 3D conversion possible)
             AnimatedGIFDetailView(imageData: gifData)
                 .aspectRatio(windowModel.imageAspectRatio, contentMode: .fit)
+                .clipShape(RoundedRectangle(cornerRadius: 50, style: .continuous))
                 .contentShape(.rect)
                 .onTapGesture {
                     windowModel.toggleUIVisibility()
@@ -135,8 +148,8 @@ struct PhotoWindowView: View {
                         resizeGIFWindowToFit(windowModel.imageAspectRatio, within: currentBounds)
                     }
                 }
-        } else {
-            // Display static image with RealityKit for potential 3D conversion
+        } else if windowModel.is3DMode {
+            // Display with RealityKit for 3D spatial conversion (full resolution)
             GeometryReader3D { geometry in
                 RealityView { content in
                     await windowModel.createImagePresentationComponent()
@@ -148,8 +161,15 @@ struct PhotoWindowView: View {
                     if windowModel.inputPlaneEntity.parent == nil {
                         content.add(windowModel.inputPlaneEntity)
                     }
-                    resizeWindowToFit(windowModel.imageAspectRatio, within: appModel.mainWindowSize)
-                    await windowModel.autoGenerateSpatial3DIfNeeded()
+                    resizeWindowToFit(windowModel.imageAspectRatio, within: currentBounds)
+
+                    // If user clicked "Generate 3D", generate immediately
+                    if windowModel.pendingGenerate3D {
+                        windowModel.pendingGenerate3D = false
+                        await windowModel.generateSpatial3DImage()
+                    } else {
+                        await windowModel.autoGenerateSpatial3DIfNeeded()
+                    }
                 } update: { content in
                     guard let presentationScreenSize = windowModel
                         .contentEntity
@@ -206,6 +226,41 @@ struct PhotoWindowView: View {
                 }
             }
             .aspectRatio(windowModel.imageAspectRatio, contentMode: .fit)
+        } else if let uiImage = windowModel.displayImage {
+            // Lightweight 2D display with downsampled UIImage (no RealityKit, low memory)
+            Image(uiImage: uiImage)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .clipShape(RoundedRectangle(cornerRadius: 50, style: .continuous))
+                .contentShape(.rect)
+                .onTapGesture {
+                    windowModel.toggleUIVisibility()
+                }
+                .gesture(
+                    DragGesture(minimumDistance: 30)
+                        .onChanged { value in
+                            handleDragChanged(translation: value.translation.width)
+                        }
+                        .onEnded { value in
+                            handleDragEnded(
+                                translation: value.translation.width,
+                                predictedEnd: value.predictedEndTranslation.width
+                            )
+                        }
+                )
+                .onAppear {
+                    setUniformResizing()
+                    resizeWindowToFit(windowModel.imageAspectRatio, within: appModel.mainWindowSize)
+                }
+                .onChange(of: windowModel.imageAspectRatio) { _, newAspectRatio in
+                    guard !suppressWindowResize else { return }
+                    resizeWindowToFit(newAspectRatio, within: currentBounds)
+                }
+                .onChange(of: windowModel.isLoadingDetailImage) { wasLoading, isLoading in
+                    if wasLoading && !isLoading {
+                        resizeWindowToFit(windowModel.imageAspectRatio, within: currentBounds)
+                    }
+                }
         }
     }
 
@@ -282,7 +337,9 @@ struct PhotoWindowView: View {
             }
         }
     }
-    
+
+    // MARK: - Window Sizing
+
     /// Resize window to fit image aspect ratio within given bounds
     private func resizeWindowToFit(_ aspectRatio: CGFloat, within bounds: CGSize) {
         guard let windowScene = resolvedWindowScene else { return }
@@ -317,6 +374,11 @@ struct PhotoWindowView: View {
         }
     }
 
+    private func setUniformResizing() {
+        guard let windowScene = resolvedWindowScene else { return }
+        windowScene.requestGeometryUpdate(.Vision(resizingRestrictions: .uniform))
+    }
+
     private func resetWindowRestrictions() {
         guard let windowScene = resolvedWindowScene else { return }
         windowScene.requestGeometryUpdate(.Vision(resizingRestrictions: .freeform))
@@ -327,13 +389,13 @@ struct PhotoWindowView: View {
         guard let imagePresentationComponent = windowModel.contentEntity.components[ImagePresentationComponent.self] else {
             return
         }
-        
+
         let presentationScreenSize = imagePresentationComponent.presentationScreenSize
         let scale = min(
             boundsInMeters.extents.x / presentationScreenSize.x,
             boundsInMeters.extents.y / presentationScreenSize.y
         )
-        
+
         windowModel.contentEntity.scale = SIMD3<Float>(scale, scale, 1.0)
     }
 
@@ -488,7 +550,10 @@ struct PhotoWindowOrnament: View {
                         if windowModel.spatial3DImageState == .notGenerated {
                             await windowModel.generateSpatial3DImage()
                         } else {
-                            windowModel.toggleSpatial3DView()
+                            // Cancel generation or deactivate 3D entirely —
+                            // releases the full-res GPU texture and returns
+                            // to lightweight 2D display
+                            await windowModel.deactivate3DMode()
                         }
                     }
                 } label: {
@@ -503,9 +568,9 @@ struct PhotoWindowOrnament: View {
                     .font(.title3)
                 }
                 .buttonStyle(.borderless)
-                .disabled(windowModel.spatial3DImageState == .generating || windowModel.isAnimatedGIF)
+                .disabled(windowModel.isAnimatedGIF)
                 .help(windowModel.spatial3DImageState == .notGenerated ? "Generate 3D" :
-                      windowModel.spatial3DImageState == .generating ? "Generating..." : "Toggle 3D")
+                      windowModel.spatial3DImageState == .generating ? "Cancel 3D" : "Exit 3D")
 
                 // Star rating / O counter popover button
                 if windowModel.image.stashId != nil {

@@ -117,6 +117,12 @@ actor ThumbnailGenerator {
         return CGSize(width: width, height: height)
     }
 
+    /// Downsample an image to a target max dimension, returning an in-memory UIImage.
+    /// Uses CGImageSource for memory-efficient decoding without loading the full image.
+    nonisolated func downsampleImage(at url: URL, maxDimension: CGFloat) -> UIImage? {
+        return createThumbnailSync(for: url, maxSize: maxDimension)
+    }
+
     /// Check if a file is an animated GIF without loading the full image
     nonisolated func isAnimatedGIF(at url: URL) -> Bool {
         guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil) else {
