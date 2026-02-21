@@ -10,6 +10,7 @@ import CommonCrypto
 import Foundation
 import os
 import UIKit
+import UniformTypeIdentifiers
 
 actor ThumbnailCache {
     static let shared = ThumbnailCache()
@@ -65,7 +66,7 @@ actor ThumbnailCache {
     /// Get the file URL for a cached thumbnail
     private func cacheFileURL(for url: URL) -> URL {
         let key = cacheKey(for: url)
-        return cacheDirectory.appendingPathComponent(key + ".jpg")
+        return cacheDirectory.appendingPathComponent(key + ".heic")
     }
 
     /// Load a cached thumbnail
@@ -112,9 +113,18 @@ actor ThumbnailCache {
         let cost = Int(image.size.width * image.size.height * 4 * image.scale * image.scale)
         memoryCache.setObject(image, forKey: key as NSString, cost: cost)
 
-        // Save to disk as JPEG (smaller than PNG for photos)
+        // Save to disk as HEIC (supports alpha, smaller than JPEG/PNG)
         let fileURL = cacheFileURL(for: url)
-        if let data = image.jpegData(compressionQuality: 0.8) {
+        guard let cgImage = image.cgImage else { return }
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            data as CFMutableData, UTType.heic.identifier as CFString, 1, nil
+        ) else { return }
+        CGImageDestinationAddImage(destination, cgImage, [
+            kCGImageDestinationLossyCompressionQuality: 0.8
+        ] as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else { return }
+        if data.length > 0 {
             do {
                 try data.write(to: fileURL)
 
