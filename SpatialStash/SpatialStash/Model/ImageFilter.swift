@@ -203,6 +203,14 @@ struct ImageFilterCriteria: Codable, Equatable {
     var selectedTags: [AutocompleteItem] = []
     var tagModifier: CriterionModifier = .includes
 
+    // Studios filter
+    var selectedStudios: [AutocompleteItem] = []
+    var studioModifier: CriterionModifier = .includes
+
+    // Performers filter
+    var selectedPerformers: [AutocompleteItem] = []
+    var performerModifier: CriterionModifier = .includes
+
     // Sort options
     var sortField: ImageSortField = .createdAt
     var sortDirection: SortDirection = .descending
@@ -218,13 +226,25 @@ struct ImageFilterCriteria: Codable, Equatable {
         selectedTags.map { $0.id }
     }
 
+    /// Get studio IDs for API queries
+    var studioIds: [String] {
+        selectedStudios.map { $0.id }
+    }
+
+    /// Get performer IDs for API queries
+    var performerIds: [String] {
+        selectedPerformers.map { $0.id }
+    }
+
     /// Whether any filter is active
     var hasActiveFilters: Bool {
         !searchTerm.isEmpty ||
         !selectedGalleries.isEmpty ||
         oCountEnabled ||
         ratingEnabled ||
-        !selectedTags.isEmpty
+        !selectedTags.isEmpty ||
+        !selectedStudios.isEmpty ||
+        !selectedPerformers.isEmpty
     }
 
     /// Clear all filters but keep sort settings
@@ -242,6 +262,10 @@ struct ImageFilterCriteria: Codable, Equatable {
         ratingRange = NumberRange()
         selectedTags = []
         tagModifier = .includes
+        selectedStudios = []
+        studioModifier = .includes
+        selectedPerformers = []
+        performerModifier = .includes
     }
 
     /// Generate a new random seed for random sort
@@ -289,6 +313,14 @@ struct SceneFilterCriteria: Codable, Equatable {
     var selectedTags: [AutocompleteItem] = []
     var tagModifier: CriterionModifier = .includes
 
+    // Studios filter
+    var selectedStudios: [AutocompleteItem] = []
+    var studioModifier: CriterionModifier = .includes
+
+    // Performers filter
+    var selectedPerformers: [AutocompleteItem] = []
+    var performerModifier: CriterionModifier = .includes
+
     // Sort options (scene-specific)
     var sortField: SceneSortField = .createdAt
     var sortDirection: SortDirection = .descending
@@ -304,13 +336,25 @@ struct SceneFilterCriteria: Codable, Equatable {
         selectedTags.map { $0.id }
     }
 
+    /// Get studio IDs for API queries
+    var studioIds: [String] {
+        selectedStudios.map { $0.id }
+    }
+
+    /// Get performer IDs for API queries
+    var performerIds: [String] {
+        selectedPerformers.map { $0.id }
+    }
+
     /// Whether any filter is active
     var hasActiveFilters: Bool {
         !searchTerm.isEmpty ||
         !selectedGalleries.isEmpty ||
         oCountEnabled ||
         ratingEnabled ||
-        !selectedTags.isEmpty
+        !selectedTags.isEmpty ||
+        !selectedStudios.isEmpty ||
+        !selectedPerformers.isEmpty
     }
 
     /// Clear all filters but keep sort settings
@@ -328,6 +372,10 @@ struct SceneFilterCriteria: Codable, Equatable {
         ratingRange = NumberRange()
         selectedTags = []
         tagModifier = .includes
+        selectedStudios = []
+        studioModifier = .includes
+        selectedPerformers = []
+        performerModifier = .includes
     }
 
     /// Generate a new random seed for random sort

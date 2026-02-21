@@ -137,8 +137,12 @@ class AppModel {
 
     var availableGalleries: [AutocompleteItem] = []
     var availableTags: [AutocompleteItem] = []
+    var availableStudios: [AutocompleteItem] = []
+    var availablePerformers: [AutocompleteItem] = []
     var isLoadingGalleries: Bool = false
     var isLoadingTags: Bool = false
+    var isLoadingStudios: Bool = false
+    var isLoadingPerformers: Bool = false
 
     // MARK: - Image Source (stored, rebuilt on config change)
 
@@ -785,10 +789,106 @@ class AppModel {
         }
     }
 
-    /// Load initial galleries and tags for autocomplete
+    /// Search studios for autocomplete
+    func searchStudios(query: String) async {
+        guard mediaSourceType == .stashServer else { return }
+
+        isLoadingStudios = true
+        defer { isLoadingStudios = false }
+
+        do {
+            let result = try await apiClient.findStudios(query: query.isEmpty ? nil : query)
+            let lowercasedQuery = query.lowercased()
+            availableStudios = result.studios.map { AutocompleteItem(id: $0.id, name: $0.name) }
+                .sorted {
+                    let name1 = $0.name.lowercased()
+                    let name2 = $1.name.lowercased()
+
+                    let name1IsExactMatch = (name1 == lowercasedQuery)
+                    let name2IsExactMatch = (name2 == lowercasedQuery)
+
+                    if name1IsExactMatch, !name2IsExactMatch { return true }
+                    if !name1IsExactMatch, name2IsExactMatch { return false }
+
+                    let name1HasPrefix = name1.hasPrefix(lowercasedQuery)
+                    let name2HasPrefix = name2.hasPrefix(lowercasedQuery)
+
+                    if name1HasPrefix, !name2HasPrefix {
+                        return true
+                    } else if !name1HasPrefix, name2HasPrefix {
+                        return false
+                    } else if name1HasPrefix, name2HasPrefix {
+                        let name1HasSeparator = name1.contains("_") || name1.contains("-")
+                        let name2HasSeparator = name2.contains("_") || name2.contains("-")
+                        if name1HasSeparator != name2HasSeparator {
+                            return !name1HasSeparator
+                        }
+                        if name1.count != name2.count {
+                            return name1.count < name2.count
+                        }
+                        return name1 < name2
+                    } else {
+                        return name1 < name2
+                    }
+                }
+        } catch {
+            AppLogger.appModel.error("Failed to search studios: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Search performers for autocomplete
+    func searchPerformers(query: String) async {
+        guard mediaSourceType == .stashServer else { return }
+
+        isLoadingPerformers = true
+        defer { isLoadingPerformers = false }
+
+        do {
+            let result = try await apiClient.findPerformers(query: query.isEmpty ? nil : query)
+            let lowercasedQuery = query.lowercased()
+            availablePerformers = result.performers.map { AutocompleteItem(id: $0.id, name: $0.name) }
+                .sorted {
+                    let name1 = $0.name.lowercased()
+                    let name2 = $1.name.lowercased()
+
+                    let name1IsExactMatch = (name1 == lowercasedQuery)
+                    let name2IsExactMatch = (name2 == lowercasedQuery)
+
+                    if name1IsExactMatch, !name2IsExactMatch { return true }
+                    if !name1IsExactMatch, name2IsExactMatch { return false }
+
+                    let name1HasPrefix = name1.hasPrefix(lowercasedQuery)
+                    let name2HasPrefix = name2.hasPrefix(lowercasedQuery)
+
+                    if name1HasPrefix, !name2HasPrefix {
+                        return true
+                    } else if !name1HasPrefix, name2HasPrefix {
+                        return false
+                    } else if name1HasPrefix, name2HasPrefix {
+                        let name1HasSeparator = name1.contains("_") || name1.contains("-")
+                        let name2HasSeparator = name2.contains("_") || name2.contains("-")
+                        if name1HasSeparator != name2HasSeparator {
+                            return !name1HasSeparator
+                        }
+                        if name1.count != name2.count {
+                            return name1.count < name2.count
+                        }
+                        return name1 < name2
+                    } else {
+                        return name1 < name2
+                    }
+                }
+        } catch {
+            AppLogger.appModel.error("Failed to search performers: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Load initial autocomplete data
     func loadAutocompleteData() async {
         await searchGalleries(query: "")
         await searchTags(query: "")
+        await searchStudios(query: "")
+        await searchPerformers(query: "")
     }
 
     // MARK: - UI Visibility Control

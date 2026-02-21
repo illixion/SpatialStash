@@ -262,6 +262,22 @@ actor StashAPIClient {
                 ]
             }
 
+            // Studios filter
+            if !filter.studioIds.isEmpty {
+                imageFilter["studios"] = [
+                    "value": filter.studioIds,
+                    "modifier": filter.studioModifier.rawValue
+                ]
+            }
+
+            // Performers filter
+            if !filter.performerIds.isEmpty {
+                imageFilter["performers"] = [
+                    "value": filter.performerIds,
+                    "modifier": filter.performerModifier.rawValue
+                ]
+            }
+
             if !imageFilter.isEmpty {
                 variables["image_filter"] = imageFilter
             }
@@ -377,6 +393,96 @@ actor StashAPIClient {
 
         let response: FindTagsResponse = try await self.query(graphQLQuery, variables: ["filter": filterVariables])
         return response.findTags
+    }
+
+    // MARK: - Studio Queries (for autocomplete)
+
+    struct FindStudiosResponse: Decodable {
+        let findStudios: FindStudiosResult
+    }
+
+    struct FindStudiosResult: Decodable {
+        let count: Int
+        let studios: [StashStudio]
+    }
+
+    struct StashStudio: Decodable {
+        let id: String
+        let name: String
+    }
+
+    func findStudios(query: String? = nil, page: Int = 1, perPage: Int? = nil) async throws -> FindStudiosResult {
+        let graphQLQuery = """
+        query FindStudios($filter: FindFilterType) {
+            findStudios(filter: $filter) {
+                count
+                studios {
+                    id
+                    name
+                }
+            }
+        }
+        """
+
+        let pageSize = perPage ?? (query != nil && !(query?.isEmpty ?? true) ? 100 : 25)
+        var filterVariables: [String: Any] = [
+            "page": page,
+            "per_page": pageSize,
+            "sort": "name",
+            "direction": "ASC"
+        ]
+
+        if let query = query, !query.isEmpty {
+            filterVariables["q"] = query
+        }
+
+        let response: FindStudiosResponse = try await self.query(graphQLQuery, variables: ["filter": filterVariables])
+        return response.findStudios
+    }
+
+    // MARK: - Performer Queries (for autocomplete)
+
+    struct FindPerformersResponse: Decodable {
+        let findPerformers: FindPerformersResult
+    }
+
+    struct FindPerformersResult: Decodable {
+        let count: Int
+        let performers: [StashPerformer]
+    }
+
+    struct StashPerformer: Decodable {
+        let id: String
+        let name: String
+    }
+
+    func findPerformers(query: String? = nil, page: Int = 1, perPage: Int? = nil) async throws -> FindPerformersResult {
+        let graphQLQuery = """
+        query FindPerformers($filter: FindFilterType) {
+            findPerformers(filter: $filter) {
+                count
+                performers {
+                    id
+                    name
+                }
+            }
+        }
+        """
+
+        let pageSize = perPage ?? (query != nil && !(query?.isEmpty ?? true) ? 100 : 25)
+        var filterVariables: [String: Any] = [
+            "page": page,
+            "per_page": pageSize,
+            "sort": "name",
+            "direction": "ASC"
+        ]
+
+        if let query = query, !query.isEmpty {
+            filterVariables["q"] = query
+        }
+
+        let response: FindPerformersResponse = try await self.query(graphQLQuery, variables: ["filter": filterVariables])
+        return response.findPerformers
     }
 
     // MARK: - Scene/Video Queries
@@ -529,6 +635,22 @@ actor StashAPIClient {
                 sceneFilter["tags"] = [
                     "value": filter.tagIds,
                     "modifier": filter.tagModifier.rawValue
+                ]
+            }
+
+            // Studios filter
+            if !filter.studioIds.isEmpty {
+                sceneFilter["studios"] = [
+                    "value": filter.studioIds,
+                    "modifier": filter.studioModifier.rawValue
+                ]
+            }
+
+            // Performers filter
+            if !filter.performerIds.isEmpty {
+                sceneFilter["performers"] = [
+                    "value": filter.performerIds,
+                    "modifier": filter.performerModifier.rawValue
                 ]
             }
 

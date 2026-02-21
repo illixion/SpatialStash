@@ -181,6 +181,16 @@ struct FiltersTabView: View {
                     TagFilterView(isVideoFilter: isVideoFilter)
                 }
 
+                // Studios Filter
+                Section("Studios") {
+                    StudioFilterView(isVideoFilter: isVideoFilter)
+                }
+
+                // Performers Filter
+                Section("Performers") {
+                    PerformerFilterView(isVideoFilter: isVideoFilter)
+                }
+
                 // O Count Filter
                 Section("O Count") {
                     OCountFilterView(isVideoFilter: isVideoFilter)
@@ -327,6 +337,12 @@ struct SavedViewRow: View {
         if !view.filter.selectedTags.isEmpty {
             parts.append("\(view.filter.selectedTags.count) tags")
         }
+        if !view.filter.selectedStudios.isEmpty {
+            parts.append("\(view.filter.selectedStudios.count) studios")
+        }
+        if !view.filter.selectedPerformers.isEmpty {
+            parts.append("\(view.filter.selectedPerformers.count) performers")
+        }
         if !view.filter.selectedGalleries.isEmpty {
             parts.append("\(view.filter.selectedGalleries.count) galleries")
         }
@@ -431,6 +447,12 @@ struct SavedVideoViewRow: View {
         }
         if !view.filter.selectedTags.isEmpty {
             parts.append("\(view.filter.selectedTags.count) tags")
+        }
+        if !view.filter.selectedStudios.isEmpty {
+            parts.append("\(view.filter.selectedStudios.count) studios")
+        }
+        if !view.filter.selectedPerformers.isEmpty {
+            parts.append("\(view.filter.selectedPerformers.count) performers")
         }
         if !view.filter.selectedGalleries.isEmpty {
             parts.append("\(view.filter.selectedGalleries.count) galleries")
@@ -651,6 +673,194 @@ struct TagFilterView: View {
                                     }
                                 } label: {
                                     Text(tag.name)
+                                        .font(.caption)
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 4)
+                                        .background(Color.secondary.opacity(0.2))
+                                        .cornerRadius(8)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Studio Filter View
+
+struct StudioFilterView: View {
+    @Environment(AppModel.self) private var appModel
+    @State private var searchText = ""
+    let isVideoFilter: Bool
+
+    private var selectedStudios: [AutocompleteItem] {
+        isVideoFilter ? appModel.currentVideoFilter.selectedStudios : appModel.currentFilter.selectedStudios
+    }
+
+    var body: some View {
+        @Bindable var appModel = appModel
+
+        VStack(alignment: .leading, spacing: 12) {
+            // Modifier picker
+            if isVideoFilter {
+                Picker("Match", selection: $appModel.currentVideoFilter.studioModifier) {
+                    ForEach(CriterionModifier.multiModifiers) { modifier in
+                        Text(modifier.displayName).tag(modifier)
+                    }
+                }
+                .pickerStyle(.menu)
+            } else {
+                Picker("Match", selection: $appModel.currentFilter.studioModifier) {
+                    ForEach(CriterionModifier.multiModifiers) { modifier in
+                        Text(modifier.displayName).tag(modifier)
+                    }
+                }
+                .pickerStyle(.menu)
+            }
+
+            // Search field
+            TextField("Search studios...", text: $searchText)
+                .textFieldStyle(.plain)
+                .autocorrectionDisabled()
+                .onChange(of: searchText) { _, newValue in
+                    Task {
+                        await appModel.searchStudios(query: newValue)
+                    }
+                }
+
+            // Selected studios
+            if !selectedStudios.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack {
+                        ForEach(selectedStudios) { studio in
+                            SelectedItemChip(name: studio.name) {
+                                if isVideoFilter {
+                                    appModel.currentVideoFilter.selectedStudios.removeAll { $0.id == studio.id }
+                                } else {
+                                    appModel.currentFilter.selectedStudios.removeAll { $0.id == studio.id }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Available studios
+            if appModel.isLoadingStudios {
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+            } else {
+                let selectedIds = Set(selectedStudios.map { $0.id })
+                let availableToSelect = appModel.availableStudios.filter { !selectedIds.contains($0.id) }
+                if !availableToSelect.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack {
+                            ForEach(availableToSelect) { studio in
+                                Button {
+                                    if isVideoFilter {
+                                        appModel.currentVideoFilter.selectedStudios.append(studio)
+                                    } else {
+                                        appModel.currentFilter.selectedStudios.append(studio)
+                                    }
+                                } label: {
+                                    Text(studio.name)
+                                        .font(.caption)
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 4)
+                                        .background(Color.secondary.opacity(0.2))
+                                        .cornerRadius(8)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Performer Filter View
+
+struct PerformerFilterView: View {
+    @Environment(AppModel.self) private var appModel
+    @State private var searchText = ""
+    let isVideoFilter: Bool
+
+    private var selectedPerformers: [AutocompleteItem] {
+        isVideoFilter ? appModel.currentVideoFilter.selectedPerformers : appModel.currentFilter.selectedPerformers
+    }
+
+    var body: some View {
+        @Bindable var appModel = appModel
+
+        VStack(alignment: .leading, spacing: 12) {
+            // Modifier picker
+            if isVideoFilter {
+                Picker("Match", selection: $appModel.currentVideoFilter.performerModifier) {
+                    ForEach(CriterionModifier.multiModifiers) { modifier in
+                        Text(modifier.displayName).tag(modifier)
+                    }
+                }
+                .pickerStyle(.menu)
+            } else {
+                Picker("Match", selection: $appModel.currentFilter.performerModifier) {
+                    ForEach(CriterionModifier.multiModifiers) { modifier in
+                        Text(modifier.displayName).tag(modifier)
+                    }
+                }
+                .pickerStyle(.menu)
+            }
+
+            // Search field
+            TextField("Search performers...", text: $searchText)
+                .textFieldStyle(.plain)
+                .autocorrectionDisabled()
+                .onChange(of: searchText) { _, newValue in
+                    Task {
+                        await appModel.searchPerformers(query: newValue)
+                    }
+                }
+
+            // Selected performers
+            if !selectedPerformers.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack {
+                        ForEach(selectedPerformers) { performer in
+                            SelectedItemChip(name: performer.name) {
+                                if isVideoFilter {
+                                    appModel.currentVideoFilter.selectedPerformers.removeAll { $0.id == performer.id }
+                                } else {
+                                    appModel.currentFilter.selectedPerformers.removeAll { $0.id == performer.id }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Available performers
+            if appModel.isLoadingPerformers {
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+            } else {
+                let selectedIds = Set(selectedPerformers.map { $0.id })
+                let availableToSelect = appModel.availablePerformers.filter { !selectedIds.contains($0.id) }
+                if !availableToSelect.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack {
+                            ForEach(availableToSelect) { performer in
+                                Button {
+                                    if isVideoFilter {
+                                        appModel.currentVideoFilter.selectedPerformers.append(performer)
+                                    } else {
+                                        appModel.currentFilter.selectedPerformers.append(performer)
+                                    }
+                                } label: {
+                                    Text(performer.name)
                                         .font(.caption)
                                         .padding(.horizontal, 8)
                                         .padding(.vertical, 4)
