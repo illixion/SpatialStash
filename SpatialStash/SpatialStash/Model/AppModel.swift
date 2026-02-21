@@ -28,7 +28,6 @@ class AppModel {
     // MARK: - Navigation State
 
     var selectedTab: Tab = .pictures
-    var isShowingDetailView: Bool = false
     var isShowingVideoDetail: Bool = false
 
     /// Tracks the last content tab (pictures or videos) for filter context
@@ -183,19 +182,6 @@ class AppModel {
     var lastViewedImageId: UUID?
     var lastViewedVideoId: UUID?
 
-    // MARK: - Spatial Image State (Existing)
-
-    var imageIndex: Int = 0
-    var imageURL: URL? = nil
-    var imageAspectRatio: CGFloat = 1.0
-    var contentEntity: Entity = Entity()
-    var spatial3DImageState: Spatial3DImageState = .notGenerated
-    var spatial3DImage: ImagePresentationComponent.Spatial3DImage? = nil
-    var isLoadingDetailImage: Bool = false
-
-    /// Task for 3D generation in gallery detail (tracked so image switching can cancel/await it)
-    private var generateTask: Task<Void, Never>?
-
     // MARK: - Main Window Size Tracking
 
     var mainWindowSize: CGSize = CGSize(width: 1200, height: 800)
@@ -218,25 +204,6 @@ class AppModel {
     /// Whether to show the memory warning alert
     var showMemoryWarningAlert: Bool = false
 
-    // MARK: - GIF Support
-
-    var isAnimatedGIF: Bool = false
-    var currentImageData: Data? = nil
-
-    // MARK: - Image Preloading
-
-    /// Data structure for preloaded images (lightweight — no Spatial3DImage to save memory)
-    private struct PreloadedImageData {
-        let imageData: Data?
-        let isAnimatedGIF: Bool
-        let aspectRatio: CGFloat?
-    }
-
-    /// Preloaded image data cache (keyed by image ID)
-    private var preloadedImages: [UUID: PreloadedImageData] = [:]
-
-    /// Currently preloading task
-    private var preloadTask: Task<Void, Never>?
 
     // MARK: - UI Visibility State (for immersive image viewing)
 
@@ -266,25 +233,16 @@ class AppModel {
 
     // MARK: - Viewer Lazy Loading State
 
-    /// Snapshotted image filter for viewer navigation (captured when viewer opens)
-    private var viewerImageFilter: ImageFilterCriteria?
-
     /// Snapshotted video filter for viewer navigation (captured when viewer opens)
     private var viewerVideoFilter: SceneFilterCriteria?
-
-    /// Whether a viewer page load is in progress (separate from gallery grid loading)
-    private(set) var isLoadingViewerPage: Bool = false
 
     /// Whether a video viewer page load is in progress
     private(set) var isLoadingVideoViewerPage: Bool = false
 
-    /// How close to the end of the loaded set before triggering a load
+    /// How many items from end before prefetching next page
     private let viewerPrefetchThreshold: Int = 5
 
-    // MARK: - Slideshow State
-
-    /// Whether a slideshow is currently active
-    var isSlideshowActive: Bool = false
+    // MARK: - Slideshow Settings
 
     /// Slideshow delay between images (in seconds)
     var slideshowDelay: TimeInterval {
@@ -299,18 +257,6 @@ class AppModel {
     static let slideshowDelayOptions: [TimeInterval] = [
         3, 5, 10, 15, 20, 30, 45, 60, 90, 120
     ]
-
-    /// Images for the current slideshow (fetched with random filter)
-    var slideshowImages: [GalleryImage] = []
-
-    /// Current index in the slideshow
-    var slideshowIndex: Int = 0
-
-    /// Task for the slideshow timer
-    private var slideshowTask: Task<Void, Never>?
-
-    /// History of visited slideshow images for going back
-    private var slideshowHistory: [GalleryImage] = []
 
     // MARK: - Initialization
 
@@ -406,9 +352,6 @@ class AppModel {
             AppLogger.appModel.warning("Memory warning received — activating lightweight display and clearing caches")
             Task { @MainActor [weak self] in
                 await ImageLoader.shared.clearMemoryCache()
-                self?.preloadedImages.removeAll()
-                self?.preloadTask?.cancel()
-                self?.preloadTask = nil
                 // Switch all photo windows to lightweight mode
                 self?.useLightweightDisplay = true
             }
@@ -632,13 +575,12 @@ class AppModel {
         hasMorePages = true
         // Force-reset loading flags so the new load can proceed even if a prior load is in-flight
         isLoadingGallery = false
-        isLoadingViewerPage = false
         await loadNextPage()
     }
 
     /// Load the next page of gallery images
     func loadNextPage() async {
-        guard !isLoadingGallery && !isLoadingViewerPage && hasMorePages else {
+        guard !isLoadingGallery && hasMorePages else {
             let loading = isLoadingGallery
             let hasMore = hasMorePages
             AppLogger.appModel.debug("loadNextPage skipped - isLoading: \(loading, privacy: .public), hasMore: \(hasMore, privacy: .public)")
@@ -671,40 +613,6 @@ class AppModel {
             currentPage += 1
         } catch {
             AppLogger.appModel.error("Failed to load gallery page: \(error.localizedDescription, privacy: .public)")
-        }
-    }
-
-    /// Load more images for the viewer using the snapshotted filter
-    func loadMoreImagesForViewer() async {
-        guard !isLoadingGallery && !isLoadingViewerPage && hasMorePages else { return }
-
-        let generation = galleryLoadGeneration
-        isLoadingViewerPage = true
-        defer {
-            if generation == galleryLoadGeneration {
-                isLoadingViewerPage = false
-            }
-        }
-
-        do {
-            let result = try await imageSource.fetchImages(page: currentPage, pageSize: pageSize, filter: viewerImageFilter)
-            guard generation == galleryLoadGeneration else { return }
-            AppLogger.appModel.debug("Viewer loaded \(result.images.count, privacy: .public) more images")
-            galleryImages.append(contentsOf: result.images)
-            hasMorePages = result.hasMore
-            currentPage += 1
-        } catch {
-            AppLogger.appModel.error("Failed to load viewer image page: \(error.localizedDescription, privacy: .public)")
-        }
-    }
-
-    /// Check if more images should be loaded based on proximity to end
-    private func checkAndLoadMoreImagesIfNeeded(currentIndex: Int) {
-        let remaining = galleryImages.count - currentIndex - 1
-        if remaining <= viewerPrefetchThreshold && hasMorePages && !isLoadingGallery && !isLoadingViewerPage {
-            Task {
-                await loadMoreImagesForViewer()
-            }
         }
     }
 
@@ -851,190 +759,6 @@ class AppModel {
         await searchTags(query: "")
     }
 
-    /// Select an image from the gallery to view in detail
-    func selectImageForDetail(_ image: GalleryImage) {
-        selectedImage = image
-        lastViewedImageId = image.id
-        imageURL = image.fullSizeURL
-        isShowingDetailView = true
-        spatial3DImageState = .notGenerated
-        isAnimatedGIF = false
-        currentImageData = nil
-        isLoadingDetailImage = true
-
-        // Cancel any in-progress 3D generation before clearing resources.
-        // RealityKit crashes if ImagePresentationComponent is removed while
-        // generate() is still running. We cancel the task and defer cleanup
-        // to the task itself (it checks isCancelled and exits early).
-        generateTask?.cancel()
-        generateTask = nil
-
-        spatial3DImage = nil
-        contentEntity.components.remove(ImagePresentationComponent.self)
-
-        // Snapshot the filter on first entry to the viewer
-        if viewerImageFilter == nil {
-            viewerImageFilter = (mediaSourceType == .stashServer) ? currentFilter : nil
-        }
-
-        // Load image data to detect if it's a GIF
-        Task {
-            await loadImageDataForDetail(url: image.fullSizeURL)
-        }
-
-        // Preload adjacent images for instant transitions
-        preloadAdjacentImages(direction: 0)
-    }
-
-    /// Load image data for the detail view and detect if it's an animated GIF
-    private func loadImageDataForDetail(url: URL) async {
-        do {
-            if let data = try await ImageLoader.shared.loadRawData(from: url) {
-                currentImageData = data
-                isAnimatedGIF = data.isAnimatedGIF
-
-                if isAnimatedGIF {
-                    // For GIFs, calculate aspect ratio from the image data
-                    if let image = UIImage(data: data) {
-                        imageAspectRatio = image.size.width / image.size.height
-                    }
-                    isLoadingDetailImage = false
-                }
-            }
-        } catch {
-            AppLogger.appModel.error("Failed to load image data: \(error.localizedDescription, privacy: .public)")
-        }
-    }
-
-    /// Select an image using preloaded data if available for instant transition
-    func selectImageForDetailFromPreload(_ image: GalleryImage) {
-        if let preloaded = preloadedImages[image.id] {
-            // Instant switch using preloaded data
-            selectedImage = image
-            lastViewedImageId = image.id
-            imageURL = image.fullSizeURL
-            isShowingDetailView = true
-            spatial3DImageState = .notGenerated
-            currentImageData = preloaded.imageData
-            isAnimatedGIF = preloaded.isAnimatedGIF
-
-            if let aspectRatio = preloaded.aspectRatio {
-                imageAspectRatio = aspectRatio
-            }
-
-            // Cancel any in-progress 3D generation before clearing resources
-            generateTask?.cancel()
-            generateTask = nil
-
-            spatial3DImage = nil
-
-            if isAnimatedGIF {
-                contentEntity.components.remove(ImagePresentationComponent.self)
-                isLoadingDetailImage = false
-            } else {
-                // Data is already cached on disk from preloading — load Spatial3DImage on demand
-                isLoadingDetailImage = true
-                contentEntity.components.remove(ImagePresentationComponent.self)
-                Task {
-                    await createImagePresentationComponent()
-                    if !isSlideshowActive {
-                        await autoGenerateSpatial3DIfNeeded()
-                    }
-                }
-            }
-
-            // Snapshot filter if first entry
-            if viewerImageFilter == nil {
-                viewerImageFilter = (mediaSourceType == .stashServer) ? currentFilter : nil
-            }
-
-            // Clear used preloaded data
-            preloadedImages.removeValue(forKey: image.id)
-        } else {
-            // Fall back to full reload
-            selectImageForDetail(image)
-        }
-    }
-
-    /// Preload images adjacent to the current image for instant transitions
-    /// - Parameter direction: +1 for forward, -1 for backward, 0 for both directions
-    func preloadAdjacentImages(direction: Int = 0) {
-        guard let currentImage = selectedImage,
-              let currentIndex = galleryImages.firstIndex(of: currentImage) else { return }
-
-        preloadTask?.cancel()
-        preloadTask = Task { @MainActor in
-            var indicesToPreload: [Int] = []
-
-            if direction >= 0, currentIndex + 1 < galleryImages.count {
-                indicesToPreload.append(currentIndex + 1)
-            }
-            if direction <= 0, currentIndex - 1 >= 0 {
-                indicesToPreload.append(currentIndex - 1)
-            }
-
-            for index in indicesToPreload {
-                guard !Task.isCancelled else { break }
-                let imageToPreload = galleryImages[index]
-                guard preloadedImages[imageToPreload.id] == nil else { continue }
-                await preloadImage(imageToPreload)
-            }
-        }
-    }
-
-    /// Preload a single image's data and spatial 3D image
-    /// Preload image data to disk cache for fast on-demand loading.
-    /// Does NOT load full-resolution Spatial3DImage to avoid ~256 MB per preloaded image.
-    private func preloadImage(_ galleryImage: GalleryImage) async {
-        let url = galleryImage.fullSizeURL
-
-        do {
-            guard let data = try await ImageLoader.shared.loadRawData(from: url) else { return }
-
-            let isGIF = data.isAnimatedGIF
-            var aspectRatio: CGFloat?
-
-            if isGIF {
-                if let uiImage = UIImage(data: data) {
-                    aspectRatio = uiImage.size.width / uiImage.size.height
-                }
-            }
-
-            preloadedImages[galleryImage.id] = PreloadedImageData(
-                imageData: data,
-                isAnimatedGIF: isGIF,
-                aspectRatio: aspectRatio
-            )
-            AppLogger.appModel.debug("Preloaded image data: \(galleryImage.id, privacy: .public)")
-        } catch {
-            AppLogger.appModel.debug("Failed to preload: \(error.localizedDescription, privacy: .public)")
-        }
-    }
-
-    /// Dismiss the detail view and return to gallery
-    func dismissDetailView() {
-        isShowingDetailView = false
-        selectedImage = nil
-        spatial3DImageState = .notGenerated
-        // Cancel any in-progress 3D generation
-        generateTask?.cancel()
-        generateTask = nil
-        spatial3DImage = nil
-        currentImageData = nil
-        isAnimatedGIF = false
-        // Remove RealityKit components to release GPU resources
-        contentEntity.components.remove(ImagePresentationComponent.self)
-        // Clear the snapshotted viewer filter
-        viewerImageFilter = nil
-        // Clean up preloaded images
-        preloadTask?.cancel()
-        preloadTask = nil
-        preloadedImages.removeAll()
-        // Reset UI visibility when leaving detail view
-        cancelAutoHideTimer()
-        isUIHidden = false
-    }
-
     // MARK: - UI Visibility Control
 
     /// Toggle UI visibility (for tap gesture)
@@ -1056,7 +780,7 @@ class AppModel {
         guard autoHideDelay > 0 else { return }
         autoHideTask = Task { @MainActor in
             try? await Task.sleep(for: .seconds(autoHideDelay))
-            if !Task.isCancelled && (isShowingDetailView || isShowingVideoDetail) && !isLoadingDetailImage {
+            if !Task.isCancelled && isShowingVideoDetail {
                 isUIHidden = true
             }
         }
@@ -1073,161 +797,6 @@ class AppModel {
         if !isUIHidden {
             startAutoHideTimer()
         }
-    }
-
-    /// Navigate to next image in gallery while in detail view
-    func nextImage() {
-        guard let currentImage = selectedImage,
-              let currentIndex = galleryImages.firstIndex(of: currentImage),
-              currentIndex + 1 < galleryImages.count else { return }
-
-        let nextIndex = currentIndex + 1
-        checkAndLoadMoreImagesIfNeeded(currentIndex: nextIndex)
-        selectImageForDetailFromPreload(galleryImages[nextIndex])
-        preloadAdjacentImages(direction: 1)
-    }
-
-    /// Navigate to previous image in gallery while in detail view
-    func previousImage() {
-        guard let currentImage = selectedImage,
-              let currentIndex = galleryImages.firstIndex(of: currentImage),
-              currentIndex > 0 else { return }
-
-        selectImageForDetailFromPreload(galleryImages[currentIndex - 1])
-        preloadAdjacentImages(direction: -1)
-    }
-
-    /// Check if there's a next image available
-    var hasNextImage: Bool {
-        guard let currentImage = selectedImage,
-              let currentIndex = galleryImages.firstIndex(of: currentImage) else { return false }
-        return currentIndex + 1 < galleryImages.count
-    }
-
-    /// Check if there's a previous image available
-    var hasPreviousImage: Bool {
-        guard let currentImage = selectedImage,
-              let currentIndex = galleryImages.firstIndex(of: currentImage) else { return false }
-        return currentIndex > 0
-    }
-
-    /// Current image position (1-indexed) for display
-    var currentImagePosition: Int {
-        guard let currentImage = selectedImage,
-              let currentIndex = galleryImages.firstIndex(of: currentImage) else { return 0 }
-        return currentIndex + 1
-    }
-
-    // MARK: - Slideshow Methods
-
-    /// Start a random slideshow
-    func startSlideshow() async {
-        guard !isSlideshowActive else { return }
-
-        isSlideshowActive = true
-        slideshowHistory = []
-        slideshowImages = []
-        slideshowIndex = 0
-
-        // Fetch initial batch of random images (no seed for true randomness)
-        await fetchRandomSlideshowImages()
-
-        // Start with the first image if we have any
-        if let firstImage = slideshowImages.first {
-            selectImageForDetail(firstImage)
-            slideshowHistory.append(firstImage)
-            isShowingDetailView = true
-        }
-
-        // Start the slideshow timer
-        startSlideshowTimer()
-    }
-
-    /// Fetch a batch of random images for the slideshow
-    private func fetchRandomSlideshowImages() async {
-        // Create a filter with random sort and no seed (unseeded = different order each time)
-        var randomFilter = ImageFilterCriteria()
-        randomFilter.sortField = .random
-        randomFilter.randomSeed = nil  // Unseeded for true random
-
-        do {
-            let result = try await imageSource.fetchImages(page: 0, pageSize: 10, filter: randomFilter)
-            slideshowImages = result.images
-            AppLogger.appModel.debug("Fetched \(result.images.count, privacy: .public) random images for slideshow")
-        } catch {
-            AppLogger.appModel.error("Failed to fetch slideshow images: \(error.localizedDescription, privacy: .public)")
-        }
-    }
-
-    /// Start the slideshow timer
-    private func startSlideshowTimer() {
-        slideshowTask?.cancel()
-        slideshowTask = Task { @MainActor in
-            while isSlideshowActive && !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(slideshowDelay))
-                if !Task.isCancelled && isSlideshowActive {
-                    await advanceSlideshow()
-                }
-            }
-        }
-    }
-
-    /// Advance to the next slideshow image
-    private func advanceSlideshow() async {
-        slideshowIndex += 1
-
-        // If we've gone through all fetched images, fetch more
-        if slideshowIndex >= slideshowImages.count {
-            await fetchRandomSlideshowImages()
-            slideshowIndex = 0
-        }
-
-        if slideshowIndex < slideshowImages.count {
-            let nextImage = slideshowImages[slideshowIndex]
-            selectImageForDetail(nextImage)
-            slideshowHistory.append(nextImage)
-        }
-    }
-
-    /// Go to the next slideshow image manually
-    func nextSlideshowImage() async {
-        guard isSlideshowActive else { return }
-
-        // Reset the timer since user manually advanced
-        startSlideshowTimer()
-
-        await advanceSlideshow()
-    }
-
-    /// Go to the previous slideshow image
-    func previousSlideshowImage() {
-        guard isSlideshowActive, slideshowHistory.count > 1 else { return }
-
-        // Reset the timer since user manually navigated
-        startSlideshowTimer()
-
-        // Remove current image from history
-        slideshowHistory.removeLast()
-
-        // Go back to the previous image
-        if let previousImage = slideshowHistory.last {
-            selectImageForDetail(previousImage)
-        }
-    }
-
-    /// Stop the slideshow
-    func stopSlideshow() {
-        isSlideshowActive = false
-        slideshowTask?.cancel()
-        slideshowTask = nil
-        slideshowImages = []
-        slideshowHistory = []
-        slideshowIndex = 0
-    }
-
-    /// Check if there's a previous slideshow image available
-    var hasPreviousSlideshowImage: Bool {
-        slideshowHistory.count > 1
     }
 
     // MARK: - Video Gallery Methods
@@ -1466,155 +1035,4 @@ class AppModel {
         }
     }
 
-    // MARK: - Spatial Image Methods (Existing - Preserved)
-
-    func createImagePresentationComponent() async {
-        guard let imageURL else {
-            AppLogger.appModel.warning("ImageURL is nil.")
-            isLoadingDetailImage = false
-            return
-        }
-        isLoadingDetailImage = true
-        spatial3DImageState = .notGenerated
-        spatial3DImage = nil
-        do {
-            // Prefer cached file URL to avoid network when reopening
-            let sourceURL: URL
-            if !imageURL.isFileURL, let cached = await DiskImageCache.shared.cachedFileURL(for: imageURL) {
-                sourceURL = cached
-            } else {
-                sourceURL = imageURL
-            }
-            spatial3DImage = try await ImagePresentationComponent.Spatial3DImage(contentsOf: sourceURL)
-        } catch {
-            AppLogger.appModel.error("Unable to initialize spatial 3D image: \(error.localizedDescription, privacy: .public)")
-            isLoadingDetailImage = false
-
-            // Enhanced error handling for network scenarios
-            if let urlError = error as? URLError {
-                switch urlError.code {
-                case .notConnectedToInternet:
-                    AppLogger.appModel.error("No internet connection available.")
-                case .timedOut:
-                    AppLogger.appModel.error("Request timed out.")
-                case .cannotFindHost:
-                    AppLogger.appModel.error("Cannot find host.")
-                default:
-                    AppLogger.appModel.error("URL error code: \(urlError.code.rawValue, privacy: .public)")
-                }
-            }
-            return
-        }
-
-        guard let spatial3DImage else {
-            AppLogger.appModel.warning("Spatial3DImage is nil.")
-            isLoadingDetailImage = false
-            return
-        }
-
-        let imagePresentationComponent = ImagePresentationComponent(spatial3DImage: spatial3DImage)
-        contentEntity.components.set(imagePresentationComponent)
-        if let aspectRatio = imagePresentationComponent.aspectRatio(for: .mono) {
-            imageAspectRatio = CGFloat(aspectRatio)
-        }
-        isLoadingDetailImage = false
-        // Note: Auto-generation is handled by ImagePresentationView after entity is added to scene
-    }
-
-    /// Called after the entity is added to the RealityKit scene to auto-generate spatial 3D
-    func autoGenerateSpatial3DIfNeeded() async {
-        await autoGenerateSpatial3DIfPreviouslyConverted()
-    }
-
-    func generateSpatial3DImage() async throws {
-        guard spatial3DImageState == .notGenerated else {
-            AppLogger.appModel.debug("Spatial 3D image already generated or generation is in progress.")
-            return
-        }
-        guard let spatial3DImage else {
-            AppLogger.appModel.warning("createImagePresentationComponent not called.")
-            return
-        }
-        guard var imagePresentationComponent = contentEntity.components[ImagePresentationComponent.self] else {
-            AppLogger.appModel.warning("ImagePresentationComponent is missing from the entity.")
-            return
-        }
-        // Set the desired viewing mode before generating so that it will trigger the
-        // generation animation.
-        imagePresentationComponent.desiredViewingMode = .spatial3D
-        contentEntity.components.set(imagePresentationComponent)
-
-        // Generate the Spatial3DImage scene.
-        spatial3DImageState = .generating
-
-        // Capture the current image URL to verify we're still on the same image after generation
-        let generatingURL = imageURL
-
-        // Track the generation task so image switching can cancel it
-        let task = Task { @MainActor [weak self] in
-            guard let self else { return }
-            do {
-                try await spatial3DImage.generate()
-
-                // Check if cancelled (user switched images during generation)
-                guard !Task.isCancelled else {
-                    self.spatial3DImageState = .notGenerated
-                    return
-                }
-
-                // Verify we're still showing the same image
-                guard self.imageURL == generatingURL else {
-                    AppLogger.appModel.debug("Generation completed for stale image, discarding")
-                    return
-                }
-
-                self.spatial3DImageState = .generated
-
-                // Track that this image was converted
-                if let url = self.imageURL {
-                    await Spatial3DConversionTracker.shared.markAsConverted(url: url)
-                    await Spatial3DConversionTracker.shared.setLastViewingMode(url: url, mode: .spatial3D)
-                }
-
-                if let aspectRatio = imagePresentationComponent.aspectRatio(for: .spatial3D) {
-                    self.imageAspectRatio = CGFloat(aspectRatio)
-                }
-            } catch {
-                if !Task.isCancelled {
-                    AppLogger.appModel.error("Error generating spatial 3D image: \(error.localizedDescription, privacy: .public)")
-                    self.spatial3DImageState = .notGenerated
-                }
-            }
-        }
-        generateTask = task
-
-        // Wait for generation to complete
-        await task.value
-        generateTask = nil
-    }
-
-    /// Check if the current image was previously converted and auto-generate if so
-    private func autoGenerateSpatial3DIfPreviouslyConverted() async {
-        guard let url = imageURL,
-              !isAnimatedGIF,
-              spatial3DImageState == .notGenerated else {
-            return
-        }
-
-        // Respect the user's last-used mode for this image
-        if let lastMode = await Spatial3DConversionTracker.shared.lastViewingMode(url: url), lastMode == .mono {
-            AppLogger.appModel.debug("Skipping auto-generation; last mode was 2D")
-            return
-        }
-
-        let wasConverted = await Spatial3DConversionTracker.shared.wasConverted(url: url)
-        if wasConverted {
-            AppLogger.appModel.debug("Auto-generating spatial 3D for previously converted image")
-            do {
-                try await generateSpatial3DImage()
-            } catch {
-                AppLogger.appModel.error("Auto-generation failed: \(error.localizedDescription, privacy: .public)")
-            }
-        }
-    }
 }

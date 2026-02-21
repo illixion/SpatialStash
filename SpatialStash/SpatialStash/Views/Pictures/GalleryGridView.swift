@@ -45,7 +45,7 @@ struct GalleryGridView: View {
                     LazyVGrid(columns: columns, spacing: 16) {
                         ForEach(appModel.galleryImages) { image in
                             GalleryThumbnailView(image: image) {
-                                appModel.selectImageForDetail(image)
+                                appModel.lastViewedImageId = image.id
                                 pushWindow(id: "pushed-picture", value: image)
                             }
                             .id(image.id)

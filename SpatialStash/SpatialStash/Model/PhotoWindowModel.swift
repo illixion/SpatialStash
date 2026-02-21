@@ -117,6 +117,9 @@ class PhotoWindowModel {
 
     // MARK: - Initialization
 
+    /// Whether start() has been called (guards against duplicate onAppear calls)
+    private var didStart = false
+
     init(image: GalleryImage, appModel: AppModel) {
         self.image = image
         self.imageURL = image.fullSizeURL
@@ -134,11 +137,22 @@ class PhotoWindowModel {
         self.galleryImages = appModel.galleryImages
         self.currentGalleryIndex = galleryImages.firstIndex(of: image) ?? 0
 
+        // NOTE: Side effects (openPhotoWindowCount, image loading Task) are
+        // deferred to start() which is called from onAppear.  Putting them here
+        // would cause them to fire every time SwiftUI re-creates the view struct,
+        // even though @State discards the duplicate model.
+    }
+
+    /// Call once from onAppear to register the window and begin loading.
+    func start() {
+        guard !didStart else { return }
+        didStart = true
+
         appModel.openPhotoWindowCount += 1
 
         // Load image data to detect if it's a GIF
         Task {
-            await loadImageDataForDetail(url: image.fullSizeURL)
+            await loadImageDataForDetail(url: imageURL)
         }
     }
 
@@ -157,11 +171,27 @@ class PhotoWindowModel {
                         imageAspectRatio = image.size.width / image.size.height
                     }
                     isLoadingDetailImage = false
+                } else {
+                    // Check if the image was previously viewed in 3D and auto-activate
+                    await autoActivate3DIfPreviouslyViewed()
                 }
             }
         } catch {
             AppLogger.photoWindow.error("Error loading image data: \(error.localizedDescription, privacy: .public)")
             isLoadingDetailImage = false
+        }
+    }
+
+    /// If the image was previously viewed in 3D, skip lightweight 2D and activate 3D immediately.
+    private func autoActivate3DIfPreviouslyViewed() async {
+        guard !isAnimatedGIF, !is3DMode else { return }
+
+        let lastMode = await Spatial3DConversionTracker.shared.lastViewingMode(url: imageURL)
+        let wasConverted = await Spatial3DConversionTracker.shared.wasConverted(url: imageURL)
+
+        // Only auto-activate if previously converted AND not explicitly switched back to 2D
+        if wasConverted && lastMode != .mono {
+            activate3DMode()
         }
     }
 
@@ -742,7 +772,9 @@ class PhotoWindowModel {
         slideshowImages = []
         slideshowHistory = []
 
-        appModel.openPhotoWindowCount -= 1
+        if didStart {
+            appModel.openPhotoWindowCount -= 1
+        }
     }
 
     // MARK: - Gallery Navigation

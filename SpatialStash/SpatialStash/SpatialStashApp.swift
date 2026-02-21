@@ -24,11 +24,12 @@ struct SpatialStashApp: App {
         // Pushed picture viewer - replaces main window temporarily
         WindowGroup(id: "pushed-picture", for: GalleryImage.self) { $image in
             if let image = image {
-                PushedPictureView(image: image)
+                PushedPictureView(image: image, appModel: appModel)
                     .environment(appModel)
             }
         }
         .windowStyle(.plain)
+        .defaultSize(width: 1200, height: 900)
         .defaultLaunchBehavior(.suppressed)
 
         // Individual photo window - supports multiple pop-out instances
