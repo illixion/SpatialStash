@@ -197,8 +197,7 @@ class AppModel {
 
     /// Whether opening another window would exceed the memory budget
     var memoryBudgetExceeded: Bool {
-        // Each lightweight 2D window uses ~17 MB
-        openPhotoWindowCount >= 40
+        useLightweightDisplay
     }
 
     /// Whether to show the memory warning alert
