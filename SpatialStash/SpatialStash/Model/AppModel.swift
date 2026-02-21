@@ -193,6 +193,9 @@ class AppModel {
     var spatial3DImage: ImagePresentationComponent.Spatial3DImage? = nil
     var isLoadingDetailImage: Bool = false
 
+    /// Task for 3D generation in gallery detail (tracked so image switching can cancel/await it)
+    private var generateTask: Task<Void, Never>?
+
     // MARK: - Main Window Size Tracking
 
     var mainWindowSize: CGSize = CGSize(width: 1200, height: 800)
@@ -202,10 +205,13 @@ class AppModel {
     /// Number of currently open pop-out photo windows
     var openPhotoWindowCount: Int = 0
 
+    /// Whether pop-out windows should use lightweight SwiftUI Image display
+    /// instead of RealityKit. Activated on memory warning to free GPU resources.
+    var useLightweightDisplay: Bool = false
+
     /// Whether opening another window would exceed the memory budget
     var memoryBudgetExceeded: Bool {
-        // Each 2D window uses ~17 MB; budget threshold ~3 GB allows many windows.
-        // In practice, 3D-activated windows use ~256 MB each, so warn conservatively.
+        // Each lightweight 2D window uses ~17 MB
         openPhotoWindowCount >= 40
     }
 
@@ -397,12 +403,14 @@ class AppModel {
             object: nil,
             queue: .main
         ) { _ in
-            AppLogger.appModel.warning("Memory warning received — clearing caches")
+            AppLogger.appModel.warning("Memory warning received — activating lightweight display and clearing caches")
             Task { @MainActor [weak self] in
                 await ImageLoader.shared.clearMemoryCache()
                 self?.preloadedImages.removeAll()
                 self?.preloadTask?.cancel()
                 self?.preloadTask = nil
+                // Switch all photo windows to lightweight mode
+                self?.useLightweightDisplay = true
             }
         }
     }
@@ -850,11 +858,18 @@ class AppModel {
         imageURL = image.fullSizeURL
         isShowingDetailView = true
         spatial3DImageState = .notGenerated
-        spatial3DImage = nil
         isAnimatedGIF = false
         currentImageData = nil
         isLoadingDetailImage = true
-        // Reset content entity to clear previous image
+
+        // Cancel any in-progress 3D generation before clearing resources.
+        // RealityKit crashes if ImagePresentationComponent is removed while
+        // generate() is still running. We cancel the task and defer cleanup
+        // to the task itself (it checks isCancelled and exits early).
+        generateTask?.cancel()
+        generateTask = nil
+
+        spatial3DImage = nil
         contentEntity.components.remove(ImagePresentationComponent.self)
 
         // Snapshot the filter on first entry to the viewer
@@ -900,13 +915,18 @@ class AppModel {
             imageURL = image.fullSizeURL
             isShowingDetailView = true
             spatial3DImageState = .notGenerated
-            spatial3DImage = nil
             currentImageData = preloaded.imageData
             isAnimatedGIF = preloaded.isAnimatedGIF
 
             if let aspectRatio = preloaded.aspectRatio {
                 imageAspectRatio = aspectRatio
             }
+
+            // Cancel any in-progress 3D generation before clearing resources
+            generateTask?.cancel()
+            generateTask = nil
+
+            spatial3DImage = nil
 
             if isAnimatedGIF {
                 contentEntity.components.remove(ImagePresentationComponent.self)
@@ -996,6 +1016,9 @@ class AppModel {
         isShowingDetailView = false
         selectedImage = nil
         spatial3DImageState = .notGenerated
+        // Cancel any in-progress 3D generation
+        generateTask?.cancel()
+        generateTask = nil
         spatial3DImage = nil
         currentImageData = nil
         isAnimatedGIF = false
@@ -1523,18 +1546,51 @@ class AppModel {
 
         // Generate the Spatial3DImage scene.
         spatial3DImageState = .generating
-        try await spatial3DImage.generate()
-        spatial3DImageState = .generated
 
-        // Track that this image was converted
-        if let url = imageURL {
-            await Spatial3DConversionTracker.shared.markAsConverted(url: url)
-            await Spatial3DConversionTracker.shared.setLastViewingMode(url: url, mode: .spatial3D)
-        }
+        // Capture the current image URL to verify we're still on the same image after generation
+        let generatingURL = imageURL
 
-        if let aspectRatio = imagePresentationComponent.aspectRatio(for: .spatial3D) {
-            imageAspectRatio = CGFloat(aspectRatio)
+        // Track the generation task so image switching can cancel it
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await spatial3DImage.generate()
+
+                // Check if cancelled (user switched images during generation)
+                guard !Task.isCancelled else {
+                    self.spatial3DImageState = .notGenerated
+                    return
+                }
+
+                // Verify we're still showing the same image
+                guard self.imageURL == generatingURL else {
+                    AppLogger.appModel.debug("Generation completed for stale image, discarding")
+                    return
+                }
+
+                self.spatial3DImageState = .generated
+
+                // Track that this image was converted
+                if let url = self.imageURL {
+                    await Spatial3DConversionTracker.shared.markAsConverted(url: url)
+                    await Spatial3DConversionTracker.shared.setLastViewingMode(url: url, mode: .spatial3D)
+                }
+
+                if let aspectRatio = imagePresentationComponent.aspectRatio(for: .spatial3D) {
+                    self.imageAspectRatio = CGFloat(aspectRatio)
+                }
+            } catch {
+                if !Task.isCancelled {
+                    AppLogger.appModel.error("Error generating spatial 3D image: \(error.localizedDescription, privacy: .public)")
+                    self.spatial3DImageState = .notGenerated
+                }
+            }
         }
+        generateTask = task
+
+        // Wait for generation to complete
+        await task.value
+        generateTask = nil
     }
 
     /// Check if the current image was previously converted and auto-generate if so

@@ -109,6 +109,14 @@ struct PhotoWindowView: View {
                 windowModel.startAutoHideTimer()
             }
         }
+        .onChange(of: appModel.useLightweightDisplay) { wasLightweight, isLightweight in
+            if !wasLightweight && isLightweight {
+                // Memory warning triggered — switch to lightweight display
+                Task {
+                    await windowModel.switchToLightweightDisplay()
+                }
+            }
+        }
     }
 
     // MARK: - Image Content
@@ -163,12 +171,14 @@ struct PhotoWindowView: View {
                     }
                     resizeWindowToFit(windowModel.imageAspectRatio, within: currentBounds)
 
-                    // If user clicked "Generate 3D", generate immediately
-                    if windowModel.pendingGenerate3D {
-                        windowModel.pendingGenerate3D = false
-                        await windowModel.generateSpatial3DImage()
-                    } else {
-                        await windowModel.autoGenerateSpatial3DIfNeeded()
+                    // Only handle 3D generation when in explicit 3D mode
+                    if windowModel.is3DMode {
+                        if windowModel.pendingGenerate3D {
+                            windowModel.pendingGenerate3D = false
+                            await windowModel.generateSpatial3DImage()
+                        } else {
+                            await windowModel.autoGenerateSpatial3DIfNeeded()
+                        }
                     }
                 } update: { content in
                     guard let presentationScreenSize = windowModel

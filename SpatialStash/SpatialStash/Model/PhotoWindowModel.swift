@@ -255,6 +255,38 @@ class PhotoWindowModel {
         return await DiskImageCache.shared.cachedFileURL(for: imageURL)
     }
 
+    // MARK: - Lightweight Display Transition
+
+    /// Transition from RealityKit to lightweight SwiftUI display.
+    /// Called when memory warning triggers lightweight mode.
+    func switchToLightweightDisplay() async {
+        guard !isAnimatedGIF else { return }
+
+        // If 3D generation is in progress, wait for it to finish before
+        // removing the component (RealityKit crashes otherwise)
+        if let task = generateTask {
+            task.cancel()
+            await task.value
+            generateTask = nil
+        }
+
+        // Release RealityKit resources immediately to free memory
+        spatial3DImage = nil
+        spatial3DImageState = .notGenerated
+        pendingGenerate3D = false
+        contentEntity.components.remove(ImagePresentationComponent.self)
+        is3DMode = false
+
+        // Reset display dimension so loadDisplayImage doesn't early-exit
+        currentDisplayMaxDimension = 0
+
+        // Load lightweight display image
+        isLoadingDetailImage = true
+        if let windowSize = lastWindowSize {
+            await loadDisplayImage(for: windowSize)
+        }
+    }
+
     // MARK: - 3D Mode Activation
 
     /// Activate RealityKit 3D mode. Loads the full-resolution ImagePresentationComponent
@@ -288,7 +320,6 @@ class PhotoWindowModel {
         spatial3DImageState = .notGenerated
         pendingGenerate3D = false
         contentEntity.components.remove(ImagePresentationComponent.self)
-
         is3DMode = false
 
         // Reset display dimension so the 2D reload doesn't early-exit
