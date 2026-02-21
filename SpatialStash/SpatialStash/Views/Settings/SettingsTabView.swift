@@ -36,6 +36,10 @@ struct SettingsTabView: View {
                 }
 
                 Section("Display") {
+                    Toggle("Rounded Corners", isOn: $appModel.roundedCorners)
+
+                    Toggle("Dynamic Image Resolution", isOn: $appModel.dynamicImageResolution)
+
                     Picker("Auto-hide Controls", selection: $appModel.autoHideDelay) {
                         ForEach(AppModel.autoHideDelayOptions, id: \.value) { option in
                             Text(option.label).tag(option.value)

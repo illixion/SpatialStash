@@ -242,6 +242,27 @@ class AppModel {
     /// How many items from end before prefetching next page
     private let viewerPrefetchThreshold: Int = 5
 
+    // MARK: - Image Display Settings
+
+    /// When true, images are downsampled to match the window size and re-scaled on resize.
+    /// When false, images are always loaded at full native resolution.
+    var dynamicImageResolution: Bool {
+        didSet {
+            if dynamicImageResolution != oldValue {
+                UserDefaults.standard.set(dynamicImageResolution, forKey: "dynamicImageResolution")
+            }
+        }
+    }
+
+    /// When true, image viewer windows have rounded corners.
+    var roundedCorners: Bool {
+        didSet {
+            if roundedCorners != oldValue {
+                UserDefaults.standard.set(roundedCorners, forKey: "roundedCorners")
+            }
+        }
+    }
+
     // MARK: - Slideshow Settings
 
     /// Slideshow delay between images (in seconds)
@@ -290,6 +311,16 @@ class AppModel {
         let savedSlideshowDelay = UserDefaults.standard.double(forKey: "slideshowDelay")
         let loadedSlideshowDelay = UserDefaults.standard.object(forKey: "slideshowDelay") != nil ? savedSlideshowDelay : defaultSlideshowDelay
 
+        // Load dynamic image resolution (default: true)
+        let loadedDynamicImageResolution = UserDefaults.standard.object(forKey: "dynamicImageResolution") != nil
+            ? UserDefaults.standard.bool(forKey: "dynamicImageResolution")
+            : true
+
+        // Load rounded corners (default: true)
+        let loadedRoundedCorners = UserDefaults.standard.object(forKey: "roundedCorners") != nil
+            ? UserDefaults.standard.bool(forKey: "roundedCorners")
+            : true
+
         // Initialize stored properties
         self.stashServerURL = loadedServerURL
         self.stashAPIKey = loadedAPIKey
@@ -297,6 +328,8 @@ class AppModel {
         self.pageSize = loadedPageSize
         self.autoHideDelay = loadedAutoHideDelay
         self.slideshowDelay = loadedSlideshowDelay
+        self.dynamicImageResolution = loadedDynamicImageResolution
+        self.roundedCorners = loadedRoundedCorners
 
         // Initialize API client with config
         let initialConfig: StashServerConfig

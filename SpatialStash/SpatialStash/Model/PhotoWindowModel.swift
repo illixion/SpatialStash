@@ -230,11 +230,17 @@ class PhotoWindowModel {
 
         let nativeMaxDim = max(nativeImageDimensions?.width ?? 8192, nativeImageDimensions?.height ?? 8192)
 
-        // Calculate target dimension: window size × scale factor, capped at native
-        let targetDimension = min(
-            max(windowSize.width, windowSize.height) * Self.displayScaleFactor,
-            nativeMaxDim
-        )
+        // Calculate target dimension: full native when dynamic resolution is off,
+        // otherwise window size × scale factor capped at native
+        let targetDimension: CGFloat
+        if appModel.dynamicImageResolution {
+            targetDimension = min(
+                max(windowSize.width, windowSize.height) * Self.displayScaleFactor,
+                nativeMaxDim
+            )
+        } else {
+            targetDimension = nativeMaxDim
+        }
 
         // Skip if already loaded at a similar resolution (within 20%)
         if displayImage != nil, currentDisplayMaxDimension > 0 {
@@ -263,7 +269,9 @@ class PhotoWindowModel {
 
     /// Handle window resize with 1-second debounce. Re-downsamples the display
     /// image in memory when the window size changes significantly.
+    /// No-op when dynamic image resolution is disabled (already at full res).
     func handleWindowResize(_ newSize: CGSize) {
+        guard appModel.dynamicImageResolution else { return }
         guard !is3DMode, !isAnimatedGIF else { return }
         guard !isLoadingDetailImage, !isLoadingDisplayImage else { return }
         guard displayImage != nil else { return }
@@ -351,6 +359,9 @@ class PhotoWindowModel {
         pendingGenerate3D = false
         contentEntity.components.remove(ImagePresentationComponent.self)
         is3DMode = false
+
+        // Record that the user explicitly exited 3D so auto-restore doesn't re-enable it
+        await Spatial3DConversionTracker.shared.setLastViewingMode(url: imageURL, mode: .mono)
 
         // Reset display dimension so the 2D reload doesn't early-exit
         currentDisplayMaxDimension = 0

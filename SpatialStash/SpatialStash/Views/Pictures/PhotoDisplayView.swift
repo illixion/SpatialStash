@@ -108,7 +108,7 @@ struct PhotoDisplayView: View {
             // Display animated GIF without RealityKit (no 3D conversion possible)
             AnimatedGIFDetailView(imageData: gifData)
                 .aspectRatio(windowModel.imageAspectRatio, contentMode: .fit)
-                .clipShape(RoundedRectangle(cornerRadius: 50, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: appModel.roundedCorners ? 50 : 0, style: .continuous))
                 .contentShape(.rect)
                 .onTapGesture {
                     windowModel.toggleUIVisibility()
@@ -194,12 +194,13 @@ struct PhotoDisplayView: View {
                 }
             }
             .aspectRatio(windowModel.imageAspectRatio, contentMode: .fit)
+            .clipShape(RoundedRectangle(cornerRadius: appModel.roundedCorners ? 50 : 0, style: .continuous))
         } else if let uiImage = windowModel.displayImage {
             // Lightweight 2D display with downsampled UIImage (no RealityKit, low memory)
             Image(uiImage: uiImage)
                 .resizable()
                 .aspectRatio(contentMode: .fit)
-                .clipShape(RoundedRectangle(cornerRadius: 50, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: appModel.roundedCorners ? 50 : 0, style: .continuous))
                 .contentShape(.rect)
                 .onTapGesture {
                     windowModel.toggleUIVisibility()
