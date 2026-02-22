@@ -16,6 +16,7 @@ struct PushedPictureView: View {
     @Environment(\.openWindow) private var openWindow
 
     @State private var pendingPopOutImage: GalleryImage? = nil
+    @State private var showDuplicateWindowAlert: Bool = false
 
     init(image: GalleryImage, appModel: AppModel) {
         self.image = image
@@ -61,8 +62,12 @@ struct PushedPictureView: View {
             ) {
                 Button("Open Anyway") {
                     if let image = pendingPopOutImage {
-                        openWindow(id: "photo-detail", value: image)
-                        pendingPopOutImage = nil
+                        if appModel.hasOpenPopOutWindow(for: image.fullSizeURL) {
+                            showDuplicateWindowAlert = true
+                        } else {
+                            openWindow(id: "photo-detail", value: PhotoWindowValue(image: image))
+                            pendingPopOutImage = nil
+                        }
                     }
                 }
                 Button("Cancel", role: .cancel) {
@@ -70,6 +75,34 @@ struct PushedPictureView: View {
                 }
             } message: {
                 Text("Opening another window may cause the app to run out of memory. You have \(appModel.openPhotoWindowCount) windows open.")
+            }
+            .alert(
+                "Window Already Open",
+                isPresented: $showDuplicateWindowAlert
+            ) {
+                Button("Summon") {
+                    if let image = pendingPopOutImage {
+                        // Dismiss existing pop-out windows for this image, then open a new one
+                        // which appears at the user's current position
+                        let existingValues = appModel.popOutWindowValues(for: image.fullSizeURL)
+                        for value in existingValues {
+                            dismissWindow(id: "photo-detail", value: value)
+                        }
+                        openWindow(id: "photo-detail", value: PhotoWindowValue(image: image))
+                        pendingPopOutImage = nil
+                    }
+                }
+                Button("Open New") {
+                    if let image = pendingPopOutImage {
+                        openWindow(id: "photo-detail", value: PhotoWindowValue(image: image))
+                        pendingPopOutImage = nil
+                    }
+                }
+                Button("Cancel", role: .cancel) {
+                    pendingPopOutImage = nil
+                }
+            } message: {
+                Text("A window for this image is already open. You can summon it to your current position or open a new window.")
             }
     }
 
@@ -81,8 +114,11 @@ struct PushedPictureView: View {
             if appModel.memoryBudgetExceeded {
                 pendingPopOutImage = image
                 appModel.showMemoryWarningAlert = true
+            } else if appModel.hasOpenPopOutWindow(for: image.fullSizeURL) {
+                pendingPopOutImage = image
+                showDuplicateWindowAlert = true
             } else {
-                openWindow(id: "photo-detail", value: image)
+                openWindow(id: "photo-detail", value: PhotoWindowValue(image: image))
             }
         } label: {
             Image(systemName: "rectangle.portrait.on.rectangle.portrait")

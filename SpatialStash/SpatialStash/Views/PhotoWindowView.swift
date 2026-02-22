@@ -13,8 +13,12 @@ struct PhotoWindowView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.openWindow) private var openWindow
 
-    init(image: GalleryImage, appModel: AppModel) {
-        _windowModel = State(initialValue: PhotoWindowModel(image: image, appModel: appModel))
+    init(windowValue: PhotoWindowValue, appModel: AppModel) {
+        _windowModel = State(initialValue: PhotoWindowModel(
+            image: windowValue.image,
+            appModel: appModel,
+            popOutWindowValue: windowValue
+        ))
     }
 
     var body: some View {

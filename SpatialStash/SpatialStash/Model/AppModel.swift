@@ -186,7 +186,10 @@ class AppModel {
     var lastViewedImageId: UUID?
     var lastViewedVideoId: UUID?
 
-    // MARK: - Main Window Size Tracking
+    // MARK: - Main Window State
+
+    /// Whether the main gallery window is currently open (prevents duplicates)
+    var isMainWindowOpen: Bool = false
 
     var mainWindowSize: CGSize = CGSize(width: 1200, height: 800)
 
@@ -195,13 +198,52 @@ class AppModel {
     /// Number of currently open pop-out photo windows
     var openPhotoWindowCount: Int = 0
 
+    // MARK: - Pop-Out Window Tracking
+
+    /// Tracks open pop-out photo windows by image fullSizeURL string.
+    /// Maps image URL string → array of PhotoWindowValue instances.
+    /// Used to detect duplicate windows for the same image.
+    var openPopOutWindows: [String: [PhotoWindowValue]] = [:]
+
+    /// Register a pop-out window as open
+    func registerPopOutWindow(imageURL: URL, windowValue: PhotoWindowValue) {
+        let key = imageURL.absoluteString
+        var values = openPopOutWindows[key] ?? []
+        values.append(windowValue)
+        openPopOutWindows[key] = values
+    }
+
+    /// Unregister a pop-out window when closed
+    func unregisterPopOutWindow(imageURL: URL, windowValueId: UUID) {
+        let key = imageURL.absoluteString
+        openPopOutWindows[key]?.removeAll { $0.id == windowValueId }
+        if openPopOutWindows[key]?.isEmpty == true {
+            openPopOutWindows.removeValue(forKey: key)
+        }
+    }
+
+    /// Check if any pop-out window exists for the given image URL
+    func hasOpenPopOutWindow(for imageURL: URL) -> Bool {
+        let key = imageURL.absoluteString
+        return !(openPopOutWindows[key]?.isEmpty ?? true)
+    }
+
+    /// Get all open pop-out window values for the given image URL
+    func popOutWindowValues(for imageURL: URL) -> [PhotoWindowValue] {
+        let key = imageURL.absoluteString
+        return openPopOutWindows[key] ?? []
+    }
+
     /// Whether pop-out windows should use lightweight SwiftUI Image display
     /// instead of RealityKit. Activated on memory warning to free GPU resources.
     var useLightweightDisplay: Bool = false
 
-    /// Whether opening another window would exceed the memory budget
+    /// Whether opening another window would exceed the memory budget.
+    /// Only warns if lightweight mode was triggered AND there are already
+    /// multiple pop-out windows open (avoids false positives from a single
+    /// early memory warning).
     var memoryBudgetExceeded: Bool {
-        useLightweightDisplay
+        useLightweightDisplay && openPhotoWindowCount >= 2
     }
 
     /// Whether to show the memory warning alert

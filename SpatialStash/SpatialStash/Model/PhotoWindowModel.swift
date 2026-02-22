@@ -115,15 +115,19 @@ class PhotoWindowModel {
 
     var appModel: AppModel
 
+    /// Pop-out window value for tracking (nil for pushed/shared windows)
+    private let popOutWindowValue: PhotoWindowValue?
+
     // MARK: - Initialization
 
     /// Whether start() has been called (guards against duplicate onAppear calls)
     private var didStart = false
 
-    init(image: GalleryImage, appModel: AppModel) {
+    init(image: GalleryImage, appModel: AppModel, popOutWindowValue: PhotoWindowValue? = nil) {
         self.image = image
         self.imageURL = image.fullSizeURL
         self.appModel = appModel
+        self.popOutWindowValue = popOutWindowValue
         self.isLoadingDetailImage = true
 
         // Capture pagination state for lazy loading (must be before galleryImages access)
@@ -149,6 +153,11 @@ class PhotoWindowModel {
         didStart = true
 
         appModel.openPhotoWindowCount += 1
+
+        // Register pop-out window for duplicate detection
+        if let windowValue = popOutWindowValue {
+            appModel.registerPopOutWindow(imageURL: imageURL, windowValue: windowValue)
+        }
 
         // Load image data to detect if it's a GIF
         Task {
@@ -782,6 +791,11 @@ class PhotoWindowModel {
         galleryImages = []
         slideshowImages = []
         slideshowHistory = []
+
+        // Unregister pop-out window
+        if let windowValue = popOutWindowValue {
+            appModel.unregisterPopOutWindow(imageURL: imageURL, windowValueId: windowValue.id)
+        }
 
         if didStart {
             appModel.openPhotoWindowCount -= 1

@@ -36,6 +36,9 @@ struct PhotoDisplayView: View {
     /// Suppresses window resize during swipe transitions
     @State private var suppressWindowResize: Bool = false
 
+    /// Task for delayed window size verification (catches restoration timing issues)
+    @State private var sizeVerificationTask: Task<Void, Never>?
+
     /// Minimum drag fraction of container width to trigger swipe
     private let swipeThresholdFraction: CGFloat = 0.15
 
@@ -69,6 +72,10 @@ struct PhotoDisplayView: View {
                     .onAppear {
                         viewerWindowSize = geo.size
                         containerWidth = geo.size.width
+                        // If image is already loaded but window may be mis-sized (restoration case)
+                        if windowModel.displayImage != nil || windowModel.isAnimatedGIF || windowModel.is3DMode {
+                            scheduleWindowSizeVerification()
+                        }
                     }
                     .onChange(of: geo.size) { _, newSize in
                         viewerWindowSize = newSize
@@ -84,6 +91,8 @@ struct PhotoDisplayView: View {
                     await windowModel.loadDisplayImage(for: appModel.mainWindowSize)
                 }
             }
+            // Schedule post-restoration size verification
+            scheduleWindowSizeVerification()
         }
         .onChange(of: windowModel.isLoadingDetailImage) { wasLoading, isLoading in
             if wasLoading && !isLoading {
@@ -124,6 +133,7 @@ struct PhotoDisplayView: View {
                 .onChange(of: windowModel.isLoadingDetailImage) { wasLoading, isLoading in
                     if wasLoading && !isLoading {
                         resizeGIFWindowToFit(windowModel.imageAspectRatio, within: currentBounds)
+                        scheduleWindowSizeVerification()
                     }
                 }
         } else if windowModel.is3DMode {
@@ -190,6 +200,7 @@ struct PhotoDisplayView: View {
                 .onChange(of: windowModel.isLoadingDetailImage) { wasLoading, isLoading in
                     if wasLoading && !isLoading {
                         resizeWindowToFit(windowModel.imageAspectRatio, within: currentBounds)
+                        scheduleWindowSizeVerification()
                     }
                 }
             }
@@ -217,6 +228,7 @@ struct PhotoDisplayView: View {
                 .onChange(of: windowModel.isLoadingDetailImage) { wasLoading, isLoading in
                     if wasLoading && !isLoading {
                         resizeWindowToFit(windowModel.imageAspectRatio, within: currentBounds)
+                        scheduleWindowSizeVerification()
                     }
                 }
         }
@@ -329,6 +341,39 @@ struct PhotoDisplayView: View {
 
         UIView.performWithoutAnimation {
             windowScene.requestGeometryUpdate(.Vision(size: size, resizingRestrictions: .uniform))
+        }
+    }
+
+    /// Schedule a delayed check that the window size matches the loaded image content.
+    /// Catches cases where requestGeometryUpdate was ignored during window restoration.
+    private func scheduleWindowSizeVerification() {
+        sizeVerificationTask?.cancel()
+        sizeVerificationTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(0.5))
+            guard !Task.isCancelled else { return }
+            verifyWindowSizeMatchesContent()
+        }
+    }
+
+    /// Verify the window size matches the loaded image's aspect ratio.
+    /// If they differ by more than 5%, re-trigger resize.
+    private func verifyWindowSizeMatchesContent() {
+        guard let currentSize = viewerWindowSize,
+              windowModel.imageAspectRatio > 0,
+              !windowModel.isLoadingDetailImage,
+              !suppressWindowResize else { return }
+
+        let currentAR = currentSize.width / currentSize.height
+        let expectedAR = windowModel.imageAspectRatio
+        let ratio = currentAR / expectedAR
+
+        guard ratio < 0.95 || ratio > 1.05 else { return }
+
+        AppLogger.views.info("Window size mismatch detected (window AR: \(currentAR, privacy: .public), image AR: \(expectedAR, privacy: .public)). Resizing.")
+        if windowModel.isAnimatedGIF {
+            resizeGIFWindowToFit(windowModel.imageAspectRatio, within: currentBounds)
+        } else {
+            resizeWindowToFit(windowModel.imageAspectRatio, within: currentBounds)
         }
     }
 

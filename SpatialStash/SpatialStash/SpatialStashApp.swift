@@ -13,7 +13,7 @@ struct SpatialStashApp: App {
     @UIApplicationDelegateAdaptor private var appDelegate: AppDelegate
 
     var body: some Scene {
-        Window("Spatial Stash", id: "main") {
+        WindowGroup("Spatial Stash", id: "main") {
             MainWindowView(appModel: appModel)
         }
         .defaultSize(width: 1200, height: 800)
@@ -33,9 +33,9 @@ struct SpatialStashApp: App {
         .defaultLaunchBehavior(.suppressed)
 
         // Individual photo window - supports multiple pop-out instances
-        WindowGroup(id: "photo-detail", for: GalleryImage.self) { $image in
-            if let image = image {
-                PhotoWindowView(image: image, appModel: appModel)
+        WindowGroup(id: "photo-detail", for: PhotoWindowValue.self) { $windowValue in
+            if let windowValue = windowValue {
+                PhotoWindowView(windowValue: windowValue, appModel: appModel)
                     .environment(appModel)
             }
         }
@@ -78,13 +78,24 @@ struct SpatialStashApp: App {
 private struct MainWindowView: View {
     let appModel: AppModel
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismissWindow) private var dismissWindow
 
     var body: some View {
         ContentView()
             .environment(appModel)
             .frame(minWidth: 320, maxWidth: 2000, minHeight: 320, maxHeight: 2000)
             .onAppear {
+                if appModel.isMainWindowOpen {
+                    // Duplicate main window (e.g. from restoration) — dismiss it
+                    AppLogger.app.info("Duplicate main window detected, dismissing")
+                    dismissWindow(id: "main")
+                    return
+                }
+                appModel.isMainWindowOpen = true
                 AppLogger.app.info("Main window appeared")
+            }
+            .onDisappear {
+                appModel.isMainWindowOpen = false
             }
             .onOpenURL { url in
                 Task { @MainActor in
