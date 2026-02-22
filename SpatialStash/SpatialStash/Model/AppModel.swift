@@ -29,6 +29,7 @@ class AppModel {
 
     var selectedTab: Tab = .pictures
     var isShowingVideoDetail: Bool = false
+    var isPictureViewerActive: Bool = false
 
     /// Tracks the last content tab (pictures or videos) for filter context
     var lastContentTab: Tab = .pictures

@@ -1,7 +1,7 @@
 /*
  Spatial Stash - Pushed Picture View
 
- Picture viewer that is pushed from the gallery grid using pushWindow.
+ Picture viewer shown in-window from the gallery grid via view swap.
  Dismissing this view returns to the gallery with preserved state.
  Uses PhotoDisplayView for rendering and PhotoOrnamentView for controls.
  */
@@ -10,6 +10,7 @@ import SwiftUI
 
 struct PushedPictureView: View {
     let image: GalleryImage
+    let onDismiss: () -> Void
     @State private var windowModel: PhotoWindowModel
     @Environment(AppModel.self) private var appModel
     @Environment(\.dismissWindow) private var dismissWindow
@@ -18,8 +19,9 @@ struct PushedPictureView: View {
     @State private var pendingPopOutImage: GalleryImage? = nil
     @State private var showDuplicateWindowAlert: Bool = false
 
-    init(image: GalleryImage, appModel: AppModel) {
+    init(image: GalleryImage, appModel: AppModel, onDismiss: @escaping () -> Void) {
         self.image = image
+        self.onDismiss = onDismiss
         _windowModel = State(initialValue: PhotoWindowModel(image: image, appModel: appModel))
     }
 
@@ -36,7 +38,7 @@ struct PushedPictureView: View {
                             if windowModel.isSlideshowActive {
                                 windowModel.stopSlideshow()
                             }
-                            dismissWindow()
+                            onDismiss()
                         },
                         extraButtons: {
                             Group {
@@ -50,10 +52,13 @@ struct PushedPictureView: View {
                 }
             )
             .onAppear {
+                appModel.isPictureViewerActive = true
+                appModel.lastViewedImageId = image.id
                 windowModel.start()
                 windowModel.startAutoHideTimer()
             }
             .onDisappear {
+                appModel.isPictureViewerActive = false
                 windowModel.cleanup()
             }
             .alert(

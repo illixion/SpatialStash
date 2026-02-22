@@ -65,6 +65,10 @@ struct ContentView: View {
     }
 
     private var shouldShowOrnament: Bool {
+        // Hide ornament when picture viewer is active (it has its own ornament)
+        if appModel.isPictureViewerActive {
+            return false
+        }
         // Hide ornament when user has hidden UI in video detail view
         if appModel.isShowingVideoDetail && appModel.isUIHidden {
             return false
