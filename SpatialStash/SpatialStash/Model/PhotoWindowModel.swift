@@ -62,6 +62,20 @@ class PhotoWindowModel {
     /// (visionOS rendering density + headroom)
     private static let displayScaleFactor: CGFloat = 2.5
 
+    // MARK: - Background Removal State
+
+    /// Current state of background removal processing
+    var backgroundRemovalState: BackgroundRemovalState = .original
+
+    /// The original display image before background removal (stored for toggle-back)
+    private var originalDisplayImage: UIImage? = nil
+
+    /// The background-removed version of the display image (cached for re-toggle)
+    private var backgroundRemovedImage: UIImage? = nil
+
+    /// Task for background removal (tracked so cleanup can cancel it)
+    private var backgroundRemovalTask: Task<Void, Never>?
+
     // MARK: - GIF Support
 
     var isAnimatedGIF: Bool = false
@@ -213,6 +227,7 @@ class PhotoWindowModel {
         guard !isAnimatedGIF else { return }
         guard !is3DMode else { return }
         guard !isLoadingDisplayImage else { return }
+        guard backgroundRemovalState == .original else { return }
 
         isLoadingDisplayImage = true
         defer { isLoadingDisplayImage = false }
@@ -284,6 +299,7 @@ class PhotoWindowModel {
         guard !is3DMode, !isAnimatedGIF else { return }
         guard !isLoadingDetailImage, !isLoadingDisplayImage else { return }
         guard displayImage != nil else { return }
+        guard backgroundRemovalState == .original else { return }
 
         lastWindowSize = newSize
         resizeDebounceTask?.cancel()
@@ -310,6 +326,10 @@ class PhotoWindowModel {
         guard !isAnimatedGIF, !is3DMode else { return }
         guard displayImage != nil, currentDisplayMaxDimension > 0 else { return }
         guard !isLoadingDisplayImage else { return }
+
+        if backgroundRemovalState != .original {
+            clearBackgroundRemovalState()
+        }
 
         let scaledDimension = currentDisplayMaxDimension * 0.75
 
@@ -385,6 +405,7 @@ class PhotoWindowModel {
         pendingGenerate3D = false
         contentEntity.components.remove(ImagePresentationComponent.self)
         is3DMode = false
+        clearBackgroundRemovalState()
 
         // Reset display dimension so loadDisplayImage doesn't early-exit
         currentDisplayMaxDimension = 0
@@ -404,6 +425,7 @@ class PhotoWindowModel {
     ///   right after creating the component (used when the user explicitly taps "Generate 3D").
     func activate3DMode(generateImmediately: Bool = false) {
         guard !isAnimatedGIF, !is3DMode else { return }
+        clearBackgroundRemovalState()
         is3DMode = true
         isLoadingDetailImage = true
         pendingGenerate3D = generateImmediately
@@ -638,6 +660,81 @@ class PhotoWindowModel {
         }
     }
 
+    // MARK: - Background Removal
+
+    /// Toggle background removal: original -> remove, removing -> cancel, removed -> restore.
+    func toggleBackgroundRemoval() async {
+        switch backgroundRemovalState {
+        case .original:
+            if let cached = backgroundRemovedImage {
+                originalDisplayImage = displayImage
+                displayImage = cached
+                backgroundRemovalState = .removed
+            } else {
+                await performBackgroundRemoval()
+            }
+        case .removing:
+            backgroundRemovalTask?.cancel()
+            backgroundRemovalTask = nil
+            backgroundRemovalState = .original
+        case .removed:
+            restoreOriginalBackground()
+        }
+    }
+
+    private func performBackgroundRemoval() async {
+        guard let sourceImage = displayImage else {
+            AppLogger.photoWindow.warning("No display image available for background removal")
+            return
+        }
+
+        originalDisplayImage = sourceImage
+        backgroundRemovalState = .removing
+
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let processed = try await BackgroundRemover.shared.removeBackground(from: sourceImage)
+
+                guard !Task.isCancelled else {
+                    self.backgroundRemovalState = .original
+                    return
+                }
+
+                if let processed {
+                    self.backgroundRemovedImage = processed
+                    self.displayImage = processed
+                    self.backgroundRemovalState = .removed
+                } else {
+                    self.backgroundRemovalState = .original
+                    AppLogger.photoWindow.warning("Background removal returned nil")
+                }
+            } catch {
+                if !Task.isCancelled {
+                    AppLogger.photoWindow.error("Background removal failed: \(error.localizedDescription, privacy: .public)")
+                    self.backgroundRemovalState = .original
+                }
+            }
+        }
+        backgroundRemovalTask = task
+        await task.value
+        backgroundRemovalTask = nil
+    }
+
+    private func restoreOriginalBackground() {
+        guard let original = originalDisplayImage else { return }
+        displayImage = original
+        backgroundRemovalState = .original
+    }
+
+    private func clearBackgroundRemovalState() {
+        backgroundRemovalTask?.cancel()
+        backgroundRemovalTask = nil
+        backgroundRemovalState = .original
+        originalDisplayImage = nil
+        backgroundRemovedImage = nil
+    }
+
     // MARK: - UI Auto-Hide
 
     func startAutoHideTimer() {
@@ -760,6 +857,7 @@ class PhotoWindowModel {
         currentDisplayMaxDimension = 0
         isLoadingDisplayImage = false
         contentEntity.components.remove(ImagePresentationComponent.self)
+        clearBackgroundRemovalState()
 
         // Always start in 2D mode when switching images
         is3DMode = false
@@ -848,6 +946,7 @@ class PhotoWindowModel {
         // Release image data
         currentImageData = nil
         displayImage = nil
+        clearBackgroundRemovalState()
 
         // Only remove the component if generation is NOT active.
         // If active, the entity retains the component until ARC releases both.

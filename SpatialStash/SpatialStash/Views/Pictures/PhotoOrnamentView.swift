@@ -58,6 +58,8 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
 
             threeDButton
 
+            backgroundRemovalButton
+
             // Rating / O counter (when stashId exists and not shared context)
             if context != .shared, windowModel.image.stashId != nil {
                 Divider()
@@ -199,6 +201,32 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
         .disabled(windowModel.isAnimatedGIF)
         .help(windowModel.spatial3DImageState == .notGenerated ? "Generate 3D" :
               windowModel.spatial3DImageState == .generating ? "Cancel 3D" : "Exit 3D")
+    }
+
+    // MARK: - Background Removal Toggle
+
+    private var backgroundRemovalButton: some View {
+        Button {
+            Task {
+                await windowModel.toggleBackgroundRemoval()
+            }
+        } label: {
+            Group {
+                if windowModel.backgroundRemovalState == .removing {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                } else {
+                    Image(systemName: "person.and.background.dotted")
+                }
+            }
+            .font(.title3)
+        }
+        .buttonStyle(.borderless)
+        .disabled(windowModel.is3DMode || windowModel.isAnimatedGIF || windowModel.isLoadingDetailImage)
+        .help(
+            windowModel.backgroundRemovalState == .original ? "Remove Background" :
+            windowModel.backgroundRemovalState == .removing ? "Cancel" : "Restore Background"
+        )
     }
 
     // MARK: - Rating & O Counter

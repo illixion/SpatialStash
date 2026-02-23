@@ -59,4 +59,7 @@ enum AppLogger {
 
     /// Window state persistence and restoration
     static let windowState = Logger(subsystem: subsystem, category: "WindowState")
+
+    /// Background removal processing
+    static let backgroundRemover = Logger(subsystem: subsystem, category: "BackgroundRemover")
 }

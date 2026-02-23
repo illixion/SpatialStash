@@ -15,6 +15,12 @@ enum Spatial3DImageState {
     case generated
 }
 
+enum BackgroundRemovalState {
+    case original
+    case removing
+    case removed
+}
+
 /// Source type for media content
 enum MediaSourceType: String, CaseIterable {
     case staticURLs = "Static URLs (Demo)"
