@@ -90,6 +90,7 @@ Uses RealityKit's `ImagePresentationComponent` for 2D→3D conversion. States tr
 - Protocol-based data sources (`ImageSource`, `VideoSource`) for swappable implementations
 - UserDefaults for persisting server config, saved filter views, and display settings
 - Explicit resource cleanup in `cleanup()` methods rather than relying on ARC/deinit
+- The Xcode project's files are automatically managed, therefore there is no need to update project files when adding new source files. Just create the new .swift file in the appropriate folder and it will be included in the build.
 
 # Stash GraphQL API
 

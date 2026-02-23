@@ -686,14 +686,69 @@ class AppModel {
         AppLogger.windowState.info("Saved window group '\(name, privacy: .public)' with \(images.count, privacy: .public) windows")
     }
 
-    func restoreWindowGroup(_ group: SavedWindowGroup, openWindow: OpenWindowAction) {
-        AppLogger.windowState.info("Restoring window group '\(group.name, privacy: .public)' with \(group.images.count, privacy: .public) windows")
+    // MARK: - Window Group Restore State
+
+    var restoringGroupId: UUID?
+    private(set) var restoreNextIndex: Int = 0
+    private var restoringImages: [GalleryImage] = []
+
+    var restoreRemaining: Int {
+        guard restoringGroupId != nil else { return 0 }
+        return restoringImages.count - restoreNextIndex
+    }
+
+    var restoreTotal: Int {
+        restoringImages.count
+    }
+
+    func beginRestore(_ group: SavedWindowGroup) {
+        restoringGroupId = group.id
+        restoringImages = group.images
+        restoreNextIndex = 0
+        AppLogger.windowState.info("Begin restore of '\(group.name, privacy: .public)' with \(group.images.count, privacy: .public) windows")
+    }
+
+    func restoreNextWindow(openWindow: OpenWindowAction) {
+        guard restoreNextIndex < restoringImages.count else {
+            finishRestore()
+            return
+        }
+        let image = restoringImages[restoreNextIndex]
+        openWindow(id: "photo-detail", value: PhotoWindowValue(image: image))
+        restoreNextIndex += 1
+        if restoreNextIndex >= restoringImages.count {
+            finishRestore()
+        }
+    }
+
+    func restoreAllRemainingWindows(openWindow: OpenWindowAction) {
+        guard restoreNextIndex < restoringImages.count else {
+            finishRestore()
+            return
+        }
         Task { @MainActor in
-            for image in group.images {
+            while restoreNextIndex < restoringImages.count {
+                let image = restoringImages[restoreNextIndex]
                 openWindow(id: "photo-detail", value: PhotoWindowValue(image: image))
+                restoreNextIndex += 1
                 try? await Task.sleep(for: .seconds(0.3))
             }
+            finishRestore()
         }
+    }
+
+    func cancelRestore() {
+        AppLogger.windowState.info("Restore cancelled at \(self.restoreNextIndex, privacy: .public)/\(self.restoringImages.count, privacy: .public)")
+        restoringGroupId = nil
+        restoringImages = []
+        restoreNextIndex = 0
+    }
+
+    private func finishRestore() {
+        AppLogger.windowState.info("Restore complete")
+        restoringGroupId = nil
+        restoringImages = []
+        restoreNextIndex = 0
     }
 
     func deleteSavedWindowGroup(_ group: SavedWindowGroup) {

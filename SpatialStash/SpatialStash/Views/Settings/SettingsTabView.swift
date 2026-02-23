@@ -85,21 +85,44 @@ struct SettingsTabView: View {
                             HStack {
                                 VStack(alignment: .leading) {
                                     Text(group.name)
-                                    Text("\(group.images.count) windows \u{00B7} \(group.savedDate, style: .date)")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
+                                    if appModel.restoringGroupId == group.id {
+                                        Text("\(appModel.restoreNextIndex)/\(appModel.restoreTotal) restored")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    } else {
+                                        Text("\(group.images.count) windows \u{00B7} \(group.savedDate, style: .date)")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
                                 }
                                 Spacer()
-                                Button("Rename") {
-                                    renamingGroup = group
-                                    renameGroupName = group.name
-                                    showRenameGroupAlert = true
+                                if appModel.restoringGroupId == group.id {
+                                    Button("Cancel") {
+                                        appModel.cancelRestore()
+                                    }
+                                    .buttonStyle(.borderless)
+                                    Button("Restore All") {
+                                        appModel.restoreAllRemainingWindows(openWindow: openWindow)
+                                    }
+                                    .buttonStyle(.borderless)
+                                    Button("Restore Next") {
+                                        appModel.restoreNextWindow(openWindow: openWindow)
+                                    }
+                                    .buttonStyle(.borderedProminent)
+                                } else {
+                                    Button("Rename") {
+                                        renamingGroup = group
+                                        renameGroupName = group.name
+                                        showRenameGroupAlert = true
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .disabled(appModel.restoringGroupId != nil)
+                                    Button("Restore") {
+                                        appModel.beginRestore(group)
+                                    }
+                                    .buttonStyle(.borderedProminent)
+                                    .disabled(appModel.restoringGroupId != nil)
                                 }
-                                .buttonStyle(.borderless)
-                                Button("Restore") {
-                                    appModel.restoreWindowGroup(group, openWindow: openWindow)
-                                }
-                                .buttonStyle(.borderedProminent)
                             }
                         }
                         .onDelete { indexSet in
