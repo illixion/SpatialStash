@@ -40,7 +40,7 @@ struct PhotoDisplayView: View {
     @State private var sizeVerificationTask: Task<Void, Never>?
 
     /// Minimum drag fraction of container width to trigger swipe
-    private let swipeThresholdFraction: CGFloat = 0.15
+    private let swipeThresholdFraction: CGFloat = 0.3
 
     /// The bounds used to fit images into — starts as main window size, then tracks viewer size
     private var currentBounds: CGSize {
@@ -248,25 +248,45 @@ struct PhotoDisplayView: View {
 
     private func handleDragChanged(translation: CGFloat) {
         guard !isSwipeTransitioning && !windowModel.isLoadingDetailImage && !windowModel.isSlideshowActive else { return }
-        dragOffset = translation
+
+        // Rubber-band effect when dragging toward an edge with no content
+        if (translation < 0 && !windowModel.hasNextGalleryImage) || (translation > 0 && !windowModel.hasPreviousGalleryImage) {
+            dragOffset = translation * 0.25
+        } else {
+            dragOffset = translation
+        }
     }
 
     private func handleDragEnded(translation: CGFloat, predictedEnd: CGFloat) {
         guard !isSwipeTransitioning && !windowModel.isLoadingDetailImage && !windowModel.isSlideshowActive else {
-            withAnimation(.easeOut(duration: 0.2)) { dragOffset = 0 }
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { dragOffset = 0 }
             return
         }
 
-        let threshold = max(containerWidth * swipeThresholdFraction, 50)
-        let shouldNavigateNext = (translation < -threshold || predictedEnd < -threshold * 2) && windowModel.hasNextGalleryImage
-        let shouldNavigatePrevious = (translation > threshold || predictedEnd > threshold * 2) && windowModel.hasPreviousGalleryImage
+        let threshold = max(containerWidth * swipeThresholdFraction, 80)
+        let actualDistance = abs(translation)
+
+        // Only allow predicted velocity to assist if the finger has already moved at least 40% of the threshold
+        let velocityAssistMinimum = threshold * 0.4
+        let shouldNavigateNext: Bool
+        let shouldNavigatePrevious: Bool
+
+        if actualDistance >= velocityAssistMinimum {
+            shouldNavigateNext = (translation < -threshold || predictedEnd < -threshold * 2) && windowModel.hasNextGalleryImage
+            shouldNavigatePrevious = (translation > threshold || predictedEnd > threshold * 2) && windowModel.hasPreviousGalleryImage
+        } else {
+            // Too little movement — only commit if past the full threshold (no velocity assist)
+            shouldNavigateNext = translation < -threshold && windowModel.hasNextGalleryImage
+            shouldNavigatePrevious = translation > threshold && windowModel.hasPreviousGalleryImage
+        }
 
         if shouldNavigateNext {
             performSwipeTransition(direction: .next)
         } else if shouldNavigatePrevious {
             performSwipeTransition(direction: .previous)
         } else {
-            withAnimation(.easeOut(duration: 0.25)) {
+            // Spring back to center
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
                 dragOffset = 0
             }
         }
@@ -287,33 +307,42 @@ struct PhotoDisplayView: View {
             dragOffset = offScreenOffset
         }
 
-        // Phase 2: Switch image and position new image on opposite side
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
-            Task {
-                if direction == .next {
-                    await windowModel.nextGalleryImage()
-                } else {
-                    await windowModel.previousGalleryImage()
-                }
+        Task { @MainActor in
+            // Wait for off-screen animation to complete
+            try? await Task.sleep(for: .milliseconds(220))
+
+            // Phase 2: Switch to new image (await ensures image data is ready)
+            if direction == .next {
+                await windowModel.nextGalleryImage()
+            } else {
+                await windowModel.previousGalleryImage()
             }
 
-            // Position new image on opposite side (no animation)
-            dragOffset = -offScreenOffset
+            // Position new image on opposite side without animation
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                dragOffset = -offScreenOffset
+            }
 
-            // Phase 3: Animate new image to center
+            // Brief pause to let SwiftUI process the view update
+            try? await Task.sleep(for: .milliseconds(50))
+
+            // Phase 3: Animate new image sliding to center
             withAnimation(.easeOut(duration: 0.25)) {
                 dragOffset = 0
             }
 
+            // Wait for slide-in animation to complete
+            try? await Task.sleep(for: .milliseconds(270))
+
             // Phase 4: Clear transition state and resize window
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.27) {
-                isSwipeTransitioning = false
-                suppressWindowResize = false
-                if windowModel.isAnimatedGIF {
-                    resizeGIFWindowToFit(windowModel.imageAspectRatio, within: currentBounds)
-                } else {
-                    resizeWindowToFit(windowModel.imageAspectRatio, within: currentBounds)
-                }
+            isSwipeTransitioning = false
+            suppressWindowResize = false
+            if windowModel.isAnimatedGIF {
+                resizeGIFWindowToFit(windowModel.imageAspectRatio, within: currentBounds)
+            } else {
+                resizeWindowToFit(windowModel.imageAspectRatio, within: currentBounds)
             }
         }
     }
