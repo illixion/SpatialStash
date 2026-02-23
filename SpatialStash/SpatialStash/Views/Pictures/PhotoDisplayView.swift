@@ -132,7 +132,7 @@ struct PhotoDisplayView: View {
                 .onTapGesture {
                     windowModel.toggleUIVisibility()
                 }
-                .modifier(SwipeGestureModifier(enabled: enableSwipeNavigation, onChanged: handleDragChanged, onEnded: handleDragEnded))
+                .modifier(SwipeGestureModifier(enabled: enableSwipeNavigation, onEnded: handleDragEnded))
                 .onAppear {
                     resizeGIFWindowToFit(windowModel.imageAspectRatio, within: appModel.mainWindowSize)
                 }
@@ -188,7 +188,7 @@ struct PhotoDisplayView: View {
                         content.add(windowModel.inputPlaneEntity)
                     }
                 }
-                .modifier(EntitySwipeGestureModifier(enabled: enableSwipeNavigation, onChanged: handleDragChanged, onEnded: handleDragEnded))
+                .modifier(EntitySwipeGestureModifier(enabled: enableSwipeNavigation, onEnded: handleDragEnded))
                 .gesture(
                     TapGesture()
                         .targetedToAnyEntity()
@@ -226,7 +226,7 @@ struct PhotoDisplayView: View {
                 .onTapGesture {
                     windowModel.toggleUIVisibility()
                 }
-                .modifier(SwipeGestureModifier(enabled: enableSwipeNavigation, onChanged: handleDragChanged, onEnded: handleDragEnded))
+                .modifier(SwipeGestureModifier(enabled: enableSwipeNavigation, onEnded: handleDragEnded))
                 .onAppear {
                     setUniformResizing()
                     resizeWindowToFit(windowModel.imageAspectRatio, within: appModel.mainWindowSize)
@@ -246,20 +246,8 @@ struct PhotoDisplayView: View {
 
     // MARK: - Swipe Gesture Handling
 
-    private func handleDragChanged(translation: CGFloat) {
-        guard !isSwipeTransitioning && !windowModel.isLoadingDetailImage && !windowModel.isSlideshowActive else { return }
-
-        // Rubber-band effect when dragging toward an edge with no content
-        if (translation < 0 && !windowModel.hasNextGalleryImage) || (translation > 0 && !windowModel.hasPreviousGalleryImage) {
-            dragOffset = translation * 0.25
-        } else {
-            dragOffset = translation
-        }
-    }
-
     private func handleDragEnded(translation: CGFloat, predictedEnd: CGFloat) {
         guard !isSwipeTransitioning && !windowModel.isLoadingDetailImage && !windowModel.isSlideshowActive else {
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { dragOffset = 0 }
             return
         }
 
@@ -284,11 +272,6 @@ struct PhotoDisplayView: View {
             performSwipeTransition(direction: .next)
         } else if shouldNavigatePrevious {
             performSwipeTransition(direction: .previous)
-        } else {
-            // Spring back to center
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
-                dragOffset = 0
-            }
         }
     }
 
@@ -465,19 +448,16 @@ struct PhotoDisplayView: View {
 
 // MARK: - Swipe Gesture Modifiers
 
-/// Adds a drag gesture for swipe navigation on standard SwiftUI views (GIF, 2D image)
+/// Adds a drag gesture for swipe navigation on standard SwiftUI views (GIF, 2D image).
+/// Uses discrete detection (onEnded only) to avoid per-frame offset flicker on visionOS.
 private struct SwipeGestureModifier: ViewModifier {
     let enabled: Bool
-    let onChanged: (CGFloat) -> Void
     let onEnded: (CGFloat, CGFloat) -> Void
 
     func body(content: Content) -> some View {
         if enabled {
             content.gesture(
                 DragGesture(minimumDistance: 30)
-                    .onChanged { value in
-                        onChanged(value.translation.width)
-                    }
                     .onEnded { value in
                         onEnded(value.translation.width, value.predictedEndTranslation.width)
                     }
@@ -488,10 +468,10 @@ private struct SwipeGestureModifier: ViewModifier {
     }
 }
 
-/// Adds a targeted entity drag gesture for swipe navigation on RealityKit views
+/// Adds a targeted entity drag gesture for swipe navigation on RealityKit views.
+/// Uses discrete detection (onEnded only) to avoid per-frame offset flicker on visionOS.
 private struct EntitySwipeGestureModifier: ViewModifier {
     let enabled: Bool
-    let onChanged: (CGFloat) -> Void
     let onEnded: (CGFloat, CGFloat) -> Void
 
     func body(content: Content) -> some View {
@@ -499,9 +479,6 @@ private struct EntitySwipeGestureModifier: ViewModifier {
             content.gesture(
                 DragGesture(minimumDistance: 30)
                     .targetedToAnyEntity()
-                    .onChanged { value in
-                        onChanged(value.translation.width)
-                    }
                     .onEnded { value in
                         onEnded(value.translation.width, value.predictedEndTranslation.width)
                     }
