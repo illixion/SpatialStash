@@ -78,12 +78,19 @@ private struct MainWindowView: View {
             .frame(minWidth: 320, maxWidth: 2000, minHeight: 320, maxHeight: 2000)
             .onAppear {
                 if appModel.isMainWindowOpen {
-                    // Duplicate (e.g. restoration + defaultLaunchBehavior both fired).
-                    // dismiss() closes THIS instance only, unlike dismissWindow(id:)
-                    // which would close ALL main windows including one with active keyboard.
-                    AppLogger.app.info("Duplicate main window detected, dismissing this instance")
-                    dismiss()
-                    return
+                    let timeSinceLaunch = Date().timeIntervalSince(appModel.launchTime)
+                    if timeSinceLaunch < 3.0 {
+                        // Launch-time duplicate (restoration + defaultLaunchBehavior both fired).
+                        // dismiss() closes THIS instance only, unlike dismissWindow(id:)
+                        // which would close ALL main windows.
+                        AppLogger.app.info("Duplicate main window at launch, dismissing this instance")
+                        dismiss()
+                        return
+                    }
+                    // After launch window, this is a keyboard/sheet-triggered scene recreation.
+                    // Don't dismiss — let it take over as primary to preserve visionOS
+                    // spatial tracking and window placement for new pop-out windows.
+                    AppLogger.app.info("Main window scene recreated, taking over as primary")
                 }
                 appModel.isMainWindowOpen = true
                 isPrimary = true

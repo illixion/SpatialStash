@@ -192,6 +192,10 @@ class AppModel {
     /// Whether the main gallery window is currently open (prevents duplicates)
     var isMainWindowOpen: Bool = false
 
+    /// Timestamp of AppModel creation — used to distinguish launch-time duplicate
+    /// windows from keyboard/sheet-triggered scene recreations.
+    let launchTime = Date()
+
     var mainWindowSize: CGSize = CGSize(width: 1200, height: 800)
 
     // MARK: - Photo Window Memory Management
