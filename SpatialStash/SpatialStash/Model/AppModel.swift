@@ -239,17 +239,9 @@ class AppModel {
     /// instead of RealityKit. Activated on memory warning to free GPU resources.
     var useLightweightDisplay: Bool = false
 
-    /// Whether opening another window would exceed the memory budget.
-    /// Only warns if lightweight mode was triggered AND there are already
-    /// multiple pop-out windows open (avoids false positives from a single
-    /// early memory warning).
-    var memoryBudgetExceeded: Bool {
-        useLightweightDisplay && openPhotoWindowCount >= 2
-    }
-
-    /// Whether to show the memory warning alert
-    var showMemoryWarningAlert: Bool = false
-
+    /// Incremented on each memory warning. PhotoDisplayView observes this to
+    /// trigger a 75% scale-down of display images across all open windows.
+    var memoryPressureGeneration: Int = 0
 
     // MARK: - UI Visibility State (for immersive image viewing)
 
@@ -428,11 +420,13 @@ class AppModel {
             object: nil,
             queue: .main
         ) { _ in
-            AppLogger.appModel.warning("Memory warning received — activating lightweight display and clearing caches")
+            AppLogger.appModel.warning("Memory warning received — scaling down textures and clearing caches")
             Task { @MainActor [weak self] in
                 await ImageLoader.shared.clearMemoryCache()
-                // Switch all photo windows to lightweight mode
+                // Switch any 3D windows to lightweight mode
                 self?.useLightweightDisplay = true
+                // Trigger 75% scale-down of all display images
+                self?.memoryPressureGeneration += 1
             }
         }
     }

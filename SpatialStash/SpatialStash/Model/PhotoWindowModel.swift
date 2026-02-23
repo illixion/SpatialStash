@@ -302,6 +302,34 @@ class PhotoWindowModel {
         return await DiskImageCache.shared.cachedFileURL(for: imageURL)
     }
 
+    // MARK: - Memory Pressure Scale-Down
+
+    /// Scale down the current display image to 75% of its current resolution
+    /// to free memory. Works regardless of the dynamicImageResolution setting.
+    func scaleDownForMemoryPressure() async {
+        guard !isAnimatedGIF, !is3DMode else { return }
+        guard displayImage != nil, currentDisplayMaxDimension > 0 else { return }
+        guard !isLoadingDisplayImage else { return }
+
+        let scaledDimension = currentDisplayMaxDimension * 0.75
+
+        guard let sourceURL = await resolveSourceFileURL() else { return }
+
+        isLoadingDisplayImage = true
+        defer { isLoadingDisplayImage = false }
+
+        let image = await Task.detached { [sourceURL, scaledDimension] in
+            ThumbnailGenerator.shared.downsampleImage(at: sourceURL, maxDimension: scaledDimension)
+        }.value
+
+        guard let image else { return }
+
+        displayImage = image
+        imageAspectRatio = image.size.width / image.size.height
+        currentDisplayMaxDimension = scaledDimension
+        AppLogger.photoWindow.info("Scaled down display image to \(Int(scaledDimension), privacy: .public)px for memory pressure")
+    }
+
     // MARK: - Lightweight Display Transition
 
     /// Transition from RealityKit to lightweight SwiftUI display.

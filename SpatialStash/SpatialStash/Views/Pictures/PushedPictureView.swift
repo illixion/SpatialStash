@@ -62,33 +62,11 @@ struct PushedPictureView: View {
                 windowModel.cleanup()
             }
             .alert(
-                "Memory Warning",
-                isPresented: Bindable(appModel).showMemoryWarningAlert
-            ) {
-                Button("Open Anyway") {
-                    if let image = pendingPopOutImage {
-                        if appModel.hasOpenPopOutWindow(for: image.fullSizeURL) {
-                            showDuplicateWindowAlert = true
-                        } else {
-                            openWindow(id: "photo-detail", value: PhotoWindowValue(image: image))
-                            pendingPopOutImage = nil
-                        }
-                    }
-                }
-                Button("Cancel", role: .cancel) {
-                    pendingPopOutImage = nil
-                }
-            } message: {
-                Text("Opening another window may cause the app to run out of memory. You have \(appModel.openPhotoWindowCount) windows open.")
-            }
-            .alert(
                 "Window Already Open",
                 isPresented: $showDuplicateWindowAlert
             ) {
                 Button("Summon") {
                     if let image = pendingPopOutImage {
-                        // Dismiss existing pop-out windows for this image, then open a new one
-                        // which appears at the user's current position
                         let existingValues = appModel.popOutWindowValues(for: image.fullSizeURL)
                         for value in existingValues {
                             dismissWindow(id: "photo-detail", value: value)
@@ -116,10 +94,7 @@ struct PushedPictureView: View {
     private var popOutButton: some View {
         Button {
             let image = windowModel.image
-            if appModel.memoryBudgetExceeded {
-                pendingPopOutImage = image
-                appModel.showMemoryWarningAlert = true
-            } else if appModel.hasOpenPopOutWindow(for: image.fullSizeURL) {
+            if appModel.hasOpenPopOutWindow(for: image.fullSizeURL) {
                 pendingPopOutImage = image
                 showDuplicateWindowAlert = true
             } else {

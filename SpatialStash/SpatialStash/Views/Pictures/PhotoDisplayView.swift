@@ -107,6 +107,11 @@ struct PhotoDisplayView: View {
                 }
             }
         }
+        .onChange(of: appModel.memoryPressureGeneration) {
+            Task {
+                await windowModel.scaleDownForMemoryPressure()
+            }
+        }
     }
 
     // MARK: - Image Content
@@ -310,18 +315,25 @@ struct PhotoDisplayView: View {
 
     // MARK: - Window Sizing
 
+    /// Calculate window size for image aspect ratio using the larger dimension of
+    /// the bounds. This prevents shrinking when switching between tall and wide images
+    /// (e.g. a tall 600×900 window switching to a wide image would otherwise cap at 600 wide).
+    private func windowSize(for aspectRatio: CGFloat, within bounds: CGSize) -> CGSize {
+        let maxDim = max(bounds.width, bounds.height)
+        if aspectRatio >= 1.0 {
+            // Wide or square image: width is the dominant axis
+            return CGSize(width: maxDim, height: maxDim / aspectRatio)
+        } else {
+            // Tall image: height is the dominant axis
+            return CGSize(width: maxDim * aspectRatio, height: maxDim)
+        }
+    }
+
     /// Resize window to fit image aspect ratio within given bounds
     private func resizeWindowToFit(_ aspectRatio: CGFloat, within bounds: CGSize) {
         guard let windowScene = resolvedWindowScene else { return }
 
-        let boundsAR = bounds.width / bounds.height
-        let size: CGSize
-        if aspectRatio > boundsAR {
-            size = CGSize(width: bounds.width, height: bounds.width / aspectRatio)
-        } else {
-            size = CGSize(width: bounds.height * aspectRatio, height: bounds.height)
-        }
-
+        let size = windowSize(for: aspectRatio, within: bounds)
         UIView.performWithoutAnimation {
             windowScene.requestGeometryUpdate(.Vision(size: size))
         }
@@ -331,14 +343,7 @@ struct PhotoDisplayView: View {
     private func resizeGIFWindowToFit(_ aspectRatio: CGFloat, within bounds: CGSize) {
         guard let windowScene = resolvedWindowScene else { return }
 
-        let boundsAR = bounds.width / bounds.height
-        let size: CGSize
-        if aspectRatio > boundsAR {
-            size = CGSize(width: bounds.width, height: bounds.width / aspectRatio)
-        } else {
-            size = CGSize(width: bounds.height * aspectRatio, height: bounds.height)
-        }
-
+        let size = windowSize(for: aspectRatio, within: bounds)
         UIView.performWithoutAnimation {
             windowScene.requestGeometryUpdate(.Vision(size: size, resizingRestrictions: .uniform))
         }
