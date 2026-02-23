@@ -330,6 +330,40 @@ class PhotoWindowModel {
         AppLogger.photoWindow.info("Scaled down display image to \(Int(scaledDimension), privacy: .public)px for memory pressure")
     }
 
+    // MARK: - Memory Recovery
+
+    /// Restore display image to proper resolution after memory pressure recovery.
+    /// Called when AppModel signals that memory is available again.
+    func restoreDisplayQuality() async {
+        guard !isAnimatedGIF, !is3DMode else { return }
+        guard displayImage != nil else { return }
+        guard !isLoadingDisplayImage, !isLoadingDetailImage else { return }
+
+        // Calculate what the proper dimension should be
+        let windowSize = lastWindowSize ?? appModel.mainWindowSize
+        let nativeMaxDim = max(nativeImageDimensions?.width ?? 8192, nativeImageDimensions?.height ?? 8192)
+
+        let targetDimension: CGFloat
+        if appModel.dynamicImageResolution {
+            targetDimension = min(
+                max(windowSize.width, windowSize.height) * Self.displayScaleFactor,
+                nativeMaxDim
+            )
+        } else {
+            targetDimension = nativeMaxDim
+        }
+
+        // Only restore if current dimension is significantly lower than target (>20% below)
+        guard currentDisplayMaxDimension > 0 else { return }
+        let ratio = currentDisplayMaxDimension / targetDimension
+        guard ratio < 0.8 else { return }
+
+        let previousDimension = Int(targetDimension * ratio)
+        AppLogger.photoWindow.info("Restoring display quality from \(previousDimension, privacy: .public)px to \(Int(targetDimension), privacy: .public)px")
+        currentDisplayMaxDimension = 0
+        await loadDisplayImage(for: windowSize)
+    }
+
     // MARK: - Lightweight Display Transition
 
     /// Transition from RealityKit to lightweight SwiftUI display.

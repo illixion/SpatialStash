@@ -112,6 +112,11 @@ struct PhotoDisplayView: View {
                 await windowModel.scaleDownForMemoryPressure()
             }
         }
+        .onChange(of: appModel.memoryRecoveryGeneration) {
+            Task {
+                await windowModel.restoreDisplayQuality()
+            }
+        }
     }
 
     // MARK: - Image Content

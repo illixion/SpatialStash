@@ -243,6 +243,18 @@ class AppModel {
     /// trigger a 75% scale-down of display images across all open windows.
     var memoryPressureGeneration: Int = 0
 
+    // MARK: - Memory Recovery
+
+    /// Counter observed by PhotoDisplayView to trigger per-window quality restoration.
+    /// Incremented one-at-a-time with delays between each to allow gradual recovery.
+    var memoryRecoveryGeneration: Int = 0
+
+    /// Task that performs gradual quality recovery after memory pressure subsides
+    private var memoryRecoveryTask: Task<Void, Never>?
+
+    /// Cooldown before attempting recovery (doubles on each failed attempt, resets on full success)
+    private var recoveryCooldownSeconds: Double = 30
+
     // MARK: - UI Visibility State (for immersive image viewing)
 
     /// Whether the UI (ornaments, navbar) should be hidden in detail view
@@ -422,12 +434,62 @@ class AppModel {
         ) { _ in
             AppLogger.appModel.warning("Memory warning received — scaling down textures and clearing caches")
             Task { @MainActor [weak self] in
+                guard let self else { return }
+
+                // If recovery was in progress, increase cooldown (the system wasn't ready)
+                if self.memoryRecoveryTask != nil {
+                    self.recoveryCooldownSeconds = min(self.recoveryCooldownSeconds * 2, 300)
+                    AppLogger.appModel.info("Recovery interrupted — cooldown increased to \(Int(self.recoveryCooldownSeconds))s")
+                }
+                self.memoryRecoveryTask?.cancel()
+                self.memoryRecoveryTask = nil
+
                 await ImageLoader.shared.clearMemoryCache()
                 // Switch any 3D windows to lightweight mode
-                self?.useLightweightDisplay = true
+                self.useLightweightDisplay = true
                 // Trigger 75% scale-down of all display images
-                self?.memoryPressureGeneration += 1
+                self.memoryPressureGeneration += 1
+
+                // Schedule gradual recovery after cooldown
+                self.scheduleMemoryRecovery()
             }
+        }
+    }
+
+    // MARK: - Memory Recovery
+
+    /// Schedule gradual quality recovery after memory pressure subsides.
+    /// Waits for cooldown, then restores one window at a time.
+    /// If a new memory warning fires during recovery, it cancels and re-schedules with longer cooldown.
+    private func scheduleMemoryRecovery() {
+        memoryRecoveryTask?.cancel()
+        let cooldown = recoveryCooldownSeconds
+
+        memoryRecoveryTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(cooldown))
+            guard !Task.isCancelled, let self else { return }
+
+            AppLogger.appModel.info("Starting memory recovery after \(Int(cooldown))s cooldown")
+
+            // Reset useLightweightDisplay so 3D can be re-enabled by user
+            self.useLightweightDisplay = false
+
+            // Gradually restore quality: increment recovery generation once per window,
+            // with a pause between each to let the system settle.
+            let windowCount = self.openPhotoWindowCount
+            for i in 0..<windowCount {
+                guard !Task.isCancelled else { return }
+                self.memoryRecoveryGeneration += 1
+                AppLogger.appModel.info("Recovery step \(i + 1)/\(windowCount)")
+
+                // Wait between restorations to let system settle and detect new warnings
+                try? await Task.sleep(for: .seconds(3))
+                guard !Task.isCancelled else { return }
+            }
+
+            // Full recovery succeeded — reset cooldown for next time
+            self.recoveryCooldownSeconds = 30
+            AppLogger.appModel.info("Memory recovery complete")
         }
     }
 
