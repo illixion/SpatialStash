@@ -67,7 +67,10 @@ struct SpatialStashApp: App {
 private struct MainWindowView: View {
     let appModel: AppModel
     @Environment(\.openWindow) private var openWindow
-    @Environment(\.dismissWindow) private var dismissWindow
+    @Environment(\.dismiss) private var dismiss
+    /// Tracks whether THIS view instance claimed primary main-window status.
+    /// Only the primary instance resets `isMainWindowOpen` on disappear.
+    @State private var isPrimary = false
 
     var body: some View {
         ContentView()
@@ -75,16 +78,22 @@ private struct MainWindowView: View {
             .frame(minWidth: 320, maxWidth: 2000, minHeight: 320, maxHeight: 2000)
             .onAppear {
                 if appModel.isMainWindowOpen {
-                    // Duplicate main window (e.g. from restoration) — dismiss it
-                    AppLogger.app.info("Duplicate main window detected, dismissing")
-                    dismissWindow(id: "main")
+                    // Duplicate (e.g. restoration + defaultLaunchBehavior both fired).
+                    // dismiss() closes THIS instance only, unlike dismissWindow(id:)
+                    // which would close ALL main windows including one with active keyboard.
+                    AppLogger.app.info("Duplicate main window detected, dismissing this instance")
+                    dismiss()
                     return
                 }
                 appModel.isMainWindowOpen = true
+                isPrimary = true
                 AppLogger.app.info("Main window appeared")
             }
             .onDisappear {
-                appModel.isMainWindowOpen = false
+                if isPrimary {
+                    appModel.isMainWindowOpen = false
+                    isPrimary = false
+                }
             }
             .onOpenURL { url in
                 Task { @MainActor in

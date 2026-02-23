@@ -419,9 +419,10 @@ class AppModel {
         AppLogger.appModel.info("Init - Page Size: \(self.pageSize, privacy: .public)")
         AppLogger.appModel.info("Init - Image source: \(String(describing: type(of: self.imageSource)), privacy: .public)")
 
-        // Load saved views from UserDefaults
+        // Load saved views and window groups from UserDefaults
         loadSavedViews()
         loadSavedVideoViews()
+        loadSavedWindowGroups()
 
         // Apply default views on startup
         applyDefaultViewsOnStartup()
@@ -643,6 +644,82 @@ class AppModel {
             savedVideoViews[index].isDefault = false
         }
         saveSavedVideoViews()
+    }
+
+    // MARK: - Saved Window Groups Persistence
+
+    var savedWindowGroups: [SavedWindowGroup] = []
+    private static let savedWindowGroupsKey = "savedWindowGroups"
+
+    private func loadSavedWindowGroups() {
+        if let data = UserDefaults.standard.data(forKey: Self.savedWindowGroupsKey),
+           let groups = try? JSONDecoder().decode([SavedWindowGroup].self, from: data) {
+            savedWindowGroups = groups
+            AppLogger.windowState.info("Loaded \(groups.count, privacy: .public) saved window groups")
+        }
+    }
+
+    private func persistSavedWindowGroups() {
+        if let data = try? JSONEncoder().encode(savedWindowGroups) {
+            UserDefaults.standard.set(data, forKey: Self.savedWindowGroupsKey)
+            let count = savedWindowGroups.count
+            AppLogger.windowState.info("Persisted \(count, privacy: .public) saved window groups")
+        }
+    }
+
+    func saveCurrentWindowGroup(name: String) {
+        let images = openPopOutWindows.values.flatMap { $0 }.map(\.image)
+        guard !images.isEmpty else { return }
+        let group = SavedWindowGroup(name: name, images: images)
+        savedWindowGroups.append(group)
+        persistSavedWindowGroups()
+        AppLogger.windowState.info("Saved window group '\(name, privacy: .public)' with \(images.count, privacy: .public) windows")
+    }
+
+    func restoreWindowGroup(_ group: SavedWindowGroup, openWindow: OpenWindowAction) {
+        AppLogger.windowState.info("Restoring window group '\(group.name, privacy: .public)' with \(group.images.count, privacy: .public) windows")
+        Task { @MainActor in
+            for image in group.images {
+                openWindow(id: "photo-detail", value: PhotoWindowValue(image: image))
+                try? await Task.sleep(for: .seconds(0.3))
+            }
+        }
+    }
+
+    func deleteSavedWindowGroup(_ group: SavedWindowGroup) {
+        savedWindowGroups.removeAll { $0.id == group.id }
+        persistSavedWindowGroups()
+    }
+
+    func renameSavedWindowGroup(_ group: SavedWindowGroup, newName: String) {
+        if let index = savedWindowGroups.firstIndex(where: { $0.id == group.id }) {
+            savedWindowGroups[index].name = newName
+            persistSavedWindowGroups()
+        }
+    }
+
+    /// Update the image tracked for a pop-out window (called when user navigates prev/next)
+    func updatePopOutWindowImage(windowValueId: UUID, oldImageURL: URL, newImage: GalleryImage) {
+        let oldKey = oldImageURL.absoluteString
+        let newKey = newImage.fullSizeURL.absoluteString
+
+        // Remove from old URL key
+        if var values = openPopOutWindows[oldKey] {
+            if let index = values.firstIndex(where: { $0.id == windowValueId }) {
+                var windowValue = values.remove(at: index)
+                windowValue.image = newImage
+
+                // Add under new URL key
+                var newValues = openPopOutWindows[newKey] ?? []
+                newValues.append(windowValue)
+                openPopOutWindows[newKey] = newValues
+            }
+            if values.isEmpty {
+                openPopOutWindows.removeValue(forKey: oldKey)
+            } else {
+                openPopOutWindows[oldKey] = values
+            }
+        }
     }
 
     // MARK: - Default Views Application

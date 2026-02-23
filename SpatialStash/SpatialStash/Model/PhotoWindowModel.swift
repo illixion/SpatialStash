@@ -731,9 +731,15 @@ class PhotoWindowModel {
 
     /// Switch to displaying a different image
     private func switchToImage(_ newImage: GalleryImage) async {
+        let oldImageURL = imageURL
         image = newImage
         imageURL = newImage.fullSizeURL
         isLoadingDetailImage = true
+
+        // Update pop-out window tracking so saved window groups capture the current image
+        if let windowValue = popOutWindowValue {
+            appModel.updatePopOutWindowImage(windowValueId: windowValue.id, oldImageURL: oldImageURL, newImage: newImage)
+        }
 
         // Wait for any in-progress generation to finish before removing the
         // component. RealityKit crashes if we remove ImagePresentationComponent

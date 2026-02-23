@@ -9,10 +9,16 @@ import SwiftUI
 
 struct SettingsTabView: View {
     @Environment(AppModel.self) private var appModel
+    @Environment(\.openWindow) private var openWindow
     @State private var imageCacheStats: (fileCount: Int, totalSize: Int64) = (0, 0)
     @State private var videoCacheStats: (fileCount: Int, totalSize: Int64) = (0, 0)
     @State private var isClearingImageCache = false
     @State private var isClearingVideoCache = false
+    @State private var showSaveGroupAlert = false
+    @State private var newGroupName = ""
+    @State private var showRenameGroupAlert = false
+    @State private var renamingGroup: SavedWindowGroup?
+    @State private var renameGroupName = ""
 
     var body: some View {
         @Bindable var appModel = appModel
@@ -61,6 +67,46 @@ struct SettingsTabView: View {
                             in: 3...120,
                             step: 1
                         )
+                    }
+                }
+
+                Section("Window Groups") {
+                    Button("Save Current Windows") {
+                        newGroupName = ""
+                        showSaveGroupAlert = true
+                    }
+                    .disabled(appModel.openPopOutWindows.isEmpty)
+
+                    if appModel.savedWindowGroups.isEmpty {
+                        Text("No saved window groups")
+                            .foregroundColor(.secondary)
+                    } else {
+                        ForEach(appModel.savedWindowGroups) { group in
+                            HStack {
+                                VStack(alignment: .leading) {
+                                    Text(group.name)
+                                    Text("\(group.images.count) windows \u{00B7} \(group.savedDate, style: .date)")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                Spacer()
+                                Button("Rename") {
+                                    renamingGroup = group
+                                    renameGroupName = group.name
+                                    showRenameGroupAlert = true
+                                }
+                                .buttonStyle(.borderless)
+                                Button("Restore") {
+                                    appModel.restoreWindowGroup(group, openWindow: openWindow)
+                                }
+                                .buttonStyle(.borderedProminent)
+                            }
+                        }
+                        .onDelete { indexSet in
+                            for index in indexSet {
+                                appModel.deleteSavedWindowGroup(appModel.savedWindowGroups[index])
+                            }
+                        }
                     }
                 }
 
@@ -198,6 +244,33 @@ struct SettingsTabView: View {
             .navigationTitle("Settings")
             .task {
                 await refreshCacheStats()
+            }
+            .alert("Save Window Group", isPresented: $showSaveGroupAlert) {
+                TextField("Group Name", text: $newGroupName)
+                Button("Save") {
+                    let name = newGroupName.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !name.isEmpty {
+                        appModel.saveCurrentWindowGroup(name: name)
+                    }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Enter a name for this window group (\(appModel.openPopOutWindows.values.flatMap { $0 }.count) windows).")
+            }
+            .alert("Rename Window Group", isPresented: $showRenameGroupAlert) {
+                TextField("Group Name", text: $renameGroupName)
+                Button("Rename") {
+                    let name = renameGroupName.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !name.isEmpty, let group = renamingGroup {
+                        appModel.renameSavedWindowGroup(group, newName: name)
+                    }
+                    renamingGroup = nil
+                }
+                Button("Cancel", role: .cancel) {
+                    renamingGroup = nil
+                }
+            } message: {
+                Text("Enter a new name for this window group.")
             }
         }
     }

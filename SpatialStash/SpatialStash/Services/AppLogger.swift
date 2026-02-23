@@ -56,4 +56,7 @@ enum AppLogger {
 
     /// Shared media handling (share sheet, caching, saving)
     static let sharedMedia = Logger(subsystem: subsystem, category: "SharedMedia")
+
+    /// Window state persistence and restoration
+    static let windowState = Logger(subsystem: subsystem, category: "WindowState")
 }

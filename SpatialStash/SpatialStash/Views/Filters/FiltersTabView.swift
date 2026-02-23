@@ -33,13 +33,16 @@ struct FiltersTabView: View {
                 }
 
                 // Saved Views Section
-                Section {
+                Section("Saved Views") {
+                    Button("Save Current Filters") {
+                        newViewName = ""
+                        showingSaveViewSheet = true
+                    }
+
                     if isVideoFilter {
-                        // Video saved views
                         if appModel.savedVideoViews.isEmpty {
                             Text("No saved views")
                                 .foregroundColor(.secondary)
-                                .italic()
                         } else {
                             ForEach(appModel.savedVideoViews) { view in
                                 SavedVideoViewRow(
@@ -47,19 +50,21 @@ struct FiltersTabView: View {
                                     isSelected: appModel.selectedSavedVideoView?.id == view.id,
                                     onApply: { appModel.applySavedVideoView(view) },
                                     onDeselect: { appModel.deselectVideoView() },
-                                    onSave: { appModel.updateSavedVideoView(view, with: appModel.currentVideoFilter) },
+                                    onUpdate: { appModel.updateSavedVideoView(view, with: appModel.currentVideoFilter) },
                                     onSetDefault: { appModel.setDefaultVideoView(view) },
-                                    onClearDefault: { appModel.clearDefaultVideoView() },
-                                    onDelete: { appModel.deleteSavedVideoView(view) }
+                                    onClearDefault: { appModel.clearDefaultVideoView() }
                                 )
+                            }
+                            .onDelete { indexSet in
+                                for index in indexSet {
+                                    appModel.deleteSavedVideoView(appModel.savedVideoViews[index])
+                                }
                             }
                         }
                     } else {
-                        // Image saved views
                         if appModel.savedViews.isEmpty {
                             Text("No saved views")
                                 .foregroundColor(.secondary)
-                                .italic()
                         } else {
                             ForEach(appModel.savedViews) { view in
                                 SavedViewRow(
@@ -67,25 +72,17 @@ struct FiltersTabView: View {
                                     isSelected: appModel.selectedSavedView?.id == view.id,
                                     onApply: { appModel.applySavedView(view) },
                                     onDeselect: { appModel.deselectView() },
-                                    onSave: { appModel.updateSavedView(view, with: appModel.currentFilter) },
+                                    onUpdate: { appModel.updateSavedView(view, with: appModel.currentFilter) },
                                     onSetDefault: { appModel.setDefaultView(view) },
-                                    onClearDefault: { appModel.clearDefaultView() },
-                                    onDelete: { appModel.deleteSavedView(view) }
+                                    onClearDefault: { appModel.clearDefaultView() }
                                 )
                             }
+                            .onDelete { indexSet in
+                                for index in indexSet {
+                                    appModel.deleteSavedView(appModel.savedViews[index])
+                                }
+                            }
                         }
-                    }
-                } header: {
-                    HStack {
-                        Text("Saved Views")
-                        Spacer()
-                        Button {
-                            showingSaveViewSheet = true
-                        } label: {
-                            Image(systemName: "plus.circle")
-                                .font(.title2)
-                        }
-                        .buttonStyle(.plain)
                     }
                 }
 
@@ -229,18 +226,24 @@ struct FiltersTabView: View {
                     }
                 }
             }
-            .sheet(isPresented: $showingSaveViewSheet) {
-                SaveViewSheet(viewName: $newViewName) {
-                    if !newViewName.isEmpty {
+            .alert("Save View", isPresented: $showingSaveViewSheet) {
+                TextField("View Name", text: $newViewName)
+                Button("Save") {
+                    let name = newViewName.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !name.isEmpty {
                         if isVideoFilter {
-                            appModel.createSavedVideoView(name: newViewName)
+                            appModel.createSavedVideoView(name: name)
                         } else {
-                            appModel.createSavedView(name: newViewName)
+                            appModel.createSavedView(name: name)
                         }
-                        newViewName = ""
                     }
-                    showingSaveViewSheet = false
+                    newViewName = ""
                 }
+                Button("Cancel", role: .cancel) {
+                    newViewName = ""
+                }
+            } message: {
+                Text("Enter a name for the current \(isVideoFilter ? "video" : "picture") filter configuration.")
             }
         }
     }
@@ -253,80 +256,53 @@ struct SavedViewRow: View {
     let isSelected: Bool
     let onApply: () -> Void
     let onDeselect: () -> Void
-    let onSave: () -> Void
+    let onUpdate: () -> Void
     let onSetDefault: () -> Void
     let onClearDefault: () -> Void
-    let onDelete: () -> Void
 
     var body: some View {
-        HStack(spacing: 12) {
-            Button {
+        HStack {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(view.name)
+                    if view.isDefault {
+                        Image(systemName: "star.fill")
+                            .font(.caption)
+                            .foregroundColor(.yellow)
+                    }
+                    if isSelected {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.caption)
+                            .foregroundColor(.accentColor)
+                    }
+                }
+                Text(filterSummary)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer()
+            Button(view.isDefault ? "Unset Default" : "Set Default") {
+                if view.isDefault {
+                    onClearDefault()
+                } else {
+                    onSetDefault()
+                }
+            }
+            .buttonStyle(.borderless)
+            Button("Update") {
+                onUpdate()
+            }
+            .buttonStyle(.borderless)
+            Button(isSelected ? "Deselect" : "Apply") {
                 if isSelected {
                     onDeselect()
                 } else {
                     onApply()
                 }
-            } label: {
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 6) {
-                            Text(view.name)
-                                .font(.headline)
-                            if view.isDefault {
-                                Image(systemName: "star.fill")
-                                    .font(.caption)
-                                    .foregroundColor(.yellow)
-                            }
-                        }
-                        Text(filterSummary)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                    }
-                    Spacer()
-                    if isSelected {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundColor(.accentColor)
-                    }
-                }
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-
-            Menu {
-                Button {
-                    onSave()
-                } label: {
-                    Label("Save Current Filters", systemImage: "square.and.arrow.down")
-                }
-                Divider()
-                if view.isDefault {
-                    Button {
-                        onClearDefault()
-                    } label: {
-                        Label("Remove as Default", systemImage: "star.slash")
-                    }
-                } else {
-                    Button {
-                        onSetDefault()
-                    } label: {
-                        Label("Set as Default", systemImage: "star")
-                    }
-                }
-                Divider()
-                Button(role: .destructive) {
-                    onDelete()
-                } label: {
-                    Label("Delete", systemImage: "trash")
-                }
-            } label: {
-                Image(systemName: "ellipsis.circle")
-                    .font(.title2)
-                    .foregroundColor(.secondary)
-            }
-            .buttonStyle(.plain)
+            .buttonStyle(.borderedProminent)
         }
-        .padding(.vertical, 4)
     }
 
     private var filterSummary: String {
@@ -364,80 +340,53 @@ struct SavedVideoViewRow: View {
     let isSelected: Bool
     let onApply: () -> Void
     let onDeselect: () -> Void
-    let onSave: () -> Void
+    let onUpdate: () -> Void
     let onSetDefault: () -> Void
     let onClearDefault: () -> Void
-    let onDelete: () -> Void
 
     var body: some View {
-        HStack(spacing: 12) {
-            Button {
+        HStack {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(view.name)
+                    if view.isDefault {
+                        Image(systemName: "star.fill")
+                            .font(.caption)
+                            .foregroundColor(.yellow)
+                    }
+                    if isSelected {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.caption)
+                            .foregroundColor(.accentColor)
+                    }
+                }
+                Text(filterSummary)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer()
+            Button(view.isDefault ? "Unset Default" : "Set Default") {
+                if view.isDefault {
+                    onClearDefault()
+                } else {
+                    onSetDefault()
+                }
+            }
+            .buttonStyle(.borderless)
+            Button("Update") {
+                onUpdate()
+            }
+            .buttonStyle(.borderless)
+            Button(isSelected ? "Deselect" : "Apply") {
                 if isSelected {
                     onDeselect()
                 } else {
                     onApply()
                 }
-            } label: {
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 6) {
-                            Text(view.name)
-                                .font(.headline)
-                            if view.isDefault {
-                                Image(systemName: "star.fill")
-                                    .font(.caption)
-                                    .foregroundColor(.yellow)
-                            }
-                        }
-                        Text(filterSummary)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                    }
-                    Spacer()
-                    if isSelected {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundColor(.accentColor)
-                    }
-                }
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-
-            Menu {
-                Button {
-                    onSave()
-                } label: {
-                    Label("Save Current Filters", systemImage: "square.and.arrow.down")
-                }
-                Divider()
-                if view.isDefault {
-                    Button {
-                        onClearDefault()
-                    } label: {
-                        Label("Remove as Default", systemImage: "star.slash")
-                    }
-                } else {
-                    Button {
-                        onSetDefault()
-                    } label: {
-                        Label("Set as Default", systemImage: "star")
-                    }
-                }
-                Divider()
-                Button(role: .destructive) {
-                    onDelete()
-                } label: {
-                    Label("Delete", systemImage: "trash")
-                }
-            } label: {
-                Image(systemName: "ellipsis.circle")
-                    .font(.title2)
-                    .foregroundColor(.secondary)
-            }
-            .buttonStyle(.plain)
+            .buttonStyle(.borderedProminent)
         }
-        .padding(.vertical, 4)
     }
 
     private var filterSummary: String {
@@ -465,39 +414,6 @@ struct SavedVideoViewRow: View {
         }
         parts.append("\(view.filter.sortField.displayName) \(view.filter.sortDirection.displayName)")
         return parts.joined(separator: " | ")
-    }
-}
-
-// MARK: - Save View Sheet
-
-struct SaveViewSheet: View {
-    @Binding var viewName: String
-    let onSave: () -> Void
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                TextField("View Name", text: $viewName)
-                    .textFieldStyle(.plain)
-            }
-            .navigationTitle("Save View")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        viewName = ""
-                        onSave()
-                    }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        onSave()
-                    }
-                    .disabled(viewName.isEmpty)
-                }
-            }
-        }
-        .presentationDetents([.medium])
     }
 }
 

@@ -11,7 +11,7 @@ import Foundation
 struct PhotoWindowValue: Identifiable, Codable, Hashable {
     /// Unique per window instance — ensures visionOS treats each opening as a new window
     let id: UUID
-    let image: GalleryImage
+    var image: GalleryImage
 
     init(image: GalleryImage) {
         self.id = UUID()
