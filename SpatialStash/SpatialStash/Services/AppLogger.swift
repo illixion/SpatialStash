@@ -21,8 +21,8 @@ enum AppLogger {
     /// Disk video cache operations
     static let videoCache = Logger(subsystem: subsystem, category: "VideoCache")
 
-    /// Spatial 3D conversion tracking
-    static let spatial3DTracker = Logger(subsystem: subsystem, category: "Spatial3DTracker")
+    /// Image enhancement tracking (3D conversion, background removal)
+    static let enhancementTracker = Logger(subsystem: subsystem, category: "EnhancementTracker")
 
     /// Photo window model (per-window image state)
     static let photoWindow = Logger(subsystem: subsystem, category: "PhotoWindow")

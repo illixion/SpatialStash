@@ -1,8 +1,8 @@
 /*
- Spatial Stash - Spatial 3D Conversion Tracker
+ Spatial Stash - Image Enhancement Tracker
 
- Tracks which images have been converted to spatial 3D so they can be
- automatically re-converted when viewed again.
+ Tracks per-image viewing enhancements (spatial 3D conversion, background
+ removal) so they can be automatically restored when the image is viewed again.
  */
 
 import Foundation
@@ -11,22 +11,23 @@ import os
 enum ViewingModePreference: String {
     case mono
     case spatial3D
+    case backgroundRemoved
 }
 
-actor Spatial3DConversionTracker {
-    static let shared = Spatial3DConversionTracker()
+actor ImageEnhancementTracker {
+    static let shared = ImageEnhancementTracker()
 
+    // UserDefaults keys unchanged for backward compatibility
     private let userDefaultsKey = "spatial3DConvertedImages"
     private let lastModeKey = "spatial3DLastViewingMode"
     private var convertedImageURLs: Set<String>
     private var lastViewingModeByURL: [String: String]
 
     private init() {
-        // Load from UserDefaults
         if let saved = UserDefaults.standard.array(forKey: userDefaultsKey) as? [String] {
             convertedImageURLs = Set(saved)
             let count = convertedImageURLs.count
-            AppLogger.spatial3DTracker.info("Loaded \(count, privacy: .public) previously converted images")
+            AppLogger.enhancementTracker.info("Loaded \(count, privacy: .public) previously converted images")
         } else {
             convertedImageURLs = []
         }

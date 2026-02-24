@@ -76,6 +76,9 @@ class PhotoWindowModel {
     /// Task for background removal (tracked so cleanup can cancel it)
     private var backgroundRemovalTask: Task<Void, Never>?
 
+    /// Flag set during initial load to auto-remove background after 2D image loads
+    private var pendingAutoBackgroundRemoval = false
+
     // MARK: - GIF Support
 
     var isAnimatedGIF: Bool = false
@@ -195,8 +198,8 @@ class PhotoWindowModel {
                     }
                     isLoadingDetailImage = false
                 } else {
-                    // Check if the image was previously viewed in 3D and auto-activate
-                    await autoActivate3DIfPreviouslyViewed()
+                    // Check if the image was previously enhanced and auto-restore
+                    await autoRestorePreviousEnhancement()
                 }
             }
         } catch {
@@ -205,16 +208,19 @@ class PhotoWindowModel {
         }
     }
 
-    /// If the image was previously viewed in 3D, skip lightweight 2D and activate 3D immediately.
-    private func autoActivate3DIfPreviouslyViewed() async {
+    /// Auto-restore the last enhancement (3D or background removal) if applicable.
+    private func autoRestorePreviousEnhancement() async {
         guard !isAnimatedGIF, !is3DMode else { return }
 
-        let lastMode = await Spatial3DConversionTracker.shared.lastViewingMode(url: imageURL)
-        let wasConverted = await Spatial3DConversionTracker.shared.wasConverted(url: imageURL)
+        let lastMode = await ImageEnhancementTracker.shared.lastViewingMode(url: imageURL)
+        let wasConverted = await ImageEnhancementTracker.shared.wasConverted(url: imageURL)
 
-        // Only auto-activate if previously converted AND not explicitly switched back to 2D
-        if wasConverted && lastMode != .mono {
+        if wasConverted && lastMode == .spatial3D {
+            // Auto-activate 3D (skips 2D load entirely)
             activate3DMode()
+        } else if lastMode == .backgroundRemoved {
+            // Flag for auto-removal after 2D image loads
+            pendingAutoBackgroundRemoval = true
         }
     }
 
@@ -289,6 +295,12 @@ class PhotoWindowModel {
         imageAspectRatio = image.size.width / image.size.height
         currentDisplayMaxDimension = targetDimension
         isLoadingDetailImage = false
+
+        // Auto-restore background removal if previously applied
+        if pendingAutoBackgroundRemoval {
+            pendingAutoBackgroundRemoval = false
+            await performBackgroundRemoval()
+        }
     }
 
     /// Handle window resize with 1-second debounce. Re-downsamples the display
@@ -454,7 +466,7 @@ class PhotoWindowModel {
         is3DMode = false
 
         // Record that the user explicitly exited 3D so auto-restore doesn't re-enable it
-        await Spatial3DConversionTracker.shared.setLastViewingMode(url: imageURL, mode: .mono)
+        await ImageEnhancementTracker.shared.setLastViewingMode(url: imageURL, mode: .mono)
 
         // Reset display dimension so the 2D reload doesn't early-exit
         currentDisplayMaxDimension = 0
@@ -598,8 +610,8 @@ class PhotoWindowModel {
                 self.spatial3DImageState = .generated
 
                 // Track that this image was converted
-                await Spatial3DConversionTracker.shared.markAsConverted(url: self.imageURL)
-                await Spatial3DConversionTracker.shared.setLastViewingMode(url: self.imageURL, mode: .spatial3D)
+                await ImageEnhancementTracker.shared.markAsConverted(url: self.imageURL)
+                await ImageEnhancementTracker.shared.setLastViewingMode(url: self.imageURL, mode: .spatial3D)
 
                 if let aspectRatio = imagePresentationComponent.aspectRatio(for: .spatial3D) {
                     self.imageAspectRatio = CGFloat(aspectRatio)
@@ -629,13 +641,13 @@ class PhotoWindowModel {
             imagePresentationComponent.desiredViewingMode = .mono
             contentEntity.components.set(imagePresentationComponent)
             Task {
-                await Spatial3DConversionTracker.shared.setLastViewingMode(url: imageURL, mode: .mono)
+                await ImageEnhancementTracker.shared.setLastViewingMode(url: imageURL, mode: .mono)
             }
         } else if spatial3DImageState == .generated {
             imagePresentationComponent.desiredViewingMode = .spatial3D
             contentEntity.components.set(imagePresentationComponent)
             Task {
-                await Spatial3DConversionTracker.shared.setLastViewingMode(url: imageURL, mode: .spatial3D)
+                await ImageEnhancementTracker.shared.setLastViewingMode(url: imageURL, mode: .spatial3D)
             }
         }
     }
@@ -648,12 +660,12 @@ class PhotoWindowModel {
         }
 
         // Respect the user's last-used mode for this image
-        if let lastMode = await Spatial3DConversionTracker.shared.lastViewingMode(url: imageURL), lastMode == .mono {
+        if let lastMode = await ImageEnhancementTracker.shared.lastViewingMode(url: imageURL), lastMode == .mono {
             AppLogger.photoWindow.debug("Skipping auto-generation; last mode was 2D")
             return
         }
 
-        let wasConverted = await Spatial3DConversionTracker.shared.wasConverted(url: imageURL)
+        let wasConverted = await ImageEnhancementTracker.shared.wasConverted(url: imageURL)
         if wasConverted {
             AppLogger.photoWindow.debug("Auto-generating spatial 3D for previously converted image")
             await generateSpatial3DImage()
@@ -705,6 +717,7 @@ class PhotoWindowModel {
                     self.backgroundRemovedImage = processed
                     self.displayImage = processed
                     self.backgroundRemovalState = .removed
+                    await ImageEnhancementTracker.shared.setLastViewingMode(url: self.imageURL, mode: .backgroundRemoved)
                 } else {
                     self.backgroundRemovalState = .original
                     AppLogger.photoWindow.warning("Background removal returned nil")
@@ -725,6 +738,9 @@ class PhotoWindowModel {
         guard let original = originalDisplayImage else { return }
         displayImage = original
         backgroundRemovalState = .original
+        Task {
+            await ImageEnhancementTracker.shared.setLastViewingMode(url: imageURL, mode: .mono)
+        }
     }
 
     private func clearBackgroundRemovalState() {
@@ -733,6 +749,7 @@ class PhotoWindowModel {
         backgroundRemovalState = .original
         originalDisplayImage = nil
         backgroundRemovedImage = nil
+        pendingAutoBackgroundRemoval = false
     }
 
     // MARK: - UI Auto-Hide
