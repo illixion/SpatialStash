@@ -91,11 +91,23 @@ class PhotoWindowModel {
 
     // MARK: - Slideshow State
 
+    enum SlideshowTransitionDirection {
+        case next
+        case previous
+    }
+
     var isSlideshowActive: Bool = false
     var slideshowImages: [GalleryImage] = []
     var slideshowIndex: Int = 0
     private var slideshowTask: Task<Void, Never>?
     private var slideshowHistory: [GalleryImage] = []
+
+    /// Signal for the view to perform a slide animation during slideshow transitions.
+    /// Set by the model, observed and cleared by PhotoDisplayView.
+    var slideshowTransitionDirection: SlideshowTransitionDirection? = nil
+
+    /// Task for preloading the next slideshow image data
+    private var slideshowPreloadTask: Task<Void, Never>?
 
     // MARK: - Gallery Navigation State
 
@@ -260,12 +272,14 @@ class PhotoWindowModel {
 
         let nativeMaxDim = max(nativeImageDimensions?.width ?? 8192, nativeImageDimensions?.height ?? 8192)
 
-        // Calculate target dimension: full native when dynamic resolution is off,
-        // otherwise window size × scale factor capped at native
+        // Calculate target dimension: full native when max resolution is off (0),
+        // otherwise window size × scale factor capped at both max resolution and native
         let targetDimension: CGFloat
-        if appModel.dynamicImageResolution {
+        if appModel.maxImageResolution > 0 {
+            let maxRes = CGFloat(appModel.maxImageResolution)
             targetDimension = min(
                 max(windowSize.width, windowSize.height) * Self.displayScaleFactor,
+                maxRes,
                 nativeMaxDim
             )
         } else {
@@ -307,7 +321,7 @@ class PhotoWindowModel {
     /// image in memory when the window size changes significantly.
     /// No-op when dynamic image resolution is disabled (already at full res).
     func handleWindowResize(_ newSize: CGSize) {
-        guard appModel.dynamicImageResolution else { return }
+        guard appModel.maxImageResolution > 0 else { return }
         guard !is3DMode, !isAnimatedGIF else { return }
         guard !isLoadingDetailImage, !isLoadingDisplayImage else { return }
         guard displayImage != nil else { return }
@@ -333,7 +347,7 @@ class PhotoWindowModel {
     // MARK: - Memory Pressure Scale-Down
 
     /// Scale down the current display image to 75% of its current resolution
-    /// to free memory. Works regardless of the dynamicImageResolution setting.
+    /// to free memory. Works regardless of the maxImageResolution setting.
     func scaleDownForMemoryPressure() async {
         guard !isAnimatedGIF, !is3DMode else { return }
         guard displayImage != nil, currentDisplayMaxDimension > 0 else { return }
@@ -376,9 +390,11 @@ class PhotoWindowModel {
         let nativeMaxDim = max(nativeImageDimensions?.width ?? 8192, nativeImageDimensions?.height ?? 8192)
 
         let targetDimension: CGFloat
-        if appModel.dynamicImageResolution {
+        if appModel.maxImageResolution > 0 {
+            let maxRes = CGFloat(appModel.maxImageResolution)
             targetDimension = min(
                 max(windowSize.width, windowSize.height) * Self.displayScaleFactor,
+                maxRes,
                 nativeMaxDim
             )
         } else {
@@ -793,6 +809,9 @@ class PhotoWindowModel {
         // Fetch initial batch of random images (no seed for true randomness)
         await fetchRandomSlideshowImages()
 
+        // Preload the first slideshow image so it's ready when the timer fires
+        preloadNextSlideshowImage()
+
         // Start the slideshow timer
         startSlideshowTimer()
     }
@@ -820,27 +839,17 @@ class PhotoWindowModel {
             while isSlideshowActive && !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(appModel.slideshowDelay))
                 if !Task.isCancelled && isSlideshowActive {
-                    await advanceSlideshow()
+                    advanceSlideshow()
                 }
             }
         }
     }
 
-    /// Advance to the next slideshow image
-    private func advanceSlideshow() async {
-        slideshowIndex += 1
-
-        // If we've gone through all fetched images, fetch more
-        if slideshowIndex >= slideshowImages.count {
-            await fetchRandomSlideshowImages()
-            slideshowIndex = 0
-        }
-
-        if slideshowIndex < slideshowImages.count {
-            let nextImage = slideshowImages[slideshowIndex]
-            await switchToImage(nextImage)
-            slideshowHistory.append(nextImage)
-        }
+    /// Signal the view to animate to the next slideshow image
+    private func advanceSlideshow() {
+        // Don't queue another transition if one is already in progress
+        guard slideshowTransitionDirection == nil else { return }
+        slideshowTransitionDirection = .next
     }
 
     /// Switch to displaying a different image
@@ -888,30 +897,68 @@ class PhotoWindowModel {
         }
     }
 
+    /// Perform the actual slideshow image switch (called by the view during animation phase 2).
+    func performSlideshowSwitch(direction: SlideshowTransitionDirection) async {
+        switch direction {
+        case .next:
+            slideshowIndex += 1
+            if slideshowIndex >= slideshowImages.count {
+                await fetchRandomSlideshowImages()
+                slideshowIndex = 0
+            }
+            if slideshowIndex < slideshowImages.count {
+                let nextImage = slideshowImages[slideshowIndex]
+                await switchToImage(nextImage)
+                slideshowHistory.append(nextImage)
+            }
+        case .previous:
+            guard slideshowHistory.count > 1 else { return }
+            slideshowHistory.removeLast()
+            if let previousImage = slideshowHistory.last {
+                await switchToImage(previousImage)
+            }
+        }
+    }
+
+    /// Called by the view after the slideshow transition animation finishes.
+    func slideshowTransitionCompleted() {
+        slideshowTransitionDirection = nil
+        preloadNextSlideshowImage()
+    }
+
+    /// Preload the next slideshow image data into disk cache for instant display.
+    private func preloadNextSlideshowImage() {
+        slideshowPreloadTask?.cancel()
+
+        let nextIndex = slideshowIndex + 1
+        guard nextIndex < slideshowImages.count else {
+            // Next image requires a new batch fetch — skip preload for this one
+            return
+        }
+
+        let imageToPreload = slideshowImages[nextIndex]
+        slideshowPreloadTask = Task { @MainActor in
+            do {
+                _ = try await ImageLoader.shared.loadRawData(from: imageToPreload.fullSizeURL)
+                AppLogger.photoWindow.debug("Preloaded next slideshow image")
+            } catch {
+                AppLogger.photoWindow.debug("Slideshow preload failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+    }
+
     /// Go to the next slideshow image manually
-    func nextSlideshowImage() async {
-        guard isSlideshowActive else { return }
-
-        // Reset the timer since user manually advanced
+    func nextSlideshowImage() {
+        guard isSlideshowActive, slideshowTransitionDirection == nil else { return }
         startSlideshowTimer()
-
-        await advanceSlideshow()
+        slideshowTransitionDirection = .next
     }
 
     /// Go to the previous slideshow image
-    func previousSlideshowImage() async {
-        guard isSlideshowActive, slideshowHistory.count > 1 else { return }
-
-        // Reset the timer since user manually navigated
+    func previousSlideshowImage() {
+        guard isSlideshowActive, slideshowHistory.count > 1, slideshowTransitionDirection == nil else { return }
         startSlideshowTimer()
-
-        // Remove current image from history
-        slideshowHistory.removeLast()
-
-        // Go back to the previous image
-        if let previousImage = slideshowHistory.last {
-            await switchToImage(previousImage)
-        }
+        slideshowTransitionDirection = .previous
     }
 
     /// Stop the slideshow
@@ -919,6 +966,9 @@ class PhotoWindowModel {
         isSlideshowActive = false
         slideshowTask?.cancel()
         slideshowTask = nil
+        slideshowPreloadTask?.cancel()
+        slideshowPreloadTask = nil
+        slideshowTransitionDirection = nil
         slideshowImages = []
         slideshowHistory = []
         slideshowIndex = 0

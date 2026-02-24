@@ -304,15 +304,28 @@ class AppModel {
 
     // MARK: - Image Display Settings
 
-    /// When true, images are downsampled to match the window size and re-scaled on resize.
-    /// When false, images are always loaded at full native resolution.
-    var dynamicImageResolution: Bool {
+    /// Maximum image resolution in pixels. Images are downsampled to this cap
+    /// (with window-based optimization within the cap). 0 = Off (full native resolution).
+    var maxImageResolution: Int {
         didSet {
-            if dynamicImageResolution != oldValue {
-                UserDefaults.standard.set(dynamicImageResolution, forKey: "dynamicImageResolution")
+            if maxImageResolution != oldValue {
+                UserDefaults.standard.set(maxImageResolution, forKey: "maxImageResolution")
             }
         }
     }
+
+    /// Available max image resolution options (value 0 = Off / no limit)
+    static let maxImageResolutionOptions: [(label: String, value: Int)] = [
+        ("1024px", 1024),
+        ("2048px", 2048),
+        ("3072px", 3072),
+        ("4096px", 4096),
+        ("5120px", 5120),
+        ("6144px", 6144),
+        ("7168px", 7168),
+        ("8192px", 8192),
+        ("Off", 0),
+    ]
 
     /// When true, image viewer windows have rounded corners.
     var roundedCorners: Bool {
@@ -371,10 +384,18 @@ class AppModel {
         let savedSlideshowDelay = UserDefaults.standard.double(forKey: "slideshowDelay")
         let loadedSlideshowDelay = UserDefaults.standard.object(forKey: "slideshowDelay") != nil ? savedSlideshowDelay : defaultSlideshowDelay
 
-        // Load dynamic image resolution (default: true)
-        let loadedDynamicImageResolution = UserDefaults.standard.object(forKey: "dynamicImageResolution") != nil
-            ? UserDefaults.standard.bool(forKey: "dynamicImageResolution")
-            : true
+        // Load max image resolution (default: 4096, migrate from old bool key if needed)
+        let loadedMaxImageResolution: Int
+        if UserDefaults.standard.object(forKey: "maxImageResolution") != nil {
+            loadedMaxImageResolution = UserDefaults.standard.integer(forKey: "maxImageResolution")
+        } else if UserDefaults.standard.object(forKey: "dynamicImageResolution") != nil {
+            // Migrate from old boolean setting: true → 4096, false → 0 (Off)
+            loadedMaxImageResolution = UserDefaults.standard.bool(forKey: "dynamicImageResolution") ? 4096 : 0
+            UserDefaults.standard.set(loadedMaxImageResolution, forKey: "maxImageResolution")
+            UserDefaults.standard.removeObject(forKey: "dynamicImageResolution")
+        } else {
+            loadedMaxImageResolution = 4096
+        }
 
         // Load rounded corners (default: true)
         let loadedRoundedCorners = UserDefaults.standard.object(forKey: "roundedCorners") != nil
@@ -388,7 +409,7 @@ class AppModel {
         self.pageSize = loadedPageSize
         self.autoHideDelay = loadedAutoHideDelay
         self.slideshowDelay = loadedSlideshowDelay
-        self.dynamicImageResolution = loadedDynamicImageResolution
+        self.maxImageResolution = loadedMaxImageResolution
         self.roundedCorners = loadedRoundedCorners
 
         // Initialize API client with config

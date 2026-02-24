@@ -44,7 +44,12 @@ struct SettingsTabView: View {
                 Section("Display") {
                     Toggle("Rounded Corners", isOn: $appModel.roundedCorners)
 
-                    Toggle("Dynamic Image Resolution", isOn: $appModel.dynamicImageResolution)
+                    Picker("Max Image Resolution", selection: $appModel.maxImageResolution) {
+                        ForEach(AppModel.maxImageResolutionOptions, id: \.value) { option in
+                            Text(option.label).tag(option.value)
+                        }
+                    }
+                    .pickerStyle(.menu)
 
                     Picker("Auto-hide Controls", selection: $appModel.autoHideDelay) {
                         ForEach(AppModel.autoHideDelayOptions, id: \.value) { option in

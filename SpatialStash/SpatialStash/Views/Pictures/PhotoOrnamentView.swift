@@ -81,15 +81,13 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
     @ViewBuilder
     private var slideshowControls: some View {
         Button {
-            Task {
-                await windowModel.previousSlideshowImage()
-            }
+            windowModel.previousSlideshowImage()
         } label: {
             Image(systemName: "backward.fill")
                 .font(.title3)
         }
         .buttonStyle(.borderless)
-        .disabled(!windowModel.hasPreviousSlideshowImage || windowModel.isLoadingDetailImage)
+        .disabled(!windowModel.hasPreviousSlideshowImage || windowModel.isLoadingDetailImage || windowModel.slideshowTransitionDirection != nil)
 
         HStack(spacing: 6) {
             Image(systemName: "play.circle.fill")
@@ -99,15 +97,13 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
         .foregroundColor(.secondary)
 
         Button {
-            Task {
-                await windowModel.nextSlideshowImage()
-            }
+            windowModel.nextSlideshowImage()
         } label: {
             Image(systemName: "forward.fill")
                 .font(.title3)
         }
         .buttonStyle(.borderless)
-        .disabled(windowModel.isLoadingDetailImage)
+        .disabled(windowModel.isLoadingDetailImage || windowModel.slideshowTransitionDirection != nil)
 
         Divider()
             .frame(height: 24)

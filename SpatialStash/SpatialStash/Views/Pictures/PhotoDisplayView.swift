@@ -95,7 +95,7 @@ struct PhotoDisplayView: View {
             scheduleWindowSizeVerification()
         }
         .onChange(of: windowModel.isLoadingDetailImage) { wasLoading, isLoading in
-            if wasLoading && !isLoading {
+            if wasLoading && !isLoading && !isSwipeTransitioning {
                 windowModel.isUIHidden = false
                 windowModel.startAutoHideTimer()
             }
@@ -116,6 +116,10 @@ struct PhotoDisplayView: View {
             Task {
                 await windowModel.restoreDisplayQuality()
             }
+        }
+        .onChange(of: windowModel.slideshowTransitionDirection) { _, direction in
+            guard let direction else { return }
+            performSlideshowTransition(direction: direction)
         }
     }
 
@@ -327,6 +331,55 @@ struct PhotoDisplayView: View {
             } else {
                 resizeWindowToFit(windowModel.imageAspectRatio, within: currentBounds)
             }
+        }
+    }
+
+    private func performSlideshowTransition(direction: PhotoWindowModel.SlideshowTransitionDirection) {
+        isSwipeTransitioning = true
+        suppressWindowResize = true
+        let offScreenOffset: CGFloat = direction == .next ? -containerWidth : containerWidth
+
+        // Phase 1: Animate current image off-screen
+        withAnimation(.easeIn(duration: 0.2)) {
+            dragOffset = offScreenOffset
+        }
+
+        Task { @MainActor in
+            // Wait for off-screen animation to complete
+            try? await Task.sleep(for: .milliseconds(220))
+
+            // Phase 2: Switch to new slideshow image
+            await windowModel.performSlideshowSwitch(direction: direction)
+
+            // Position new image on opposite side without animation
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                dragOffset = -offScreenOffset
+            }
+
+            // Brief pause to let SwiftUI process the view update
+            try? await Task.sleep(for: .milliseconds(50))
+
+            // Phase 3: Animate new image sliding to center
+            withAnimation(.easeOut(duration: 0.25)) {
+                dragOffset = 0
+            }
+
+            // Wait for slide-in animation to complete
+            try? await Task.sleep(for: .milliseconds(270))
+
+            // Phase 4: Clear transition state and resize window
+            isSwipeTransitioning = false
+            suppressWindowResize = false
+            if windowModel.isAnimatedGIF {
+                resizeGIFWindowToFit(windowModel.imageAspectRatio, within: currentBounds)
+            } else {
+                resizeWindowToFit(windowModel.imageAspectRatio, within: currentBounds)
+            }
+
+            // Signal model that transition is complete (triggers preloading)
+            windowModel.slideshowTransitionCompleted()
         }
     }
 
