@@ -9,7 +9,7 @@ import Foundation
 struct SavedWindowGroup: Codable, Identifiable {
     let id: UUID
     var name: String
-    let images: [GalleryImage]
+    var images: [GalleryImage]
     let savedDate: Date
 
     init(name: String, images: [GalleryImage]) {

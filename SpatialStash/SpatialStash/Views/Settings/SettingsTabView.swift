@@ -19,6 +19,7 @@ struct SettingsTabView: View {
     @State private var showRenameGroupAlert = false
     @State private var renamingGroup: SavedWindowGroup?
     @State private var renameGroupName = ""
+    @State private var restoreSheetGroup: SavedWindowGroup?
 
     var body: some View {
         @Bindable var appModel = appModel
@@ -90,44 +91,25 @@ struct SettingsTabView: View {
                             HStack {
                                 VStack(alignment: .leading) {
                                     Text(group.name)
-                                    if appModel.restoringGroupId == group.id {
-                                        Text("\(appModel.restoreNextIndex)/\(appModel.restoreTotal) restored")
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
-                                    } else {
-                                        Text("\(group.images.count) windows \u{00B7} \(group.savedDate, style: .date)")
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
-                                    }
+                                    Text("\(group.images.count) windows \u{00B7} \(group.savedDate, style: .date)")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
                                 }
                                 Spacer()
-                                if appModel.restoringGroupId == group.id {
-                                    Button("Cancel") {
-                                        appModel.cancelRestore()
-                                    }
-                                    .buttonStyle(.borderless)
-                                    Button("Restore All") {
-                                        appModel.restoreAllRemainingWindows(openWindow: openWindow)
-                                    }
-                                    .buttonStyle(.borderless)
-                                    Button("Restore Next") {
-                                        appModel.restoreNextWindow(openWindow: openWindow)
-                                    }
-                                    .buttonStyle(.borderedProminent)
-                                } else {
-                                    Button("Rename") {
-                                        renamingGroup = group
-                                        renameGroupName = group.name
-                                        showRenameGroupAlert = true
-                                    }
-                                    .buttonStyle(.borderless)
-                                    .disabled(appModel.restoringGroupId != nil)
-                                    Button("Restore") {
-                                        appModel.beginRestore(group)
-                                    }
-                                    .buttonStyle(.borderedProminent)
-                                    .disabled(appModel.restoringGroupId != nil)
+                                Button("Rename") {
+                                    renamingGroup = group
+                                    renameGroupName = group.name
+                                    showRenameGroupAlert = true
                                 }
+                                .buttonStyle(.borderless)
+                                Button("Restore All") {
+                                    appModel.restoreAllImagesInGroup(group, openWindow: openWindow)
+                                }
+                                .buttonStyle(.borderless)
+                                Button("Restore...") {
+                                    restoreSheetGroup = group
+                                }
+                                .buttonStyle(.borderedProminent)
                             }
                         }
                         .onDelete { indexSet in
@@ -299,6 +281,10 @@ struct SettingsTabView: View {
                 }
             } message: {
                 Text("Enter a new name for this window group.")
+            }
+            .sheet(item: $restoreSheetGroup) { group in
+                WindowGroupRestoreSheet(group: group)
+                    .environment(appModel)
             }
         }
     }

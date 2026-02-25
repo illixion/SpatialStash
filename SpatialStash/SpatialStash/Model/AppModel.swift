@@ -707,70 +707,6 @@ class AppModel {
         AppLogger.windowState.info("Saved window group '\(name, privacy: .public)' with \(images.count, privacy: .public) windows")
     }
 
-    // MARK: - Window Group Restore State
-
-    var restoringGroupId: UUID?
-    private(set) var restoreNextIndex: Int = 0
-    private var restoringImages: [GalleryImage] = []
-
-    var restoreRemaining: Int {
-        guard restoringGroupId != nil else { return 0 }
-        return restoringImages.count - restoreNextIndex
-    }
-
-    var restoreTotal: Int {
-        restoringImages.count
-    }
-
-    func beginRestore(_ group: SavedWindowGroup) {
-        restoringGroupId = group.id
-        restoringImages = group.images
-        restoreNextIndex = 0
-        AppLogger.windowState.info("Begin restore of '\(group.name, privacy: .public)' with \(group.images.count, privacy: .public) windows")
-    }
-
-    func restoreNextWindow(openWindow: OpenWindowAction) {
-        guard restoreNextIndex < restoringImages.count else {
-            finishRestore()
-            return
-        }
-        let image = restoringImages[restoreNextIndex]
-        openWindow(id: "photo-detail", value: PhotoWindowValue(image: image))
-        restoreNextIndex += 1
-        if restoreNextIndex >= restoringImages.count {
-            finishRestore()
-        }
-    }
-
-    func restoreAllRemainingWindows(openWindow: OpenWindowAction) {
-        guard restoreNextIndex < restoringImages.count else {
-            finishRestore()
-            return
-        }
-        Task { @MainActor in
-            while restoreNextIndex < restoringImages.count {
-                let image = restoringImages[restoreNextIndex]
-                openWindow(id: "photo-detail", value: PhotoWindowValue(image: image))
-                restoreNextIndex += 1
-                try? await Task.sleep(for: .seconds(0.3))
-            }
-            finishRestore()
-        }
-    }
-
-    func cancelRestore() {
-        AppLogger.windowState.info("Restore cancelled at \(self.restoreNextIndex, privacy: .public)/\(self.restoringImages.count, privacy: .public)")
-        restoringGroupId = nil
-        restoringImages = []
-        restoreNextIndex = 0
-    }
-
-    private func finishRestore() {
-        AppLogger.windowState.info("Restore complete")
-        restoringGroupId = nil
-        restoringImages = []
-        restoreNextIndex = 0
-    }
 
     func deleteSavedWindowGroup(_ group: SavedWindowGroup) {
         savedWindowGroups.removeAll { $0.id == group.id }
@@ -782,6 +718,41 @@ class AppModel {
             savedWindowGroups[index].name = newName
             persistSavedWindowGroups()
         }
+    }
+
+    func removeImageFromWindowGroup(_ group: SavedWindowGroup, imageId: UUID) {
+        guard let groupIndex = savedWindowGroups.firstIndex(where: { $0.id == group.id }) else { return }
+        savedWindowGroups[groupIndex].images.removeAll { $0.id == imageId }
+        if savedWindowGroups[groupIndex].images.isEmpty {
+            savedWindowGroups.remove(at: groupIndex)
+        }
+        persistSavedWindowGroups()
+        AppLogger.windowState.info("Removed image from window group '\(group.name, privacy: .public)'")
+    }
+
+    func addImagesToWindowGroup(_ group: SavedWindowGroup, images: [GalleryImage]) {
+        guard let groupIndex = savedWindowGroups.firstIndex(where: { $0.id == group.id }) else { return }
+        savedWindowGroups[groupIndex].images.append(contentsOf: images)
+        persistSavedWindowGroups()
+        let count = images.count
+        AppLogger.windowState.info("Added \(count, privacy: .public) images to window group '\(group.name, privacy: .public)'")
+    }
+
+    func restoreAllImagesInGroup(_ group: SavedWindowGroup, openWindow: OpenWindowAction) {
+        Task { @MainActor in
+            for image in group.images {
+                openWindow(id: "photo-detail", value: PhotoWindowValue(image: image))
+                try? await Task.sleep(for: .seconds(0.3))
+            }
+            AppLogger.windowState.info("Restored all \(group.images.count, privacy: .public) windows from group '\(group.name, privacy: .public)'")
+        }
+    }
+
+    func openPopOutImagesNotInGroup(_ group: SavedWindowGroup) -> [GalleryImage] {
+        let groupURLs = Set(group.images.map(\.fullSizeURL))
+        return openPopOutWindows.values.flatMap { $0 }
+            .map(\.image)
+            .filter { !groupURLs.contains($0.fullSizeURL) }
     }
 
     /// Update the image tracked for a pop-out window (called when user navigates prev/next)
