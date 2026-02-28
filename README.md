@@ -75,7 +75,8 @@ To use local files:
 ### Pictures Tab
 Browse your image gallery in a grid view. Tap any image to open it in the viewer:
 - **Swipe** left/right to navigate between images
-- Tap the **wand** button to generate a spatial 3D version
+- Tap the **2D/3D** button to generate a spatial 3D version and toggle it on/off (3D generation may take a few seconds)
+- Tap the **person outline** button to toggle background removal
 - Tap the **play** button to start a random slideshow
 - Tap the **star** button to view/edit rating and O-count (Stash server only)
 - Tap the **pop-out** button to open the image in its own window

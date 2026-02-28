@@ -188,7 +188,7 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
                     ProgressView()
                         .scaleEffect(0.8)
                 } else {
-                    Image(systemName: windowModel.spatial3DImageState == .generated ? "view.3d" : "wand.and.stars")
+                    Image(systemName: windowModel.spatial3DImageState == .generated ? "view.3d" : "view.2d")
                 }
             }
             .font(.title3)
@@ -212,7 +212,7 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
                     ProgressView()
                         .scaleEffect(0.8)
                 } else {
-                    Image(systemName: "person.and.background.dotted")
+                    Image(systemName: windowModel.backgroundRemovalState == .original ? "person.and.background.dotted" : "person.and.background.striped.horizontal")
                 }
             }
             .font(.title3)

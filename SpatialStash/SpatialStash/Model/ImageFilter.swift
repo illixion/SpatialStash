@@ -48,7 +48,7 @@ enum CriterionModifier: String, CaseIterable, Identifiable, Codable {
 
     /// Modifiers valid for multi-select criteria (tags, galleries)
     static var multiModifiers: [CriterionModifier] {
-        [.includes, .includesAll, .excludes]
+        [.includesAll, .includes, .excludes]
     }
 
     /// Whether this modifier requires a value
@@ -185,7 +185,7 @@ struct ImageFilterCriteria: Codable, Equatable {
 
     // Gallery filter - stores full items with names for display
     var selectedGalleries: [AutocompleteItem] = []
-    var galleryModifier: CriterionModifier = .includes
+    var galleryModifier: CriterionModifier = .includesAll
 
     // O Count filter
     var oCountEnabled: Bool = false
@@ -201,15 +201,15 @@ struct ImageFilterCriteria: Codable, Equatable {
 
     // Tags filter - stores full items with names for display
     var selectedTags: [AutocompleteItem] = []
-    var tagModifier: CriterionModifier = .includes
+    var tagModifier: CriterionModifier = .includesAll
 
     // Studios filter
     var selectedStudios: [AutocompleteItem] = []
-    var studioModifier: CriterionModifier = .includes
+    var studioModifier: CriterionModifier = .includesAll
 
     // Performers filter
     var selectedPerformers: [AutocompleteItem] = []
-    var performerModifier: CriterionModifier = .includes
+    var performerModifier: CriterionModifier = .includesAll
 
     // Sort options
     var sortField: ImageSortField = .createdAt
@@ -251,7 +251,7 @@ struct ImageFilterCriteria: Codable, Equatable {
     mutating func clearFilters() {
         searchTerm = ""
         selectedGalleries = []
-        galleryModifier = .includes
+        galleryModifier = .includesAll
         oCountEnabled = false
         oCountModifier = .equals
         oCountValue = nil
@@ -261,11 +261,11 @@ struct ImageFilterCriteria: Codable, Equatable {
         ratingValue = nil
         ratingRange = NumberRange()
         selectedTags = []
-        tagModifier = .includes
+        tagModifier = .includesAll
         selectedStudios = []
-        studioModifier = .includes
+        studioModifier = .includesAll
         selectedPerformers = []
-        performerModifier = .includes
+        performerModifier = .includesAll
     }
 
     /// Generate a new random seed for random sort
@@ -295,7 +295,7 @@ struct SceneFilterCriteria: Codable, Equatable {
 
     // Gallery filter - stores full items with names for display
     var selectedGalleries: [AutocompleteItem] = []
-    var galleryModifier: CriterionModifier = .includes
+    var galleryModifier: CriterionModifier = .includesAll
 
     // O Count filter
     var oCountEnabled: Bool = false
@@ -311,15 +311,15 @@ struct SceneFilterCriteria: Codable, Equatable {
 
     // Tags filter - stores full items with names for display
     var selectedTags: [AutocompleteItem] = []
-    var tagModifier: CriterionModifier = .includes
+    var tagModifier: CriterionModifier = .includesAll
 
     // Studios filter
     var selectedStudios: [AutocompleteItem] = []
-    var studioModifier: CriterionModifier = .includes
+    var studioModifier: CriterionModifier = .includesAll
 
     // Performers filter
     var selectedPerformers: [AutocompleteItem] = []
-    var performerModifier: CriterionModifier = .includes
+    var performerModifier: CriterionModifier = .includesAll
 
     // Sort options (scene-specific)
     var sortField: SceneSortField = .createdAt
@@ -361,7 +361,7 @@ struct SceneFilterCriteria: Codable, Equatable {
     mutating func clearFilters() {
         searchTerm = ""
         selectedGalleries = []
-        galleryModifier = .includes
+        galleryModifier = .includesAll
         oCountEnabled = false
         oCountModifier = .equals
         oCountValue = nil
@@ -371,11 +371,11 @@ struct SceneFilterCriteria: Codable, Equatable {
         ratingValue = nil
         ratingRange = NumberRange()
         selectedTags = []
-        tagModifier = .includes
+        tagModifier = .includesAll
         selectedStudios = []
-        studioModifier = .includes
+        studioModifier = .includesAll
         selectedPerformers = []
-        performerModifier = .includes
+        performerModifier = .includesAll
     }
 
     /// Generate a new random seed for random sort
