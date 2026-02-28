@@ -568,6 +568,7 @@ class AppModel {
 
     func applySavedView(_ view: SavedView) {
         currentFilter = view.filter
+        normalizeEmptyMultiSelectModifiers(&currentFilter)
         selectedSavedView = view
         Task {
             await loadInitialGallery()
@@ -644,6 +645,7 @@ class AppModel {
 
     func applySavedVideoView(_ view: SavedVideoView) {
         currentVideoFilter = view.filter
+        normalizeEmptyMultiSelectModifiers(&currentVideoFilter)
         selectedSavedVideoView = view
         Task {
             await loadInitialVideos()
@@ -785,6 +787,7 @@ class AppModel {
         // Apply default image view if one exists
         if let defaultImageView = savedViews.first(where: { $0.isDefault }) {
             currentFilter = defaultImageView.filter
+            normalizeEmptyMultiSelectModifiers(&currentFilter)
             selectedSavedView = defaultImageView
             AppLogger.appModel.info("Applied default image view: \(defaultImageView.name, privacy: .public)")
         }
@@ -792,8 +795,39 @@ class AppModel {
         // Apply default video view if one exists
         if let defaultVideoView = savedVideoViews.first(where: { $0.isDefault }) {
             currentVideoFilter = defaultVideoView.filter
+            normalizeEmptyMultiSelectModifiers(&currentVideoFilter)
             selectedSavedVideoView = defaultVideoView
             AppLogger.appModel.info("Applied default video view: \(defaultVideoView.name, privacy: .public)")
+        }
+    }
+
+    private func normalizeEmptyMultiSelectModifiers(_ filter: inout ImageFilterCriteria) {
+        if filter.selectedGalleries.isEmpty {
+            filter.galleryModifier = .includesAll
+        }
+        if filter.selectedTags.isEmpty {
+            filter.tagModifier = .includesAll
+        }
+        if filter.selectedStudios.isEmpty {
+            filter.studioModifier = .includesAll
+        }
+        if filter.selectedPerformers.isEmpty {
+            filter.performerModifier = .includesAll
+        }
+    }
+
+    private func normalizeEmptyMultiSelectModifiers(_ filter: inout SceneFilterCriteria) {
+        if filter.selectedGalleries.isEmpty {
+            filter.galleryModifier = .includesAll
+        }
+        if filter.selectedTags.isEmpty {
+            filter.tagModifier = .includesAll
+        }
+        if filter.selectedStudios.isEmpty {
+            filter.studioModifier = .includesAll
+        }
+        if filter.selectedPerformers.isEmpty {
+            filter.performerModifier = .includesAll
         }
     }
 
