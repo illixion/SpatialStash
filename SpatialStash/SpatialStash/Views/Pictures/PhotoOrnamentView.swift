@@ -58,7 +58,10 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
 
             threeDButton
 
-            backgroundRemovalButton
+            // Background removal only available with lightweight 2D display
+            if !windowModel.isRealityKitDisplay {
+                backgroundRemovalButton
+            }
 
             // Rating / O counter (when stashId exists and not shared context)
             if context != .shared, windowModel.image.stashId != nil {
