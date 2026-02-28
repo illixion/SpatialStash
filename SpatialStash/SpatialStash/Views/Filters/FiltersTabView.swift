@@ -495,11 +495,11 @@ struct GalleryFilterView: View {
                                     }
                                 } label: {
                                     Text(gallery.name)
-                                        .font(.caption)
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 4)
+                                        .font(.body)
+                                        .padding(.horizontal, 14)
+                                        .padding(.vertical, 10)
                                         .background(Color.secondary.opacity(0.2))
-                                        .cornerRadius(8)
+                                        .cornerRadius(12)
                                 }
                                 .buttonStyle(.plain)
                             }
@@ -589,11 +589,11 @@ struct TagFilterView: View {
                                     }
                                 } label: {
                                     Text(tag.name)
-                                        .font(.caption)
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 4)
+                                        .font(.body)
+                                        .padding(.horizontal, 14)
+                                        .padding(.vertical, 10)
                                         .background(Color.secondary.opacity(0.2))
-                                        .cornerRadius(8)
+                                        .cornerRadius(12)
                                 }
                                 .buttonStyle(.plain)
                             }
@@ -683,11 +683,11 @@ struct StudioFilterView: View {
                                     }
                                 } label: {
                                     Text(studio.name)
-                                        .font(.caption)
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 4)
+                                        .font(.body)
+                                        .padding(.horizontal, 14)
+                                        .padding(.vertical, 10)
                                         .background(Color.secondary.opacity(0.2))
-                                        .cornerRadius(8)
+                                        .cornerRadius(12)
                                 }
                                 .buttonStyle(.plain)
                             }
@@ -777,11 +777,11 @@ struct PerformerFilterView: View {
                                     }
                                 } label: {
                                     Text(performer.name)
-                                        .font(.caption)
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 4)
+                                        .font(.body)
+                                        .padding(.horizontal, 14)
+                                        .padding(.vertical, 10)
                                         .background(Color.secondary.opacity(0.2))
-                                        .cornerRadius(8)
+                                        .cornerRadius(12)
                                 }
                                 .buttonStyle(.plain)
                             }
@@ -800,21 +800,21 @@ struct SelectedItemChip: View {
     let onRemove: () -> Void
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 6) {
             Text(name)
-                .font(.caption)
+                .font(.body)
             Button {
                 onRemove()
             } label: {
                 Image(systemName: "xmark.circle.fill")
-                    .font(.caption)
+                    .font(.body)
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
         .background(Color.accentColor.opacity(0.2))
-        .cornerRadius(8)
+        .cornerRadius(12)
     }
 }
 
