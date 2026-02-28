@@ -178,6 +178,9 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
             Task {
                 if windowModel.spatial3DImageState == .notGenerated {
                     await windowModel.generateSpatial3DImage()
+                } else if windowModel.isRealityKitDisplay {
+                    // Toggle between mono and spatial3D within RealityKit
+                    windowModel.toggleSpatial3DView()
                 } else {
                     await windowModel.deactivate3DMode()
                 }
@@ -187,6 +190,9 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
                 if windowModel.spatial3DImageState == .generating {
                     ProgressView()
                         .scaleEffect(0.8)
+                } else if windowModel.isRealityKitDisplay && windowModel.spatial3DImageState == .generated {
+                    // Show current viewing mode for RealityKit display toggle
+                    Image(systemName: windowModel.isViewingSpatial3D ? "view.3d" : "view.2d")
                 } else {
                     Image(systemName: windowModel.spatial3DImageState == .generated ? "view.3d" : "view.2d")
                 }
@@ -195,8 +201,19 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
         }
         .buttonStyle(.borderless)
         .disabled(windowModel.isAnimatedGIF)
-        .help(windowModel.spatial3DImageState == .notGenerated ? "Generate 3D" :
-              windowModel.spatial3DImageState == .generating ? "Cancel 3D" : "Exit 3D")
+        .help(threeDButtonHelp)
+    }
+
+    private var threeDButtonHelp: String {
+        if windowModel.spatial3DImageState == .notGenerated {
+            return "Generate 3D"
+        } else if windowModel.spatial3DImageState == .generating {
+            return "Generating 3D"
+        } else if windowModel.isRealityKitDisplay {
+            return windowModel.isViewingSpatial3D ? "Switch to 2D" : "Switch to 3D"
+        } else {
+            return "Exit 3D"
+        }
     }
 
     // MARK: - Background Removal Toggle

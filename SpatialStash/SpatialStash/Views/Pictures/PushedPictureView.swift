@@ -22,7 +22,7 @@ struct PushedPictureView: View {
     init(image: GalleryImage, appModel: AppModel, onDismiss: @escaping () -> Void) {
         self.image = image
         self.onDismiss = onDismiss
-        _windowModel = State(initialValue: PhotoWindowModel(image: image, appModel: appModel))
+        _windowModel = State(initialValue: PhotoWindowModel(image: image, appModel: appModel, useRealityKitDisplay: true))
     }
 
     var body: some View {

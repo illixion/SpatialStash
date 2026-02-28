@@ -147,16 +147,22 @@ class PhotoWindowModel {
     /// Pop-out window value for tracking (nil for pushed/shared windows)
     private let popOutWindowValue: PhotoWindowValue?
 
+    /// When true, always use RealityKit's ImagePresentationComponent in mono mode
+    /// instead of the lightweight 2D SwiftUI Image. Used by the main window picture
+    /// viewer so the 2D-to-3D transition uses RealityKit's built-in animation.
+    private let useRealityKitDisplay: Bool
+
     // MARK: - Initialization
 
     /// Whether start() has been called (guards against duplicate onAppear calls)
     private var didStart = false
 
-    init(image: GalleryImage, appModel: AppModel, popOutWindowValue: PhotoWindowValue? = nil) {
+    init(image: GalleryImage, appModel: AppModel, popOutWindowValue: PhotoWindowValue? = nil, useRealityKitDisplay: Bool = false) {
         self.image = image
         self.imageURL = image.fullSizeURL
         self.appModel = appModel
         self.popOutWindowValue = popOutWindowValue
+        self.useRealityKitDisplay = useRealityKitDisplay
         self.isLoadingDetailImage = true
 
         // Capture pagination state for lazy loading (must be before galleryImages access)
@@ -221,8 +227,18 @@ class PhotoWindowModel {
     }
 
     /// Auto-restore the last enhancement (3D or background removal) if applicable.
+    /// When useRealityKitDisplay is set, always activates RealityKit in mono mode.
     private func autoRestorePreviousEnhancement() async {
         guard !isAnimatedGIF, !is3DMode else { return }
+
+        if useRealityKitDisplay {
+            // Always use RealityKit — check if we should also auto-generate 3D
+            let lastMode = await ImageEnhancementTracker.shared.lastViewingMode(url: imageURL)
+            let wasConverted = await ImageEnhancementTracker.shared.wasConverted(url: imageURL)
+            let shouldAutoGenerate = wasConverted && lastMode == .spatial3D
+            activate3DMode(generateImmediately: shouldAutoGenerate)
+            return
+        }
 
         let lastMode = await ImageEnhancementTracker.shared.lastViewingMode(url: imageURL)
         let wasConverted = await ImageEnhancementTracker.shared.wasConverted(url: imageURL)
@@ -460,9 +476,17 @@ class PhotoWindowModel {
         // RealityView's init closure will call createImagePresentationComponent()
     }
 
-    /// Deactivate 3D mode and return to lightweight 2D display.
+    /// Deactivate 3D mode and return to 2D display.
+    /// When useRealityKitDisplay is set, toggles the RealityKit viewing mode back
+    /// to mono instead of switching to the lightweight SwiftUI Image display.
     func deactivate3DMode() async {
         guard is3DMode else { return }
+
+        if useRealityKitDisplay {
+            // Stay in RealityKit but switch viewing mode to mono
+            toggleSpatial3DView()
+            return
+        }
 
         // If generation is in progress, we MUST wait for it to finish before
         // removing ImagePresentationComponent. RealityKit's generate() ignores
@@ -645,6 +669,14 @@ class PhotoWindowModel {
         await task.value
         generateTask = nil
     }
+
+    /// Whether the RealityKit component is currently showing spatial 3D (vs mono)
+    var isViewingSpatial3D: Bool {
+        contentEntity.components[ImagePresentationComponent.self]?.viewingMode == .spatial3D
+    }
+
+    /// Whether this model always uses RealityKit for display (even in 2D/mono mode)
+    var isRealityKitDisplay: Bool { useRealityKitDisplay }
 
     /// Toggle 2D/3D view
     func toggleSpatial3DView() {
@@ -885,14 +917,16 @@ class PhotoWindowModel {
         contentEntity.components.remove(ImagePresentationComponent.self)
         clearBackgroundRemovalState()
 
-        // Always start in 2D mode when switching images
+        // Reset to 2D mode when switching images (RealityView will be recreated
+        // if needed when activate3DMode sets is3DMode back to true)
         is3DMode = false
 
         // Load image data to detect if it's a GIF
         await loadImageDataForDetail(url: newImage.fullSizeURL)
 
-        // Load 2D display image if not a GIF
-        if !isAnimatedGIF, let windowSize = lastWindowSize {
+        // Load 2D display image if not a GIF and not using RealityKit display
+        // (useRealityKitDisplay images go through autoRestorePreviousEnhancement → activate3DMode)
+        if !isAnimatedGIF && !useRealityKitDisplay, let windowSize = lastWindowSize {
             await loadDisplayImage(for: windowSize)
         }
     }
