@@ -42,6 +42,9 @@ struct PhotoDisplayView: View {
     /// Minimum drag fraction of container width to trigger swipe
     private let swipeThresholdFraction: CGFloat = 0.3
 
+    /// Very large window size for immersive mode (fills field of vision)
+    private let immersiveWindowSize: CGSize = CGSize(width: 3000, height: 3000)
+
     /// The bounds used to fit images into — starts as main window size, then tracks viewer size
     private var currentBounds: CGSize {
         viewerWindowSize ?? appModel.mainWindowSize
@@ -211,6 +214,26 @@ struct PhotoDisplayView: View {
                     guard !suppressWindowResize else { return }
                     resizeWindowToFit(newAspectRatio, within: currentBounds)
                 }
+                .onChange(of: windowModel.immersiveResizeTrigger) { _, _ in
+                    // Triggered when entering or exiting immersive mode
+                    guard !suppressWindowResize else { return }
+                    
+                    // Check the component's desiredViewingMode to see if we're going immersive
+                    if let component = windowModel.contentEntity.components[ImagePresentationComponent.self] {
+                        let isImmersive = component.desiredViewingMode == .spatial3DImmersive
+                        
+                        if isImmersive {
+                            // Store current size before entering immersive
+                            windowModel.preImmersiveWindowSize = viewerWindowSize ?? currentBounds
+                            resizeWindowToFit(windowModel.imageAspectRatio, within: immersiveWindowSize, forceImmersive: true)
+                        } else {
+                            // Exiting immersive - restore original size
+                            let restoreSize = windowModel.preImmersiveWindowSize ?? appModel.mainWindowSize
+                            resizeWindowToFit(windowModel.imageAspectRatio, within: restoreSize, forceImmersive: false)
+                            windowModel.preImmersiveWindowSize = nil
+                        }
+                    }
+                }
                 .onChange(of: windowModel.isLoadingDetailImage) { wasLoading, isLoading in
                     if wasLoading && !isLoading {
                         resizeWindowToFit(windowModel.imageAspectRatio, within: currentBounds)
@@ -219,7 +242,10 @@ struct PhotoDisplayView: View {
                 }
             }
             .aspectRatio(windowModel.imageAspectRatio, contentMode: .fit)
-            .clipShape(RoundedRectangle(cornerRadius: appModel.roundedCorners ? 50 : 0, style: .continuous))
+            .clipShape(RoundedRectangle(
+                cornerRadius: (appModel.roundedCorners && !windowModel.isViewingSpatial3DImmersive) ? 50 : 0,
+                style: .continuous
+            ))
         } else if let uiImage = windowModel.displayImage {
             // Lightweight 2D display with downsampled UIImage (no RealityKit, low memory)
             Image(uiImage: uiImage)
@@ -400,10 +426,20 @@ struct PhotoDisplayView: View {
     }
 
     /// Resize window to fit image aspect ratio within given bounds
-    private func resizeWindowToFit(_ aspectRatio: CGFloat, within bounds: CGSize) {
+    private func resizeWindowToFit(_ aspectRatio: CGFloat, within bounds: CGSize, forceImmersive: Bool? = nil) {
         guard let windowScene = resolvedWindowScene else { return }
 
-        let size = windowSize(for: aspectRatio, within: bounds)
+        // Use explicit immersive flag if provided, otherwise detect automatically
+        let shouldUseImmersive: Bool
+        if let forceImmersive {
+            shouldUseImmersive = forceImmersive
+        } else {
+            shouldUseImmersive = windowModel.isViewingSpatial3DImmersive
+        }
+        
+        let effectiveBounds = shouldUseImmersive ? immersiveWindowSize : bounds
+        let size = windowSize(for: aspectRatio, within: effectiveBounds)
+        
         UIView.performWithoutAnimation {
             windowScene.requestGeometryUpdate(.Vision(size: size))
         }

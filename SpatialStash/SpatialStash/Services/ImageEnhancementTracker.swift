@@ -11,6 +11,7 @@ import os
 enum ViewingModePreference: String {
     case mono
     case spatial3D
+    case spatial3DImmersive
     case backgroundRemoved
 }
 

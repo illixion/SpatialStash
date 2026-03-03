@@ -235,7 +235,7 @@ class PhotoWindowModel {
             // Always use RealityKit — check if we should also auto-generate 3D
             let lastMode = await ImageEnhancementTracker.shared.lastViewingMode(url: imageURL)
             let wasConverted = await ImageEnhancementTracker.shared.wasConverted(url: imageURL)
-            let shouldAutoGenerate = wasConverted && lastMode == .spatial3D
+            let shouldAutoGenerate = wasConverted && (lastMode == .spatial3D || lastMode == .spatial3DImmersive)
             activate3DMode(generateImmediately: shouldAutoGenerate)
             return
         }
@@ -243,7 +243,7 @@ class PhotoWindowModel {
         let lastMode = await ImageEnhancementTracker.shared.lastViewingMode(url: imageURL)
         let wasConverted = await ImageEnhancementTracker.shared.wasConverted(url: imageURL)
 
-        if wasConverted && lastMode == .spatial3D {
+        if wasConverted && (lastMode == .spatial3D || lastMode == .spatial3DImmersive) {
             // Auto-activate 3D (skips 2D load entirely)
             activate3DMode()
         } else if lastMode == .backgroundRemoved {
@@ -484,7 +484,7 @@ class PhotoWindowModel {
 
         if useRealityKitDisplay {
             // Stay in RealityKit but switch viewing mode to mono
-            toggleSpatial3DView()
+            cycleSpatial3DView()
             return
         }
 
@@ -504,6 +504,7 @@ class PhotoWindowModel {
         pendingGenerate3D = false
         contentEntity.components.remove(ImagePresentationComponent.self)
         is3DMode = false
+        desiredViewingMode = .mono  // Reset to mono when exiting 3D entirely
 
         // Record that the user explicitly exited 3D so auto-restore doesn't re-enable it
         await ImageEnhancementTracker.shared.setLastViewingMode(url: imageURL, mode: .mono)
@@ -574,6 +575,7 @@ class PhotoWindowModel {
 
         let imagePresentationComponent = ImagePresentationComponent(spatial3DImage: spatial3DImage)
         contentEntity.components.set(imagePresentationComponent)
+        desiredViewingMode = .mono  // Initialize to mono when component is created
         if let aspectRatio = imagePresentationComponent.aspectRatio(for: .mono) {
             imageAspectRatio = CGFloat(aspectRatio)
         }
@@ -630,6 +632,7 @@ class PhotoWindowModel {
         // Set the desired viewing mode before generating so that it will trigger the
         // generation animation.
         imagePresentationComponent.desiredViewingMode = .spatial3D
+        desiredViewingMode = .spatial3D  // Update observable property for button icon
         contentEntity.components.set(imagePresentationComponent)
 
         spatial3DImageState = .generating
@@ -649,12 +652,20 @@ class PhotoWindowModel {
 
                 self.spatial3DImageState = .generated
 
+                // Check if we should restore immersive mode before updating tracker
+                let wasImmersive = await ImageEnhancementTracker.shared.lastViewingMode(url: self.imageURL) == .spatial3DImmersive
+
                 // Track that this image was converted
                 await ImageEnhancementTracker.shared.markAsConverted(url: self.imageURL)
                 await ImageEnhancementTracker.shared.setLastViewingMode(url: self.imageURL, mode: .spatial3D)
 
                 if let aspectRatio = imagePresentationComponent.aspectRatio(for: .spatial3D) {
                     self.imageAspectRatio = CGFloat(aspectRatio)
+                }
+
+                // If the image was previously viewed in immersive mode, restore that mode
+                if wasImmersive {
+                    self.cycleSpatial3DView()
                 }
             } catch {
                 if !Task.isCancelled {
@@ -672,28 +683,69 @@ class PhotoWindowModel {
 
     /// Whether the RealityKit component is currently showing spatial 3D (vs mono)
     var isViewingSpatial3D: Bool {
-        contentEntity.components[ImagePresentationComponent.self]?.viewingMode == .spatial3D
+        if let viewingMode = contentEntity.components[ImagePresentationComponent.self]?.viewingMode {
+            return viewingMode == .spatial3D || viewingMode == .spatial3DImmersive
+        }
+        return false
     }
+
+    /// Whether the RealityKit component is currently showing immersive spatial 3D
+    var isViewingSpatial3DImmersive: Bool {
+        contentEntity.components[ImagePresentationComponent.self]?.viewingMode == .spatial3DImmersive
+    }
+
+    /// Current viewing mode of the ImagePresentationComponent
+    var currentViewingMode: ImagePresentationComponent.ViewingMode? {
+        contentEntity.components[ImagePresentationComponent.self]?.viewingMode
+    }
+
+    /// Trigger for immersive window resize (incremented when entering/exiting immersive)
+    var immersiveResizeTrigger: Int = 0
+
+    /// Window size before entering immersive mode (for restoration)
+    var preImmersiveWindowSize: CGSize? = nil
+
+    /// The desired viewing mode (set immediately, before RealityKit animation completes)
+    var desiredViewingMode: ImagePresentationComponent.ViewingMode = .mono
 
     /// Whether this model always uses RealityKit for display (even in 2D/mono mode)
     var isRealityKitDisplay: Bool { useRealityKitDisplay }
 
-    /// Toggle 2D/3D view
-    func toggleSpatial3DView() {
+    /// Cycle viewing mode: mono -> spatial3D -> spatial3DImmersive -> mono
+    func cycleSpatial3DView() {
         guard var imagePresentationComponent = contentEntity.components[ImagePresentationComponent.self] else {
             return
         }
 
-        // Toggle viewing mode
-        if imagePresentationComponent.viewingMode == .spatial3D {
+        if imagePresentationComponent.viewingMode == .spatial3DImmersive {
             imagePresentationComponent.desiredViewingMode = .mono
+            desiredViewingMode = .mono
             contentEntity.components.set(imagePresentationComponent)
+            if let aspectRatio = imagePresentationComponent.aspectRatio(for: .mono) {
+                imageAspectRatio = CGFloat(aspectRatio)
+            }
+            immersiveResizeTrigger += 1  // Signal exit from immersive
             Task {
                 await ImageEnhancementTracker.shared.setLastViewingMode(url: imageURL, mode: .mono)
             }
+        } else if imagePresentationComponent.viewingMode == .spatial3D {
+            imagePresentationComponent.desiredViewingMode = .spatial3DImmersive
+            desiredViewingMode = .spatial3DImmersive
+            contentEntity.components.set(imagePresentationComponent)
+            if let aspectRatio = imagePresentationComponent.aspectRatio(for: .spatial3DImmersive) {
+                imageAspectRatio = CGFloat(aspectRatio)
+            }
+            immersiveResizeTrigger += 1  // Signal entry to immersive
+            Task {
+                await ImageEnhancementTracker.shared.setLastViewingMode(url: imageURL, mode: .spatial3DImmersive)
+            }
         } else if spatial3DImageState == .generated {
             imagePresentationComponent.desiredViewingMode = .spatial3D
+            desiredViewingMode = .spatial3D
             contentEntity.components.set(imagePresentationComponent)
+            if let aspectRatio = imagePresentationComponent.aspectRatio(for: .spatial3D) {
+                imageAspectRatio = CGFloat(aspectRatio)
+            }
             Task {
                 await ImageEnhancementTracker.shared.setLastViewingMode(url: imageURL, mode: .spatial3D)
             }

@@ -32,6 +32,7 @@ struct SharedPhotoWindowView: View {
                 unavailableContent
             }
         }
+        .persistentSystemOverlays(windowModel.isUIHidden ? .hidden : .visible)
         .ornament(
             visibility: windowModel.isUIHidden ? .hidden : .visible,
             attachmentAnchor: .scene(.bottomFront),

@@ -6,6 +6,7 @@
  navigation, slideshow, rating, and context-specific buttons.
  */
 
+import RealityKit
 import SwiftUI
 
 /// Determines which controls are visible in the photo ornament
@@ -182,10 +183,15 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
                 if windowModel.spatial3DImageState == .notGenerated {
                     await windowModel.generateSpatial3DImage()
                 } else if windowModel.isRealityKitDisplay {
-                    // Toggle between mono and spatial3D within RealityKit
-                    windowModel.toggleSpatial3DView()
+                    // Cycle mono -> spatial3D -> spatial3DImmersive -> mono
+                    windowModel.cycleSpatial3DView()
                 } else {
-                    await windowModel.deactivate3DMode()
+                    // 2D viewer cycle: 2D -> spatial3D -> spatial3DImmersive -> 2D
+                    if windowModel.isViewingSpatial3DImmersive {
+                        await windowModel.deactivate3DMode()
+                    } else {
+                        windowModel.cycleSpatial3DView()
+                    }
                 }
             }
         } label: {
@@ -194,10 +200,20 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
                     ProgressView()
                         .scaleEffect(0.8)
                 } else if windowModel.isRealityKitDisplay && windowModel.spatial3DImageState == .generated {
-                    // Show current viewing mode for RealityKit display toggle
-                    Image(systemName: windowModel.isViewingSpatial3D ? "view.3d" : "view.2d")
+                    // Show desired viewing mode for immediate icon update
+                    let mode = windowModel.desiredViewingMode
+                    if mode == .spatial3DImmersive {
+                        Image(systemName: "view.3d")
+                    } else if mode == .spatial3D {
+                        Image(systemName: "view.3d")
+                    } else {
+                        Image(systemName: "view.2d")
+                    }
                 } else {
-                    Image(systemName: windowModel.spatial3DImageState == .generated ? "view.3d" : "view.2d")
+                    // Non-RealityKit display: use desiredViewingMode for immediate icon update
+                    let is3D = windowModel.spatial3DImageState == .generated && 
+                               (windowModel.desiredViewingMode == .spatial3D || windowModel.desiredViewingMode == .spatial3DImmersive)
+                    Image(systemName: is3D ? "view.3d" : "view.2d")
                 }
             }
             .font(.title3)
@@ -213,9 +229,13 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
         } else if windowModel.spatial3DImageState == .generating {
             return "Generating 3D"
         } else if windowModel.isRealityKitDisplay {
-            return windowModel.isViewingSpatial3D ? "Switch to 2D" : "Switch to 3D"
+            if windowModel.desiredViewingMode == .spatial3DImmersive {
+                return "Switch to 2D"
+            }
+            return windowModel.desiredViewingMode == .spatial3D ? "Switch to Immersive 3D" : "Switch to 3D"
         } else {
-            return "Exit 3D"
+            // Non-RealityKit display
+            return windowModel.desiredViewingMode == .spatial3DImmersive ? "Exit 3D" : "Switch to Immersive 3D"
         }
     }
 
