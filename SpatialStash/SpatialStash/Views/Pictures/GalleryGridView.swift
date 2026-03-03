@@ -72,7 +72,9 @@ struct GalleryGridView: View {
                         if let lastId = appModel.lastViewedImageId {
                             // Delay to allow LazyVGrid to materialize items before scrolling
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                proxy.scrollTo(lastId, anchor: .top)
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    proxy.scrollTo(lastId, anchor: .center)
+                                }
                             }
                         }
                     }
