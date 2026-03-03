@@ -752,6 +752,43 @@ class PhotoWindowModel {
         }
     }
 
+    /// Switch directly to a specific viewing mode without cycling.
+    func switchToViewingMode(_ mode: ImagePresentationComponent.ViewingMode) async {
+        if mode == .mono {
+            await deactivate3DMode()
+        } else if mode == .spatial3D {
+            if spatial3DImageState == .notGenerated {
+                await generateSpatial3DImage()
+                // generateSpatial3DImage already sets desiredViewingMode = .spatial3D
+            } else {
+                guard var ipc = contentEntity.components[ImagePresentationComponent.self] else { return }
+                guard ipc.viewingMode != .spatial3D else { return }
+                let wasImmersive = ipc.viewingMode == .spatial3DImmersive
+                ipc.desiredViewingMode = .spatial3D
+                desiredViewingMode = .spatial3D
+                contentEntity.components.set(ipc)
+                if let ar = ipc.aspectRatio(for: .spatial3D) { imageAspectRatio = CGFloat(ar) }
+                if wasImmersive { immersiveResizeTrigger += 1 }
+                Task { await ImageEnhancementTracker.shared.setLastViewingMode(url: self.imageURL, mode: .spatial3D) }
+            }
+        } else if mode == .spatial3DImmersive {
+            if spatial3DImageState == .notGenerated {
+                await generateSpatial3DImage()
+                // Now in spatial3D; advance to immersive
+                cycleSpatial3DView()
+            } else {
+                guard var ipc = contentEntity.components[ImagePresentationComponent.self] else { return }
+                guard ipc.viewingMode != .spatial3DImmersive else { return }
+                ipc.desiredViewingMode = .spatial3DImmersive
+                desiredViewingMode = .spatial3DImmersive
+                contentEntity.components.set(ipc)
+                if let ar = ipc.aspectRatio(for: .spatial3DImmersive) { imageAspectRatio = CGFloat(ar) }
+                immersiveResizeTrigger += 1
+                Task { await ImageEnhancementTracker.shared.setLastViewingMode(url: self.imageURL, mode: .spatial3DImmersive) }
+            }
+        }
+    }
+
     /// Check if the current image was previously converted and auto-generate if so
     private func autoGenerateSpatial3DIfPreviouslyConverted() async {
         guard !isAnimatedGIF,

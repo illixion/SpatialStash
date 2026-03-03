@@ -178,65 +178,43 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
     // MARK: - 3D Toggle
 
     private var threeDButton: some View {
-        Button {
-            Task {
-                if windowModel.spatial3DImageState == .notGenerated {
-                    await windowModel.generateSpatial3DImage()
-                } else if windowModel.isRealityKitDisplay {
-                    // Cycle mono -> spatial3D -> spatial3DImmersive -> mono
-                    windowModel.cycleSpatial3DView()
-                } else {
-                    // 2D viewer cycle: 2D -> spatial3D -> spatial3DImmersive -> 2D
-                    if windowModel.isViewingSpatial3DImmersive {
-                        await windowModel.deactivate3DMode()
-                    } else {
-                        windowModel.cycleSpatial3DView()
-                    }
-                }
+        Menu {
+            Button {
+                Task { await windowModel.switchToViewingMode(.mono) }
+            } label: {
+                Label("2D", systemImage: "view.2d")
+            }
+
+            Button {
+                Task { await windowModel.switchToViewingMode(.spatial3D) }
+            } label: {
+                Label("3D", systemImage: "view.3d")
+            }
+
+            Button {
+                Task { await windowModel.switchToViewingMode(.spatial3DImmersive) }
+            } label: {
+                Label("Immersive 3D", systemImage: "rotate.3d")
             }
         } label: {
             Group {
                 if windowModel.spatial3DImageState == .generating {
                     ProgressView()
                         .scaleEffect(0.8)
-                } else if windowModel.isRealityKitDisplay && windowModel.spatial3DImageState == .generated {
-                    // Show desired viewing mode for immediate icon update
-                    let mode = windowModel.desiredViewingMode
-                    if mode == .spatial3DImmersive {
-                        Image(systemName: "view.3d")
-                    } else if mode == .spatial3D {
-                        Image(systemName: "view.3d")
-                    } else {
-                        Image(systemName: "view.2d")
-                    }
+                } else if windowModel.desiredViewingMode == .spatial3DImmersive {
+                    Image(systemName: "rotate.3d")
+                } else if windowModel.desiredViewingMode == .spatial3D {
+                    Image(systemName: "view.3d")
                 } else {
-                    // Non-RealityKit display: use desiredViewingMode for immediate icon update
-                    let is3D = windowModel.spatial3DImageState == .generated && 
-                               (windowModel.desiredViewingMode == .spatial3D || windowModel.desiredViewingMode == .spatial3DImmersive)
-                    Image(systemName: is3D ? "view.3d" : "view.2d")
+                    Image(systemName: "view.2d")
                 }
             }
             .font(.title3)
         }
+        .menuStyle(.button)
         .buttonStyle(.borderless)
-        .disabled(windowModel.isAnimatedGIF)
-        .help(threeDButtonHelp)
-    }
-
-    private var threeDButtonHelp: String {
-        if windowModel.spatial3DImageState == .notGenerated {
-            return "Generate 3D"
-        } else if windowModel.spatial3DImageState == .generating {
-            return "Generating 3D"
-        } else if windowModel.isRealityKitDisplay {
-            if windowModel.desiredViewingMode == .spatial3DImmersive {
-                return "Switch to 2D"
-            }
-            return windowModel.desiredViewingMode == .spatial3D ? "Switch to Immersive 3D" : "Switch to 3D"
-        } else {
-            // Non-RealityKit display
-            return windowModel.desiredViewingMode == .spatial3DImmersive ? "Exit 3D" : "Switch to Immersive 3D"
-        }
+        .disabled(windowModel.isAnimatedGIF || windowModel.spatial3DImageState == .generating)
+        .help("Display Mode")
     }
 
     // MARK: - Background Removal Toggle
