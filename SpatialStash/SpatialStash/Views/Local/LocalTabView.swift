@@ -159,7 +159,7 @@ struct LocalMediaListView: View {
 
     var body: some View {
         Group {
-            if let image = selectedImage {
+            if !appModel.openImagesInSeparateWindows, let image = selectedImage {
                 PushedPictureView(image: image, appModel: appModel, onDismiss: {
                     selectedImage = nil
                 })
@@ -244,7 +244,11 @@ struct LocalMediaListView: View {
                                                 url: file.url,
                                                 title: file.name
                                             )
-                                            selectedImage = image
+                                            if appModel.openImagesInSeparateWindows {
+                                                openWindow(id: "photo-detail", value: PhotoWindowValue(image: image))
+                                            } else {
+                                                selectedImage = image
+                                            }
                                         }
                                     }
                                 }
@@ -284,6 +288,11 @@ struct LocalMediaListView: View {
             }
         }
         .environment(appModel)
+        .onChange(of: appModel.openImagesInSeparateWindows) { _, isEnabled in
+            if isEnabled {
+                selectedImage = nil
+            }
+        }
     }
 
     private func loadContent() {

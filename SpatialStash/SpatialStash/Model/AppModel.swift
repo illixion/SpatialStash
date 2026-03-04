@@ -282,6 +282,16 @@ class AppModel {
         }
     }
 
+    /// When true, image selections open in separate pop-out windows instead of
+    /// replacing the main app grid with a pushed picture viewer.
+    var openImagesInSeparateWindows: Bool {
+        didSet {
+            if openImagesInSeparateWindows != oldValue {
+                UserDefaults.standard.set(openImagesInSeparateWindows, forKey: "openImagesInSeparateWindows")
+            }
+        }
+    }
+
     // MARK: - Slideshow Settings
 
     /// Slideshow delay between images (in seconds)
@@ -336,6 +346,11 @@ class AppModel {
             ? UserDefaults.standard.bool(forKey: "roundedCorners")
             : true
 
+        // Load image opening mode (default: false = open in main window)
+        let loadedOpenImagesInSeparateWindows = UserDefaults.standard.object(forKey: "openImagesInSeparateWindows") != nil
+            ? UserDefaults.standard.bool(forKey: "openImagesInSeparateWindows")
+            : false
+
         // Initialize stored properties
         self.stashServerURL = loadedServerURL
         self.stashAPIKey = loadedAPIKey
@@ -343,6 +358,7 @@ class AppModel {
         self.slideshowDelay = loadedSlideshowDelay
         self.maxImageResolution = loadedMaxImageResolution
         self.roundedCorners = loadedRoundedCorners
+        self.openImagesInSeparateWindows = loadedOpenImagesInSeparateWindows
 
         // Initialize API client and image sources
         let client: StashAPIClient

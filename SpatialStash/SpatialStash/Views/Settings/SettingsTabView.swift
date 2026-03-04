@@ -29,6 +29,8 @@ struct SettingsTabView: View {
                 Section("Display") {
                     Toggle("Rounded Corners", isOn: $appModel.roundedCorners)
 
+                    Toggle("Open images in separate windows", isOn: $appModel.openImagesInSeparateWindows)
+
                     Picker("Max Image Resolution", selection: $appModel.maxImageResolution) {
                         ForEach(AppModel.maxImageResolutionOptions, id: \.value) { option in
                             Text(option.label).tag(option.value)
