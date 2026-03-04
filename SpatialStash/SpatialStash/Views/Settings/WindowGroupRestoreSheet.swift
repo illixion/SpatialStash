@@ -9,7 +9,6 @@ import SwiftUI
 
 struct WindowGroupRestoreSheet: View {
     @Environment(AppModel.self) private var appModel
-    @Environment(\.openWindow) private var openWindow
     @Environment(\.dismiss) private var dismiss
 
     let group: SavedWindowGroup
@@ -39,7 +38,7 @@ struct WindowGroupRestoreSheet: View {
                                         selectedImageIds.insert(image.id)
                                     }
                                 } else {
-                                    openWindow(id: "photo-detail", value: PhotoWindowValue(image: image))
+                                    appModel.enqueuePhotoWindowOpen(image)
                                     restoredImageIds.insert(image.id)
                                 }
                             } label: {

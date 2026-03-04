@@ -14,7 +14,6 @@ struct PushedPictureView: View {
     @State private var windowModel: PhotoWindowModel
     @Environment(AppModel.self) private var appModel
     @Environment(\.dismissWindow) private var dismissWindow
-    @Environment(\.openWindow) private var openWindow
 
     @State private var pendingPopOutImage: GalleryImage? = nil
     @State private var showDuplicateWindowAlert: Bool = false
@@ -71,13 +70,13 @@ struct PushedPictureView: View {
                         for value in existingValues {
                             dismissWindow(id: "photo-detail", value: value)
                         }
-                        openWindow(id: "photo-detail", value: PhotoWindowValue(image: image))
+                        appModel.enqueuePhotoWindowOpen(image, bypassDuplicatePrompt: true)
                         pendingPopOutImage = nil
                     }
                 }
                 Button("Open New") {
                     if let image = pendingPopOutImage {
-                        openWindow(id: "photo-detail", value: PhotoWindowValue(image: image))
+                        appModel.enqueuePhotoWindowOpen(image, bypassDuplicatePrompt: true)
                         pendingPopOutImage = nil
                     }
                 }
@@ -98,7 +97,7 @@ struct PushedPictureView: View {
                 pendingPopOutImage = image
                 showDuplicateWindowAlert = true
             } else {
-                openWindow(id: "photo-detail", value: PhotoWindowValue(image: image))
+                appModel.enqueuePhotoWindowOpen(image)
             }
         } label: {
             Image(systemName: "rectangle.portrait.on.rectangle.portrait")

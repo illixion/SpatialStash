@@ -9,7 +9,6 @@ import SwiftUI
 
 struct SettingsTabView: View {
     @Environment(AppModel.self) private var appModel
-    @Environment(\.openWindow) private var openWindow
     @State private var imageCacheStats: (fileCount: Int, totalSize: Int64) = (0, 0)
     @State private var videoCacheStats: (fileCount: Int, totalSize: Int64) = (0, 0)
     @State private var isClearingImageCache = false
@@ -89,7 +88,7 @@ struct SettingsTabView: View {
                                 }
                                 .buttonStyle(.borderless)
                                 Button("Restore All") {
-                                    appModel.restoreAllImagesInGroup(group, openWindow: openWindow)
+                                    appModel.restoreAllImagesInGroup(group)
                                 }
                                 .buttonStyle(.borderless)
                                 Button("Restore...") {

@@ -9,7 +9,6 @@ import SwiftUI
 
 struct PicturesTabView: View {
     @Environment(AppModel.self) private var appModel
-    @Environment(\.openWindow) private var openWindow
     @State private var selectedImage: GalleryImage? = nil
 
     var body: some View {
@@ -21,7 +20,7 @@ struct PicturesTabView: View {
             } else {
                 GalleryGridView(onImageSelected: { image in
                     if appModel.openImagesInSeparateWindows {
-                        openWindow(id: "photo-detail", value: PhotoWindowValue(image: image))
+                        appModel.enqueuePhotoWindowOpen(image)
                     } else {
                         selectedImage = image
                     }

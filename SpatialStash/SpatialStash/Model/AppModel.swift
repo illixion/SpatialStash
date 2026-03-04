@@ -155,6 +155,65 @@ class AppModel {
     /// Number of currently open pop-out photo windows
     var openPhotoWindowCount: Int = 0
 
+    /// Request to open a photo window (consumed by ContentView)
+    struct PhotoWindowOpenRequest: Identifiable {
+        let id = UUID()
+        let image: GalleryImage
+        let bypassDuplicatePrompt: Bool
+    }
+
+    /// Current open request being processed
+    var activePhotoWindowOpenRequest: PhotoWindowOpenRequest?
+
+    /// Queue for pending photo window open requests
+    private var queuedPhotoWindowOpenRequests: [PhotoWindowOpenRequest] = []
+
+    /// Allow opening duplicate windows for the current request
+    private var allowDuplicateOpen: Bool = false
+
+    func enqueuePhotoWindowOpen(
+        _ image: GalleryImage,
+        bypassDuplicatePrompt: Bool = false
+    ) {
+        let request = PhotoWindowOpenRequest(
+            image: image,
+            bypassDuplicatePrompt: bypassDuplicatePrompt
+        )
+        queuedPhotoWindowOpenRequests.append(request)
+
+        if activePhotoWindowOpenRequest == nil {
+            activePhotoWindowOpenRequest = queuedPhotoWindowOpenRequests.removeFirst()
+        }
+    }
+
+    func shouldConfirmDuplicateOpen(for request: PhotoWindowOpenRequest) -> Bool {
+        if request.bypassDuplicatePrompt || allowDuplicateOpen {
+            return false
+        }
+
+        return hasOpenPopOutWindow(for: request.image.fullSizeURL)
+    }
+
+    func confirmDuplicateOpen() {
+        allowDuplicateOpen = true
+    }
+
+    func advancePhotoWindowOpenQueue() {
+        if queuedPhotoWindowOpenRequests.isEmpty {
+            activePhotoWindowOpenRequest = nil
+            allowDuplicateOpen = false
+        } else {
+            activePhotoWindowOpenRequest = queuedPhotoWindowOpenRequests.removeFirst()
+            allowDuplicateOpen = false
+        }
+    }
+
+    func cancelPendingPhotoWindowOpens() {
+        queuedPhotoWindowOpenRequests.removeAll()
+        activePhotoWindowOpenRequest = nil
+        allowDuplicateOpen = false
+    }
+
     // MARK: - Pop-Out Window Tracking
 
     /// Tracks open pop-out photo windows by image fullSizeURL string.
@@ -677,10 +736,10 @@ class AppModel {
         AppLogger.windowState.info("Added \(count, privacy: .public) images to window group '\(group.name, privacy: .public)'")
     }
 
-    func restoreAllImagesInGroup(_ group: SavedWindowGroup, openWindow: OpenWindowAction) {
+    func restoreAllImagesInGroup(_ group: SavedWindowGroup) {
         Task { @MainActor in
             for image in group.images {
-                openWindow(id: "photo-detail", value: PhotoWindowValue(image: image))
+                enqueuePhotoWindowOpen(image)
                 try? await Task.sleep(for: .seconds(0.3))
             }
             AppLogger.windowState.info("Restored all \(group.images.count, privacy: .public) windows from group '\(group.name, privacy: .public)'")

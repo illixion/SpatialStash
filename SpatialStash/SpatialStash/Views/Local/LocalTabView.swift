@@ -133,7 +133,6 @@ struct FolderListView: View {
 struct LocalMediaListView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(SceneDelegate.self) private var sceneDelegate: SceneDelegate?
-    @Environment(\.openWindow) private var openWindow
 
     let folderPath: [String]
     let onBack: () -> Void
@@ -245,7 +244,7 @@ struct LocalMediaListView: View {
                                                 title: file.name
                                             )
                                             if appModel.openImagesInSeparateWindows {
-                                                openWindow(id: "photo-detail", value: PhotoWindowValue(image: image))
+                                                appModel.enqueuePhotoWindowOpen(image)
                                             } else {
                                                 selectedImage = image
                                             }
