@@ -1,8 +1,8 @@
 /*
- Spatial Stash - Local Tab View
+ Spatial Stash - Local Tab View with Folder Hierarchy
 
- Container for browsing local media files from the app Documents folder.
- Shows two folders: Photos and Videos.
+ Container for browsing local media files organized in folder hierarchies.
+ Shows Photos and Videos at top level, with navigation tiles for subfolders.
  */
 
 import os
@@ -10,7 +10,8 @@ import SwiftUI
 
 struct LocalTabView: View {
     @Environment(AppModel.self) private var appModel
-    @State private var selectedFolder: LocalMediaFolder? = nil
+    @State private var selectedFolderPath: [String] = []
+    @State private var selectedImage: GalleryImage? = nil
 
     enum LocalMediaFolder: String, CaseIterable, Identifiable {
         case photos = "Photos"
@@ -28,94 +29,133 @@ struct LocalTabView: View {
 
     var body: some View {
         Group {
-            if let folder = selectedFolder {
-                // Show media list for selected folder
-                LocalMediaListView(folder: folder) {
-                    selectedFolder = nil
+            if selectedFolderPath.isEmpty {
+                // Show folder picker at root
+                FolderListView(isRootLevel: true) { folder in
+                    selectedFolderPath = [folder.rawValue]
                 }
             } else {
-                // Show folder picker
-                VStack(spacing: 24) {
-                    Text("Local Media")
-                        .font(.headline)
-                        .padding(.top, 20)
-
-                    ForEach(LocalMediaFolder.allCases) { folder in
-                        Button {
-                            selectedFolder = folder
-                        } label: {
-                            HStack(spacing: 16) {
-                                Image(systemName: folder.systemImage)
-                                    .font(.title2)
-                                    .foregroundColor(.accentColor)
-
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(folder.rawValue)
-                                        .font(.headline)
-                                    Text("Browse local \(folder.rawValue.lowercased())")
-                                        .font(.footnote)
-                                        .foregroundColor(.secondary)
-                                }
-
-                                Spacer()
-
-                                Image(systemName: "chevron.right")
-                                    .foregroundColor(.secondary)
-                            }
-                            .padding()
-                            .background(Color.secondary.opacity(0.1))
-                            .cornerRadius(12)
+                // Show media list with folder hierarchy
+                LocalMediaListView(
+                    folderPath: selectedFolderPath,
+                    onBack: {
+                        if selectedFolderPath.count > 1 {
+                            selectedFolderPath.removeLast()
+                        } else {
+                            selectedFolderPath = []
                         }
-                        .buttonStyle(.plain)
+                    },
+                    onSelectFolder: { folderName in
+                        selectedFolderPath.append(folderName)
+                    },
+                    onSelectImage: { image in
+                        selectedImage = image
                     }
-
-                    Spacer()
-
-                    VStack(spacing: 12) {
-                        HStack(spacing: 8) {
-                            Image(systemName: "info.circle")
-                                .foregroundColor(.secondary)
-                            Text("Files are stored in the app's Documents folder")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        .padding()
-                        .background(Color.secondary.opacity(0.05))
-                        .cornerRadius(8)
-                    }
-                    .padding()
-                }
-                .padding()
+                )
             }
         }
         .environment(appModel)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onChange(of: appModel.localTabReselected) { oldValue, newValue in
-            // When Local tab is re-tapped while already viewing it, close the folder view
-            if selectedFolder != nil {
-                selectedFolder = nil
+            // When Local tab is re-tapped while already viewing it, close folders and return to root
+            if !selectedFolderPath.isEmpty {
+                selectedFolderPath = []
+                selectedImage = nil
             }
         }
     }
 }
 
-// MARK: - Local Media List View
+// MARK: - Folder List View
+
+struct FolderListView: View {
+    let isRootLevel: Bool
+    var onSelectFolder: (LocalTabView.LocalMediaFolder) -> Void
+
+    var body: some View {
+        VStack(spacing: 24) {
+            Text("Local Media")
+                .font(.headline)
+                .padding(.top, 20)
+
+            ForEach(LocalTabView.LocalMediaFolder.allCases) { folder in
+                Button {
+                    onSelectFolder(folder)
+                } label: {
+                    HStack(spacing: 16) {
+                        Image(systemName: folder.systemImage)
+                            .font(.title2)
+                            .foregroundColor(.accentColor)
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(folder.rawValue)
+                                .font(.headline)
+                            Text("Browse local \(folder.rawValue.lowercased())")
+                                .font(.footnote)
+                                .foregroundColor(.secondary)
+                        }
+
+                        Spacer()
+
+                        Image(systemName: "chevron.right")
+                            .foregroundColor(.secondary)
+                    }
+                    .padding()
+                    .background(Color.secondary.opacity(0.1))
+                    .cornerRadius(12)
+                }
+                .buttonStyle(.plain)
+            }
+
+            Spacer()
+
+            VStack(spacing: 12) {
+                HStack(spacing: 8) {
+                    Image(systemName: "info.circle")
+                        .foregroundColor(.secondary)
+                    Text("Files are stored in the app's Documents folder")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .padding()
+                .background(Color.secondary.opacity(0.05))
+                .cornerRadius(8)
+            }
+            .padding()
+            .safeAreaPadding(.bottom)
+        }
+        .padding()
+    }
+}
+
+// MARK: - Local Media List View with Hierarchy
 
 struct LocalMediaListView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(SceneDelegate.self) private var sceneDelegate: SceneDelegate?
     @Environment(\.openWindow) private var openWindow
 
-    let folder: LocalTabView.LocalMediaFolder
+    let folderPath: [String]
     let onBack: () -> Void
+    let onSelectFolder: (String) -> Void
+    let onSelectImage: (GalleryImage) -> Void
 
     @State private var mediaFiles: [LocalMediaFile] = []
+    @State private var subfolders: [String] = []
     @State private var isLoading = true
     @State private var selectedImage: GalleryImage? = nil
 
     let columns = [
-        GridItem(.adaptive(minimum: 200, maximum: 300), spacing: 16)
+        GridItem(.adaptive(minimum: 150, maximum: 250), spacing: 16)
     ]
+
+    var currentFolderName: String {
+        folderPath.last ?? "Media"
+    }
+
+    var currentPath: String {
+        folderPath.joined(separator: " / ")
+    }
 
     var body: some View {
         Group {
@@ -125,26 +165,16 @@ struct LocalMediaListView: View {
                 })
             } else {
                 VStack(spacing: 0) {
-                    // Back button
-                    HStack {
-                        Button {
-                            onBack()
-                        } label: {
-                            HStack(spacing: 8) {
-                                Image(systemName: "chevron.left")
-                                Text("Back")
-                            }
-                            .foregroundColor(.accentColor)
-                        }
-                        .buttonStyle(.plain)
-
-                        Spacer()
-
-                        Text(folder.rawValue)
+                    // Breadcrumb/Path display
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Local / \(currentPath)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                        Text(currentFolderName)
                             .font(.headline)
-
-                        Spacer()
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .padding()
                     .background(Color.secondary.opacity(0.05))
 
@@ -153,44 +183,84 @@ struct LocalMediaListView: View {
                         VStack(spacing: 20) {
                             ProgressView()
                                 .scaleEffect(2)
-                            Text("Loading \(folder.rawValue.lowercased())...")
+                            Text("Loading \(currentFolderName.lowercased())...")
                                 .font(.title2)
                                 .foregroundColor(.secondary)
-                        }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else if mediaFiles.isEmpty {
-                        VStack(spacing: 20) {
-                            Image(systemName: folder == .photos ? "photo" : "video")
-                                .font(.system(size: 64))
-                                .foregroundColor(.secondary)
-                            Text("No \(folder.rawValue.lowercased()) found")
-                                .font(.title2)
-                                .foregroundColor(.secondary)
-                            Text("Add files to the\n\(folder.rawValue) folder")
-                                .font(.footnote)
-                                .foregroundColor(.secondary)
-                                .multilineTextAlignment(.center)
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else {
                         ScrollView {
                             LazyVGrid(columns: columns, spacing: 16) {
+                                // Back/Up navigation tile
+                                if folderPath.count >= 1 {
+                                    Button {
+                                        onBack()
+                                    } label: {
+                                        VStack(spacing: 12) {
+                                            Image(systemName: "arrow.turn.left.up")
+                                                .font(.title)
+                                                .foregroundColor(.accentColor)
+                                            Text("Up")
+                                                .font(.caption)
+                                                .foregroundColor(.primary)
+                                        }
+                                        .frame(height: 150)
+                                        .frame(maxWidth: .infinity)
+                                        .background(Color.secondary.opacity(0.2))
+                                        .cornerRadius(12)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+
+                                // Subfolder tiles
+                                ForEach(subfolders, id: \.self) { subfolder in
+                                    Button {
+                                        onSelectFolder(subfolder)
+                                    } label: {
+                                        VStack(spacing: 12) {
+                                            Image(systemName: "folder")
+                                                .font(.title)
+                                                .foregroundColor(.orange)
+                                            Text(subfolder)
+                                                .font(.caption)
+                                                .foregroundColor(.primary)
+                                                .lineLimit(2)
+                                                .multilineTextAlignment(.center)
+                                        }
+                                        .frame(height: 150)
+                                        .frame(maxWidth: .infinity)
+                                        .background(Color.secondary.opacity(0.1))
+                                        .cornerRadius(12)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+
+                                // Media file tiles
                                 ForEach(mediaFiles, id: \.id) { file in
                                     LocalMediaThumbnailView(file: file) {
-                                        if folder == .photos {
-                                            // Open photo viewer for images
+                                        if folderPath.first == "Photos" {
                                             let image = GalleryImage(
                                                 id: file.id,
                                                 url: file.url,
                                                 title: file.name
                                             )
                                             selectedImage = image
-                                        } else {
-                                            // Videos - would need separate action
-                                            // For now just log
-                                            AppLogger.views.debug("Selected video: \(file.name, privacy: .private)")
                                         }
                                     }
+                                }
+
+                                // Empty state message
+                                if mediaFiles.isEmpty && subfolders.isEmpty {
+                                    VStack(spacing: 20) {
+                                        Image(systemName: folderPath.first == "Photos" ? "photo" : "video")
+                                            .font(.system(size: 48))
+                                            .foregroundColor(.secondary)
+                                        Text("No files or folders found")
+                                            .font(.callout)
+                                            .foregroundColor(.secondary)
+                                    }
+                                    .frame(maxWidth: .infinity)
+                                    .padding()
                                 }
                             }
                             .padding()
@@ -198,7 +268,10 @@ struct LocalMediaListView: View {
                     }
                 }
                 .onAppear {
-                    scanMediaFiles()
+                    loadContent()
+                }
+                .onChange(of: folderPath) { oldPath, newPath in
+                    loadContent()
                 }
                 .onAppear {
                     if let windowScene = resolvedWindowScene {
@@ -213,23 +286,110 @@ struct LocalMediaListView: View {
         .environment(appModel)
     }
 
-    private func scanMediaFiles() {
+    private func loadContent() {
         isLoading = true
         Task {
-            let allFiles = await LocalMediaSource.shared.scanAllMedia()
-            let filtered = allFiles.filter { file in
-                switch folder {
-                case .photos:
-                    return file.type == .image
-                case .videos:
-                    return file.type == .video
-                }
+            let documentsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+            
+            // Build the current directory path
+            var currentDir = documentsDir
+            for component in folderPath {
+                currentDir = currentDir.appendingPathComponent(component, isDirectory: true)
             }
+
+            // Verify directory exists
+            let fileManager = FileManager.default
+            var isDir: ObjCBool = false
+            guard fileManager.fileExists(atPath: currentDir.path, isDirectory: &isDir), isDir.boolValue else {
+                AppLogger.localMedia.error("Directory does not exist: \(currentDir.path, privacy: .private)")
+                await MainActor.run {
+                    subfolders = []
+                    mediaFiles = []
+                    isLoading = false
+                }
+                return
+            }
+
+            // Scan for subfolders and media files
+            let result = scanDirectoryContent(at: currentDir, parentPath: currentDir)
+
             await MainActor.run {
-                mediaFiles = filtered
+                subfolders = result.folders.sorted()
+                mediaFiles = result.mediaItems.sorted { $0.createdDate > $1.createdDate }
                 isLoading = false
             }
         }
+    }
+
+    private func scanDirectoryContent(at directory: URL, parentPath: URL? = nil) -> (folders: [String], mediaItems: [LocalMediaFile]) {
+        let fileManager = FileManager.default
+        var folders: [String] = []
+        var mediaItems: [LocalMediaFile] = []
+
+        guard let enumerator = fileManager.enumerator(
+            at: directory,
+            includingPropertiesForKeys: [.isDirectoryKey, .contentModificationDateKey, .creationDateKey, .fileSizeKey],
+            options: [.skipsHiddenFiles, .skipsSubdirectoryDescendants]
+        ) else {
+            AppLogger.localMedia.warning("Failed to create enumerator for: \(directory.path, privacy: .private)")
+            return (folders, mediaItems)
+        }
+
+        let allURLs = enumerator.allObjects.compactMap { $0 as? URL }
+        
+        for fileURL in allURLs {
+            do {
+                let resourceValues = try fileURL.resourceValues(forKeys: [.isDirectoryKey])
+                let isDirectory = resourceValues.isDirectory ?? false
+                let folderName = fileURL.lastPathComponent
+                
+                // Skip system folders and current directory markers
+                if folderName.hasPrefix(".") || folderName == "." || folderName == ".." {
+                    continue
+                }
+                
+                // Ensure we're not recursively listing the parent directory
+                if let parentPath = parentPath, fileURL.standardizedFileURL == parentPath.standardizedFileURL {
+                    continue
+                }
+                
+                if isDirectory {
+                    folders.append(folderName)
+                } else if let mediaFile = createMediaFile(from: fileURL) {
+                    mediaItems.append(mediaFile)
+                }
+            } catch {
+                AppLogger.localMedia.error("Failed to read resource values for \(fileURL.lastPathComponent, privacy: .private): \(error.localizedDescription, privacy: .public)")
+            }
+        }
+
+        return (folders, mediaItems)
+    }
+
+    private func createMediaFile(from url: URL) -> LocalMediaFile? {
+        let imageExtensions = Set(["jpg", "jpeg", "png", "heic", "heif", "gif", "webp", "bmp", "tiff", "tif"])
+        let videoExtensions = Set(["mp4", "m4v", "mov", "mkv", "webm", "avi", "wmv", "flv", "3gp"])
+
+        let fileExt = url.pathExtension.lowercased()
+        let isImage = imageExtensions.contains(fileExt)
+        let isVideo = videoExtensions.contains(fileExt)
+
+        guard isImage || isVideo else { return nil }
+
+        let resourceValues = try? url.resourceValues(forKeys: [.contentModificationDateKey, .creationDateKey, .fileSizeKey])
+        let createdDate = resourceValues?.creationDate ?? Date()
+        let modifiedDate = resourceValues?.contentModificationDate ?? Date()
+        let fileSize = resourceValues?.fileSize ?? 0
+
+        return LocalMediaFile(
+            id: UUID(),
+            url: url,
+            name: url.deletingPathExtension().lastPathComponent,
+            type: isImage ? .image : .video,
+            createdDate: createdDate,
+            modifiedDate: modifiedDate,
+            fileSize: Int64(fileSize)
+        )
     }
 
     private var resolvedWindowScene: UIWindowScene? {
@@ -255,18 +415,15 @@ struct LocalMediaThumbnailView: View {
 
     var body: some View {
         ZStack {
-            // Background
             Color.secondary.opacity(0.2)
 
             if let loadedImage {
-                // Display image
                 Image(uiImage: loadedImage)
                     .resizable()
                     .scaledToFill()
             } else if isLoading {
                 ProgressView()
             } else {
-                // Error state
                 VStack(spacing: 8) {
                     Image(systemName: file.type == .image ? "photo" : "video")
                         .font(.largeTitle)
@@ -279,7 +436,7 @@ struct LocalMediaThumbnailView: View {
                 }
             }
         }
-        .frame(width: 200, height: 200)
+        .frame(height: 150)
         .cornerRadius(12)
         .clipped()
         .contentShape(Rectangle())
