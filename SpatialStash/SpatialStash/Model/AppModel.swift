@@ -770,6 +770,16 @@ class AppModel {
 
     // MARK: - API Client Management
 
+    /// Opens the main window only when one isn't already open.
+    /// Prevents creating duplicate main gallery windows from pop-out contexts.
+    func showMainWindowIfNeeded(openWindow: OpenWindowAction) {
+        guard !isMainWindowOpen else {
+            AppLogger.app.debug("Main window already open, skipping duplicate open request")
+            return
+        }
+        openWindow(id: "main")
+    }
+
     func updateAPIClient() {
         if !stashServerURL.isEmpty, let url = URL(string: stashServerURL) {
             // Update with Stash server config

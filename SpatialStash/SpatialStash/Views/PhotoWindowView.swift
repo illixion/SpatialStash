@@ -35,7 +35,7 @@ struct PhotoWindowView: View {
                             if windowModel.isSlideshowActive {
                                 windowModel.stopSlideshow()
                             }
-                            openWindow(id: "main")
+                            appModel.showMainWindowIfNeeded(openWindow: openWindow)
                         },
                         extraButtons: { EmptyView() }
                     )
