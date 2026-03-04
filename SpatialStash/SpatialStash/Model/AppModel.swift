@@ -21,13 +21,6 @@ enum BackgroundRemovalState {
     case removed
 }
 
-/// Source type for media content
-enum MediaSourceType: String, CaseIterable {
-    case staticURLs = "Static URLs (Demo)"
-    case stashServer = "Stash Server"
-    case localFiles = "Local Files"
-}
-
 @MainActor
 @Observable
 class AppModel {
@@ -39,6 +32,9 @@ class AppModel {
 
     /// Tracks the last content tab (pictures or videos) for filter context
     var lastContentTab: Tab = .pictures
+
+    /// Incremented when Local tab is tapped while already on Local tab
+    var localTabReselected: Int = 0
 
     // MARK: - Server Configuration (with UserDefaults persistence)
 
@@ -60,27 +56,6 @@ class AppModel {
         }
     }
 
-    var mediaSourceType: MediaSourceType {
-        didSet {
-            if mediaSourceType != oldValue {
-                UserDefaults.standard.set(mediaSourceType.rawValue, forKey: "mediaSourceType")
-                let sourceType = mediaSourceType.rawValue
-                AppLogger.appModel.notice("Media source changed to: \(sourceType, privacy: .public)")
-                rebuildImageSource()
-                rebuildVideoSource()
-                Task {
-                    await reloadAllGalleries()
-                }
-            }
-        }
-    }
-
-    // MARK: - API Client
-
-    private var apiClient: StashAPIClient
-
-    // MARK: - Image Gallery State
-
     var galleryImages: [GalleryImage] = []
     var isLoadingGallery: Bool = false
     var currentPage: Int = 0
@@ -88,16 +63,7 @@ class AppModel {
     /// Incremented on each loadInitialGallery; stale loadNextPage results are discarded
     private var galleryLoadGeneration: Int = 0
 
-    /// Number of images/videos to fetch per page (configurable in settings)
-    var pageSize: Int {
-        didSet {
-            if pageSize != oldValue {
-                UserDefaults.standard.set(pageSize, forKey: "pageSize")
-                let size = pageSize
-                AppLogger.appModel.info("Page size changed to: \(size, privacy: .public)")
-            }
-        }
-    }
+    var pageSize: Int = 30
 
     /// Available page size options for the picker
     static let pageSizeOptions: [Int] = [10, 20, 30, 50, 100]
@@ -151,37 +117,17 @@ class AppModel {
     var isLoadingStudios: Bool = false
     var isLoadingPerformers: Bool = false
 
-    // MARK: - Image Source (stored, rebuilt on config change)
+    // MARK: - API Client
+
+    private var apiClient: StashAPIClient
+
+    // MARK: - Image Source (stored, always Stash server)
 
     private(set) var imageSource: any ImageSource
 
-    // MARK: - Video Source (stored, rebuilt on config change)
+    // MARK: - Video Source (stored, always Stash server)
 
     private(set) var videoSource: any VideoSource
-
-    /// Rebuild image source when media type changes
-    private func rebuildImageSource() {
-        let sourceTypeRaw = mediaSourceType.rawValue
-        AppLogger.appModel.debug("Rebuilding image source for: \(sourceTypeRaw, privacy: .public)")
-        switch mediaSourceType {
-        case .staticURLs:
-            imageSource = StaticURLImageSource()
-        case .stashServer:
-            imageSource = GraphQLImageSource(apiClient: apiClient)
-        case .localFiles:
-            imageSource = LocalImageSource()
-        }
-    }
-
-    /// Rebuild video source based on media type
-    private func rebuildVideoSource() {
-        switch mediaSourceType {
-        case .localFiles:
-            videoSource = LocalVideoSource()
-        default:
-            videoSource = GraphQLVideoSource(apiClient: apiClient)
-        }
-    }
 
     // MARK: - Selected Items for Detail View
 
@@ -358,23 +304,11 @@ class AppModel {
         // Load persisted settings or use defaults (use local vars to avoid self reference issues)
         let defaultServerURL = ""
         let defaultAPIKey = ""
-        let defaultPageSize = 20
         let defaultAutoHideDelay: TimeInterval = 3.0
         let defaultSlideshowDelay: TimeInterval = 5.0
 
         let loadedServerURL = UserDefaults.standard.string(forKey: "stashServerURL") ?? defaultServerURL
         let loadedAPIKey = UserDefaults.standard.string(forKey: "stashAPIKey") ?? defaultAPIKey
-        let loadedSourceType: MediaSourceType
-        if let savedSourceType = UserDefaults.standard.string(forKey: "mediaSourceType"),
-           let sourceType = MediaSourceType(rawValue: savedSourceType) {
-            loadedSourceType = sourceType
-        } else {
-            loadedSourceType = .staticURLs
-        }
-
-        // Load page size (with validation)
-        let savedPageSize = UserDefaults.standard.integer(forKey: "pageSize")
-        let loadedPageSize = savedPageSize > 0 ? savedPageSize : defaultPageSize
 
         // Load auto-hide delay (0 means disabled, use default if not set)
         let savedAutoHideDelay = UserDefaults.standard.double(forKey: "autoHideDelay")
@@ -405,50 +339,37 @@ class AppModel {
         // Initialize stored properties
         self.stashServerURL = loadedServerURL
         self.stashAPIKey = loadedAPIKey
-        self.mediaSourceType = loadedSourceType
-        self.pageSize = loadedPageSize
         self.autoHideDelay = loadedAutoHideDelay
         self.slideshowDelay = loadedSlideshowDelay
         self.maxImageResolution = loadedMaxImageResolution
         self.roundedCorners = loadedRoundedCorners
 
-        // Initialize API client with config
-        let initialConfig: StashServerConfig
-        if let url = URL(string: loadedServerURL) {
-            initialConfig = StashServerConfig(
+        // Initialize API client and image sources
+        let client: StashAPIClient
+        if !loadedServerURL.isEmpty, let url = URL(string: loadedServerURL) {
+            // Use Stash server if configured
+            let config = StashServerConfig(
                 serverURL: url,
                 apiKey: loadedAPIKey.isEmpty ? nil : loadedAPIKey
             )
-        } else {
-            initialConfig = StashServerConfig.default
-        }
-        let client = StashAPIClient(config: initialConfig)
-        self.apiClient = client
-
-        // Initialize image source based on media source type
-        switch loadedSourceType {
-        case .staticURLs:
-            self.imageSource = StaticURLImageSource()
-        case .stashServer:
+            client = StashAPIClient(config: config)
+            self.apiClient = client
             self.imageSource = GraphQLImageSource(apiClient: client)
-        case .localFiles:
-            self.imageSource = LocalImageSource()
-        }
-
-        // Initialize video source based on media source type
-        switch loadedSourceType {
-        case .localFiles:
-            self.videoSource = LocalVideoSource()
-        default:
             self.videoSource = GraphQLVideoSource(apiClient: client)
+            AppLogger.appModel.info("Init - Using Stash Server: \(loadedServerURL, privacy: .private)")
+        } else {
+            // Fallback to example images if no server configured
+            let defaultConfig = StashServerConfig.default
+            client = StashAPIClient(config: defaultConfig)
+            self.apiClient = client
+            self.imageSource = StaticURLImageSource()
+            self.videoSource = GraphQLVideoSource(apiClient: client)
+            AppLogger.appModel.info("Init - No Stash Server configured, using example images")
         }
 
         // Now all stored properties are initialized, we can use self
-        AppLogger.appModel.info("Init - Server URL: \(self.stashServerURL, privacy: .private)")
         AppLogger.appModel.info("Init - Has API Key: \(!self.stashAPIKey.isEmpty, privacy: .public)")
-        AppLogger.appModel.info("Init - Media Source: \(self.mediaSourceType.rawValue, privacy: .public)")
-        AppLogger.appModel.info("Init - Page Size: \(self.pageSize, privacy: .public)")
-        AppLogger.appModel.info("Init - Image source: \(String(describing: type(of: self.imageSource)), privacy: .public)")
+        AppLogger.appModel.info("Init - Page Size: 30")
 
         // Load saved views and window groups from UserDefaults
         loadSavedViews()
@@ -834,32 +755,44 @@ class AppModel {
     // MARK: - API Client Management
 
     func updateAPIClient() {
-        guard let url = URL(string: stashServerURL) else {
-            let serverURL = stashServerURL
-            AppLogger.appModel.warning("Invalid server URL: \(serverURL, privacy: .private)")
-            return
-        }
-        let config = StashServerConfig(
-            serverURL: url,
-            apiKey: stashAPIKey.isEmpty ? nil : stashAPIKey
-        )
-        let hasKey = !stashAPIKey.isEmpty
-        AppLogger.appModel.info("Updating API client with URL: \(url, privacy: .private), hasAPIKey: \(hasKey, privacy: .public)")
-        Task {
-            await apiClient.updateConfig(config)
-            // Rebuild sources with updated client
-            rebuildImageSource()
-            rebuildVideoSource()
+        if !stashServerURL.isEmpty, let url = URL(string: stashServerURL) {
+            // Update with Stash server config
+            let config = StashServerConfig(
+                serverURL: url,
+                apiKey: stashAPIKey.isEmpty ? nil : stashAPIKey
+            )
+            let hasKey = !stashAPIKey.isEmpty
+            AppLogger.appModel.info("Updating API client with URL: \(url, privacy: .private), hasAPIKey: \(hasKey, privacy: .public)")
+            Task {
+                await apiClient.updateConfig(config)
+                // Update image source to use Stash
+                self.imageSource = GraphQLImageSource(apiClient: self.apiClient)
+                await self.reloadAllGalleries()
+            }
+        } else {
+            // No server URL - use example images
+            AppLogger.appModel.info("No Stash Server URL configured, using example images")
+            self.imageSource = StaticURLImageSource()
+            Task {
+                await self.reloadAllGalleries()
+            }
         }
     }
 
     private func reloadAllGalleries() async {
         // Reload images if on pictures tab
+        galleryLoadGeneration += 1
+        currentPage = 0
+        hasMorePages = true
+        galleryImages.removeAll()
         await loadInitialGallery()
         // Reload videos
+        videoLoadGeneration += 1
+        currentVideoPage = 0
+        hasMoreVideoPages = true
+        galleryVideos.removeAll()
         await loadInitialVideos()
     }
-
     // MARK: - Image Gallery Methods
 
     /// Load the initial gallery page
@@ -902,9 +835,8 @@ class AppModel {
         }
 
         do {
-            // Use filter if we're on Stash server, otherwise ignore
-            let filter: ImageFilterCriteria? = (mediaSourceType == .stashServer) ? currentFilter : nil
-            let result = try await imageSource.fetchImages(page: currentPage, pageSize: pageSize, filter: filter)
+            // Always use filter since we're on Stash server
+            let result = try await imageSource.fetchImages(page: currentPage, pageSize: pageSize, filter: currentFilter)
             // Discard results if a new loadInitialGallery was called while fetching
             guard generation == galleryLoadGeneration else {
                 AppLogger.appModel.debug("loadNextPage discarding stale results (generation \(generation, privacy: .public) != \(self.galleryLoadGeneration, privacy: .public))")
@@ -936,7 +868,6 @@ class AppModel {
 
     /// Search galleries for autocomplete
     func searchGalleries(query: String) async {
-        guard mediaSourceType == .stashServer else { return }
 
         isLoadingGalleries = true
         defer { isLoadingGalleries = false }
@@ -1009,7 +940,6 @@ class AppModel {
 
     /// Search tags for autocomplete
     func searchTags(query: String) async {
-        guard mediaSourceType == .stashServer else { return }
 
         isLoadingTags = true
         defer { isLoadingTags = false }
@@ -1058,7 +988,6 @@ class AppModel {
 
     /// Search studios for autocomplete
     func searchStudios(query: String) async {
-        guard mediaSourceType == .stashServer else { return }
 
         isLoadingStudios = true
         defer { isLoadingStudios = false }
@@ -1105,7 +1034,6 @@ class AppModel {
 
     /// Search performers for autocomplete
     func searchPerformers(query: String) async {
-        guard mediaSourceType == .stashServer else { return }
 
         isLoadingPerformers = true
         defer { isLoadingPerformers = false }
@@ -1239,9 +1167,8 @@ class AppModel {
         }
 
         do {
-            // Use filter if we're on Stash server, otherwise ignore
-            let filter: SceneFilterCriteria? = (mediaSourceType == .stashServer) ? currentVideoFilter : nil
-            let result = try await videoSource.fetchVideos(page: currentVideoPage, pageSize: pageSize, filter: filter)
+            // Always use filter since we're on Stash server
+            let result = try await videoSource.fetchVideos(page: currentVideoPage, pageSize: pageSize, filter: currentVideoFilter)
             // Discard results if a new loadInitialVideos was called while fetching
             guard generation == videoLoadGeneration else {
                 AppLogger.appModel.debug("loadNextVideoPage discarding stale results")
@@ -1313,7 +1240,7 @@ class AppModel {
 
         // Snapshot the filter on first entry to the viewer
         if viewerVideoFilter == nil {
-            viewerVideoFilter = (mediaSourceType == .stashServer) ? currentVideoFilter : nil
+            viewerVideoFilter = currentVideoFilter
         }
     }
 

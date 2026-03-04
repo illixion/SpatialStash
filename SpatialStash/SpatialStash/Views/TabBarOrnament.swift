@@ -17,7 +17,13 @@ struct TabBarOrnament: View {
                     if tab == .pictures || tab == .videos {
                         appModel.lastContentTab = tab
                     }
-                    appModel.selectedTab = tab
+                    
+                    // Special handling for Local tab re-selection
+                    if tab == .local && appModel.selectedTab == .local {
+                        appModel.localTabReselected += 1
+                    } else {
+                        appModel.selectedTab = tab
+                    }
                 } label: {
                     VStack(spacing: 4) {
                         Image(systemName: tab.systemImage)

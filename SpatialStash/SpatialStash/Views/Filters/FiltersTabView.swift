@@ -192,23 +192,9 @@ struct FiltersTabView: View {
                 Section("O Count") {
                     OCountFilterView(isVideoFilter: isVideoFilter)
                 }
-
                 // Rating Filter
                 Section("Rating") {
                     RatingFilterView(isVideoFilter: isVideoFilter)
-                }
-
-                // Info Section
-                if appModel.mediaSourceType != .stashServer {
-                    Section {
-                        HStack {
-                            Image(systemName: "info.circle")
-                                .foregroundColor(.orange)
-                            Text("Filters only work with Stash Server. Switch to Stash Server in Settings.")
-                                .font(.footnote)
-                                .foregroundColor(.secondary)
-                        }
-                    }
                 }
             }
             .navigationTitle(isVideoFilter ? "Video Filters" : "Picture Filters")

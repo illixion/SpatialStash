@@ -26,22 +26,6 @@ struct SettingsTabView: View {
 
         NavigationStack {
             List {
-                Section("Media Source") {
-                    Picker("Source", selection: $appModel.mediaSourceType) {
-                        ForEach(MediaSourceType.allCases, id: \.self) { source in
-                            Text(source.rawValue).tag(source)
-                        }
-                    }
-                    .pickerStyle(.menu)
-
-                    Picker("Images per Page", selection: $appModel.pageSize) {
-                        ForEach(AppModel.pageSizeOptions, id: \.self) { size in
-                            Text("\(size)").tag(size)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                }
-
                 Section("Display") {
                     Toggle("Rounded Corners", isOn: $appModel.roundedCorners)
 
@@ -225,7 +209,7 @@ struct SettingsTabView: View {
 
                 Section {
                     Button("Refresh All Content") {
-                        AppLogger.settings.debug("Refresh button pressed, source: \(appModel.mediaSourceType.rawValue, privacy: .public)")
+                        AppLogger.settings.debug("Refresh button pressed")
                         Task {
                             AppLogger.settings.debug("Starting gallery refresh...")
                             await appModel.loadInitialGallery()

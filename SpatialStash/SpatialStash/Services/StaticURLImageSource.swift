@@ -43,9 +43,6 @@ final class StaticURLImageSource: ImageSource, @unchecked Sendable {
     }
 
     func fetchImages(page: Int, pageSize: Int) async throws -> ImageFetchResult {
-        // Simulate network delay for realistic behavior
-        try await Task.sleep(nanoseconds: 300_000_000) // 0.3 seconds
-
         let startIndex = page * pageSize
         let endIndex = min(startIndex + pageSize, staticURLs.count)
 

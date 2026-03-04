@@ -167,7 +167,7 @@ class PhotoWindowModel {
 
         // Capture pagination state for lazy loading (must be before galleryImages access)
         self.imageSource = appModel.imageSource
-        self.snapshotFilter = (appModel.mediaSourceType == .stashServer) ? appModel.currentFilter : nil
+        self.snapshotFilter = appModel.currentFilter
         self.currentPage = appModel.currentPage
         self.hasMorePages = appModel.hasMorePages
         self.pageSize = appModel.pageSize

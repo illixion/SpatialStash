@@ -15,6 +15,8 @@ struct WindowGroupRestoreSheet: View {
     let group: SavedWindowGroup
     @State private var restoredImageIds: Set<UUID> = []
     @State private var showAddSheet = false
+    @State private var isSelectionMode = false
+    @State private var selectedImageIds: Set<UUID> = []
 
     private let columns = [
         GridItem(.adaptive(minimum: 150, maximum: 200), spacing: 12)
@@ -28,53 +30,110 @@ struct WindowGroupRestoreSheet: View {
 
                 LazyVGrid(columns: columns, spacing: 12) {
                     ForEach(images) { image in
-                        Button {
-                            openWindow(id: "photo-detail", value: PhotoWindowValue(image: image))
-                            restoredImageIds.insert(image.id)
-                        } label: {
-                            WindowGroupThumbnailView(image: image)
-                                .opacity(restoredImageIds.contains(image.id) ? 0.5 : 1.0)
-                        }
-                        .buttonStyle(.plain)
-                        .hoverEffectDisabled()
-                        .hoverEffect(LiftHoverEffect())
-                        .contextMenu {
-                            Button(role: .destructive) {
-                                appModel.removeImageFromWindowGroup(group, imageId: image.id)
-                                if appModel.savedWindowGroups.first(where: { $0.id == group.id }) == nil {
-                                    dismiss()
+                        ZStack(alignment: .topTrailing) {
+                            Button {
+                                if isSelectionMode {
+                                    if selectedImageIds.contains(image.id) {
+                                        selectedImageIds.remove(image.id)
+                                    } else {
+                                        selectedImageIds.insert(image.id)
+                                    }
+                                } else {
+                                    openWindow(id: "photo-detail", value: PhotoWindowValue(image: image))
+                                    restoredImageIds.insert(image.id)
                                 }
                             } label: {
-                                Label("Delete", systemImage: "trash")
+                                WindowGroupThumbnailView(image: image)
+                                    .opacity(restoredImageIds.contains(image.id) ? 0.5 : 1.0)
+                            }
+                            .buttonStyle(.plain)
+                            .hoverEffectDisabled()
+                            .hoverEffect(LiftHoverEffect())
+
+                            // Selection checkmark in selection mode
+                            if isSelectionMode {
+                                ZStack {
+                                    Circle()
+                                        .fill(selectedImageIds.contains(image.id) ? Color.accentColor : Color.secondary.opacity(0.3))
+                                    Image(systemName: selectedImageIds.contains(image.id) ? "checkmark.circle.fill" : "circle")
+                                        .foregroundColor(.white)
+                                        .font(.title3)
+                                }
+                                .frame(width: 32, height: 32)
+                                .padding(8)
                             }
                         }
                     }
 
-                    Button {
-                        showAddSheet = true
-                    } label: {
-                        ZStack {
-                            Color.secondary.opacity(0.2)
-                            Image(systemName: "plus")
-                                .font(.largeTitle)
-                                .foregroundColor(.secondary)
+                    if !isSelectionMode {
+                        Button {
+                            showAddSheet = true
+                        } label: {
+                            ZStack {
+                                Color.secondary.opacity(0.2)
+                                Image(systemName: "plus")
+                                    .font(.largeTitle)
+                                    .foregroundColor(.secondary)
+                            }
+                            .frame(width: 150, height: 150)
+                            .cornerRadius(12)
                         }
-                        .frame(width: 150, height: 150)
-                        .cornerRadius(12)
+                        .buttonStyle(.plain)
+                        .hoverEffectDisabled()
+                        .hoverEffect(LiftHoverEffect())
                     }
-                    .buttonStyle(.plain)
-                    .disabled(appModel.openPopOutImagesNotInGroup(group).isEmpty)
-                }
-                .padding()
-            }
-            .navigationTitle(group.name)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { dismiss() }
                 }
             }
             .sheet(isPresented: $showAddSheet) {
                 AddFromOpenWindowsSheet(group: group)
+            }
+            .navigationTitle(group.name)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        isSelectionMode.toggle()
+                        selectedImageIds.removeAll()
+                    } label: {
+                        Image(systemName: isSelectionMode ? "pencil.circle.fill" : "pencil.circle")
+                            .font(.title2)
+                            .symbolRenderingMode(.monochrome)
+                            .frame(width: 44, height: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.primary)
+                    .accessibilityLabel(isSelectionMode ? "Exit selection mode" : "Enter selection mode")
+                    .accessibilityHint("Toggles multi-select mode")
+                    .contentShape(Circle())
+                }
+
+                ToolbarItem(placement: .topBarTrailing) {
+                    if isSelectionMode {
+                        Button(role: .destructive) {
+                            for imageId in selectedImageIds {
+                                appModel.removeImageFromWindowGroup(group, imageId: imageId)
+                            }
+                            selectedImageIds.removeAll()
+                            isSelectionMode = false
+
+                            // If group is empty, dismiss
+                            if appModel.savedWindowGroups.first(where: { $0.id == group.id })?.images.isEmpty ?? true {
+                                dismiss()
+                            }
+                        } label: {
+                            Text("Delete")
+                                .font(.title3)
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(selectedImageIds.isEmpty)
+                    } else {
+                        Button {
+                            dismiss()
+                        } label: {
+                            Text("Done")
+                                .font(.title3)
+                        }
+                    }
+                }
             }
         }
     }

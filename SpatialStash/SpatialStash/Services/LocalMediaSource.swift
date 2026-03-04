@@ -239,7 +239,8 @@ final class LocalImageSource: ImageSource, @unchecked Sendable {
             GalleryImage(
                 thumbnailURL: file.url,
                 fullSizeURL: file.url,
-                title: file.name
+                title: file.name,
+                source: "local"
             )
         }
 
