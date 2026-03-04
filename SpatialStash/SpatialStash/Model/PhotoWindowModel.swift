@@ -84,7 +84,9 @@ class PhotoWindowModel {
     // MARK: - UI Visibility State
 
     var isUIHidden: Bool = false
+    var isWindowControlsHidden: Bool = false
     private var autoHideTask: Task<Void, Never>?
+    private var windowControlsHideTask: Task<Void, Never>?
 
     // MARK: - Slideshow State
 
@@ -957,6 +959,18 @@ class PhotoWindowModel {
             try? await Task.sleep(for: .seconds(appModel.autoHideDelay))
             if !Task.isCancelled {
                 isUIHidden = true
+                // Schedule window controls to hide 1.5 seconds later
+                scheduleWindowControlsHiding()
+            }
+        }
+    }
+
+    private func scheduleWindowControlsHiding() {
+        windowControlsHideTask?.cancel()
+        windowControlsHideTask = Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            if !Task.isCancelled {
+                isWindowControlsHidden = true
             }
         }
     }
@@ -964,10 +978,14 @@ class PhotoWindowModel {
     func cancelAutoHideTimer() {
         autoHideTask?.cancel()
         autoHideTask = nil
+        windowControlsHideTask?.cancel()
+        windowControlsHideTask = nil
+        isWindowControlsHidden = false
     }
 
     func toggleUIVisibility() {
         isUIHidden.toggle()
+        isWindowControlsHidden = false
         if !isUIHidden {
             startAutoHideTimer()
         }
@@ -1172,6 +1190,8 @@ class PhotoWindowModel {
         // Cancel all tasks
         autoHideTask?.cancel()
         autoHideTask = nil
+        windowControlsHideTask?.cancel()
+        windowControlsHideTask = nil
         slideshowTask?.cancel()
         slideshowTask = nil
         resizeDebounceTask?.cancel()

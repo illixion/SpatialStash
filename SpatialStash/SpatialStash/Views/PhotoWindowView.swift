@@ -23,7 +23,7 @@ struct PhotoWindowView: View {
 
     var body: some View {
         PhotoDisplayView(windowModel: windowModel, enableSwipeNavigation: true)
-            .persistentSystemOverlays(windowModel.isUIHidden ? .hidden : .visible)
+            .persistentSystemOverlays(windowModel.isWindowControlsHidden ? .hidden : .visible)
             .ornament(
                 visibility: windowModel.isUIHidden ? .hidden : .visible,
                 attachmentAnchor: .scene(.bottomFront),
