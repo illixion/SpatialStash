@@ -11,8 +11,10 @@ struct SettingsTabView: View {
     @Environment(AppModel.self) private var appModel
     @State private var imageCacheStats: (fileCount: Int, totalSize: Int64) = (0, 0)
     @State private var videoCacheStats: (fileCount: Int, totalSize: Int64) = (0, 0)
+    @State private var backgroundRemovalCacheStats: (fileCount: Int, totalSize: Int64) = (0, 0)
     @State private var isClearingImageCache = false
     @State private var isClearingVideoCache = false
+    @State private var isClearingBackgroundRemovalCache = false
     @State private var showSaveGroupAlert = false
     @State private var newGroupName = ""
     @State private var showRenameGroupAlert = false
@@ -161,9 +163,15 @@ struct SettingsTabView: View {
                             .foregroundColor(.secondary)
                     }
                     HStack {
+                        Text("Background Removal")
+                        Spacer()
+                        Text("\(backgroundRemovalCacheStats.fileCount) items, \(formatBytes(backgroundRemovalCacheStats.totalSize))")
+                            .foregroundColor(.secondary)
+                    }
+                    HStack {
                         Text("Total")
                         Spacer()
-                        Text(formatBytes(imageCacheStats.totalSize + videoCacheStats.totalSize))
+                        Text(formatBytes(imageCacheStats.totalSize + videoCacheStats.totalSize + backgroundRemovalCacheStats.totalSize))
                             .foregroundColor(.secondary)
                             .fontWeight(.medium)
                     }
@@ -206,6 +214,26 @@ struct SettingsTabView: View {
                         }
                     }
                     .disabled(isClearingVideoCache || videoCacheStats.fileCount == 0)
+
+                    Button(role: .destructive) {
+                        isClearingBackgroundRemovalCache = true
+                        Task {
+                            await clearBackgroundRemovalCache()
+                            await refreshCacheStats()
+                            isClearingBackgroundRemovalCache = false
+                        }
+                    } label: {
+                        if isClearingBackgroundRemovalCache {
+                            HStack {
+                                ProgressView()
+                                    .scaleEffect(0.8)
+                                Text("Clearing...")
+                            }
+                        } else {
+                            Text("Clear Background Removal Cache")
+                        }
+                    }
+                    .disabled(isClearingBackgroundRemovalCache || backgroundRemovalCacheStats.fileCount == 0)
                 }
 
                 Section {
@@ -287,6 +315,7 @@ struct SettingsTabView: View {
     private func refreshCacheStats() async {
         imageCacheStats = await DiskImageCache.shared.getCacheStats()
         videoCacheStats = await DiskVideoCache.shared.getCacheStats()
+        backgroundRemovalCacheStats = await BackgroundRemovalCache.shared.getCacheStats()
     }
 
     private func clearImageCache() async {
@@ -295,6 +324,10 @@ struct SettingsTabView: View {
 
     private func clearVideoCache() async {
         await DiskVideoCache.shared.clearCache()
+    }
+
+    private func clearBackgroundRemovalCache() async {
+        await BackgroundRemovalCache.shared.clearCache()
     }
 
     private func formatBytes(_ bytes: Int64) -> String {

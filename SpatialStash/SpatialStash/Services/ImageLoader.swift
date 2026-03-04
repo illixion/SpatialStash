@@ -332,10 +332,11 @@ actor ImageLoader {
         return (image, data)
     }
 
-    /// Clear the image cache (both memory and disk)
+    /// Clear the image cache (both memory and disk, including background removal cache)
     func clearCache() async {
         cache.removeAllObjects()
         await DiskImageCache.shared.clearCache()
+        await BackgroundRemovalCache.shared.clearCache()
     }
 
     /// Clear only the in-memory cache, preserving disk cache

@@ -76,9 +76,6 @@ class PhotoWindowModel {
     /// Task for background removal (tracked so cleanup can cancel it)
     private var backgroundRemovalTask: Task<Void, Never>?
 
-    /// Flag set during initial load to auto-remove background after 2D image loads
-    private var pendingAutoBackgroundRemoval = false
-
     // MARK: - GIF Support
 
     var isAnimatedGIF: Bool = false
@@ -247,8 +244,8 @@ class PhotoWindowModel {
             // Auto-activate 3D (skips 2D load entirely)
             activate3DMode()
         } else if lastMode == .backgroundRemoved {
-            // Flag for auto-removal after 2D image loads
-            pendingAutoBackgroundRemoval = true
+            // Process background removal on full-resolution image now
+            await performFullResolutionBackgroundRemoval(isAutoDuringLoad: true)
         }
     }
 
@@ -325,14 +322,11 @@ class PhotoWindowModel {
         imageAspectRatio = image.size.width / image.size.height
         currentDisplayMaxDimension = targetDimension
         isLoadingDetailImage = false
-
-        // Auto-restore background removal if previously applied
-        if pendingAutoBackgroundRemoval {
-            pendingAutoBackgroundRemoval = false
-            await performBackgroundRemoval()
-        }
     }
 
+    /// Auto-restore background removal by applying to the current display image.
+    /// Unlike the user-initiated toggle, this processes the already-downsampled display image
+    /// to avoid jarring resizes. Only updates in-memory cache (not persistent cache).
     /// Handle window resize with 1-second debounce. Re-downsamples the display
     /// image in memory when the window size changes significantly.
     /// No-op when dynamic image resolution is disabled (already at full res).
@@ -795,12 +789,21 @@ class PhotoWindowModel {
     func toggleBackgroundRemoval() async {
         switch backgroundRemovalState {
         case .original:
+            // First check in-memory cache
             if let cached = backgroundRemovedImage {
                 originalDisplayImage = displayImage
                 displayImage = cached
                 backgroundRemovalState = .removed
             } else {
-                await performBackgroundRemoval()
+                // Then check persistent cache (full-res version)
+                if let cachedData = await BackgroundRemovalCache.shared.loadData(for: imageURL),
+                   let cachedImage = UIImage(data: cachedData) {
+                    // Downscale the full-res cached version for display
+                    await applyDownscaledCachedBackgroundRemoval(cachedImage)
+                } else {
+                    // No cache, process the full-resolution image
+                    await performFullResolutionBackgroundRemoval(isAutoDuringLoad: false)
+                }
             }
         case .removing:
             backgroundRemovalTask?.cancel()
@@ -811,19 +814,26 @@ class PhotoWindowModel {
         }
     }
 
-    private func performBackgroundRemoval() async {
-        guard let sourceImage = displayImage else {
-            AppLogger.photoWindow.warning("No display image available for background removal")
+    /// Process background removal on the full-resolution image.
+    /// Caches the full-res result, then downscales for display.
+    private func performFullResolutionBackgroundRemoval(isAutoDuringLoad: Bool) async {
+        guard let imageData = currentImageData else {
+            AppLogger.photoWindow.warning("No image data available for full-resolution background removal")
             return
         }
 
-        originalDisplayImage = sourceImage
+        // Load full-resolution image
+        guard let fullResImage = UIImage(data: imageData) else {
+            AppLogger.photoWindow.warning("Failed to create UIImage from data for background removal")
+            return
+        }
+
         backgroundRemovalState = .removing
 
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                let processed = try await BackgroundRemover.shared.removeBackground(from: sourceImage)
+                let processed = try await BackgroundRemover.shared.removeBackground(from: fullResImage)
 
                 guard !Task.isCancelled else {
                     self.backgroundRemovalState = .original
@@ -831,12 +841,22 @@ class PhotoWindowModel {
                 }
 
                 if let processed {
-                    self.backgroundRemovedImage = processed
-                    self.displayImage = processed
+                    // Cache the full-resolution background-removed image
+                    if let pngData = processed.pngData() {
+                        await BackgroundRemovalCache.shared.saveData(pngData, for: self.imageURL)
+                    }
+
+                    // Now downscale the result for display
+                    let displayImage = await self.downscaleForDisplay(processed)
+
+                    self.backgroundRemovedImage = displayImage
+                    self.originalDisplayImage = self.displayImage
+                    self.displayImage = displayImage
                     self.backgroundRemovalState = .removed
+
                     await ImageEnhancementTracker.shared.setLastViewingMode(url: self.imageURL, mode: .backgroundRemoved)
                 } else {
-                    self.backgroundRemovalState = .original
+                    self.backgroundRemovalState = isAutoDuringLoad ? .original : .original
                     AppLogger.photoWindow.warning("Background removal returned nil")
                 }
             } catch {
@@ -849,6 +869,64 @@ class PhotoWindowModel {
         backgroundRemovalTask = task
         await task.value
         backgroundRemovalTask = nil
+    }
+
+    /// Apply a downscaled version of a cached background-removed image.
+    private func applyDownscaledCachedBackgroundRemoval(_ fullResImage: UIImage) async {
+        backgroundRemovalState = .removing
+
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+
+            // Downscale the full-res cached version for display
+            let displayImage = await self.downscaleForDisplay(fullResImage)
+
+            self.backgroundRemovedImage = displayImage
+            self.originalDisplayImage = self.displayImage
+            self.displayImage = displayImage
+            self.backgroundRemovalState = .removed
+
+            await ImageEnhancementTracker.shared.setLastViewingMode(url: self.imageURL, mode: .backgroundRemoved)
+        }
+        backgroundRemovalTask = task
+        await task.value
+        backgroundRemovalTask = nil
+    }
+
+    /// Downscale an image for display using the same strategy as loadDisplayImage.
+    private func downscaleForDisplay(_ image: UIImage) async -> UIImage {
+        // If dynamic resolution is disabled, use the image as-is
+        guard appModel.maxImageResolution > 0 else {
+            return image
+        }
+
+        let maxDimension = CGFloat(appModel.maxImageResolution)
+        let imageWidth = image.size.width
+        let imageHeight = image.size.height
+        let maxImageDimension = max(imageWidth, imageHeight)
+
+        guard maxImageDimension > maxDimension else {
+            return image // Already smaller than max, no downsampling needed
+        }
+
+        // Calculate target dimension with headroom for scaling
+        let scale = Self.displayScaleFactor
+        let targetDimension = maxDimension * scale
+
+        // Create a new UIImage at the downsampled size
+        let newSize = CGSize(
+            width: imageWidth * (targetDimension / maxImageDimension),
+            height: imageHeight * (targetDimension / maxImageDimension)
+        )
+
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = image.scale
+        format.opaque = false
+
+        let renderer = UIGraphicsImageRenderer(size: newSize, format: format)
+        return renderer.image { context in
+            image.draw(in: CGRect(origin: .zero, size: newSize))
+        }
     }
 
     private func restoreOriginalBackground() {
@@ -866,7 +944,6 @@ class PhotoWindowModel {
         backgroundRemovalState = .original
         originalDisplayImage = nil
         backgroundRemovedImage = nil
-        pendingAutoBackgroundRemoval = false
     }
 
     // MARK: - UI Auto-Hide
