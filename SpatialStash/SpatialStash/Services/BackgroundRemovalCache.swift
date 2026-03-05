@@ -7,8 +7,10 @@
  */
 
 import Foundation
+import ImageIO
 import os
 import UIKit
+import UniformTypeIdentifiers
 
 actor BackgroundRemovalCache {
     static let shared = BackgroundRemovalCache()
@@ -16,6 +18,7 @@ actor BackgroundRemovalCache {
     private let cacheDirectory: URL
     private let maxCacheSize: Int64 // Maximum cache size in bytes
     private let fileManager = FileManager.default
+    private let heicCompressionQuality: CGFloat = 0.95
 
     private init() {
         // Use the Caches directory - Apple-approved for temporary cache storage
@@ -34,6 +37,10 @@ actor BackgroundRemovalCache {
         resourceValues.isExcludedFromBackup = true
         var mutableCacheDir = cacheDirectory
         try? mutableCacheDir.setResourceValues(resourceValues)
+
+        Task { [self] in
+            await migrateLegacyCacheIfNeeded()
+        }
     }
 
     /// Generate a cache key from a URL with background removal suffix
@@ -51,44 +58,83 @@ actor BackgroundRemovalCache {
     /// Get the file URL for a cached background-removed image
     private func cacheFileURL(for url: URL) -> URL {
         let key = cacheKey(for: url)
+        return cacheDirectory.appendingPathComponent(key + ".heic")
+    }
+
+    /// Legacy cache file URL (pre-HEIC migration, no extension)
+    private func legacyCacheFileURL(for url: URL) -> URL {
+        let key = cacheKey(for: url)
         return cacheDirectory.appendingPathComponent(key)
     }
 
     /// Return cached file URL if present
     func cachedFileURL(for url: URL) -> URL? {
         let fileURL = cacheFileURL(for: url)
-        return fileManager.fileExists(atPath: fileURL.path) ? fileURL : nil
+        if fileManager.fileExists(atPath: fileURL.path) {
+            return fileURL
+        }
+
+        let legacyURL = legacyCacheFileURL(for: url)
+        return fileManager.fileExists(atPath: legacyURL.path) ? legacyURL : nil
     }
 
     /// Check if a background-removed image is cached
     func isCached(url: URL) -> Bool {
-        let fileURL = cacheFileURL(for: url)
-        return fileManager.fileExists(atPath: fileURL.path)
+        return cachedFileURL(for: url) != nil
     }
 
     /// Load background-removed image data from disk cache
     func loadData(for url: URL) -> Data? {
         let fileURL = cacheFileURL(for: url)
 
-        guard fileManager.fileExists(atPath: fileURL.path) else {
+        if fileManager.fileExists(atPath: fileURL.path) {
+            guard let data = try? Data(contentsOf: fileURL) else {
+                return nil
+            }
+
+            // Update access time for LRU tracking
+            try? fileManager.setAttributes(
+                [.modificationDate: Date()],
+                ofItemAtPath: fileURL.path
+            )
+
+            if let migratedData = migrateDataToHeicIfNeeded(data, destinationURL: fileURL) {
+                return migratedData
+            }
+
+            return data
+        }
+
+        let legacyURL = legacyCacheFileURL(for: url)
+        guard fileManager.fileExists(atPath: legacyURL.path),
+              let legacyData = try? Data(contentsOf: legacyURL) else {
             return nil
         }
 
-        // Update access time for LRU tracking
+        if let migratedData = migrateLegacyDataToHeic(legacyData, legacyURL: legacyURL, destinationURL: fileURL) {
+            return migratedData
+        }
+
+        // Update access time for LRU tracking on legacy entry
         try? fileManager.setAttributes(
             [.modificationDate: Date()],
-            ofItemAtPath: fileURL.path
+            ofItemAtPath: legacyURL.path
         )
 
-        return try? Data(contentsOf: fileURL)
+        return legacyData
     }
 
-    /// Save background-removed image data to disk cache
-    func saveData(_ data: Data, for url: URL) {
+    /// Save background-removed image to disk cache as HEIC
+    func saveImage(_ image: UIImage, for url: URL) {
         let fileURL = cacheFileURL(for: url)
 
+        guard let heicData = encodeHeicData(from: image) else {
+            AppLogger.diskCache.warning("Failed to encode background-removed image as HEIC")
+            return
+        }
+
         do {
-            try data.write(to: fileURL)
+            try heicData.write(to: fileURL)
 
             // Check cache size and cleanup if needed
             Task { [self] in
@@ -97,6 +143,16 @@ actor BackgroundRemovalCache {
         } catch {
             AppLogger.diskCache.error("Failed to save background-removed image: \(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    /// Save background-removed image data to disk cache (re-encodes to HEIC)
+    func saveData(_ data: Data, for url: URL) {
+        guard let image = UIImage(data: data) else {
+            AppLogger.diskCache.warning("Failed to decode background-removed image data for HEIC re-encode")
+            return
+        }
+
+        saveImage(image, for: url)
     }
 
     /// Get total cache size in bytes
@@ -195,6 +251,106 @@ actor BackgroundRemovalCache {
         }
 
         return (contents.count, totalSize)
+    }
+
+    // MARK: - HEIC Encoding and Migration
+
+    private func encodeHeicData(from image: UIImage) -> Data? {
+        guard let cgImage = image.cgImage else { return nil }
+
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            data as CFMutableData, UTType.heic.identifier as CFString, 1, nil
+        ) else {
+            return nil
+        }
+
+        let orientation = cgImagePropertyOrientation(for: image.imageOrientation)
+        let properties: [CFString: Any] = [
+            kCGImageDestinationLossyCompressionQuality: heicCompressionQuality,
+            kCGImagePropertyOrientation: orientation.rawValue
+        ]
+
+        CGImageDestinationAddImage(destination, cgImage, properties as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        return data as Data
+    }
+
+    private func cgImagePropertyOrientation(for orientation: UIImage.Orientation) -> CGImagePropertyOrientation {
+        switch orientation {
+        case .up: return .up
+        case .down: return .down
+        case .left: return .left
+        case .right: return .right
+        case .upMirrored: return .upMirrored
+        case .downMirrored: return .downMirrored
+        case .leftMirrored: return .leftMirrored
+        case .rightMirrored: return .rightMirrored
+        @unknown default: return .up
+        }
+    }
+
+    private func isHeicData(_ data: Data) -> Bool {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let type = CGImageSourceGetType(source) as String? else {
+            return false
+        }
+
+        return type == UTType.heic.identifier || type == UTType.heif.identifier
+    }
+
+    private func migrateDataToHeicIfNeeded(_ data: Data, destinationURL: URL) -> Data? {
+        guard !isHeicData(data) else { return nil }
+        guard let image = UIImage(data: data),
+              let heicData = encodeHeicData(from: image) else {
+            return nil
+        }
+
+        do {
+            try heicData.write(to: destinationURL)
+            return heicData
+        } catch {
+            AppLogger.diskCache.warning("Failed to migrate background-removed image to HEIC: \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
+    }
+
+    private func migrateLegacyDataToHeic(_ data: Data, legacyURL: URL, destinationURL: URL) -> Data? {
+        guard let image = UIImage(data: data),
+              let heicData = encodeHeicData(from: image) else {
+            return nil
+        }
+
+        do {
+            try heicData.write(to: destinationURL)
+            try? fileManager.removeItem(at: legacyURL)
+            return heicData
+        } catch {
+            AppLogger.diskCache.warning("Failed to migrate legacy background removal cache: \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
+    }
+
+    private func migrateLegacyCacheIfNeeded() async {
+        guard let contents = try? fileManager.contentsOfDirectory(
+            at: cacheDirectory,
+            includingPropertiesForKeys: nil
+        ) else {
+            return
+        }
+
+        for fileURL in contents {
+            if fileURL.pathExtension.lowercased() == "heic" {
+                continue
+            }
+
+            guard let data = try? Data(contentsOf: fileURL) else { continue }
+
+            let destinationURL = cacheDirectory.appendingPathComponent(fileURL.lastPathComponent + ".heic")
+            if migrateLegacyDataToHeic(data, legacyURL: fileURL, destinationURL: destinationURL) != nil {
+                continue
+            }
+        }
     }
 }
 

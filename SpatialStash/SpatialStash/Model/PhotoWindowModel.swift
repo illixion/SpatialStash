@@ -844,9 +844,7 @@ class PhotoWindowModel {
 
                 if let processed {
                     // Cache the full-resolution background-removed image
-                    if let pngData = processed.pngData() {
-                        await BackgroundRemovalCache.shared.saveData(pngData, for: self.imageURL)
-                    }
+                    await BackgroundRemovalCache.shared.saveImage(processed, for: self.imageURL)
 
                     // Now downscale the result for display
                     let displayImage = await self.downscaleForDisplay(processed)
