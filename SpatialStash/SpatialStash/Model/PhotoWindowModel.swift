@@ -246,8 +246,12 @@ class PhotoWindowModel {
             // Auto-activate 3D (skips 2D load entirely)
             activate3DMode()
         } else if lastMode == .backgroundRemoved {
-            // Process background removal on full-resolution image now
-            await performFullResolutionBackgroundRemoval(isAutoDuringLoad: true)
+            if let cachedData = await BackgroundRemovalCache.shared.loadData(for: imageURL),
+               let cachedImage = UIImage(data: cachedData) {
+                await applyDownscaledCachedBackgroundRemoval(cachedImage)
+            } else {
+                await performFullResolutionBackgroundRemoval(isAutoDuringLoad: true)
+            }
         }
     }
 
@@ -869,6 +873,7 @@ class PhotoWindowModel {
         backgroundRemovalTask = task
         await task.value
         backgroundRemovalTask = nil
+        isLoadingDetailImage = false
     }
 
     /// Apply a downscaled version of a cached background-removed image.
@@ -891,6 +896,7 @@ class PhotoWindowModel {
         backgroundRemovalTask = task
         await task.value
         backgroundRemovalTask = nil
+        isLoadingDetailImage = false
     }
 
     /// Downscale an image for display using the same strategy as loadDisplayImage.
@@ -930,11 +936,20 @@ class PhotoWindowModel {
     }
 
     private func restoreOriginalBackground() {
-        guard let original = originalDisplayImage else { return }
-        displayImage = original
         backgroundRemovalState = .original
         Task {
             await ImageEnhancementTracker.shared.setLastViewingMode(url: imageURL, mode: .mono)
+        }
+        if let original = originalDisplayImage {
+            displayImage = original
+        } else {
+            // Auto-restore case: originalDisplayImage was nil because displayImage hadn't loaded yet
+            // when background removal ran. Clear displayImage so PhotoDisplayView triggers a fresh load.
+            displayImage = nil
+            if let windowSize = lastWindowSize {
+                isLoadingDetailImage = true
+                Task { await loadDisplayImage(for: windowSize) }
+            }
         }
     }
 
