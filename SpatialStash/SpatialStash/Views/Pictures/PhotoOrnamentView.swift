@@ -236,7 +236,7 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
             .font(.title3)
         }
         .buttonStyle(.borderless)
-        .disabled(windowModel.is3DMode || windowModel.isAnimatedGIF || windowModel.isLoadingDetailImage)
+        .disabled(windowModel.is3DMode || windowModel.isAnimatedGIF || (windowModel.isLoadingDetailImage && windowModel.backgroundRemovalState != .removing))
         .help(
             windowModel.backgroundRemovalState == .original ? "Remove Background" :
             windowModel.backgroundRemovalState == .removing ? "Cancel" : "Restore Background"

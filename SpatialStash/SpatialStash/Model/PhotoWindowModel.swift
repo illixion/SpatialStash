@@ -829,6 +829,7 @@ class PhotoWindowModel {
             backgroundRemovalTask?.cancel()
             backgroundRemovalTask = nil
             backgroundRemovalState = .original
+            await ImageEnhancementTracker.shared.setLastViewingMode(url: imageURL, mode: .mono)
         case .removed:
             restoreOriginalBackground()
         }
@@ -900,6 +901,11 @@ class PhotoWindowModel {
 
             // Downscale the full-res cached version for display
             let displayImage = await self.downscaleForDisplay(fullResImage)
+
+            guard !Task.isCancelled else {
+                self.backgroundRemovalState = .original
+                return
+            }
 
             self.backgroundRemovedImage = displayImage
             self.originalDisplayImage = self.displayImage
