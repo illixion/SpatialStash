@@ -77,6 +77,11 @@ class AppModel {
     /// Incremented on each loadInitialVideos; stale loadNextVideoPage results are discarded
     private var videoLoadGeneration: Int = 0
 
+    // MARK: - Video Share State
+
+    var isPreparingVideoShare: Bool = false
+    var videoShareFileURL: URL?
+
     // MARK: - Stereoscopic Video Immersive State
 
     /// Whether the stereoscopic video immersive space is currently shown
@@ -1375,6 +1380,37 @@ class AppModel {
         guard let currentVideo = selectedVideo,
               let currentIndex = galleryVideos.firstIndex(of: currentVideo) else { return 0 }
         return currentIndex + 1
+    }
+
+    // MARK: - Video Share
+
+    func shareVideo() async {
+        guard !isPreparingVideoShare, let video = selectedVideo else { return }
+        isPreparingVideoShare = true
+        defer { isPreparingVideoShare = false }
+
+        let url = video.streamURL
+        let shareName = video.fileName ?? video.title
+
+        if url.isFileURL {
+            presentVideoShareSheet(url: ShareSheetHelper.prepareShareFile(from: url, title: shareName, originalURL: url))
+            return
+        }
+
+        // Remote Stash video — download to temp file
+        do {
+            let (tempURL, _) = try await URLSession.shared.download(from: url)
+            let namedURL = ShareSheetHelper.prepareShareFile(from: tempURL, title: shareName, originalURL: url)
+            try? FileManager.default.removeItem(at: tempURL)
+            presentVideoShareSheet(url: namedURL)
+        } catch {
+            AppLogger.appModel.error("Failed to download video for sharing: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private func presentVideoShareSheet(url: URL) {
+        cancelAutoHideTimer()
+        videoShareFileURL = url
     }
 
     // MARK: - Rating & O Counter Mutations

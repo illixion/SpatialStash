@@ -34,6 +34,7 @@ struct SharedVideoWindowView: View {
                     isSaving: isSaving,
                     isSaved: isSaved,
                     saveError: saveError,
+                    videoURL: item.cachedFileURL,
                     onSave: saveVideo,
                     onOpenGallery: { appModel.showMainWindowIfNeeded(openWindow: openWindow) }
                 )
@@ -88,8 +89,11 @@ struct SharedVideoOrnament: View {
     let isSaving: Bool
     let isSaved: Bool
     let saveError: String?
+    let videoURL: URL
     let onSave: () -> Void
     let onOpenGallery: () -> Void
+
+    @State private var showShareSheet = false
 
     var body: some View {
         HStack(spacing: 16) {
@@ -100,6 +104,22 @@ struct SharedVideoOrnament: View {
             }
             .buttonStyle(.borderless)
             .help("Show Gallery")
+
+            Divider()
+                .frame(height: 24)
+
+            // Share button
+            Button {
+                showShareSheet = true
+            } label: {
+                Image(systemName: "square.and.arrow.up")
+                    .font(.title3)
+            }
+            .buttonStyle(.borderless)
+            .help("Share")
+            .sheet(isPresented: $showShareSheet) {
+                ActivityViewController(activityItems: [videoURL], isPresented: $showShareSheet)
+            }
 
             Divider()
                 .frame(height: 24)

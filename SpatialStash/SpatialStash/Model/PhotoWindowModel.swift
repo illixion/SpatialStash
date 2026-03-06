@@ -76,6 +76,11 @@ class PhotoWindowModel {
     /// Task for background removal (tracked so cleanup can cancel it)
     private var backgroundRemovalTask: Task<Void, Never>?
 
+    // MARK: - Share State
+
+    var isPreparingShare: Bool = false
+    var shareFileURL: URL?
+
     // MARK: - GIF Support
 
     var isAnimatedGIF: Bool = false
@@ -981,6 +986,44 @@ class PhotoWindowModel {
         backgroundRemovalState = .original
         originalDisplayImage = nil
         backgroundRemovedImage = nil
+    }
+
+    // MARK: - Share
+
+    func shareImage() async {
+        guard !isPreparingShare else { return }
+        isPreparingShare = true
+        defer { isPreparingShare = false }
+
+        let url = image.fullSizeURL
+        // Prefer server filename (has correct extension), fall back to title
+        let shareName = image.fileName ?? image.title
+
+        if url.isFileURL {
+            presentShareSheet(url: ShareSheetHelper.prepareShareFile(from: url, title: shareName, originalURL: url))
+            return
+        }
+
+        // Remote URL — check disk cache first, otherwise download
+        if let cachedURL = await DiskImageCache.shared.cachedFileURL(for: url) {
+            presentShareSheet(url: ShareSheetHelper.prepareShareFile(from: cachedURL, title: shareName, originalURL: url))
+            return
+        }
+
+        // Download the full-res image (also caches to disk)
+        do {
+            _ = try await ImageLoader.shared.loadRawData(from: url)
+            if let cachedURL = await DiskImageCache.shared.cachedFileURL(for: url) {
+                presentShareSheet(url: ShareSheetHelper.prepareShareFile(from: cachedURL, title: shareName, originalURL: url))
+            }
+        } catch {
+            AppLogger.photoWindow.error("Failed to download image for sharing: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private func presentShareSheet(url: URL) {
+        cancelAutoHideTimer()
+        shareFileURL = url
     }
 
     // MARK: - UI Auto-Hide

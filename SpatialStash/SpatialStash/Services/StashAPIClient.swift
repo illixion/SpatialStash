@@ -143,6 +143,7 @@ actor StashAPIClient {
         let o_counter: Int?
         let paths: StashImagePaths
         let files: [StashImageFile]?
+        let visual_files: [StashVisualFile]?
     }
 
     struct StashImagePaths: Decodable {
@@ -153,6 +154,10 @@ actor StashAPIClient {
     struct StashImageFile: Decodable {
         let width: Int?
         let height: Int?
+    }
+
+    struct StashVisualFile: Decodable {
+        let path: String?
     }
 
     func findImages(page: Int, perPage: Int, query: String? = nil) async throws -> FindImagesResult {
@@ -176,6 +181,11 @@ actor StashAPIClient {
                     files {
                         width
                         height
+                    }
+                    visual_files {
+                        ... on ImageFile {
+                            path
+                        }
                     }
                 }
             }
@@ -519,6 +529,7 @@ actor StashAPIClient {
     }
 
     struct StashSceneFile: Decodable {
+        let path: String?
         let width: Int?
         let height: Int?
         let duration: Double?
@@ -545,6 +556,7 @@ actor StashAPIClient {
                         stream
                     }
                     files {
+                        path
                         width
                         height
                         duration

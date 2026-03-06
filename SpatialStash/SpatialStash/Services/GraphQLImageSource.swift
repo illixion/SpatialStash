@@ -41,13 +41,20 @@ final class GraphQLImageSource: ImageSource, @unchecked Sendable {
                 thumbnailURL = imageURL
             }
 
+            // Extract original filename from visual_files path
+            let fileName = stashImage.visual_files?
+                .compactMap { $0.path }
+                .first
+                .map { ($0 as NSString).lastPathComponent }
+
             return GalleryImage(
                 stashId: stashImage.id,
                 thumbnailURL: thumbnailURL,
                 fullSizeURL: imageURL,
                 title: stashImage.title,
                 rating100: stashImage.rating100,
-                oCounter: stashImage.o_counter
+                oCounter: stashImage.o_counter,
+                fileName: fileName
             )
         }
 

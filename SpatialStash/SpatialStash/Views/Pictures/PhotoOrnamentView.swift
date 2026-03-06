@@ -64,6 +64,11 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
                 backgroundRemovalButton
             }
 
+            Divider()
+                .frame(height: 24)
+
+            shareButton
+
             // Rating / O counter (when stashId exists and not shared context)
             if context != .shared, windowModel.image.stashId != nil {
                 Divider()
@@ -241,6 +246,45 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
             windowModel.backgroundRemovalState == .original ? "Remove Background" :
             windowModel.backgroundRemovalState == .removing ? "Cancel" : "Restore Background"
         )
+    }
+
+    // MARK: - Share
+
+    private var shareButton: some View {
+        Button {
+            Task {
+                await windowModel.shareImage()
+            }
+        } label: {
+            Group {
+                if windowModel.isPreparingShare {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                } else {
+                    Image(systemName: "square.and.arrow.up")
+                }
+            }
+            .font(.title3)
+        }
+        .buttonStyle(.borderless)
+        .disabled(windowModel.isPreparingShare || windowModel.isLoadingDetailImage)
+        .help("Share")
+        .sheet(isPresented: Binding(
+            get: { windowModel.shareFileURL != nil },
+            set: { if !$0 { windowModel.shareFileURL = nil } }
+        )) {
+            windowModel.startAutoHideTimer()
+        } content: {
+            if let url = windowModel.shareFileURL {
+                ActivityViewController(
+                    activityItems: [url],
+                    isPresented: Binding(
+                        get: { windowModel.shareFileURL != nil },
+                        set: { if !$0 { windowModel.shareFileURL = nil } }
+                    )
+                )
+            }
+        }
     }
 
     // MARK: - Rating & O Counter

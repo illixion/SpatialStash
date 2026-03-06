@@ -107,6 +107,47 @@ struct VideoOrnamentsView: View {
                     }
                 }
 
+                // Share button
+                if appModel.selectedVideo != nil {
+                    Divider()
+                        .frame(height: 24)
+
+                    Button {
+                        Task {
+                            await appModel.shareVideo()
+                        }
+                    } label: {
+                        Group {
+                            if appModel.isPreparingVideoShare {
+                                ProgressView()
+                                    .scaleEffect(0.8)
+                            } else {
+                                Image(systemName: "square.and.arrow.up")
+                            }
+                        }
+                        .font(.title3)
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(appModel.isPreparingVideoShare)
+                    .help("Share")
+                    .sheet(isPresented: Binding(
+                        get: { appModel.videoShareFileURL != nil },
+                        set: { if !$0 { appModel.videoShareFileURL = nil } }
+                    )) {
+                        appModel.startAutoHideTimer()
+                    } content: {
+                        if let url = appModel.videoShareFileURL {
+                            ActivityViewController(
+                                activityItems: [url],
+                                isPresented: Binding(
+                                    get: { appModel.videoShareFileURL != nil },
+                                    set: { if !$0 { appModel.videoShareFileURL = nil } }
+                                )
+                            )
+                        }
+                    }
+                }
+
                 // Video title if available
                 if let title = appModel.selectedVideo?.title, !title.isEmpty {
                     Divider()

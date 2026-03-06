@@ -42,9 +42,13 @@ final class GraphQLVideoSource: VideoSource, @unchecked Sendable {
                 thumbnailURL = streamURL
             }
 
-            let duration = scene.files?.first?.duration
-            let sourceWidth = scene.files?.first?.width
-            let sourceHeight = scene.files?.first?.height
+            let firstFile = scene.files?.first
+            let duration = firstFile?.duration
+            let sourceWidth = firstFile?.width
+            let sourceHeight = firstFile?.height
+
+            // Extract original filename from files path
+            let fileName = firstFile?.path.map { ($0 as NSString).lastPathComponent }
 
             // Detect stereoscopic format from tags
             let tagNames = scene.tags?.map { $0.name } ?? []
@@ -71,7 +75,8 @@ final class GraphQLVideoSource: VideoSource, @unchecked Sendable {
                 sourceHeight: sourceHeight,
                 eyesReversed: eyesReversed,
                 rating100: scene.rating100,
-                oCounter: scene.o_counter
+                oCounter: scene.o_counter,
+                fileName: fileName
             )
         }
 

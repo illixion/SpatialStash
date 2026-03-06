@@ -27,6 +27,9 @@ struct GalleryVideo: Identifiable, Equatable, Hashable {
     var rating100: Int?
     var oCounter: Int?
 
+    /// Original filename from server (e.g. from files path), used for sharing
+    let fileName: String?
+
     init(
         id: UUID = UUID(),
         stashId: String,
@@ -40,7 +43,8 @@ struct GalleryVideo: Identifiable, Equatable, Hashable {
         sourceHeight: Int? = nil,
         eyesReversed: Bool = false,
         rating100: Int? = nil,
-        oCounter: Int? = nil
+        oCounter: Int? = nil,
+        fileName: String? = nil
     ) {
         self.id = id
         self.stashId = stashId
@@ -55,6 +59,7 @@ struct GalleryVideo: Identifiable, Equatable, Hashable {
         self.eyesReversed = eyesReversed
         self.rating100 = rating100
         self.oCounter = oCounter
+        self.fileName = fileName
     }
 
     /// Formatted duration string (e.g., "1:23:45" or "12:34")
