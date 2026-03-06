@@ -18,6 +18,7 @@ struct ImmersiveVideoView: View {
     @State private var player: AVPlayer = AVPlayer()
     @State private var videoMaterial: VideoMaterial?
     @State private var videoEntity: Entity?
+    @State private var endOfPlayObserver: NSObjectProtocol?
     @State private var isLoaded: Bool = false
 
     var body: some View {
@@ -67,7 +68,7 @@ struct ImmersiveVideoView: View {
             isLoaded = true
 
             // Setup looping
-            NotificationCenter.default.addObserver(
+            endOfPlayObserver = NotificationCenter.default.addObserver(
                 forName: .AVPlayerItemDidPlayToEndTime,
                 object: playerItem,
                 queue: .main
@@ -79,6 +80,10 @@ struct ImmersiveVideoView: View {
             }
         }
         .onDisappear {
+            if let observer = endOfPlayObserver {
+                NotificationCenter.default.removeObserver(observer)
+                endOfPlayObserver = nil
+            }
             player.pause()
             player.replaceCurrentItem(with: nil)
             videoMaterial = nil
