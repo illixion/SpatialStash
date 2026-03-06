@@ -24,6 +24,7 @@ struct LocalVideoPlayerView: UIViewControllerRepresentable {
         // Only update if URL actually changed
         if let currentAsset = controller.player?.currentItem?.asset as? AVURLAsset,
            currentAsset.url != videoURL {
+            controller.player?.pause()
             let player = AVPlayer(url: videoURL)
             controller.player = player
             player.play()
