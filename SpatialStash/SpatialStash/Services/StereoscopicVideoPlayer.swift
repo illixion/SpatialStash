@@ -75,6 +75,7 @@ class StereoscopicVideoPlayer: ObservableObject {
     private var timeObserver: Any?
     private var downloadTask: URLSessionDownloadTask?
     private var downloadObservation: NSKeyValueObservation?
+    private var endOfPlayObserver: NSObjectProtocol?
 
     init() {}
 
@@ -357,6 +358,11 @@ class StereoscopicVideoPlayer: ObservableObject {
         }
         timeObserver = nil
 
+        if let observer = endOfPlayObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        endOfPlayObserver = nil
+
         avPlayer?.pause()
         avPlayer = nil
 
@@ -457,7 +463,7 @@ class StereoscopicVideoPlayer: ObservableObject {
         let player = AVPlayer(playerItem: playerItem)
 
         // Enable looping
-        NotificationCenter.default.addObserver(
+        endOfPlayObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemDidPlayToEndTime,
             object: playerItem,
             queue: .main
