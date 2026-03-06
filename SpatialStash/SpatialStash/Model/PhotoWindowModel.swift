@@ -201,8 +201,10 @@ class PhotoWindowModel {
 
     // MARK: - Image Loading
 
-    /// Load image data for the detail view and detect if it's an animated GIF
-    private func loadImageDataForDetail(url: URL) async {
+    /// Load image data for the detail view and detect if it's an animated GIF.
+    /// Pass autoRestore: false when calling from loadDisplayImage — that path only
+    /// needs the raw data and must not trigger a second concurrent auto-restoration.
+    private func loadImageDataForDetail(url: URL, autoRestore: Bool = true) async {
         do {
             if let data = try await ImageLoader.shared.loadRawData(from: url) {
                 currentImageData = data
@@ -214,7 +216,7 @@ class PhotoWindowModel {
                         imageAspectRatio = image.size.width / image.size.height
                     }
                     isLoadingDetailImage = false
-                } else {
+                } else if autoRestore {
                     // Check if the image was previously enhanced and auto-restore
                     await autoRestorePreviousEnhancement()
                 }
@@ -229,6 +231,7 @@ class PhotoWindowModel {
     /// When useRealityKitDisplay is set, always activates RealityKit in mono mode.
     private func autoRestorePreviousEnhancement() async {
         guard !isAnimatedGIF, !is3DMode else { return }
+        guard backgroundRemovalState == .original else { return }
 
         if useRealityKitDisplay {
             // Always use RealityKit — check if we should also auto-generate 3D
@@ -266,16 +269,20 @@ class PhotoWindowModel {
         guard !isLoadingDisplayImage else { return }
         guard backgroundRemovalState == .original else { return }
 
+        lastWindowSize = windowSize
+
         isLoadingDisplayImage = true
         defer { isLoadingDisplayImage = false }
 
-        lastWindowSize = windowSize
-
-        // Ensure raw data is downloaded to disk cache
+        // Ensure raw data is downloaded to disk cache.
+        // autoRestore: false — auto-restoration runs exclusively from start(), not here.
         if currentImageData == nil {
-            await loadImageDataForDetail(url: imageURL)
+            await loadImageDataForDetail(url: imageURL, autoRestore: false)
         }
         guard !isAnimatedGIF else { return }
+        // autoRestorePreviousEnhancement may have run inside loadImageDataForDetail —
+        // abort the 2D load if an enhancement is now active
+        guard backgroundRemovalState == .original, !is3DMode else { return }
 
         // Resolve source file URL (prefer disk cache, fall back to original URL)
         guard let sourceURL = await resolveSourceFileURL() else {
@@ -320,6 +327,13 @@ class PhotoWindowModel {
 
         guard let image else {
             AppLogger.photoWindow.warning("Failed to downsample image for display")
+            isLoadingDetailImage = false
+            return
+        }
+
+        // Re-check after off-thread downsampling: an enhancement may have been applied
+        // concurrently (e.g., from the start() task running in parallel with this load)
+        guard backgroundRemovalState == .original, !is3DMode else {
             isLoadingDetailImage = false
             return
         }
@@ -856,6 +870,7 @@ class PhotoWindowModel {
                     self.backgroundRemovedImage = displayImage
                     self.originalDisplayImage = self.displayImage
                     self.displayImage = displayImage
+                    self.imageAspectRatio = displayImage.size.width / displayImage.size.height
                     self.backgroundRemovalState = .removed
 
                     await ImageEnhancementTracker.shared.setLastViewingMode(url: self.imageURL, mode: .backgroundRemoved)
@@ -889,6 +904,7 @@ class PhotoWindowModel {
             self.backgroundRemovedImage = displayImage
             self.originalDisplayImage = self.displayImage
             self.displayImage = displayImage
+            self.imageAspectRatio = displayImage.size.width / displayImage.size.height
             self.backgroundRemovalState = .removed
 
             await ImageEnhancementTracker.shared.setLastViewingMode(url: self.imageURL, mode: .backgroundRemoved)

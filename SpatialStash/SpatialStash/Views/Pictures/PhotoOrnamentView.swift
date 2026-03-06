@@ -194,7 +194,7 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
             Button {
                 Task { await windowModel.switchToViewingMode(.spatial3DImmersive) }
             } label: {
-                Label("Immersive 3D", systemImage: "rotate.3d")
+                Label("Immersive 3D", systemImage: "square.arrowtriangle.4.outward")
             }
         } label: {
             Group {
@@ -202,7 +202,7 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
                     ProgressView()
                         .scaleEffect(0.8)
                 } else if windowModel.desiredViewingMode == .spatial3DImmersive {
-                    Image(systemName: "rotate.3d")
+                    Image(systemName: "square.arrowtriangle.4.outward")
                 } else if windowModel.desiredViewingMode == .spatial3D {
                     Image(systemName: "view.3d")
                 } else {
@@ -230,7 +230,7 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
                     ProgressView()
                         .scaleEffect(0.8)
                 } else {
-                    Image(systemName: windowModel.backgroundRemovalState == .original ? "person.and.background.dotted" : "person.and.background.striped.horizontal")
+                    Image(systemName: windowModel.backgroundRemovalState == .original ? "person.and.background.striped.horizontal" : "person.and.background.dotted")
                 }
             }
             .font(.title3)
