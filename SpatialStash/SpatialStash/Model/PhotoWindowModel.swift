@@ -232,6 +232,17 @@ class PhotoWindowModel {
         }
     }
 
+    /// Record an enhancement in the tracker, but only if the setting is enabled.
+    private func trackViewingMode(_ mode: ViewingModePreference) async {
+        guard appModel.rememberImageEnhancements else { return }
+        await ImageEnhancementTracker.shared.setLastViewingMode(url: imageURL, mode: mode)
+    }
+
+    private func trackImageConverted() async {
+        guard appModel.rememberImageEnhancements else { return }
+        await ImageEnhancementTracker.shared.markAsConverted(url: imageURL)
+    }
+
     /// Auto-restore the last enhancement (3D or background removal) if applicable.
     /// When useRealityKitDisplay is set, always activates RealityKit in mono mode.
     private func autoRestorePreviousEnhancement() async {
@@ -240,12 +251,18 @@ class PhotoWindowModel {
 
         if useRealityKitDisplay {
             // Always use RealityKit — check if we should also auto-generate 3D
-            let lastMode = await ImageEnhancementTracker.shared.lastViewingMode(url: imageURL)
-            let wasConverted = await ImageEnhancementTracker.shared.wasConverted(url: imageURL)
-            let shouldAutoGenerate = wasConverted && (lastMode == .spatial3D || lastMode == .spatial3DImmersive)
-            activate3DMode(generateImmediately: shouldAutoGenerate)
+            if appModel.rememberImageEnhancements {
+                let lastMode = await ImageEnhancementTracker.shared.lastViewingMode(url: imageURL)
+                let wasConverted = await ImageEnhancementTracker.shared.wasConverted(url: imageURL)
+                let shouldAutoGenerate = wasConverted && (lastMode == .spatial3D || lastMode == .spatial3DImmersive)
+                activate3DMode(generateImmediately: shouldAutoGenerate)
+            } else {
+                activate3DMode(generateImmediately: false)
+            }
             return
         }
+
+        guard appModel.rememberImageEnhancements else { return }
 
         let lastMode = await ImageEnhancementTracker.shared.lastViewingMode(url: imageURL)
         let wasConverted = await ImageEnhancementTracker.shared.wasConverted(url: imageURL)
@@ -510,7 +527,7 @@ class PhotoWindowModel {
             contentEntity.components.set(ipc)
             if let ar = ipc.aspectRatio(for: .mono) { imageAspectRatio = CGFloat(ar) }
             immersiveResizeTrigger += 1
-            await ImageEnhancementTracker.shared.setLastViewingMode(url: imageURL, mode: .mono)
+            await trackViewingMode(.mono)
             return
         }
 
@@ -533,7 +550,7 @@ class PhotoWindowModel {
         desiredViewingMode = .mono  // Reset to mono when exiting 3D entirely
 
         // Record that the user explicitly exited 3D so auto-restore doesn't re-enable it
-        await ImageEnhancementTracker.shared.setLastViewingMode(url: imageURL, mode: .mono)
+        await trackViewingMode(.mono)
 
         // Reset display dimension so the 2D reload doesn't early-exit
         currentDisplayMaxDimension = 0
@@ -679,10 +696,12 @@ class PhotoWindowModel {
                 self.spatial3DImageState = .generated
 
                 // Check if we should restore immersive mode before updating tracker
-                let wasImmersive = await ImageEnhancementTracker.shared.lastViewingMode(url: self.imageURL) == .spatial3DImmersive
+                let wasImmersive = self.appModel.rememberImageEnhancements
+                    ? await ImageEnhancementTracker.shared.lastViewingMode(url: self.imageURL) == .spatial3DImmersive
+                    : false
 
                 // Track that this image was converted
-                await ImageEnhancementTracker.shared.markAsConverted(url: self.imageURL)
+                await self.trackImageConverted()
 
                 // Restore to the last viewing mode (immersive or spatial3D)
                 if wasImmersive {
@@ -694,12 +713,12 @@ class PhotoWindowModel {
                         self.imageAspectRatio = CGFloat(ar)
                     }
                     self.immersiveResizeTrigger += 1
-                    await ImageEnhancementTracker.shared.setLastViewingMode(url: self.imageURL, mode: .spatial3DImmersive)
+                    await self.trackViewingMode(.spatial3DImmersive)
                 } else {
                     if let aspectRatio = imagePresentationComponent.aspectRatio(for: .spatial3D) {
                         self.imageAspectRatio = CGFloat(aspectRatio)
                     }
-                    await ImageEnhancementTracker.shared.setLastViewingMode(url: self.imageURL, mode: .spatial3D)
+                    await self.trackViewingMode(.spatial3D)
                 }
             } catch {
                 if !Task.isCancelled {
@@ -762,7 +781,7 @@ class PhotoWindowModel {
                 contentEntity.components.set(ipc)
                 if let ar = ipc.aspectRatio(for: .spatial3D) { imageAspectRatio = CGFloat(ar) }
                 if wasImmersive { immersiveResizeTrigger += 1 }
-                Task { await ImageEnhancementTracker.shared.setLastViewingMode(url: self.imageURL, mode: .spatial3D) }
+                Task { await self.trackViewingMode(.spatial3D) }
             }
         } else if mode == .spatial3DImmersive {
             if spatial3DImageState == .notGenerated {
@@ -774,7 +793,7 @@ class PhotoWindowModel {
                 contentEntity.components.set(ipc)
                 if let ar = ipc.aspectRatio(for: .spatial3DImmersive) { imageAspectRatio = CGFloat(ar) }
                 immersiveResizeTrigger += 1
-                Task { await ImageEnhancementTracker.shared.setLastViewingMode(url: self.imageURL, mode: .spatial3DImmersive) }
+                Task { await self.trackViewingMode(.spatial3DImmersive) }
             } else {
                 guard var ipc = contentEntity.components[ImagePresentationComponent.self] else { return }
                 guard ipc.viewingMode != .spatial3DImmersive else { return }
@@ -783,13 +802,14 @@ class PhotoWindowModel {
                 contentEntity.components.set(ipc)
                 if let ar = ipc.aspectRatio(for: .spatial3DImmersive) { imageAspectRatio = CGFloat(ar) }
                 immersiveResizeTrigger += 1
-                Task { await ImageEnhancementTracker.shared.setLastViewingMode(url: self.imageURL, mode: .spatial3DImmersive) }
+                Task { await self.trackViewingMode(.spatial3DImmersive) }
             }
         }
     }
 
     /// Check if the current image was previously converted and auto-generate if so
     private func autoGenerateSpatial3DIfPreviouslyConverted() async {
+        guard appModel.rememberImageEnhancements else { return }
         guard !isAnimatedGIF,
               spatial3DImageState == .notGenerated else {
             return
@@ -834,7 +854,7 @@ class PhotoWindowModel {
             backgroundRemovalTask?.cancel()
             backgroundRemovalTask = nil
             backgroundRemovalState = .original
-            await ImageEnhancementTracker.shared.setLastViewingMode(url: imageURL, mode: .mono)
+            await trackViewingMode(.mono)
         case .removed:
             restoreOriginalBackground()
         }
@@ -879,7 +899,7 @@ class PhotoWindowModel {
                     self.imageAspectRatio = displayImage.size.width / displayImage.size.height
                     self.backgroundRemovalState = .removed
 
-                    await ImageEnhancementTracker.shared.setLastViewingMode(url: self.imageURL, mode: .backgroundRemoved)
+                    await self.trackViewingMode(.backgroundRemoved)
                 } else {
                     self.backgroundRemovalState = isAutoDuringLoad ? .original : .original
                     AppLogger.photoWindow.warning("Background removal returned nil")
@@ -918,7 +938,7 @@ class PhotoWindowModel {
             self.imageAspectRatio = displayImage.size.width / displayImage.size.height
             self.backgroundRemovalState = .removed
 
-            await ImageEnhancementTracker.shared.setLastViewingMode(url: self.imageURL, mode: .backgroundRemoved)
+            await self.trackViewingMode(.backgroundRemoved)
         }
         backgroundRemovalTask = task
         await task.value
@@ -965,7 +985,7 @@ class PhotoWindowModel {
     private func restoreOriginalBackground() {
         backgroundRemovalState = .original
         Task {
-            await ImageEnhancementTracker.shared.setLastViewingMode(url: imageURL, mode: .mono)
+            await trackViewingMode(.mono)
         }
         if let original = originalDisplayImage {
             displayImage = original

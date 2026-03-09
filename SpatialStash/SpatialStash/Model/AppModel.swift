@@ -356,6 +356,21 @@ class AppModel {
         }
     }
 
+    /// When true, per-image viewing enhancements (spatial 3D, background removal)
+    /// are remembered and auto-restored on reopen. Turning off clears all saved data.
+    var rememberImageEnhancements: Bool {
+        didSet {
+            if rememberImageEnhancements != oldValue {
+                UserDefaults.standard.set(rememberImageEnhancements, forKey: "rememberImageEnhancements")
+                if !rememberImageEnhancements {
+                    Task {
+                        await ImageEnhancementTracker.shared.clearAll()
+                    }
+                }
+            }
+        }
+    }
+
     // MARK: - Slideshow Settings
 
     /// Slideshow delay between images (in seconds)
@@ -415,6 +430,11 @@ class AppModel {
             ? UserDefaults.standard.bool(forKey: "openImagesInSeparateWindows")
             : false
 
+        // Load remember image enhancements (default: true)
+        let loadedRememberImageEnhancements = UserDefaults.standard.object(forKey: "rememberImageEnhancements") != nil
+            ? UserDefaults.standard.bool(forKey: "rememberImageEnhancements")
+            : true
+
         // Initialize stored properties
         self.stashServerURL = loadedServerURL
         self.stashAPIKey = loadedAPIKey
@@ -423,6 +443,7 @@ class AppModel {
         self.maxImageResolution = loadedMaxImageResolution
         self.roundedCorners = loadedRoundedCorners
         self.openImagesInSeparateWindows = loadedOpenImagesInSeparateWindows
+        self.rememberImageEnhancements = loadedRememberImageEnhancements
 
         // Initialize API client and image sources
         let client: StashAPIClient
@@ -849,6 +870,7 @@ class AppModel {
             maxImageResolution: maxImageResolution,
             roundedCorners: roundedCorners,
             openImagesInSeparateWindows: openImagesInSeparateWindows,
+            rememberImageEnhancements: rememberImageEnhancements,
             savedViews: savedViews,
             savedVideoViews: savedVideoViews,
             savedWindowGroups: savedWindowGroups,
@@ -867,6 +889,7 @@ class AppModel {
         if let v = backup.maxImageResolution { maxImageResolution = v }
         if let v = backup.roundedCorners { roundedCorners = v }
         if let v = backup.openImagesInSeparateWindows { openImagesInSeparateWindows = v }
+        if let v = backup.rememberImageEnhancements { rememberImageEnhancements = v }
 
         // Complex settings
         if let v = backup.savedViews {

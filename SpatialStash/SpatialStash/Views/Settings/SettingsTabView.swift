@@ -42,6 +42,8 @@ struct SettingsTabView: View {
 
                     Toggle("Open images in separate windows", isOn: $appModel.openImagesInSeparateWindows)
 
+                    Toggle("Remember Image Enhancements", isOn: $appModel.rememberImageEnhancements)
+
                     Picker("Max Image Resolution", selection: $appModel.maxImageResolution) {
                         ForEach(AppModel.maxImageResolutionOptions, id: \.value) { option in
                             Text(option.label).tag(option.value)
