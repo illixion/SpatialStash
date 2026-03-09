@@ -326,14 +326,15 @@ class AppModel {
 
     /// Available max image resolution options (value 0 = Off / no limit)
     static let maxImageResolutionOptions: [(label: String, value: Int)] = [
-        ("1024px", 1024),
+        ("480px", 480),
+        ("640px", 640),
+        ("960px", 960),
+        ("1280px", 1280),
+        ("1600px", 1600),
         ("2048px", 2048),
-        ("3072px", 3072),
+        ("2560px", 2560),
+        ("3200px", 3200),
         ("4096px", 4096),
-        ("5120px", 5120),
-        ("6144px", 6144),
-        ("7168px", 7168),
-        ("8192px", 8192),
         ("Off", 0),
     ]
 
