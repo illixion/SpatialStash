@@ -1,0 +1,62 @@
+/*
+ Spatial Stash - Settings Backup
+
+ Codable backup container for all app settings plus a lightweight FileDocument
+ wrapper for SwiftUI fileExporter / fileImporter.
+ */
+
+import SwiftUI
+import UniformTypeIdentifiers
+
+// MARK: - Backup Data Model
+
+struct SettingsBackup: Codable {
+    /// Schema version — increment when fields change semantics or type.
+    let version: Int
+    let exportDate: Date
+    let appVersion: String
+
+    // Simple display settings (all optional for forward/backward compatibility)
+    var stashServerURL: String?
+    var stashAPIKey: String?
+    var autoHideDelay: TimeInterval?
+    var slideshowDelay: TimeInterval?
+    var maxImageResolution: Int?
+    var roundedCorners: Bool?
+    var openImagesInSeparateWindows: Bool?
+
+    // Complex Codable settings
+    var savedViews: [SavedView]?
+    var savedVideoViews: [SavedVideoView]?
+    var savedWindowGroups: [SavedWindowGroup]?
+
+    // Actor-based tracker data
+    var video3DSettings: [String: Video3DSettings]?
+    var imageEnhancementConvertedURLs: [String]?
+    var imageEnhancementLastViewingModes: [String: String]?
+
+    static let currentVersion = 1
+}
+
+// MARK: - FileDocument Wrapper
+
+struct SettingsBackupDocument: FileDocument {
+    static var readableContentTypes: [UTType] { [.json] }
+
+    let data: Data
+
+    init(data: Data) {
+        self.data = data
+    }
+
+    init(configuration: ReadConfiguration) throws {
+        guard let data = configuration.file.regularFileContents else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        self.data = data
+    }
+
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+        FileWrapper(regularFileWithContents: data)
+    }
+}

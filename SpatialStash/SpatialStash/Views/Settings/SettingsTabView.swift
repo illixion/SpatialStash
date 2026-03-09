@@ -6,6 +6,7 @@
 
 import os
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct SettingsTabView: View {
     @Environment(AppModel.self) private var appModel
@@ -21,6 +22,15 @@ struct SettingsTabView: View {
     @State private var renamingGroup: SavedWindowGroup?
     @State private var renameGroupName = ""
     @State private var restoreSheetGroup: SavedWindowGroup?
+    @State private var showExporter = false
+    @State private var showImporter = false
+    @State private var exportDocument: SettingsBackupDocument?
+    @State private var isExporting = false
+    @State private var showImportConfirmation = false
+    @State private var pendingImportData: Data?
+    @State private var showImportSuccess = false
+    @State private var showImportError = false
+    @State private var importErrorMessage = ""
 
     var body: some View {
         @Bindable var appModel = appModel
@@ -249,6 +259,40 @@ struct SettingsTabView: View {
                     }
                 }
 
+                Section("Backup") {
+                    Button {
+                        isExporting = true
+                        Task {
+                            let backup = await appModel.exportSettingsBackup()
+                            let encoder = JSONEncoder()
+                            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                            encoder.dateEncodingStrategy = .iso8601
+                            if let data = try? encoder.encode(backup) {
+                                exportDocument = SettingsBackupDocument(data: data)
+                                showExporter = true
+                            }
+                            isExporting = false
+                        }
+                    } label: {
+                        if isExporting {
+                            HStack {
+                                ProgressView()
+                                    .scaleEffect(0.8)
+                                Text("Preparing...")
+                            }
+                        } else {
+                            Label("Export Settings", systemImage: "square.and.arrow.up")
+                        }
+                    }
+                    .disabled(isExporting)
+
+                    Button {
+                        showImporter = true
+                    } label: {
+                        Label("Import Settings", systemImage: "square.and.arrow.down")
+                    }
+                }
+
                 Section("About") {
                     HStack {
                         Text("App Name")
@@ -299,6 +343,64 @@ struct SettingsTabView: View {
                 WindowGroupRestoreSheet(group: group)
                     .environment(appModel)
             }
+            .fileExporter(
+                isPresented: $showExporter,
+                document: exportDocument,
+                contentType: .json,
+                defaultFilename: "SpatialStash-Backup-\(backupDateString()).json"
+            ) { _ in
+                exportDocument = nil
+            }
+            .fileImporter(
+                isPresented: $showImporter,
+                allowedContentTypes: [.json]
+            ) { result in
+                switch result {
+                case .success(let url):
+                    guard url.startAccessingSecurityScopedResource() else { return }
+                    defer { url.stopAccessingSecurityScopedResource() }
+                    if let data = try? Data(contentsOf: url) {
+                        pendingImportData = data
+                        showImportConfirmation = true
+                    }
+                case .failure(let error):
+                    importErrorMessage = error.localizedDescription
+                    showImportError = true
+                }
+            }
+            .alert("Import Settings?", isPresented: $showImportConfirmation) {
+                Button("Import", role: .destructive) {
+                    guard let data = pendingImportData else { return }
+                    Task {
+                        do {
+                            let decoder = JSONDecoder()
+                            decoder.dateDecodingStrategy = .iso8601
+                            let backup = try decoder.decode(SettingsBackup.self, from: data)
+                            await appModel.importSettingsBackup(backup)
+                            showImportSuccess = true
+                        } catch {
+                            importErrorMessage = error.localizedDescription
+                            showImportError = true
+                        }
+                        pendingImportData = nil
+                    }
+                }
+                Button("Cancel", role: .cancel) {
+                    pendingImportData = nil
+                }
+            } message: {
+                Text("This will replace your current settings with the imported backup. This cannot be undone.")
+            }
+            .alert("Import Successful", isPresented: $showImportSuccess) {
+                Button("OK") {}
+            } message: {
+                Text("Settings have been restored from backup.")
+            }
+            .alert("Import Failed", isPresented: $showImportError) {
+                Button("OK") {}
+            } message: {
+                Text(importErrorMessage)
+            }
         }
     }
 
@@ -335,6 +437,12 @@ struct SettingsTabView: View {
         formatter.allowedUnits = [.useKB, .useMB, .useGB]
         formatter.countStyle = .file
         return formatter.string(fromByteCount: bytes)
+    }
+
+    private func backupDateString() -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: Date())
     }
 
     private func formatSlideshowDelay(_ seconds: TimeInterval) -> String {

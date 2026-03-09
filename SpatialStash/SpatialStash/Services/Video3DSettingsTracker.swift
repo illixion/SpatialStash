@@ -60,6 +60,19 @@ actor Video3DSettingsTracker {
         settingsByVideoId.count
     }
 
+    // MARK: - Backup Export / Import
+
+    /// Export all settings for backup
+    func exportData() -> [String: Video3DSettings] {
+        return settingsByVideoId
+    }
+
+    /// Import settings from backup, replacing current data
+    func importData(_ settings: [String: Video3DSettings]) {
+        settingsByVideoId = settings
+        save()
+    }
+
     private func save() {
         if let data = try? JSONEncoder().encode(settingsByVideoId) {
             UserDefaults.standard.set(data, forKey: userDefaultsKey)

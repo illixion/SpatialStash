@@ -693,7 +693,7 @@ class AppModel {
         }
     }
 
-    private func persistSavedWindowGroups() {
+    func persistSavedWindowGroups() {
         if let data = try? JSONEncoder().encode(savedWindowGroups) {
             UserDefaults.standard.set(data, forKey: Self.savedWindowGroupsKey)
             let count = savedWindowGroups.count
@@ -830,6 +830,72 @@ class AppModel {
         if filter.selectedPerformers.isEmpty {
             filter.performerModifier = .includesAll
         }
+    }
+
+    // MARK: - Settings Backup
+
+    func exportSettingsBackup() async -> SettingsBackup {
+        let video3DData = await Video3DSettingsTracker.shared.exportData()
+        let imageEnhancementData = await ImageEnhancementTracker.shared.exportData()
+
+        return SettingsBackup(
+            version: SettingsBackup.currentVersion,
+            exportDate: Date(),
+            appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown",
+            stashServerURL: stashServerURL,
+            stashAPIKey: stashAPIKey,
+            autoHideDelay: autoHideDelay,
+            slideshowDelay: slideshowDelay,
+            maxImageResolution: maxImageResolution,
+            roundedCorners: roundedCorners,
+            openImagesInSeparateWindows: openImagesInSeparateWindows,
+            savedViews: savedViews,
+            savedVideoViews: savedVideoViews,
+            savedWindowGroups: savedWindowGroups,
+            video3DSettings: video3DData,
+            imageEnhancementConvertedURLs: imageEnhancementData.convertedURLs,
+            imageEnhancementLastViewingModes: imageEnhancementData.lastViewingModes
+        )
+    }
+
+    func importSettingsBackup(_ backup: SettingsBackup) async {
+        // Simple settings — only apply if present in backup
+        if let v = backup.stashServerURL { stashServerURL = v }
+        if let v = backup.stashAPIKey { stashAPIKey = v }
+        if let v = backup.autoHideDelay { autoHideDelay = v }
+        if let v = backup.slideshowDelay { slideshowDelay = v }
+        if let v = backup.maxImageResolution { maxImageResolution = v }
+        if let v = backup.roundedCorners { roundedCorners = v }
+        if let v = backup.openImagesInSeparateWindows { openImagesInSeparateWindows = v }
+
+        // Complex settings
+        if let v = backup.savedViews {
+            savedViews = v
+            saveSavedViews()
+        }
+        if let v = backup.savedVideoViews {
+            savedVideoViews = v
+            saveSavedVideoViews()
+        }
+        if let v = backup.savedWindowGroups {
+            savedWindowGroups = v
+            persistSavedWindowGroups()
+        }
+
+        // Actor-based trackers
+        if let settings = backup.video3DSettings {
+            await Video3DSettingsTracker.shared.importData(settings)
+        }
+        if let urls = backup.imageEnhancementConvertedURLs,
+           let modes = backup.imageEnhancementLastViewingModes {
+            await ImageEnhancementTracker.shared.importData(
+                convertedURLs: urls,
+                lastViewingModes: modes
+            )
+        }
+
+        // Reconnect API client with potentially updated server config
+        updateAPIClient()
     }
 
     // MARK: - API Client Management

@@ -75,6 +75,20 @@ actor ImageEnhancementTracker {
         UserDefaults.standard.set(lastViewingModeByURL, forKey: lastModeKey)
     }
 
+    // MARK: - Backup Export / Import
+
+    /// Export all tracking data for backup
+    func exportData() -> (convertedURLs: [String], lastViewingModes: [String: String]) {
+        return (Array(convertedImageURLs), lastViewingModeByURL)
+    }
+
+    /// Import tracking data from backup, replacing current data
+    func importData(convertedURLs: [String], lastViewingModes: [String: String]) {
+        convertedImageURLs = Set(convertedURLs)
+        lastViewingModeByURL = lastViewingModes
+        save()
+    }
+
     // MARK: - Last Viewing Mode Tracking
 
     func setLastViewingMode(url: URL, mode: ViewingModePreference) {
