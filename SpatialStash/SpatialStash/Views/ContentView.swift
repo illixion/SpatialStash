@@ -31,9 +31,9 @@ struct ContentView: View {
             visibility: shouldShowOrnament ? .visible : .hidden,
             attachmentAnchor: .scene(.bottomFront),
             ornament: {
-                if appModel.selectedTab == .videos && appModel.isShowingVideoDetail {
+                if (appModel.selectedTab == .videos || appModel.selectedTab == .local) && appModel.isShowingVideoDetail {
                     // Show video player controls
-                    VideoOrnamentsView(videoCount: appModel.galleryVideos.count)
+                    VideoOrnamentsView(videoCount: appModel.selectedTab == .videos ? appModel.galleryVideos.count : 0)
                 } else {
                     // Show tab bar for all tabs
                     TabBarOrnament()

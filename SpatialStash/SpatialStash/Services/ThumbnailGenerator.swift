@@ -6,6 +6,7 @@
  avoiding loading full-resolution images into memory.
  */
 
+import AVFoundation
 import Foundation
 import ImageIO
 import os
@@ -31,6 +32,11 @@ actor ThumbnailGenerator {
         semaphore = DispatchSemaphore(value: maxConcurrentTasks)
     }
 
+    /// Video file extensions that require AVAssetImageGenerator for thumbnails
+    private static let videoExtensions: Set<String> = [
+        "mp4", "m4v", "mov", "mkv", "webm", "avi", "wmv", "flv", "3gp"
+    ]
+
     /// Generate a thumbnail for a local file URL
     /// - Parameters:
     ///   - url: The local file URL
@@ -42,8 +48,14 @@ actor ThumbnailGenerator {
             return await existingTask.value
         }
 
+        // Use AVAssetImageGenerator for video files
+        let isVideo = Self.videoExtensions.contains(url.pathExtension.lowercased())
+
         let task = Task<UIImage?, Never> {
-            await withCheckedContinuation { continuation in
+            if isVideo {
+                return await self.createVideoThumbnail(for: url, maxSize: maxSize)
+            }
+            return await withCheckedContinuation { continuation in
                 // Use semaphore to limit concurrent operations
                 DispatchQueue.global(qos: .userInitiated).async { [self] in
                     self.semaphore.wait()
@@ -60,6 +72,29 @@ actor ThumbnailGenerator {
         inProgressTasks[url] = nil
 
         return result
+    }
+
+    /// Generate a thumbnail from a video file using AVAssetImageGenerator
+    private func createVideoThumbnail(for url: URL, maxSize: CGFloat) async -> UIImage? {
+        let asset = AVURLAsset(url: url)
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: maxSize, height: maxSize)
+
+        // Try to grab a frame at 1 second, falling back to 0
+        let times: [CMTime] = [CMTime(seconds: 1, preferredTimescale: 600), .zero]
+
+        for time in times {
+            do {
+                let (cgImage, _) = try await generator.image(at: time)
+                return UIImage(cgImage: cgImage)
+            } catch {
+                continue
+            }
+        }
+
+        AppLogger.imageLoader.warning("Failed to create video thumbnail for: \(url.lastPathComponent, privacy: .private)")
+        return nil
     }
 
     /// Synchronous thumbnail creation using CGImageSource

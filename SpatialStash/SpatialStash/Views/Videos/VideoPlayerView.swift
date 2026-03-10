@@ -32,8 +32,13 @@ struct VideoPlayerView: View {
                             }
                         )
                         .id("\(video.id)_3d")
+                    } else if video.streamURL.isFileURL {
+                        // Use native AVPlayer for local files
+                        LocalVideoPlayerView(videoURL: video.streamURL)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .id("\(video.id)_local")
                     } else {
-                        // Use standard web player for 2D content
+                        // Use web player for remote content (supports WebM etc.)
                         WebVideoPlayerView(
                             videoURL: video.streamURL,
                             apiKey: appModel.stashAPIKey.isEmpty ? nil : appModel.stashAPIKey

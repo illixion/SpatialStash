@@ -143,6 +143,7 @@ struct LocalMediaListView: View {
     @State private var subfolders: [String] = []
     @State private var isLoading = true
     @State private var selectedImage: GalleryImage? = nil
+    @State private var isShowingLocalVideo = false
 
     let columns = [
         GridItem(.adaptive(minimum: 150, maximum: 250), spacing: 16)
@@ -158,7 +159,9 @@ struct LocalMediaListView: View {
 
     var body: some View {
         Group {
-            if !appModel.openImagesInSeparateWindows, let image = selectedImage {
+            if isShowingLocalVideo, appModel.selectedVideo != nil {
+                VideoPlayerView()
+            } else if !appModel.openImagesInSeparateWindows, let image = selectedImage {
                 PushedPictureView(image: image, appModel: appModel, onDismiss: {
                     selectedImage = nil
                 })
@@ -248,6 +251,15 @@ struct LocalMediaListView: View {
                                             } else {
                                                 selectedImage = image
                                             }
+                                        } else if folderPath.first == "Videos" {
+                                            let video = GalleryVideo(
+                                                stashId: file.url.absoluteString,
+                                                thumbnailURL: file.url,
+                                                streamURL: file.url,
+                                                title: file.name
+                                            )
+                                            appModel.selectVideoForDetail(video)
+                                            isShowingLocalVideo = true
                                         }
                                     }
                                 }
@@ -287,6 +299,11 @@ struct LocalMediaListView: View {
             }
         }
         .environment(appModel)
+        .onChange(of: appModel.isShowingVideoDetail) { _, isShowing in
+            if !isShowing {
+                isShowingLocalVideo = false
+            }
+        }
         .onChange(of: appModel.openImagesInSeparateWindows) { _, isEnabled in
             if isEnabled {
                 selectedImage = nil
