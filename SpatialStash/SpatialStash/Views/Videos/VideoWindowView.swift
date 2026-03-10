@@ -40,10 +40,6 @@ struct VideoWindowView: View {
                         }
                     )
                     .id("\(video.id)_3d")
-                } else if video.streamURL.isFileURL {
-                    LocalVideoPlayerView(videoURL: video.streamURL)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .id("\(video.id)_local")
                 } else {
                     WebVideoPlayerView(
                         videoURL: video.streamURL,

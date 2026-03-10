@@ -27,8 +27,22 @@ struct WebVideoPlayerView: UIViewRepresentable {
     }
 
     func updateUIView(_ webView: WKWebView, context: Context) {
-        let html = generateVideoHTML(for: videoURL, apiKey: apiKey)
-        webView.loadHTMLString(html, baseURL: videoURL)
+        if videoURL.isFileURL {
+            loadLocalVideo(webView: webView, fileURL: videoURL)
+        } else {
+            let html = generateVideoHTML(for: videoURL, apiKey: apiKey)
+            webView.loadHTMLString(html, baseURL: videoURL)
+        }
+    }
+
+    /// Load a local video by writing a temporary HTML file into the video's directory
+    /// and using loadFileURL to grant WKWebView read access to that directory.
+    private func loadLocalVideo(webView: WKWebView, fileURL: URL) {
+        let html = generateVideoHTML(for: fileURL, apiKey: nil)
+        let videoDir = fileURL.deletingLastPathComponent()
+        let htmlFile = videoDir.appendingPathComponent(".spatialstash_player.html")
+        try? html.write(to: htmlFile, atomically: true, encoding: .utf8)
+        webView.loadFileURL(htmlFile, allowingReadAccessTo: videoDir)
     }
 
     private func generateVideoHTML(for url: URL, apiKey: String?) -> String {
