@@ -85,6 +85,7 @@ class PhotoWindowModel {
 
     var isAnimatedGIF: Bool = false
     var currentImageData: Data? = nil
+    var gifHEVCURL: URL? = nil
 
     // MARK: - UI Visibility State
 
@@ -220,7 +221,17 @@ class PhotoWindowModel {
                     if let image = UIImage(data: data) {
                         imageAspectRatio = image.size.width / image.size.height
                     }
+
+                    // Show the GIF immediately (base64 fallback) while HEVC converts
                     isLoadingDetailImage = false
+
+                    // Convert GIF to HEVC in background for reliable multi-window playback
+                    do {
+                        gifHEVCURL = try await GIFHEVCConverter.shared.convert(gifData: data, sourceURL: url)
+                    } catch {
+                        AppLogger.gifConverter.warning("GIF HEVC conversion failed, falling back to base64: \(error.localizedDescription, privacy: .public)")
+                        gifHEVCURL = nil
+                    }
                 } else if autoRestore {
                     // Check if the image was previously enhanced and auto-restore
                     await autoRestorePreviousEnhancement()
@@ -1172,6 +1183,7 @@ class PhotoWindowModel {
         spatial3DImage = nil
         isAnimatedGIF = false
         currentImageData = nil
+        gifHEVCURL = nil
         displayImage = nil
         nativeImageDimensions = nil
         currentDisplayMaxDimension = 0
@@ -1310,6 +1322,7 @@ class PhotoWindowModel {
 
         // Release image data
         currentImageData = nil
+        gifHEVCURL = nil
         displayImage = nil
         clearBackgroundRemovalState()
 

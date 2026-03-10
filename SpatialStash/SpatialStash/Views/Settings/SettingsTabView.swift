@@ -13,9 +13,11 @@ struct SettingsTabView: View {
     @State private var imageCacheStats: (fileCount: Int, totalSize: Int64) = (0, 0)
     @State private var videoCacheStats: (fileCount: Int, totalSize: Int64) = (0, 0)
     @State private var backgroundRemovalCacheStats: (fileCount: Int, totalSize: Int64) = (0, 0)
+    @State private var gifHEVCCacheStats: (fileCount: Int, totalSize: Int64) = (0, 0)
     @State private var isClearingImageCache = false
     @State private var isClearingVideoCache = false
     @State private var isClearingBackgroundRemovalCache = false
+    @State private var isClearingGIFHEVCCache = false
     @State private var showSaveGroupAlert = false
     @State private var newGroupName = ""
     @State private var showRenameGroupAlert = false
@@ -181,9 +183,15 @@ struct SettingsTabView: View {
                             .foregroundColor(.secondary)
                     }
                     HStack {
+                        Text("Animated GIFs")
+                        Spacer()
+                        Text("\(gifHEVCCacheStats.fileCount) items, \(formatBytes(gifHEVCCacheStats.totalSize))")
+                            .foregroundColor(.secondary)
+                    }
+                    HStack {
                         Text("Total")
                         Spacer()
-                        Text(formatBytes(imageCacheStats.totalSize + videoCacheStats.totalSize + backgroundRemovalCacheStats.totalSize))
+                        Text(formatBytes(imageCacheStats.totalSize + videoCacheStats.totalSize + backgroundRemovalCacheStats.totalSize + gifHEVCCacheStats.totalSize))
                             .foregroundColor(.secondary)
                             .fontWeight(.medium)
                     }
@@ -246,6 +254,26 @@ struct SettingsTabView: View {
                         }
                     }
                     .disabled(isClearingBackgroundRemovalCache || backgroundRemovalCacheStats.fileCount == 0)
+
+                    Button(role: .destructive) {
+                        isClearingGIFHEVCCache = true
+                        Task {
+                            await DiskGIFHEVCCache.shared.clearCache()
+                            await refreshCacheStats()
+                            isClearingGIFHEVCCache = false
+                        }
+                    } label: {
+                        if isClearingGIFHEVCCache {
+                            HStack {
+                                ProgressView()
+                                    .scaleEffect(0.8)
+                                Text("Clearing...")
+                            }
+                        } else {
+                            Text("Clear Animated GIF Cache")
+                        }
+                    }
+                    .disabled(isClearingGIFHEVCCache || gifHEVCCacheStats.fileCount == 0)
                 }
 
                 Section {
@@ -420,6 +448,7 @@ struct SettingsTabView: View {
         imageCacheStats = await DiskImageCache.shared.getCacheStats()
         videoCacheStats = await DiskVideoCache.shared.getCacheStats()
         backgroundRemovalCacheStats = await BackgroundRemovalCache.shared.getCacheStats()
+        gifHEVCCacheStats = await DiskGIFHEVCCache.shared.getCacheStats()
     }
 
     private func clearImageCache() async {

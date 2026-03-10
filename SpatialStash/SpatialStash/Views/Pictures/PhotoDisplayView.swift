@@ -132,7 +132,7 @@ struct PhotoDisplayView: View {
     private var imageContent: some View {
         if windowModel.isAnimatedGIF, let gifData = windowModel.currentImageData {
             // Display animated GIF without RealityKit (no 3D conversion possible)
-            AnimatedGIFDetailView(imageData: gifData)
+            AnimatedGIFDetailView(imageData: gifData, hevcFileURL: windowModel.gifHEVCURL)
                 .aspectRatio(windowModel.imageAspectRatio, contentMode: .fit)
                 .clipShape(RoundedRectangle(cornerRadius: appModel.roundedCorners ? 50 : 0, style: .continuous))
                 .contentShape(.rect)

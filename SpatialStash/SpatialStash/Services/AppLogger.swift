@@ -62,4 +62,7 @@ enum AppLogger {
 
     /// Background removal processing
     static let backgroundRemover = Logger(subsystem: subsystem, category: "BackgroundRemover")
+
+    /// GIF to HEVC conversion and caching
+    static let gifConverter = Logger(subsystem: subsystem, category: "GIFConverter")
 }
