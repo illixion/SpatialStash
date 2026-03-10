@@ -439,29 +439,42 @@ struct LocalMediaThumbnailView: View {
     @State private var loadFailed = false
 
     var body: some View {
-        ZStack {
-            Color.secondary.opacity(0.2)
+        VStack(spacing: 0) {
+            ZStack {
+                Color.secondary.opacity(0.2)
 
-            if let loadedImage {
-                Image(uiImage: loadedImage)
-                    .resizable()
-                    .scaledToFill()
-            } else if isLoading {
-                ProgressView()
-            } else {
-                VStack(spacing: 8) {
-                    Image(systemName: file.type == .image ? "photo" : "video")
-                        .font(.largeTitle)
-                        .foregroundColor(.secondary)
-                    if loadFailed {
-                        Text("Failed to load")
-                            .font(.caption)
+                if let loadedImage {
+                    Image(uiImage: loadedImage)
+                        .resizable()
+                        .scaledToFill()
+                } else if isLoading {
+                    ProgressView()
+                } else {
+                    VStack(spacing: 8) {
+                        Image(systemName: file.type == .image ? "photo" : "video")
+                            .font(.largeTitle)
                             .foregroundColor(.secondary)
+                        if loadFailed {
+                            Text("Failed to load")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
                     }
                 }
             }
+            .frame(height: 150)
+
+            // Filename bar
+            Text(file.name)
+                .font(.caption)
+                .foregroundColor(.white)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .background(.black)
         }
-        .frame(height: 150)
         .cornerRadius(12)
         .clipped()
         .contentShape(Rectangle())

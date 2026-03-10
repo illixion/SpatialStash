@@ -38,7 +38,10 @@ struct WebVideoPlayerView: UIViewRepresentable {
     /// Load a local video by writing a temporary HTML file into the video's directory
     /// and using loadFileURL to grant WKWebView read access to that directory.
     private func loadLocalVideo(webView: WKWebView, fileURL: URL) {
-        let html = generateVideoHTML(for: fileURL, apiKey: nil)
+        // Use relative filename so WKWebView resolves it against the HTML file's directory
+        let relativeSrc = fileURL.lastPathComponent.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
+            ?? fileURL.lastPathComponent
+        let html = generateVideoHTML(videoSrc: relativeSrc, apiKey: nil)
         let videoDir = fileURL.deletingLastPathComponent()
         let htmlFile = videoDir.appendingPathComponent(".spatialstash_player.html")
         try? html.write(to: htmlFile, atomically: true, encoding: .utf8)
@@ -54,6 +57,10 @@ struct WebVideoPlayerView: UIViewRepresentable {
             components.queryItems = queryItems
         }
         let videoURLString = components.url?.absoluteString ?? url.absoluteString
+        return generateVideoHTML(videoSrc: videoURLString, apiKey: apiKey)
+    }
+
+    private func generateVideoHTML(videoSrc: String, apiKey: String?) -> String {
 
         return """
         <!DOCTYPE html>
@@ -98,7 +105,7 @@ struct WebVideoPlayerView: UIViewRepresentable {
         </head>
         <body>
             <div class="video-container">
-                <video id="player" controls autoplay playsinline loop muted src="\(videoURLString)">
+                <video id="player" controls autoplay playsinline loop muted src="\(videoSrc)">
                     Your browser does not support video playback.
                 </video>
             </div>

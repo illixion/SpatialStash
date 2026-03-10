@@ -13,73 +13,96 @@ struct VideoThumbnailView: View {
     @State private var isLoading = true
     @State private var loadFailed = false
 
+    private var displayName: String {
+        if let title = video.title, !title.isEmpty {
+            return title
+        }
+        if let fileName = video.fileName, !fileName.isEmpty {
+            return fileName
+        }
+        return video.thumbnailURL.deletingPathExtension().lastPathComponent
+    }
+
     var body: some View {
-        ZStack(alignment: .bottomTrailing) {
-            // Background
-            Rectangle()
-                .fill(Color.secondary.opacity(0.2))
-            
-            // Thumbnail image
-            if let loadedImage {
-                Image(uiImage: loadedImage)
-                    .resizable()
-                    .scaledToFill()
-            } else if isLoading {
-                ProgressView()
-            } else {
-                Image(systemName: "video")
-                    .font(.largeTitle)
-                    .foregroundColor(.secondary)
-            }
+        VStack(spacing: 0) {
+            ZStack(alignment: .bottomTrailing) {
+                // Background
+                Rectangle()
+                    .fill(Color.secondary.opacity(0.2))
 
-            // Play button overlay
-            Image(systemName: "play.circle.fill")
-                .font(.system(size: 44))
-                .foregroundColor(.white.opacity(0.9))
-                .shadow(radius: 4)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            // Bottom badges (3D indicator and duration)
-            HStack(spacing: 6) {
-                // 3D badge for stereoscopic videos
-                if video.isStereoscopic {
-                    HStack(spacing: 2) {
-                        Image(systemName: "view.3d")
-                            .font(.caption2)
-                        if let format = video.stereoscopicFormat {
-                            Text(format.shortLabel)
-                                .font(.caption2)
-                                .fontWeight(.semibold)
-                        } else {
-                            Text("3D")
-                                .font(.caption2)
-                                .fontWeight(.semibold)
-                        }
-                    }
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2)
-                    .background(.blue.opacity(0.8))
-                    .foregroundColor(.white)
-                    .cornerRadius(4)
+                // Thumbnail image
+                if let loadedImage {
+                    Image(uiImage: loadedImage)
+                        .resizable()
+                        .scaledToFill()
+                } else if isLoading {
+                    ProgressView()
+                } else {
+                    Image(systemName: "video")
+                        .font(.largeTitle)
+                        .foregroundColor(.secondary)
                 }
 
-                Spacer()
+                // Play button overlay
+                Image(systemName: "play.circle.fill")
+                    .font(.system(size: 44))
+                    .foregroundColor(.white.opacity(0.9))
+                    .shadow(radius: 4)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                // Duration badge
-                if let duration = video.formattedDuration {
-                    Text(duration)
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .padding(.horizontal, 6)
+                // Bottom badges (3D indicator and duration)
+                HStack(spacing: 6) {
+                    // 3D badge for stereoscopic videos
+                    if video.isStereoscopic {
+                        HStack(spacing: 2) {
+                            Image(systemName: "view.3d")
+                                .font(.caption2)
+                            if let format = video.stereoscopicFormat {
+                                Text(format.shortLabel)
+                                    .font(.caption2)
+                                    .fontWeight(.semibold)
+                            } else {
+                                Text("3D")
+                                    .font(.caption2)
+                                    .fontWeight(.semibold)
+                            }
+                        }
+                        .padding(.horizontal, 5)
                         .padding(.vertical, 2)
-                        .background(.black.opacity(0.7))
+                        .background(.blue.opacity(0.8))
                         .foregroundColor(.white)
                         .cornerRadius(4)
+                    }
+
+                    Spacer()
+
+                    // Duration badge
+                    if let duration = video.formattedDuration {
+                        Text(duration)
+                            .font(.caption)
+                            .fontWeight(.medium)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(.black.opacity(0.7))
+                            .foregroundColor(.white)
+                            .cornerRadius(4)
+                    }
                 }
+                .padding(8)
             }
-            .padding(8)
+            .aspectRatio(16/9, contentMode: .fit)
+
+            // Filename bar
+            Text(displayName)
+                .font(.caption)
+                .foregroundColor(.white)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .background(.black)
         }
-        .aspectRatio(16/9, contentMode: .fit)
         .cornerRadius(12)
         .clipped()
         .contentShape(Rectangle())

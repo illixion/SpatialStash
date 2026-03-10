@@ -74,16 +74,16 @@ actor ThumbnailGenerator {
         return result
     }
 
-    /// Generate a thumbnail from a video file using AVAssetImageGenerator
+    /// Generate a thumbnail from a video file using AVAssetImageGenerator.
+    /// Formats not supported by AVFoundation (e.g. WebM) will return nil and
+    /// the UI shows a generic video icon placeholder instead.
     private func createVideoThumbnail(for url: URL, maxSize: CGFloat) async -> UIImage? {
         let asset = AVURLAsset(url: url)
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
         generator.maximumSize = CGSize(width: maxSize, height: maxSize)
 
-        // Try to grab a frame at 1 second, falling back to 0
         let times: [CMTime] = [CMTime(seconds: 1, preferredTimescale: 600), .zero]
-
         for time in times {
             do {
                 let (cgImage, _) = try await generator.image(at: time)
@@ -93,7 +93,7 @@ actor ThumbnailGenerator {
             }
         }
 
-        AppLogger.imageLoader.warning("Failed to create video thumbnail for: \(url.lastPathComponent, privacy: .private)")
+        AppLogger.imageLoader.debug("Failed to create video thumbnail for: \(url.lastPathComponent, privacy: .private)")
         return nil
     }
 
