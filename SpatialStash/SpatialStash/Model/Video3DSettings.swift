@@ -7,7 +7,7 @@
 import Foundation
 
 /// User-configurable settings for 3D video conversion
-struct Video3DSettings: Codable, Equatable {
+struct Video3DSettings: Codable, Equatable, Hashable {
     /// The stereoscopic format (SBS, HSBS, OU, HOU)
     let format: StereoscopicFormat
 

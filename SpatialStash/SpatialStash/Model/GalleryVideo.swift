@@ -6,7 +6,7 @@
 
 import Foundation
 
-struct GalleryVideo: Identifiable, Equatable, Hashable {
+struct GalleryVideo: Identifiable, Equatable, Hashable, Codable {
     let id: UUID
     let stashId: String
     let thumbnailURL: URL

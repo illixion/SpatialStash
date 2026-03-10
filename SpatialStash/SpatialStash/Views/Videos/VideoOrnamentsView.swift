@@ -8,6 +8,7 @@ import SwiftUI
 
 struct VideoOrnamentsView: View {
     @Environment(AppModel.self) private var appModel
+    @Environment(\.openWindow) private var openWindow
     let videoCount: Int
     @State private var showMediaInfo = false
     @State private var isUpdatingMediaInfo = false
@@ -148,6 +149,21 @@ struct VideoOrnamentsView: View {
                     }
                 }
 
+                // Pop out button
+                if appModel.selectedVideo != nil {
+                    Divider()
+                        .frame(height: 24)
+
+                    Button {
+                        popOutVideo()
+                    } label: {
+                        Image(systemName: "rectangle.portrait.and.arrow.forward")
+                            .font(.title3)
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Pop Out")
+                }
+
                 // Video title if available
                 if let title = appModel.selectedVideo?.title, !title.isEmpty {
                     Divider()
@@ -161,6 +177,17 @@ struct VideoOrnamentsView: View {
             .padding()
         }
         .glassBackgroundEffect()
+    }
+
+    private func popOutVideo() {
+        guard let video = appModel.selectedVideo else { return }
+        let windowValue = VideoWindowValue(
+            video: video,
+            stereoscopicOverride: appModel.videoStereoscopicOverride,
+            video3DSettings: appModel.video3DSettings
+        )
+        openWindow(id: "video-detail", value: windowValue)
+        appModel.dismissVideoDetail()
     }
 
     @ViewBuilder

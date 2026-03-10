@@ -32,6 +32,17 @@ struct SpatialStashApp: App {
         .defaultSize(width: 1200, height: 900)
         .defaultLaunchBehavior(.suppressed)
 
+        // Individual video window - pop-out video player
+        WindowGroup(id: "video-detail", for: VideoWindowValue.self) { $windowValue in
+            if let windowValue = windowValue {
+                VideoWindowView(windowValue: windowValue)
+                    .environment(appModel)
+            }
+        }
+        .windowStyle(.plain)
+        .defaultSize(width: 1200, height: 700)
+        .defaultLaunchBehavior(.suppressed)
+
         // Shared photo viewer - opens when image is shared to the app
         WindowGroup(id: "shared-photo", for: SharedMediaItem.self) { $item in
             if let item = item {
