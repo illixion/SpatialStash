@@ -13,7 +13,7 @@ struct SpatialStashApp: App {
     @UIApplicationDelegateAdaptor private var appDelegate: AppDelegate
 
     var body: some Scene {
-        WindowGroup("Spatial Stash", id: "main") {
+        Window("Spatial Stash", id: "main") {
             MainWindowView(appModel: appModel)
         }
         .defaultSize(width: 1200, height: 800)
