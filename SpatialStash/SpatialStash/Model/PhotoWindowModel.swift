@@ -343,15 +343,21 @@ class PhotoWindowModel {
         let nativeMaxDim = max(nativeImageDimensions?.width ?? 8192, nativeImageDimensions?.height ?? 8192)
 
         // Calculate target dimension: full native when max resolution is off (0),
-        // otherwise window size × scale factor capped at both max resolution and native
+        // otherwise window size × scale factor capped at both max resolution and native.
+        // During initial load, use max resolution directly — window size is unreliable
+        // during visionOS scene restoration and the resize handler will adjust later.
         let targetDimension: CGFloat
         if appModel.maxImageResolution > 0 {
             let maxRes = CGFloat(appModel.maxImageResolution)
-            targetDimension = min(
-                max(windowSize.width, windowSize.height) * Self.displayScaleFactor,
-                maxRes,
-                nativeMaxDim
-            )
+            if isInitialLoadInProgress {
+                targetDimension = min(maxRes, nativeMaxDim)
+            } else {
+                targetDimension = min(
+                    max(windowSize.width, windowSize.height) * Self.displayScaleFactor,
+                    maxRes,
+                    nativeMaxDim
+                )
+            }
         } else {
             targetDimension = nativeMaxDim
         }
