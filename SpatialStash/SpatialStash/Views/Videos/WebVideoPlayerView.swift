@@ -11,6 +11,7 @@ import WebKit
 struct WebVideoPlayerView: UIViewRepresentable {
     let videoURL: URL
     let apiKey: String?
+    var showControls: Bool = true
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -31,11 +32,24 @@ struct WebVideoPlayerView: UIViewRepresentable {
     }
 
     func updateUIView(_ webView: WKWebView, context: Context) {
-        if videoURL.isFileURL {
-            loadLocalVideo(webView: webView, coordinator: context.coordinator, fileURL: videoURL)
-        } else {
-            let html = generateVideoHTML(for: videoURL, apiKey: apiKey)
-            webView.loadHTMLString(html, baseURL: videoURL)
+        let coordinator = context.coordinator
+
+        // Only reload the page when the video URL changes
+        if coordinator.loadedURL != videoURL {
+            coordinator.loadedURL = videoURL
+            if videoURL.isFileURL {
+                loadLocalVideo(webView: webView, coordinator: coordinator, fileURL: videoURL)
+            } else {
+                let html = generateVideoHTML(for: videoURL, apiKey: apiKey)
+                webView.loadHTMLString(html, baseURL: videoURL)
+            }
+        }
+
+        // Toggle controls via JS without reloading
+        if coordinator.lastShowControls != showControls {
+            coordinator.lastShowControls = showControls
+            let js = "document.getElementById('player').controls = \(showControls);"
+            webView.evaluateJavaScript(js)
         }
     }
 
@@ -62,6 +76,8 @@ struct WebVideoPlayerView: UIViewRepresentable {
 
     class Coordinator {
         var htmlFileURL: URL?
+        var loadedURL: URL?
+        var lastShowControls: Bool?
 
         func cleanupHTMLFile() {
             guard let url = htmlFileURL else { return }

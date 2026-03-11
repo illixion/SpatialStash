@@ -43,7 +43,8 @@ struct VideoWindowView: View {
                 } else {
                     WebVideoPlayerView(
                         videoURL: video.streamURL,
-                        apiKey: appModel.stashAPIKey.isEmpty ? nil : appModel.stashAPIKey
+                        apiKey: appModel.stashAPIKey.isEmpty ? nil : appModel.stashAPIKey,
+                        showControls: !isUIHidden
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .id("\(video.id)_2d")
