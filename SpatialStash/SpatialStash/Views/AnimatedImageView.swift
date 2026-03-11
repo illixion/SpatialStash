@@ -21,6 +21,10 @@ struct AnimatedImageView: UIViewRepresentable {
         self.contentMode = contentMode
     }
 
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
@@ -94,11 +98,27 @@ struct AnimatedImageView: UIViewRepresentable {
             // Write a temporary HTML file next to the .mp4 so loadFileURL grants
             // read access to the cache directory and the <img src> resolves correctly.
             let htmlURL = hevcURL.deletingPathExtension().appendingPathExtension("html")
+            context.coordinator.cleanupHTMLFile()
             try? html.write(to: htmlURL, atomically: true, encoding: .utf8)
+            context.coordinator.htmlFileURL = htmlURL
             let cacheDir = hevcURL.deletingLastPathComponent()
             webView.loadFileURL(htmlURL, allowingReadAccessTo: cacheDir)
         } else {
             webView.loadHTMLString(html, baseURL: nil)
+        }
+    }
+
+    static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
+        coordinator.cleanupHTMLFile()
+    }
+
+    class Coordinator {
+        var htmlFileURL: URL?
+
+        func cleanupHTMLFile() {
+            guard let url = htmlFileURL else { return }
+            try? FileManager.default.removeItem(at: url)
+            htmlFileURL = nil
         }
     }
 }

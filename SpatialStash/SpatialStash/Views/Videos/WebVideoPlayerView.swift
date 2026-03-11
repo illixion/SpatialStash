@@ -12,6 +12,10 @@ struct WebVideoPlayerView: UIViewRepresentable {
     let videoURL: URL
     let apiKey: String?
 
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.allowsInlineMediaPlayback = true
@@ -28,24 +32,42 @@ struct WebVideoPlayerView: UIViewRepresentable {
 
     func updateUIView(_ webView: WKWebView, context: Context) {
         if videoURL.isFileURL {
-            loadLocalVideo(webView: webView, fileURL: videoURL)
+            loadLocalVideo(webView: webView, coordinator: context.coordinator, fileURL: videoURL)
         } else {
             let html = generateVideoHTML(for: videoURL, apiKey: apiKey)
             webView.loadHTMLString(html, baseURL: videoURL)
         }
     }
 
+    static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
+        coordinator.cleanupHTMLFile()
+    }
+
     /// Load a local video by writing a temporary HTML file into the video's directory
     /// and using loadFileURL to grant WKWebView read access to that directory.
-    private func loadLocalVideo(webView: WKWebView, fileURL: URL) {
+    private func loadLocalVideo(webView: WKWebView, coordinator: Coordinator, fileURL: URL) {
         // Use relative filename so WKWebView resolves it against the HTML file's directory
         let relativeSrc = fileURL.lastPathComponent.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
             ?? fileURL.lastPathComponent
         let html = generateVideoHTML(videoSrc: relativeSrc, apiKey: nil)
         let videoDir = fileURL.deletingLastPathComponent()
-        let htmlFile = videoDir.appendingPathComponent(".spatialstash_player.html")
+        let videoBaseName = fileURL.deletingPathExtension().lastPathComponent
+        let htmlFile = videoDir.appendingPathComponent(".spatialstash_player_\(videoBaseName).html")
+        // Clean up previous HTML file if switching videos
+        coordinator.cleanupHTMLFile()
         try? html.write(to: htmlFile, atomically: true, encoding: .utf8)
+        coordinator.htmlFileURL = htmlFile
         webView.loadFileURL(htmlFile, allowingReadAccessTo: videoDir)
+    }
+
+    class Coordinator {
+        var htmlFileURL: URL?
+
+        func cleanupHTMLFile() {
+            guard let url = htmlFileURL else { return }
+            try? FileManager.default.removeItem(at: url)
+            htmlFileURL = nil
+        }
     }
 
     private func generateVideoHTML(for url: URL, apiKey: String?) -> String {
