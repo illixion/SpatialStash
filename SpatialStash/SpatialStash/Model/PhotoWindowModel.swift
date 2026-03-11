@@ -55,6 +55,10 @@ class PhotoWindowModel {
     /// Whether a display image load is currently in progress (prevents concurrent loads)
     private var isLoadingDisplayImage: Bool = false
 
+    /// True during the initial sequential load from start(). Prevents resize-triggered
+    /// reloads from interfering with enhancement restoration.
+    private(set) var isInitialLoadInProgress: Bool = false
+
     /// Task for 3D generation (tracked so cleanup can avoid removing the component mid-generation)
     private var generateTask: Task<Void, Never>?
 
@@ -191,6 +195,7 @@ class PhotoWindowModel {
     func start() {
         guard !didStart else { return }
         didStart = true
+        isInitialLoadInProgress = true
 
         appModel.openPhotoWindowCount += 1
 
@@ -199,9 +204,15 @@ class PhotoWindowModel {
             appModel.registerPopOutWindow(imageURL: imageURL, windowValue: windowValue)
         }
 
-        // Load image data to detect if it's a GIF
+        // Sequential load: data → enhancement check → 2D fallback
         Task {
             await loadImageDataForDetail(url: imageURL)
+            // If no enhancement was applied and it's not a GIF, load 2D display image
+            if !isAnimatedGIF && !is3DMode && backgroundRemovalState == .original {
+                let windowSize = lastWindowSize ?? appModel.mainWindowSize
+                await loadDisplayImage(for: windowSize)
+            }
+            isInitialLoadInProgress = false
         }
     }
 
@@ -387,6 +398,7 @@ class PhotoWindowModel {
         guard appModel.maxImageResolution > 0 else { return }
         guard !is3DMode, !isAnimatedGIF else { return }
         guard !isLoadingDetailImage, !isLoadingDisplayImage else { return }
+        guard !isInitialLoadInProgress else { return }
         guard displayImage != nil else { return }
         guard backgroundRemovalState == .original else { return }
 

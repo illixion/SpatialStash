@@ -347,8 +347,7 @@ class AppModel {
         }
     }
 
-    /// When true, image selections open in separate pop-out windows instead of
-    /// replacing the main app grid with a pushed picture viewer.
+    /// When true, image selections open in separate pop-out windows.
     var openImagesInSeparateWindows: Bool {
         didSet {
             if openImagesInSeparateWindows != oldValue {

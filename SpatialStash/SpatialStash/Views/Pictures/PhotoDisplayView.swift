@@ -88,13 +88,8 @@ struct PhotoDisplayView: View {
             }
         )
         .onAppear {
-            // Load initial 2D display image at the default window size
-            if !windowModel.isAnimatedGIF && windowModel.displayImage == nil && !windowModel.is3DMode {
-                Task {
-                    await windowModel.loadDisplayImage(for: appModel.mainWindowSize)
-                }
-            }
-            // Schedule post-restoration size verification
+            // Schedule post-restoration size verification (initial 2D load is
+            // handled sequentially by PhotoWindowModel.start())
             scheduleWindowSizeVerification()
         }
         .onChange(of: windowModel.isLoadingDetailImage) { wasLoading, isLoading in
