@@ -21,7 +21,7 @@ struct SharedMediaItem: Identifiable, Codable, Hashable {
         static func from(url: URL) -> SharedMediaType {
             let ext = url.pathExtension.lowercased()
             let imageExtensions: Set<String> = [
-                "jpg", "jpeg", "png", "heic", "heif", "gif", "webp", "bmp", "tiff", "tif"
+                "jpg", "jpeg", "png", "heic", "heif", "gif", "webp", "bmp", "tiff", "tif", "jxl"
             ]
             let videoExtensions: Set<String> = [
                 "mp4", "m4v", "mov", "mkv", "webm", "avi", "wmv", "flv", "3gp"

@@ -31,7 +31,7 @@ actor LocalMediaSource {
 
     // Supported file types
     private static let imageExtensions: Set<String> = [
-        "jpg", "jpeg", "png", "heic", "heif", "gif", "webp", "bmp", "tiff", "tif"
+        "jpg", "jpeg", "png", "heic", "heif", "gif", "webp", "bmp", "tiff", "tif", "jxl"
     ]
 
     private static let videoExtensions: Set<String> = [
@@ -40,7 +40,7 @@ actor LocalMediaSource {
 
     private static let imageMIMETypes: Set<String> = [
         "image/jpeg", "image/png", "image/heic", "image/heif", "image/gif",
-        "image/webp", "image/bmp", "image/tiff"
+        "image/webp", "image/bmp", "image/tiff", "image/jxl"
     ]
 
     private static let videoMIMETypes: Set<String> = [
@@ -79,7 +79,7 @@ actor LocalMediaSource {
         Add your photos and videos to this folder to view them in the app.
 
         Supported formats:
-        - Photos: JPG, PNG, HEIC, GIF, WebP, BMP, TIFF
+        - Photos: JPG, PNG, HEIC, GIF, WebP, BMP, TIFF, JXL
         - Videos: MP4, MOV, MKV, WebM, AVI
 
         You can organize files into the Photos and Videos subfolders,

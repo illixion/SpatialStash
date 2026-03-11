@@ -392,7 +392,7 @@ struct LocalMediaListView: View {
     }
 
     private func createMediaFile(from url: URL) -> LocalMediaFile? {
-        let imageExtensions = Set(["jpg", "jpeg", "png", "heic", "heif", "gif", "webp", "bmp", "tiff", "tif"])
+        let imageExtensions = Set(["jpg", "jpeg", "png", "heic", "heif", "gif", "webp", "bmp", "tiff", "tif", "jxl"])
         let videoExtensions = Set(["mp4", "m4v", "mov", "mkv", "webm", "avi", "wmv", "flv", "3gp"])
 
         let fileExt = url.pathExtension.lowercased()
