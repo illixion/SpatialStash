@@ -54,20 +54,6 @@ struct PhotoDisplayView: View {
         ZStack {
             imageContent
                 .offset(x: dragOffset)
-
-            // Loading overlay (stays in place, not offset with swipe)
-            if windowModel.isLoadingDetailImage && !isSwipeTransitioning {
-                Color.black.opacity(0.5)
-                    .ignoresSafeArea()
-                VStack(spacing: 16) {
-                    ProgressView()
-                        .scaleEffect(2)
-                        .tint(.white)
-                    Text("Loading image...")
-                        .font(.title3)
-                        .foregroundColor(.white)
-                }
-            }
         }
         .background(
             GeometryReader { geo in
