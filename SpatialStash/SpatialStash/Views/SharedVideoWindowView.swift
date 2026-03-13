@@ -36,7 +36,7 @@ struct SharedVideoWindowView: View {
                     saveError: saveError,
                     videoURL: item.cachedFileURL,
                     onSave: saveVideo,
-                    onOpenGallery: { appModel.showMainWindowIfNeeded(openWindow: openWindow) }
+                    onOpenGallery: { appModel.showMainWindow(openWindow: openWindow) }
                 )
             }
         )

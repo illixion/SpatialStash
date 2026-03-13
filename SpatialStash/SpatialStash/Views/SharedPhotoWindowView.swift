@@ -41,7 +41,7 @@ struct SharedPhotoWindowView: View {
                     windowModel: windowModel,
                     context: .shared,
                     onGalleryButtonTap: {
-                        appModel.showMainWindowIfNeeded(openWindow: openWindow)
+                        appModel.showMainWindow(openWindow: openWindow)
                     },
                     extraButtons: {
                         Group {

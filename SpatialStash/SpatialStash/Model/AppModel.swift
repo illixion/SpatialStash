@@ -923,13 +923,10 @@ class AppModel {
 
     // MARK: - API Client Management
 
-    /// Opens the main window only when one isn't already open.
-    /// Prevents creating duplicate main gallery windows from pop-out contexts.
-    func showMainWindowIfNeeded(openWindow: OpenWindowAction) {
-        guard !isMainWindowOpen else {
-            AppLogger.app.debug("Main window already open, skipping duplicate open request")
-            return
-        }
+    /// Opens the main window or brings it to the front if already open.
+    /// Since the main scene is a singleton `Window` (not `WindowGroup`),
+    /// calling openWindow(id:) on an already-open Window orders it to the front.
+    func showMainWindow(openWindow: OpenWindowAction) {
         openWindow(id: "main")
     }
 

@@ -72,7 +72,7 @@ struct VideoWindowView: View {
             ornament: {
                 HStack(spacing: 16) {
                     Button {
-                        appModel.showMainWindowIfNeeded(openWindow: openWindow)
+                        appModel.showMainWindow(openWindow: openWindow)
                     } label: {
                         Image(systemName: "square.grid.2x2")
                             .font(.title3)

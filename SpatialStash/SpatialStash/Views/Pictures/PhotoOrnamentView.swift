@@ -64,6 +64,11 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
                 backgroundRemovalButton
             }
 
+            // Resolution indicator (only in lightweight 2D mode with a loaded image)
+            if !windowModel.isRealityKitDisplay, !windowModel.isAnimatedGIF, windowModel.displayImage != nil {
+                resolutionMenu
+            }
+
             Divider()
                 .frame(height: 24)
 
@@ -246,6 +251,54 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
             windowModel.backgroundRemovalState == .original ? "Remove Background" :
             windowModel.backgroundRemovalState == .removing ? "Cancel" : "Restore Background"
         )
+    }
+
+    // MARK: - Resolution Menu
+
+    private var resolutionMenu: some View {
+        Menu {
+            // "Auto" option clears the override, reverting to global setting
+            Button {
+                Task { await windowModel.applyResolutionOverride(nil) }
+            } label: {
+                HStack {
+                    Text("Auto")
+                    if windowModel.resolutionOverride == nil {
+                        Image(systemName: "checkmark")
+                    }
+                }
+            }
+
+            Divider()
+
+            ForEach(AppModel.maxImageResolutionOptions, id: \.value) { option in
+                Button {
+                    Task { await windowModel.applyResolutionOverride(option.value) }
+                } label: {
+                    HStack {
+                        Text(option.label)
+                        if windowModel.resolutionOverride == option.value {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            Text("\(windowModel.currentDisplayResolution)px")
+                .font(.caption)
+                .monospacedDigit()
+                .foregroundColor(windowModel.resolutionOverride != nil ? .accentColor : .secondary)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.borderless)
+        .disabled(windowModel.isLoadingDetailImage)
+        .help(windowModel.resolutionOverride != nil ? "Resolution Override: \(resolutionOverrideLabel)" : "Image Resolution")
+    }
+
+    /// Label for the current resolution override setting
+    private var resolutionOverrideLabel: String {
+        guard let override = windowModel.resolutionOverride else { return "Auto" }
+        return AppModel.maxImageResolutionOptions.first { $0.value == override }?.label ?? "\(override)px"
     }
 
     // MARK: - Share

@@ -44,7 +44,12 @@ class PhotoWindowModel {
     private var nativeImageDimensions: CGSize?
 
     /// The max dimension used for the current displayImage
-    private var currentDisplayMaxDimension: CGFloat = 0
+    private(set) var currentDisplayMaxDimension: CGFloat = 0
+
+    /// Per-window resolution override. When non-nil, this overrides the global
+    /// maxImageResolution from AppModel and forces dynamic resolution behavior
+    /// even when the global setting is Off. nil = use global setting.
+    var resolutionOverride: Int? = nil
 
     /// Last known window size for resize-triggered reloads
     private var lastWindowSize: CGSize?
@@ -342,13 +347,14 @@ class PhotoWindowModel {
 
         let nativeMaxDim = max(nativeImageDimensions?.width ?? 8192, nativeImageDimensions?.height ?? 8192)
 
-        // Calculate target dimension: full native when max resolution is off (0),
+        // Calculate target dimension: full native when effective resolution is off (0),
         // otherwise window size × scale factor capped at both max resolution and native.
         // During initial load, use max resolution directly — window size is unreliable
         // during visionOS scene restoration and the resize handler will adjust later.
+        let effectiveRes = effectiveMaxResolution
         let targetDimension: CGFloat
-        if appModel.maxImageResolution > 0 {
-            let maxRes = CGFloat(appModel.maxImageResolution)
+        if effectiveRes > 0 {
+            let maxRes = CGFloat(effectiveRes)
             if isInitialLoadInProgress {
                 targetDimension = min(maxRes, nativeMaxDim)
             } else {
@@ -401,7 +407,7 @@ class PhotoWindowModel {
     /// image in memory when the window size changes significantly.
     /// No-op when dynamic image resolution is disabled (already at full res).
     func handleWindowResize(_ newSize: CGSize) {
-        guard appModel.maxImageResolution > 0 else { return }
+        guard effectiveMaxResolution > 0 else { return }
         guard !is3DMode, !isAnimatedGIF else { return }
         guard !isLoadingDetailImage, !isLoadingDisplayImage else { return }
         guard !isInitialLoadInProgress else { return }
@@ -470,9 +476,10 @@ class PhotoWindowModel {
         let windowSize = lastWindowSize ?? appModel.mainWindowSize
         let nativeMaxDim = max(nativeImageDimensions?.width ?? 8192, nativeImageDimensions?.height ?? 8192)
 
+        let effectiveRes = effectiveMaxResolution
         let targetDimension: CGFloat
-        if appModel.maxImageResolution > 0 {
-            let maxRes = CGFloat(appModel.maxImageResolution)
+        if effectiveRes > 0 {
+            let maxRes = CGFloat(effectiveRes)
             targetDimension = min(
                 max(windowSize.width, windowSize.height) * Self.displayScaleFactor,
                 maxRes,
@@ -792,6 +799,33 @@ class PhotoWindowModel {
 
     /// Whether this model always uses RealityKit for display (even in 2D/mono mode)
     var isRealityKitDisplay: Bool { useRealityKitDisplay }
+
+    /// The effective max resolution for this window, considering per-window override.
+    /// When resolutionOverride is set, it takes priority over the global setting.
+    /// A value of 0 means "Off" (full native resolution).
+    var effectiveMaxResolution: Int {
+        resolutionOverride ?? appModel.maxImageResolution
+    }
+
+    /// The current display resolution in pixels (longest edge of the displayed image).
+    /// Returns 0 when no display image is loaded (e.g., in 3D mode or loading).
+    var currentDisplayResolution: Int {
+        guard let image = displayImage else { return 0 }
+        return Int(max(image.size.width, image.size.height))
+    }
+
+    /// Apply a per-window resolution override and reload the display image.
+    /// Pass nil to clear the override and revert to the global setting.
+    func applyResolutionOverride(_ resolution: Int?) async {
+        resolutionOverride = resolution
+        guard !isAnimatedGIF, !is3DMode else { return }
+        guard backgroundRemovalState == .original else { return }
+
+        // Reset current dimension to force reload
+        currentDisplayMaxDimension = 0
+        let windowSize = lastWindowSize ?? appModel.mainWindowSize
+        await loadDisplayImage(for: windowSize)
+    }
 
     /// Switch directly to a specific viewing mode without cycling.
     func switchToViewingMode(_ mode: ImagePresentationComponent.ViewingMode) async {
