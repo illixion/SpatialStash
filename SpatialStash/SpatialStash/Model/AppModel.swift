@@ -262,21 +262,22 @@ class AppModel {
     /// instead of RealityKit. Activated on memory warning to free GPU resources.
     var useLightweightDisplay: Bool = false
 
-    /// Incremented on each memory warning. PhotoDisplayView observes this to
-    /// trigger a 75% scale-down of display images across all open windows.
-    var memoryPressureGeneration: Int = 0
+    // MARK: - Photo Window Model Registry (for LRU Memory Pressure)
 
-    // MARK: - Memory Recovery
+    /// Registry of active PhotoWindowModel instances. Used by the memory pressure
+    /// handler to sort windows by last interaction time and selectively downscale
+    /// the least-recently-interacted windows first.
+    private var activePhotoWindowModels: [ObjectIdentifier: PhotoWindowModel] = [:]
 
-    /// Counter observed by PhotoDisplayView to trigger per-window quality restoration.
-    /// Incremented one-at-a-time with delays between each to allow gradual recovery.
-    var memoryRecoveryGeneration: Int = 0
+    /// Register a photo window model as active (called from PhotoWindowModel.start())
+    func registerWindowModel(_ model: PhotoWindowModel) {
+        activePhotoWindowModels[ObjectIdentifier(model)] = model
+    }
 
-    /// Task that performs gradual quality recovery after memory pressure subsides
-    private var memoryRecoveryTask: Task<Void, Never>?
-
-    /// Cooldown before attempting recovery (doubles on each failed attempt, resets on full success)
-    private var recoveryCooldownSeconds: Double = 30
+    /// Unregister a photo window model (called from PhotoWindowModel.cleanup())
+    func unregisterWindowModel(_ model: PhotoWindowModel) {
+        activePhotoWindowModels.removeValue(forKey: ObjectIdentifier(model))
+    }
 
     // MARK: - UI Visibility State (for immersive image viewing)
 
@@ -483,70 +484,78 @@ class AppModel {
         // Apply default views on startup
         applyDefaultViewsOnStartup()
 
-        // Monitor memory pressure and clear caches when warned
+        // Monitor memory pressure and clear caches when warned.
+        // Uses LRU strategy: downscales least-recently-interacted windows first.
         NotificationCenter.default.addObserver(
             forName: UIApplication.didReceiveMemoryWarningNotification,
             object: nil,
             queue: .main
         ) { _ in
-            AppLogger.appModel.warning("Memory warning received — scaling down textures and clearing caches")
+            AppLogger.appModel.warning("Memory warning received — LRU idle-downscaling windows")
             Task { @MainActor [weak self] in
                 guard let self else { return }
 
-                // If recovery was in progress, increase cooldown (the system wasn't ready)
-                if self.memoryRecoveryTask != nil {
-                    self.recoveryCooldownSeconds = min(self.recoveryCooldownSeconds * 2, 300)
-                    AppLogger.appModel.info("Recovery interrupted — cooldown increased to \(Int(self.recoveryCooldownSeconds))s")
-                }
-                self.memoryRecoveryTask?.cancel()
-                self.memoryRecoveryTask = nil
-
                 await ImageLoader.shared.clearMemoryCache()
-                // Switch any 3D windows to lightweight mode
-                self.useLightweightDisplay = true
-                // Trigger 75% scale-down of all display images
-                self.memoryPressureGeneration += 1
 
-                // Schedule gradual recovery after cooldown
-                self.scheduleMemoryRecovery()
+                // LRU downscale handles 3D→2D conversion directly (phase 1),
+                // so we don't set useLightweightDisplay here to avoid a race
+                // where switchToLightweightDisplay() loads full-res images
+                // that immediately get downscaled again.
+                await self.downscaleLeastRecentWindows()
             }
         }
     }
 
-    // MARK: - Memory Recovery
+    // MARK: - LRU Memory Pressure Downscale
 
-    /// Schedule gradual quality recovery after memory pressure subsides.
-    /// Waits for cooldown, then restores one window at a time.
-    /// If a new memory warning fires during recovery, it cancels and re-schedules with longer cooldown.
-    private func scheduleMemoryRecovery() {
-        memoryRecoveryTask?.cancel()
-        let cooldown = recoveryCooldownSeconds
+    /// Downscale the least-recently-interacted photo windows to free memory.
+    /// Uses a two-phase approach to avoid OOM during the downscale itself:
+    ///
+    /// **Phase 1 — Release memory (no allocations):**
+    /// First targets 3D windows (highest memory: RealityKit GPU textures), then
+    /// 2D windows, sorted by LRU in each group. Releases all heavy resources
+    /// (textures, raw data, display images, background removal caches).
+    ///
+    /// **Phase 2 — Generate thumbnails:**
+    /// After all targeted windows have freed their memory, loads small 256px
+    /// thumbnails so windows show a recognizable preview instead of blank.
+    private func downscaleLeastRecentWindows() async {
+        let models = Array(activePhotoWindowModels.values)
+        guard !models.isEmpty else { return }
 
-        memoryRecoveryTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(cooldown))
-            guard !Task.isCancelled, let self else { return }
+        let nonDownscaled = models.filter { !$0.isIdleDownscaled }
 
-            AppLogger.appModel.info("Starting memory recovery after \(Int(cooldown))s cooldown")
+        guard !nonDownscaled.isEmpty else {
+            AppLogger.appModel.info("All \(models.count) windows already idle-downscaled")
+            return
+        }
 
-            // Reset useLightweightDisplay so 3D can be re-enabled by user
-            self.useLightweightDisplay = false
+        // Partition into 3D and 2D windows, each sorted by LRU (oldest first)
+        let windows3D = nonDownscaled
+            .filter { $0.is3DMode }
+            .sorted { $0.lastInteractionTime < $1.lastInteractionTime }
+        let windows2D = nonDownscaled
+            .filter { !$0.is3DMode }
+            .sorted { $0.lastInteractionTime < $1.lastInteractionTime }
 
-            // Gradually restore quality: increment recovery generation once per window,
-            // with a pause between each to let the system settle.
-            let windowCount = self.openPhotoWindowCount
-            for i in 0..<windowCount {
-                guard !Task.isCancelled else { return }
-                self.memoryRecoveryGeneration += 1
-                AppLogger.appModel.info("Recovery step \(i + 1)/\(windowCount)")
+        // Target all 3D windows first (they use the most memory), then
+        // up to half the remaining 2D windows (LRU order)
+        var windowsToDownscale = windows3D
+        if windows2D.count > 0 {
+            let count2D = max(1, windows2D.count / 2)
+            windowsToDownscale += Array(windows2D.prefix(count2D))
+        }
 
-                // Wait between restorations to let system settle and detect new warnings
-                try? await Task.sleep(for: .seconds(3))
-                guard !Task.isCancelled else { return }
-            }
+        AppLogger.appModel.info("Idle-downscaling \(windowsToDownscale.count) of \(models.count) windows (\(windows3D.count) 3D, \(windowsToDownscale.count - windows3D.count) 2D, LRU)")
 
-            // Full recovery succeeded — reset cooldown for next time
-            self.recoveryCooldownSeconds = 30
-            AppLogger.appModel.info("Memory recovery complete")
+        // Phase 1: Release all heavy memory first (no allocations)
+        for model in windowsToDownscale {
+            await model.releaseMemoryForIdleDownscale()
+        }
+
+        // Phase 2: Now that memory is freed, generate small thumbnails
+        for model in windowsToDownscale {
+            await model.applyIdleDownscaleThumbnail()
         }
     }
 

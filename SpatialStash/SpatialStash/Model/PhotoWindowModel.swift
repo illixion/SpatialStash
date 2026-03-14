@@ -92,6 +92,7 @@ class PhotoWindowModel {
 
     /// Toggle the flip state and persist it via the enhancement tracker.
     func toggleFlip() {
+        recordInteraction()
         isImageFlipped.toggle()
         Task {
             await trackFlipState()
@@ -109,6 +110,21 @@ class PhotoWindowModel {
         guard appModel.rememberImageEnhancements else { return }
         await ImageEnhancementTracker.shared.setResolutionOverride(url: imageURL, resolution: resolutionOverride)
     }
+
+    // MARK: - Idle Downscale State
+
+    /// Timestamp of the last user interaction with this window.
+    /// Used by AppModel's LRU memory pressure system to determine which
+    /// windows to downscale first (least-recently-interacted = first evicted).
+    private(set) var lastInteractionTime: Date = Date()
+
+    /// Whether this window has been downscaled due to memory pressure.
+    /// When true, the display image is at thumbnail resolution and raw data
+    /// has been released. Restored on next user interaction.
+    private(set) var isIdleDownscaled: Bool = false
+
+    /// Max dimension used for idle-downscaled thumbnail display
+    private static let idleDownscaleDimension: CGFloat = 256
 
     // MARK: - Share State
 
@@ -228,6 +244,8 @@ class PhotoWindowModel {
         isInitialLoadInProgress = true
 
         appModel.openPhotoWindowCount += 1
+        appModel.registerWindowModel(self)
+        lastInteractionTime = Date()
 
         // Register pop-out window for duplicate detection
         if let windowValue = popOutWindowValue {
@@ -452,6 +470,7 @@ class PhotoWindowModel {
     /// image in memory when the window size changes significantly.
     /// No-op when dynamic image resolution is disabled (already at full res).
     func handleWindowResize(_ newSize: CGSize) {
+        recordInteraction()
         guard effectiveMaxResolution > 0 else { return }
         guard !is3DMode, !isAnimatedGIF else { return }
         guard !isLoadingDetailImage, !isLoadingDisplayImage else { return }
@@ -479,73 +498,116 @@ class PhotoWindowModel {
         return await DiskImageCache.shared.cachedFileURL(for: imageURL)
     }
 
-    // MARK: - Memory Pressure Scale-Down
+    // MARK: - Interaction Tracking
 
-    /// Scale down the current display image to 75% of its current resolution
-    /// to free memory. Works regardless of the maxImageResolution setting.
-    func scaleDownForMemoryPressure() async {
-        guard !isAnimatedGIF, !is3DMode else { return }
-        guard displayImage != nil, currentDisplayMaxDimension > 0 else { return }
-        guard !isLoadingDisplayImage else { return }
+    /// Record a user interaction with this window. Updates the LRU timestamp
+    /// and restores from idle downscale if the window was previously evicted.
+    func recordInteraction() {
+        lastInteractionTime = Date()
 
-        if backgroundRemovalState != .original {
-            clearBackgroundRemovalState()
+        if isIdleDownscaled {
+            Task {
+                await restoreFromIdleDownscale()
+            }
+        }
+    }
+
+    // MARK: - Memory Pressure Idle Downscale
+
+    /// Aggressively downscale this window to thumbnail resolution to free memory.
+    /// Called by AppModel's LRU memory pressure system. Ignores resolution overrides
+    /// since crash prevention is more important than user preferences.
+    /// Phase 1: Release all heavy in-memory resources without allocating anything new.
+    /// This is safe to call during memory pressure since it only frees memory.
+    /// After this, the window may show a stale display image or blank until
+    /// `applyIdleDownscaleThumbnail()` replaces it with a small thumbnail.
+    func releaseMemoryForIdleDownscale() async {
+        guard !isIdleDownscaled else { return }
+
+        AppLogger.photoWindow.info("Releasing memory for idle downscale")
+
+        // If in 3D mode, release RealityKit textures (GPU memory)
+        if is3DMode {
+            // Cancel any in-progress 3D generation first (RealityKit crashes otherwise)
+            if let task = generateTask {
+                task.cancel()
+                await task.value
+                generateTask = nil
+            }
+            spatial3DImage = nil
+            spatial3DImageState = .notGenerated
+            pendingGenerate3D = false
+            contentEntity.components.remove(ImagePresentationComponent.self)
+            is3DMode = false
         }
 
-        let scaledDimension = currentDisplayMaxDimension * 0.75
+        // Clear background removal caches
+        clearBackgroundRemovalState()
+
+        // Release raw image data (can be reloaded from disk cache)
+        currentImageData = nil
+
+        // Release current display image to free decoded bitmap memory
+        displayImage = nil
+
+        // For GIFs, release HEVC converted data too
+        if isAnimatedGIF {
+            gifHEVCURL = nil
+        }
+
+        isIdleDownscaled = true
+    }
+
+    /// Phase 2: Load a small thumbnail so the window shows a recognizable preview
+    /// instead of blank. Called after `releaseMemoryForIdleDownscale()` has freed
+    /// memory from all targeted windows first.
+    func applyIdleDownscaleThumbnail() async {
+        guard isIdleDownscaled else { return }
+        // GIFs and windows with no display don't need a thumbnail
+        guard !isAnimatedGIF else { return }
 
         guard let sourceURL = await resolveSourceFileURL() else { return }
 
-        isLoadingDisplayImage = true
-        defer { isLoadingDisplayImage = false }
-
-        let image = await Task.detached { [sourceURL, scaledDimension] in
-            ThumbnailGenerator.shared.downsampleImage(at: sourceURL, maxDimension: scaledDimension)
+        let thumbnailDim = Self.idleDownscaleDimension
+        let image = await Task.detached { [sourceURL, thumbnailDim] in
+            ThumbnailGenerator.shared.downsampleImage(at: sourceURL, maxDimension: thumbnailDim)
         }.value
 
-        guard let image else { return }
-
-        displayImage = image
-        imageAspectRatio = image.size.width / image.size.height
-        currentDisplayMaxDimension = scaledDimension
-        AppLogger.photoWindow.info("Scaled down display image to \(Int(scaledDimension), privacy: .public)px for memory pressure")
+        if let image {
+            displayImage = image
+            imageAspectRatio = image.size.width / image.size.height
+            currentDisplayMaxDimension = thumbnailDim
+        }
     }
 
-    // MARK: - Memory Recovery
+    /// Restore this window from idle-downscaled state to proper resolution.
+    /// Called when the user interacts with a previously downscaled window.
+    private func restoreFromIdleDownscale() async {
+        guard isIdleDownscaled else { return }
 
-    /// Restore display image to proper resolution after memory pressure recovery.
-    /// Called when AppModel signals that memory is available again.
-    func restoreDisplayQuality() async {
-        guard !isAnimatedGIF, !is3DMode else { return }
-        guard displayImage != nil else { return }
-        guard !isLoadingDisplayImage, !isLoadingDetailImage else { return }
+        AppLogger.photoWindow.info("Restoring window from idle downscale")
+        isIdleDownscaled = false
+        currentDisplayMaxDimension = 0
+        isLoadingDetailImage = true
 
-        // Calculate what the proper dimension should be
         let windowSize = lastWindowSize ?? appModel.mainWindowSize
-        let nativeMaxDim = max(nativeImageDimensions?.width ?? 8192, nativeImageDimensions?.height ?? 8192)
 
-        let effectiveRes = effectiveMaxResolution
-        let targetDimension: CGFloat
-        if effectiveRes > 0 {
-            let maxRes = CGFloat(effectiveRes)
-            targetDimension = min(
-                max(windowSize.width, windowSize.height) * Self.displayScaleFactor,
-                maxRes,
-                nativeMaxDim
-            )
-        } else {
-            targetDimension = nativeMaxDim
+        // Reload raw data and display image via the standard path
+        await loadImageDataForDetail(url: imageURL)
+
+        if !isAnimatedGIF && !is3DMode && backgroundRemovalState == .original {
+            await loadDisplayImage(for: windowSize)
         }
 
-        // Only restore if current dimension is significantly lower than target (>20% below)
-        guard currentDisplayMaxDimension > 0 else { return }
-        let ratio = currentDisplayMaxDimension / targetDimension
-        guard ratio < 0.8 else { return }
+        // Restore flip state
+        if appModel.rememberImageEnhancements, !is3DMode {
+            let wasFlipped = await ImageEnhancementTracker.shared.isFlipped(url: imageURL)
+            if wasFlipped {
+                isImageFlipped = true
+            }
+        }
 
-        let previousDimension = Int(targetDimension * ratio)
-        AppLogger.photoWindow.info("Restoring display quality from \(previousDimension, privacy: .public)px to \(Int(targetDimension), privacy: .public)px")
-        currentDisplayMaxDimension = 0
-        await loadDisplayImage(for: windowSize)
+        isLoadingDetailImage = false
     }
 
     // MARK: - Lightweight Display Transition
@@ -588,6 +650,7 @@ class PhotoWindowModel {
     /// - Parameter generateImmediately: If true, RealityView will generate the 3D depth map
     ///   right after creating the component (used when the user explicitly taps "Generate 3D").
     func activate3DMode(generateImmediately: Bool = false) {
+        recordInteraction()
         guard !isAnimatedGIF, !is3DMode else { return }
         clearBackgroundRemovalState()
         if isImageFlipped {
@@ -604,6 +667,7 @@ class PhotoWindowModel {
     /// When useRealityKitDisplay is set, toggles the RealityKit viewing mode back
     /// to mono instead of switching to the lightweight SwiftUI Image display.
     func deactivate3DMode() async {
+        recordInteraction()
         guard is3DMode else { return }
 
         if useRealityKitDisplay {
@@ -746,6 +810,7 @@ class PhotoWindowModel {
 
     /// Generate spatial 3D image (depth map)
     func generateSpatial3DImage() async {
+        recordInteraction()
         // If not in 3D mode yet, activate it first and let the RealityView
         // handle creation + generation after its init closure runs
         if !is3DMode {
@@ -875,6 +940,7 @@ class PhotoWindowModel {
     /// Apply a per-window resolution override and reload the display image.
     /// Pass nil to clear the override and revert to the global setting.
     func applyResolutionOverride(_ resolution: Int?) async {
+        recordInteraction()
         resolutionOverride = resolution
         await trackResolutionOverride()
         guard !isAnimatedGIF, !is3DMode else { return }
@@ -966,6 +1032,7 @@ class PhotoWindowModel {
 
     /// Toggle background removal: original -> remove, removing -> cancel, removed -> restore.
     func toggleBackgroundRemoval() async {
+        recordInteraction()
         switch backgroundRemovalState {
         case .original:
             // First check in-memory cache
@@ -1208,6 +1275,7 @@ class PhotoWindowModel {
     // MARK: - UI Auto-Hide
 
     func startAutoHideTimer() {
+        recordInteraction()
         cancelAutoHideTimer()
 
         guard appModel.autoHideDelay > 0 else { return }
@@ -1241,6 +1309,7 @@ class PhotoWindowModel {
     }
 
     func toggleUIVisibility() {
+        recordInteraction()
         isUIHidden.toggle()
         isWindowControlsHidden = false
         if !isUIHidden {
@@ -1252,6 +1321,7 @@ class PhotoWindowModel {
 
     /// Start a random slideshow in this window
     func startSlideshow() async {
+        recordInteraction()
         guard !isSlideshowActive else { return }
 
         isSlideshowActive = true
@@ -1510,6 +1580,7 @@ class PhotoWindowModel {
         }
 
         if didStart {
+            appModel.unregisterWindowModel(self)
             appModel.openPhotoWindowCount -= 1
         }
     }
@@ -1518,6 +1589,7 @@ class PhotoWindowModel {
 
     /// Navigate to next image in gallery
     func nextGalleryImage() async {
+        recordInteraction()
         guard hasNextGalleryImage else { return }
         currentGalleryIndex += 1
 
@@ -1530,6 +1602,7 @@ class PhotoWindowModel {
 
     /// Navigate to previous image in gallery
     func previousGalleryImage() async {
+        recordInteraction()
         guard hasPreviousGalleryImage else { return }
         currentGalleryIndex -= 1
         let prevImage = galleryImages[currentGalleryIndex]

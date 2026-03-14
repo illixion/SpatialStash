@@ -98,16 +98,6 @@ struct PhotoDisplayView: View {
                 }
             }
         }
-        .onChange(of: appModel.memoryPressureGeneration) {
-            Task {
-                await windowModel.scaleDownForMemoryPressure()
-            }
-        }
-        .onChange(of: appModel.memoryRecoveryGeneration) {
-            Task {
-                await windowModel.restoreDisplayQuality()
-            }
-        }
         .onChange(of: windowModel.slideshowTransitionDirection) { _, direction in
             guard let direction else { return }
             performSlideshowTransition(direction: direction)
