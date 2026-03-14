@@ -1298,6 +1298,7 @@ class PhotoWindowModel {
         // Reset to 2D mode when switching images (RealityView will be recreated
         // if needed when activate3DMode sets is3DMode back to true)
         is3DMode = false
+        desiredViewingMode = .mono
 
         // Load image data to detect if it's a GIF
         await loadImageDataForDetail(url: newImage.fullSizeURL)
