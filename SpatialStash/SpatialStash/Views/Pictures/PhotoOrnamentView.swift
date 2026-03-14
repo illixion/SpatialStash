@@ -58,6 +58,7 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
             }
 
             threeDButton
+            immersive3DButton
 
             // Background removal only available with lightweight 2D display
             if !windowModel.isRealityKitDisplay {
@@ -188,43 +189,57 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
     // MARK: - 3D Toggle
 
     private var threeDButton: some View {
-        Menu {
-            Button {
-                Task { await windowModel.switchToViewingMode(.mono) }
-            } label: {
-                Label("2D", systemImage: "view.2d")
-            }
-
-            Button {
-                Task { await windowModel.switchToViewingMode(.spatial3D) }
-            } label: {
-                Label("3D", systemImage: "view.3d")
-            }
-
-            Button {
-                Task { await windowModel.switchToViewingMode(.spatial3DImmersive) }
-            } label: {
-                Label("Immersive 3D", systemImage: "square.arrowtriangle.4.outward")
+        Button {
+            Task {
+                if windowModel.desiredViewingMode == .spatial3D {
+                    await windowModel.switchToViewingMode(.mono)
+                } else {
+                    await windowModel.switchToViewingMode(.spatial3D)
+                }
             }
         } label: {
             Group {
-                if windowModel.spatial3DImageState == .generating {
+                if windowModel.spatial3DImageState == .generating && windowModel.desiredViewingMode != .spatial3DImmersive {
                     ProgressView()
                         .scaleEffect(0.8)
-                } else if windowModel.desiredViewingMode == .spatial3DImmersive {
-                    Image(systemName: "square.arrowtriangle.4.outward")
-                } else if windowModel.desiredViewingMode == .spatial3D {
-                    Image(systemName: "view.3d")
                 } else {
-                    Image(systemName: "view.2d")
+                    Image(systemName: "view.3d")
                 }
             }
             .font(.title3)
+            .padding(6)
+            .background(windowModel.desiredViewingMode == .spatial3D ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
         }
-        .menuStyle(.button)
         .buttonStyle(.borderless)
-        .disabled(windowModel.isAnimatedGIF || windowModel.spatial3DImageState == .generating)
-        .help("Display Mode")
+        .disabled(windowModel.isAnimatedGIF || (windowModel.spatial3DImageState == .generating && windowModel.desiredViewingMode != .spatial3DImmersive))
+        .help("3D")
+    }
+
+    private var immersive3DButton: some View {
+        Button {
+            Task {
+                if windowModel.desiredViewingMode == .spatial3DImmersive {
+                    await windowModel.switchToViewingMode(.mono)
+                } else {
+                    await windowModel.switchToViewingMode(.spatial3DImmersive)
+                }
+            }
+        } label: {
+            Group {
+                if windowModel.spatial3DImageState == .generating && windowModel.desiredViewingMode == .spatial3DImmersive {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                } else {
+                    Image(systemName: "square.arrowtriangle.4.outward")
+                }
+            }
+            .font(.title3)
+            .padding(6)
+            .background(windowModel.desiredViewingMode == .spatial3DImmersive ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
+        }
+        .buttonStyle(.borderless)
+        .disabled(windowModel.isAnimatedGIF || (windowModel.spatial3DImageState == .generating && windowModel.desiredViewingMode != .spatial3D))
+        .help("Immersive 3D")
     }
 
     // MARK: - Background Removal Toggle

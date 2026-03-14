@@ -33,6 +33,7 @@ struct SettingsTabView: View {
     @State private var showImportSuccess = false
     @State private var showImportError = false
     @State private var importErrorMessage = ""
+    @State private var showEnhancementsClearConfirmation = false
 
     var body: some View {
         @Bindable var appModel = appModel
@@ -44,7 +45,16 @@ struct SettingsTabView: View {
 
                     Toggle("Open images in separate windows", isOn: $appModel.openImagesInSeparateWindows)
 
-                    Toggle("Remember Image Enhancements", isOn: $appModel.rememberImageEnhancements)
+                    Toggle("Remember Image Enhancements", isOn: Binding(
+                        get: { appModel.rememberImageEnhancements },
+                        set: { newValue in
+                            if newValue {
+                                appModel.rememberImageEnhancements = true
+                            } else {
+                                showEnhancementsClearConfirmation = true
+                            }
+                        }
+                    ))
 
                     Picker("Max Image Resolution", selection: $appModel.maxImageResolution) {
                         ForEach(AppModel.maxImageResolutionOptions, id: \.value) { option in
@@ -430,6 +440,18 @@ struct SettingsTabView: View {
                 Button("OK") {}
             } message: {
                 Text(importErrorMessage)
+            }
+            .alert("Clear Saved Enhancements?", isPresented: $showEnhancementsClearConfirmation) {
+                Button("Disable & Clear Data", role: .destructive) {
+                    appModel.rememberImageEnhancements = false
+                    Task { await appModel.clearImageEnhancementData() }
+                }
+                Button("Disable & Keep Data") {
+                    appModel.rememberImageEnhancements = false
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Would you like to clear existing remembered enhancements? Keeping the data allows them to be restored if you re-enable this setting.")
             }
         }
     }

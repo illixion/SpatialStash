@@ -282,6 +282,9 @@ class PhotoWindowModel {
                 let lastMode = await ImageEnhancementTracker.shared.lastViewingMode(url: imageURL)
                 let wasConverted = await ImageEnhancementTracker.shared.wasConverted(url: imageURL)
                 let shouldAutoGenerate = wasConverted && (lastMode == .spatial3D || lastMode == .spatial3DImmersive)
+                if shouldAutoGenerate && lastMode == .spatial3DImmersive {
+                    desiredViewingMode = .spatial3DImmersive
+                }
                 activate3DMode(generateImmediately: shouldAutoGenerate)
             } else {
                 activate3DMode(generateImmediately: false)
@@ -296,6 +299,9 @@ class PhotoWindowModel {
 
         if wasConverted && (lastMode == .spatial3D || lastMode == .spatial3DImmersive) {
             // Auto-activate 3D (skips 2D load entirely)
+            if lastMode == .spatial3DImmersive {
+                desiredViewingMode = .spatial3DImmersive
+            }
             activate3DMode()
         } else if lastMode == .backgroundRemoved {
             if let cachedData = await BackgroundRemovalCache.shared.loadData(for: imageURL),
@@ -654,7 +660,10 @@ class PhotoWindowModel {
 
         let imagePresentationComponent = ImagePresentationComponent(spatial3DImage: spatial3DImage)
         contentEntity.components.set(imagePresentationComponent)
-        desiredViewingMode = .mono  // Initialize to mono when component is created
+        // Initialize to mono unless already targeting immersive (e.g. auto-restore)
+        if desiredViewingMode != .spatial3DImmersive {
+            desiredViewingMode = .mono
+        }
         if let aspectRatio = imagePresentationComponent.aspectRatio(for: .mono) {
             imageAspectRatio = CGFloat(aspectRatio)
         }
@@ -709,9 +718,12 @@ class PhotoWindowModel {
         }
 
         // Set the desired viewing mode before generating so that it will trigger the
-        // generation animation.
+        // generation animation. Preserve .spatial3DImmersive if already set (e.g. when
+        // the user clicked immersive or auto-restore targets immersive).
         imagePresentationComponent.desiredViewingMode = .spatial3D
-        desiredViewingMode = .spatial3D  // Update observable property for button icon
+        if desiredViewingMode != .spatial3DImmersive {
+            desiredViewingMode = .spatial3D
+        }
         contentEntity.components.set(imagePresentationComponent)
 
         spatial3DImageState = .generating
@@ -848,8 +860,8 @@ class PhotoWindowModel {
             }
         } else if mode == .spatial3DImmersive {
             if spatial3DImageState == .notGenerated {
+                desiredViewingMode = .spatial3DImmersive
                 await generateSpatial3DImage()
-                // Now in spatial3D; directly set to immersive
                 guard var ipc = contentEntity.components[ImagePresentationComponent.self] else { return }
                 ipc.desiredViewingMode = .spatial3DImmersive
                 desiredViewingMode = .spatial3DImmersive
@@ -886,6 +898,11 @@ class PhotoWindowModel {
 
         let wasConverted = await ImageEnhancementTracker.shared.wasConverted(url: imageURL)
         if wasConverted {
+            // Set desired mode before generation so the correct button shows the spinner
+            let lastMode = await ImageEnhancementTracker.shared.lastViewingMode(url: imageURL)
+            if lastMode == .spatial3DImmersive {
+                desiredViewingMode = .spatial3DImmersive
+            }
             AppLogger.photoWindow.debug("Auto-generating spatial 3D for previously converted image")
             await generateSpatial3DImage()
         }

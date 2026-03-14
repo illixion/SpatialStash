@@ -357,18 +357,18 @@ class AppModel {
     }
 
     /// When true, per-image viewing enhancements (spatial 3D, background removal)
-    /// are remembered and auto-restored on reopen. Turning off clears all saved data.
+    /// are remembered and auto-restored on reopen.
     var rememberImageEnhancements: Bool {
         didSet {
             if rememberImageEnhancements != oldValue {
                 UserDefaults.standard.set(rememberImageEnhancements, forKey: "rememberImageEnhancements")
-                if !rememberImageEnhancements {
-                    Task {
-                        await ImageEnhancementTracker.shared.clearAll()
-                    }
-                }
             }
         }
+    }
+
+    /// Clears all remembered image enhancement data.
+    func clearImageEnhancementData() async {
+        await ImageEnhancementTracker.shared.clearAll()
     }
 
     // MARK: - Slideshow Settings
