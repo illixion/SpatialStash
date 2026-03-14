@@ -22,9 +22,11 @@ actor ImageEnhancementTracker {
     private let userDefaultsKey = "spatial3DConvertedImages"
     private let lastModeKey = "spatial3DLastViewingMode"
     private let flippedKey = "imageFlippedState"
+    private let resolutionOverrideKey = "imageResolutionOverride"
     private var convertedImageURLs: Set<String>
     private var lastViewingModeByURL: [String: String]
     private var flippedByURL: Set<String>
+    private var resolutionOverrideByURL: [String: Int]
 
     private init() {
         if let saved = UserDefaults.standard.array(forKey: userDefaultsKey) as? [String] {
@@ -45,6 +47,12 @@ actor ImageEnhancementTracker {
             flippedByURL = Set(saved)
         } else {
             flippedByURL = []
+        }
+
+        if let dict = UserDefaults.standard.dictionary(forKey: resolutionOverrideKey) as? [String: Int] {
+            resolutionOverrideByURL = dict
+        } else {
+            resolutionOverrideByURL = [:]
         }
     }
 
@@ -71,6 +79,7 @@ actor ImageEnhancementTracker {
         convertedImageURLs.removeAll()
         lastViewingModeByURL.removeAll()
         flippedByURL.removeAll()
+        resolutionOverrideByURL.removeAll()
         save()
     }
 
@@ -83,21 +92,25 @@ actor ImageEnhancementTracker {
         UserDefaults.standard.set(Array(convertedImageURLs), forKey: userDefaultsKey)
         UserDefaults.standard.set(lastViewingModeByURL, forKey: lastModeKey)
         UserDefaults.standard.set(Array(flippedByURL), forKey: flippedKey)
+        UserDefaults.standard.set(resolutionOverrideByURL, forKey: resolutionOverrideKey)
     }
 
     // MARK: - Backup Export / Import
 
     /// Export all tracking data for backup
-    func exportData() -> (convertedURLs: [String], lastViewingModes: [String: String], flippedURLs: [String]) {
-        return (Array(convertedImageURLs), lastViewingModeByURL, Array(flippedByURL))
+    func exportData() -> (convertedURLs: [String], lastViewingModes: [String: String], flippedURLs: [String], resolutionOverrides: [String: Int]) {
+        return (Array(convertedImageURLs), lastViewingModeByURL, Array(flippedByURL), resolutionOverrideByURL)
     }
 
     /// Import tracking data from backup, replacing current data
-    func importData(convertedURLs: [String], lastViewingModes: [String: String], flippedURLs: [String]? = nil) {
+    func importData(convertedURLs: [String], lastViewingModes: [String: String], flippedURLs: [String]? = nil, resolutionOverrides: [String: Int]? = nil) {
         convertedImageURLs = Set(convertedURLs)
         lastViewingModeByURL = lastViewingModes
         if let flippedURLs {
             flippedByURL = Set(flippedURLs)
+        }
+        if let resolutionOverrides {
+            resolutionOverrideByURL = resolutionOverrides
         }
         save()
     }
@@ -128,5 +141,21 @@ actor ImageEnhancementTracker {
 
     func isFlipped(url: URL) -> Bool {
         flippedByURL.contains(url.absoluteString)
+    }
+
+    // MARK: - Resolution Override Tracking
+
+    func setResolutionOverride(url: URL, resolution: Int?) {
+        let urlString = url.absoluteString
+        if let resolution {
+            resolutionOverrideByURL[urlString] = resolution
+        } else {
+            resolutionOverrideByURL.removeValue(forKey: urlString)
+        }
+        save()
+    }
+
+    func resolutionOverride(url: URL) -> Int? {
+        resolutionOverrideByURL[url.absoluteString]
     }
 }

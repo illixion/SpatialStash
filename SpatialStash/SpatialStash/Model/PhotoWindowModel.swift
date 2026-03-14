@@ -104,6 +104,12 @@ class PhotoWindowModel {
         await ImageEnhancementTracker.shared.setFlipped(url: imageURL, isFlipped: isImageFlipped)
     }
 
+    /// Persist the current resolution override to the enhancement tracker.
+    private func trackResolutionOverride() async {
+        guard appModel.rememberImageEnhancements else { return }
+        await ImageEnhancementTracker.shared.setResolutionOverride(url: imageURL, resolution: resolutionOverride)
+    }
+
     // MARK: - Share State
 
     var isPreparingShare: Bool = false
@@ -228,8 +234,15 @@ class PhotoWindowModel {
             appModel.registerPopOutWindow(imageURL: imageURL, windowValue: windowValue)
         }
 
-        // Sequential load: data → enhancement check → 2D fallback → flip restore
+        // Sequential load: resolution restore → data → enhancement check → 2D fallback → flip restore
         Task {
+            // Restore per-image resolution override before any image loading
+            if appModel.rememberImageEnhancements {
+                let savedOverride = await ImageEnhancementTracker.shared.resolutionOverride(url: imageURL)
+                if savedOverride != nil {
+                    resolutionOverride = savedOverride
+                }
+            }
             await loadImageDataForDetail(url: imageURL)
             // If no enhancement was applied and it's not a GIF, load 2D display image
             if !isAnimatedGIF && !is3DMode && backgroundRemovalState == .original {
@@ -863,6 +876,7 @@ class PhotoWindowModel {
     /// Pass nil to clear the override and revert to the global setting.
     func applyResolutionOverride(_ resolution: Int?) async {
         resolutionOverride = resolution
+        await trackResolutionOverride()
         guard !isAnimatedGIF, !is3DMode else { return }
 
         if backgroundRemovalState == .removed {
@@ -1330,6 +1344,15 @@ class PhotoWindowModel {
         is3DMode = false
         desiredViewingMode = .mono
         isImageFlipped = false
+        resolutionOverride = nil
+
+        // Restore per-image resolution override before loading
+        if appModel.rememberImageEnhancements {
+            let savedOverride = await ImageEnhancementTracker.shared.resolutionOverride(url: newImage.fullSizeURL)
+            if savedOverride != nil {
+                resolutionOverride = savedOverride
+            }
+        }
 
         // Load image data to detect if it's a GIF
         await loadImageDataForDetail(url: newImage.fullSizeURL)
@@ -1338,6 +1361,14 @@ class PhotoWindowModel {
         // (useRealityKitDisplay images go through autoRestorePreviousEnhancement → activate3DMode)
         if !isAnimatedGIF && !useRealityKitDisplay, let windowSize = lastWindowSize {
             await loadDisplayImage(for: windowSize)
+        }
+
+        // Restore flip state (independent of other enhancements, but not for 3D/RealityKit)
+        if appModel.rememberImageEnhancements, !is3DMode {
+            let wasFlipped = await ImageEnhancementTracker.shared.isFlipped(url: newImage.fullSizeURL)
+            if wasFlipped {
+                isImageFlipped = true
+            }
         }
     }
 

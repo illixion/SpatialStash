@@ -880,7 +880,8 @@ class AppModel {
             video3DSettings: video3DData,
             imageEnhancementConvertedURLs: imageEnhancementData.convertedURLs,
             imageEnhancementLastViewingModes: imageEnhancementData.lastViewingModes,
-            imageEnhancementFlippedURLs: imageEnhancementData.flippedURLs
+            imageEnhancementFlippedURLs: imageEnhancementData.flippedURLs,
+            imageEnhancementResolutionOverrides: imageEnhancementData.resolutionOverrides
         )
     }
 
@@ -918,7 +919,8 @@ class AppModel {
             await ImageEnhancementTracker.shared.importData(
                 convertedURLs: urls,
                 lastViewingModes: modes,
-                flippedURLs: backup.imageEnhancementFlippedURLs
+                flippedURLs: backup.imageEnhancementFlippedURLs,
+                resolutionOverrides: backup.imageEnhancementResolutionOverrides
             )
         }
 
