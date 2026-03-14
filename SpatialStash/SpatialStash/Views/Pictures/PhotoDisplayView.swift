@@ -15,9 +15,15 @@ struct PhotoDisplayView: View {
     @Bindable var windowModel: PhotoWindowModel
     @Environment(AppModel.self) private var appModel
     @Environment(SceneDelegate.self) private var sceneDelegate: SceneDelegate?
+    @Environment(\.surfaceSnappingInfo) private var snappingInfo: SurfaceSnappingInfo
 
     /// Whether swipe navigation between gallery images is enabled
     let enableSwipeNavigation: Bool
+
+    /// Effective swipe navigation state: disabled when window is snapped to a surface
+    private var isSwipeEnabled: Bool {
+        enableSwipeNavigation && !snappingInfo.isSnapped
+    }
 
     /// Tracks the viewer window's current size (updated live via GeometryReader)
     @State private var viewerWindowSize: CGSize?
@@ -121,7 +127,7 @@ struct PhotoDisplayView: View {
                 .onTapGesture {
                     windowModel.toggleUIVisibility()
                 }
-                .modifier(SwipeGestureModifier(enabled: enableSwipeNavigation, onEnded: handleDragEnded))
+                .modifier(SwipeGestureModifier(enabled: isSwipeEnabled, onEnded: handleDragEnded))
                 .onAppear {
                     resizeGIFWindowToFit(windowModel.imageAspectRatio, within: appModel.mainWindowSize)
                 }
@@ -177,7 +183,7 @@ struct PhotoDisplayView: View {
                         content.add(windowModel.inputPlaneEntity)
                     }
                 }
-                .modifier(EntitySwipeGestureModifier(enabled: enableSwipeNavigation, onEnded: handleDragEnded))
+                .modifier(EntitySwipeGestureModifier(enabled: isSwipeEnabled, onEnded: handleDragEnded))
                 .gesture(
                     TapGesture()
                         .targetedToAnyEntity()
@@ -238,7 +244,7 @@ struct PhotoDisplayView: View {
                 .onTapGesture {
                     windowModel.toggleUIVisibility()
                 }
-                .modifier(SwipeGestureModifier(enabled: enableSwipeNavigation, onEnded: handleDragEnded))
+                .modifier(SwipeGestureModifier(enabled: isSwipeEnabled, onEnded: handleDragEnded))
                 .onAppear {
                     setUniformResizing()
                     resizeWindowToFit(windowModel.imageAspectRatio, within: appModel.mainWindowSize)
