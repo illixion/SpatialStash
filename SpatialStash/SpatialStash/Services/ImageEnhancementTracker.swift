@@ -21,8 +21,10 @@ actor ImageEnhancementTracker {
     // UserDefaults keys unchanged for backward compatibility
     private let userDefaultsKey = "spatial3DConvertedImages"
     private let lastModeKey = "spatial3DLastViewingMode"
+    private let flippedKey = "imageFlippedState"
     private var convertedImageURLs: Set<String>
     private var lastViewingModeByURL: [String: String]
+    private var flippedByURL: Set<String>
 
     private init() {
         if let saved = UserDefaults.standard.array(forKey: userDefaultsKey) as? [String] {
@@ -37,6 +39,12 @@ actor ImageEnhancementTracker {
             lastViewingModeByURL = dict
         } else {
             lastViewingModeByURL = [:]
+        }
+
+        if let saved = UserDefaults.standard.array(forKey: flippedKey) as? [String] {
+            flippedByURL = Set(saved)
+        } else {
+            flippedByURL = []
         }
     }
 
@@ -62,6 +70,7 @@ actor ImageEnhancementTracker {
     func clearAll() {
         convertedImageURLs.removeAll()
         lastViewingModeByURL.removeAll()
+        flippedByURL.removeAll()
         save()
     }
 
@@ -73,19 +82,23 @@ actor ImageEnhancementTracker {
     private func save() {
         UserDefaults.standard.set(Array(convertedImageURLs), forKey: userDefaultsKey)
         UserDefaults.standard.set(lastViewingModeByURL, forKey: lastModeKey)
+        UserDefaults.standard.set(Array(flippedByURL), forKey: flippedKey)
     }
 
     // MARK: - Backup Export / Import
 
     /// Export all tracking data for backup
-    func exportData() -> (convertedURLs: [String], lastViewingModes: [String: String]) {
-        return (Array(convertedImageURLs), lastViewingModeByURL)
+    func exportData() -> (convertedURLs: [String], lastViewingModes: [String: String], flippedURLs: [String]) {
+        return (Array(convertedImageURLs), lastViewingModeByURL, Array(flippedByURL))
     }
 
     /// Import tracking data from backup, replacing current data
-    func importData(convertedURLs: [String], lastViewingModes: [String: String]) {
+    func importData(convertedURLs: [String], lastViewingModes: [String: String], flippedURLs: [String]? = nil) {
         convertedImageURLs = Set(convertedURLs)
         lastViewingModeByURL = lastViewingModes
+        if let flippedURLs {
+            flippedByURL = Set(flippedURLs)
+        }
         save()
     }
 
@@ -99,5 +112,21 @@ actor ImageEnhancementTracker {
     func lastViewingMode(url: URL) -> ViewingModePreference? {
         guard let raw = lastViewingModeByURL[url.absoluteString] else { return nil }
         return ViewingModePreference(rawValue: raw)
+    }
+
+    // MARK: - Flip State Tracking
+
+    func setFlipped(url: URL, isFlipped: Bool) {
+        let urlString = url.absoluteString
+        if isFlipped {
+            flippedByURL.insert(urlString)
+        } else {
+            flippedByURL.remove(urlString)
+        }
+        save()
+    }
+
+    func isFlipped(url: URL) -> Bool {
+        flippedByURL.contains(url.absoluteString)
     }
 }

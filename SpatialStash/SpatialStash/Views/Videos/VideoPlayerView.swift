@@ -46,6 +46,7 @@ struct VideoPlayerView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .scaleEffect(x: appModel.isVideoFlipped ? -1 : 1, y: 1)
 
             // Bottom spacer to keep ornament below video content
             Spacer()

@@ -19,6 +19,7 @@ struct VideoWindowView: View {
     @State private var windowControlsHideTask: Task<Void, Never>?
     @State private var stereoscopicOverride: Bool?
     @State private var video3DSettings: Video3DSettings?
+    @State private var isVideoFlipped: Bool = false
 
     /// Extra bottom padding to prevent the ornament from overlapping video content
     private let ornamentBottomPadding: CGFloat = 60
@@ -51,6 +52,7 @@ struct VideoWindowView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .scaleEffect(x: isVideoFlipped ? -1 : 1, y: 1)
             .overlay {
                 // Transparent tap target that only appears when UI is hidden
                 if isUIHidden {
@@ -71,6 +73,19 @@ struct VideoWindowView: View {
             attachmentAnchor: .scene(.bottomFront),
             ornament: {
                 HStack(spacing: 16) {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            isVideoFlipped.toggle()
+                        }
+                    } label: {
+                        Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right")
+                            .font(.title3)
+                            .padding(6)
+                            .background(isVideoFlipped ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Flip Video")
+
                     Button {
                         appModel.showMainWindow(openWindow: openWindow)
                     } label: {

@@ -35,6 +35,7 @@ struct SettingsBackup: Codable {
     var video3DSettings: [String: Video3DSettings]?
     var imageEnhancementConvertedURLs: [String]?
     var imageEnhancementLastViewingModes: [String: String]?
+    var imageEnhancementFlippedURLs: [String]?
 
     static let currentVersion = 1
 }

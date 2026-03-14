@@ -149,6 +149,25 @@ struct VideoOrnamentsView: View {
                     }
                 }
 
+                // Flip video
+                if appModel.selectedVideo != nil {
+                    Divider()
+                        .frame(height: 24)
+
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            appModel.isVideoFlipped.toggle()
+                        }
+                    } label: {
+                        Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right")
+                            .font(.title3)
+                            .padding(6)
+                            .background(appModel.isVideoFlipped ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Flip Video")
+                }
+
                 // Pop out button
                 if appModel.selectedVideo != nil {
                     Divider()

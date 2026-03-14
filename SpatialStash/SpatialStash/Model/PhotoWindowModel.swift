@@ -85,6 +85,25 @@ class PhotoWindowModel {
     /// Task for background removal (tracked so cleanup can cancel it)
     private var backgroundRemovalTask: Task<Void, Never>?
 
+    // MARK: - Image Flip State
+
+    /// Whether the image is horizontally flipped (showing its "back side")
+    var isImageFlipped: Bool = false
+
+    /// Toggle the flip state and persist it via the enhancement tracker.
+    func toggleFlip() {
+        isImageFlipped.toggle()
+        Task {
+            await trackFlipState()
+        }
+    }
+
+    /// Persist the current flip state to the enhancement tracker.
+    private func trackFlipState() async {
+        guard appModel.rememberImageEnhancements else { return }
+        await ImageEnhancementTracker.shared.setFlipped(url: imageURL, isFlipped: isImageFlipped)
+    }
+
     // MARK: - Share State
 
     var isPreparingShare: Bool = false
@@ -209,13 +228,20 @@ class PhotoWindowModel {
             appModel.registerPopOutWindow(imageURL: imageURL, windowValue: windowValue)
         }
 
-        // Sequential load: data → enhancement check → 2D fallback
+        // Sequential load: data → enhancement check → 2D fallback → flip restore
         Task {
             await loadImageDataForDetail(url: imageURL)
             // If no enhancement was applied and it's not a GIF, load 2D display image
             if !isAnimatedGIF && !is3DMode && backgroundRemovalState == .original {
                 let windowSize = lastWindowSize ?? appModel.mainWindowSize
                 await loadDisplayImage(for: windowSize)
+            }
+            // Restore flip state (independent of other enhancements, but not for 3D/RealityKit)
+            if appModel.rememberImageEnhancements, !is3DMode {
+                let wasFlipped = await ImageEnhancementTracker.shared.isFlipped(url: imageURL)
+                if wasFlipped {
+                    isImageFlipped = true
+                }
             }
             isInitialLoadInProgress = false
         }
@@ -551,6 +577,10 @@ class PhotoWindowModel {
     func activate3DMode(generateImmediately: Bool = false) {
         guard !isAnimatedGIF, !is3DMode else { return }
         clearBackgroundRemovalState()
+        if isImageFlipped {
+            isImageFlipped = false
+            Task { await trackFlipState() }
+        }
         is3DMode = true
         isLoadingDetailImage = true
         pendingGenerate3D = generateImmediately
@@ -1299,6 +1329,7 @@ class PhotoWindowModel {
         // if needed when activate3DMode sets is3DMode back to true)
         is3DMode = false
         desiredViewingMode = .mono
+        isImageFlipped = false
 
         // Load image data to detect if it's a GIF
         await loadImageDataForDetail(url: newImage.fullSizeURL)

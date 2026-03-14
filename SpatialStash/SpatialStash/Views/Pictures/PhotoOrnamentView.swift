@@ -65,6 +65,11 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
                 backgroundRemovalButton
             }
 
+            // Flip only available with lightweight 2D or GIF display (not RealityKit)
+            if !windowModel.isRealityKitDisplay, !windowModel.is3DMode {
+                flipButton
+            }
+
             // Resolution indicator (only in lightweight 2D mode with a loaded image)
             if !windowModel.isRealityKitDisplay, !windowModel.isAnimatedGIF, windowModel.displayImage != nil {
                 resolutionMenu
@@ -266,6 +271,24 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
             windowModel.backgroundRemovalState == .original ? "Remove Background" :
             windowModel.backgroundRemovalState == .removing ? "Cancel" : "Restore Background"
         )
+    }
+
+    // MARK: - Flip Image
+
+    private var flipButton: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.3)) {
+                windowModel.toggleFlip()
+            }
+        } label: {
+            Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right")
+                .font(.title3)
+                .padding(6)
+                .background(windowModel.isImageFlipped ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
+        }
+        .buttonStyle(.borderless)
+        .disabled(windowModel.isLoadingDetailImage)
+        .help("Flip Image")
     }
 
     // MARK: - Resolution Menu

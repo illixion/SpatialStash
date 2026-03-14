@@ -10,6 +10,7 @@ import UniformTypeIdentifiers
 
 struct SettingsTabView: View {
     @Environment(AppModel.self) private var appModel
+    @Environment(SceneDelegate.self) private var sceneDelegate: SceneDelegate?
     @State private var imageCacheStats: (fileCount: Int, totalSize: Int64) = (0, 0)
     @State private var videoCacheStats: (fileCount: Int, totalSize: Int64) = (0, 0)
     @State private var backgroundRemovalCacheStats: (fileCount: Int, totalSize: Int64) = (0, 0)
@@ -297,6 +298,11 @@ struct SettingsTabView: View {
                             AppLogger.settings.debug("Video refresh complete, videos: \(appModel.galleryVideos.count, privacy: .public)")
                         }
                     }
+
+                    Button("Close All Windows", role: .destructive) {
+                        closeAllSecondaryWindows()
+                    }
+                    .disabled(!hasSecondaryWindows)
                 }
 
                 Section("Backup") {
@@ -511,5 +517,36 @@ struct SettingsTabView: View {
         } else {
             return "\(intSeconds) seconds"
         }
+    }
+
+    /// Whether any secondary (non-main) window scenes are currently connected
+    private var hasSecondaryWindows: Bool {
+        let mainSession = sceneDelegate?.windowScene?.session
+        return UIApplication.shared.connectedScenes.contains { scene in
+            guard let windowScene = scene as? UIWindowScene,
+                  windowScene.session.role == .windowApplication else {
+                return false
+            }
+            return windowScene.session !== mainSession
+        }
+    }
+
+    /// Close all secondary windows (photo, video, shared) by requesting scene destruction
+    private func closeAllSecondaryWindows() {
+        let mainSession = sceneDelegate?.windowScene?.session
+        let secondaryScenes = UIApplication.shared.connectedScenes.compactMap { scene -> UISceneSession? in
+            guard let windowScene = scene as? UIWindowScene,
+                  windowScene.session.role == .windowApplication,
+                  windowScene.session !== mainSession else {
+                return nil
+            }
+            return windowScene.session
+        }
+
+        for session in secondaryScenes {
+            UIApplication.shared.requestSceneSessionDestruction(session, options: nil)
+        }
+
+        AppLogger.settings.info("Closed \(secondaryScenes.count, privacy: .public) secondary windows")
     }
 }

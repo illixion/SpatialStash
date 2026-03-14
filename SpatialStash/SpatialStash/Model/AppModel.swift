@@ -102,6 +102,9 @@ class AppModel {
     /// Whether to show the 3D settings sheet
     var showVideo3DSettingsSheet: Bool = false
 
+    /// Whether the in-window video is horizontally flipped
+    var isVideoFlipped: Bool = false
+
     // MARK: - Filter State
 
     var currentFilter: ImageFilterCriteria = ImageFilterCriteria()
@@ -876,7 +879,8 @@ class AppModel {
             savedWindowGroups: savedWindowGroups,
             video3DSettings: video3DData,
             imageEnhancementConvertedURLs: imageEnhancementData.convertedURLs,
-            imageEnhancementLastViewingModes: imageEnhancementData.lastViewingModes
+            imageEnhancementLastViewingModes: imageEnhancementData.lastViewingModes,
+            imageEnhancementFlippedURLs: imageEnhancementData.flippedURLs
         )
     }
 
@@ -913,7 +917,8 @@ class AppModel {
            let modes = backup.imageEnhancementLastViewingModes {
             await ImageEnhancementTracker.shared.importData(
                 convertedURLs: urls,
-                lastViewingModes: modes
+                lastViewingModes: modes,
+                flippedURLs: backup.imageEnhancementFlippedURLs
             )
         }
 
@@ -1413,6 +1418,7 @@ class AppModel {
         isShowingVideoDetail = true
         videoStereoscopicOverride = nil
         video3DSettings = nil
+        isVideoFlipped = false
 
         // Snapshot the filter on first entry to the viewer
         if viewerVideoFilter == nil {
@@ -1426,6 +1432,7 @@ class AppModel {
         selectedVideo = nil
         videoStereoscopicOverride = nil
         video3DSettings = nil
+        isVideoFlipped = false
         // Clear the snapshotted viewer filter
         viewerVideoFilter = nil
     }

@@ -53,6 +53,7 @@ struct PhotoDisplayView: View {
     var body: some View {
         ZStack {
             imageContent
+                .scaleEffect(x: windowModel.isImageFlipped ? -1 : 1, y: 1)
                 .offset(x: dragOffset)
         }
         .background(
