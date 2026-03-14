@@ -418,14 +418,17 @@ class PhotoWindowModel {
         guard !isLoadingDetailImage, !isLoadingDisplayImage else { return }
         guard !isInitialLoadInProgress else { return }
         guard displayImage != nil else { return }
-        guard backgroundRemovalState == .original else { return }
 
         lastWindowSize = newSize
         resizeDebounceTask?.cancel()
         resizeDebounceTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(1))
             guard let self, !Task.isCancelled else { return }
-            await self.loadDisplayImage(for: newSize)
+            if self.backgroundRemovalState == .removed {
+                await self.reloadBackgroundRemovedAtCurrentResolution()
+            } else if self.backgroundRemovalState == .original {
+                await self.loadDisplayImage(for: newSize)
+            }
         }
     }
 
@@ -831,6 +834,13 @@ class PhotoWindowModel {
     func applyResolutionOverride(_ resolution: Int?) async {
         resolutionOverride = resolution
         guard !isAnimatedGIF, !is3DMode else { return }
+
+        if backgroundRemovalState == .removed {
+            // Re-downscale the background-removed image at the new resolution
+            await reloadBackgroundRemovedAtCurrentResolution()
+            return
+        }
+
         guard backgroundRemovalState == .original else { return }
 
         // Reset current dimension to force reload
@@ -1027,29 +1037,36 @@ class PhotoWindowModel {
     }
 
     /// Downscale an image for display using the same strategy as loadDisplayImage.
+    /// Mirrors the target-dimension logic: min(windowSize × scale, maxRes, nativeMax).
     private func downscaleForDisplay(_ image: UIImage) async -> UIImage {
+        let effectiveRes = effectiveMaxResolution
         // If dynamic resolution is disabled, use the image as-is
-        guard appModel.maxImageResolution > 0 else {
+        guard effectiveRes > 0 else {
             return image
         }
 
-        let maxDimension = CGFloat(appModel.maxImageResolution)
+        let maxRes = CGFloat(effectiveRes)
         let imageWidth = image.size.width
         let imageHeight = image.size.height
-        let maxImageDimension = max(imageWidth, imageHeight)
+        let nativeMaxDim = max(imageWidth, imageHeight)
 
-        guard maxImageDimension > maxDimension else {
-            return image // Already smaller than max, no downsampling needed
+        // Match loadDisplayImage: window size × scale, capped at max resolution and native
+        let windowSize = lastWindowSize ?? appModel.mainWindowSize
+        let targetDimension = min(
+            max(windowSize.width, windowSize.height) * Self.displayScaleFactor,
+            maxRes,
+            nativeMaxDim
+        )
+
+        guard nativeMaxDim > targetDimension else {
+            return image // Already smaller than target, no downsampling needed
         }
 
-        // Calculate target dimension with headroom for scaling
-        let scale = Self.displayScaleFactor
-        let targetDimension = maxDimension * scale
-
         // Create a new UIImage at the downsampled size
+        let scaleFactor = targetDimension / nativeMaxDim
         let newSize = CGSize(
-            width: imageWidth * (targetDimension / maxImageDimension),
-            height: imageHeight * (targetDimension / maxImageDimension)
+            width: imageWidth * scaleFactor,
+            height: imageHeight * scaleFactor
         )
 
         let format = UIGraphicsImageRendererFormat()
@@ -1060,6 +1077,24 @@ class PhotoWindowModel {
         return renderer.image { context in
             image.draw(in: CGRect(origin: .zero, size: newSize))
         }
+    }
+
+    /// Reload the background-removed image at the current effective resolution.
+    /// Fetches the full-res cached version from disk and re-downscales it.
+    private func reloadBackgroundRemovedAtCurrentResolution() async {
+        guard backgroundRemovalState == .removed else { return }
+
+        // Try to load the full-res background-removed image from persistent cache
+        guard let cachedData = await BackgroundRemovalCache.shared.loadData(for: imageURL),
+              let fullResImage = UIImage(data: cachedData) else {
+            AppLogger.photoWindow.warning("Cannot reload background-removed image: no cached data")
+            return
+        }
+
+        let downscaled = await downscaleForDisplay(fullResImage)
+        backgroundRemovedImage = downscaled
+        displayImage = downscaled
+        imageAspectRatio = downscaled.size.width / downscaled.size.height
     }
 
     private func restoreOriginalBackground() {
