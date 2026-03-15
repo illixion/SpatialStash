@@ -11,3 +11,8 @@
 // approach in your own projects—it's only useful for sample code projects because
 // they are frequently downloaded and don't have a development team set.
 SAMPLE_CODE_DISAMBIGUATOR=${DEVELOPMENT_TEAM}
+
+// Git commit hash injected at build time.
+// Override by running: scripts/set-build-info.sh
+// Falls back to "unknown" if not set before building.
+COMMIT_HASH = unknown

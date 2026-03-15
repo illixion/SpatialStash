@@ -349,7 +349,7 @@ struct SettingsTabView: View {
                     HStack {
                         Text("Version")
                         Spacer()
-                        Text("1.0.0")
+                        Text(appVersionString)
                             .foregroundColor(.secondary)
                     }
                 }
@@ -517,6 +517,15 @@ struct SettingsTabView: View {
         } else {
             return "\(intSeconds) seconds"
         }
+    }
+
+    private var appVersionString: String {
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
+        let commitHash = Bundle.main.infoDictionary?["CommitHash"] as? String
+        if let commitHash, !commitHash.isEmpty, commitHash != "unknown" {
+            return "\(version) (\(commitHash))"
+        }
+        return version
     }
 
     /// Whether any secondary (non-main) window scenes are currently connected
