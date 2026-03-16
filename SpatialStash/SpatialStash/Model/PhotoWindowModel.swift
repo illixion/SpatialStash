@@ -129,19 +129,60 @@ class PhotoWindowModel {
     /// Max dimension used for idle-downscaled thumbnail display
     private static let idleDownscaleDimension: CGFloat = 256
 
-    // MARK: - ScenePhase Visibility Probe (diagnostic — remove after testing)
+    // MARK: - Scene Phase Idle Downscale
 
-    /// Track the last known scene phase for this window
-    private(set) var lastScenePhase: String = "unknown"
+    /// Task that fires after the inactivity timeout to downscale the window
+    private var scenePhaseIdleTask: Task<Void, Never>?
 
-    /// Record a scenePhase change for this window and log it
-    func recordScenePhaseChange(from oldPhase: ScenePhase, to newPhase: ScenePhase) {
-        let oldName = Self.phaseLabel(oldPhase)
-        let newName = Self.phaseLabel(newPhase)
-        lastScenePhase = newName
-        AppLogger.visibilityProbe.info(
-            "[\(self.image.title ?? "untitled", privacy: .public)] SCENE PHASE: \(oldName, privacy: .public) → \(newName, privacy: .public)"
+    /// How long a window must remain inactive/background before being downscaled
+    private static let scenePhaseIdleTimeout: TimeInterval = 5 * 60 // 5 minutes
+
+    /// Display name for this window used in log messages
+    private var displayName: String {
+        image.title ?? image.fullSizeURL.deletingPathExtension().lastPathComponent
+    }
+
+    /// Handle a scenePhase transition for this window.
+    /// Starts an inactivity timer when leaving active, restores on return.
+    func handleScenePhaseChange(from oldPhase: ScenePhase, to newPhase: ScenePhase) {
+        AppLogger.photoWindow.info(
+            "[\(self.displayName, privacy: .public)] scenePhase: \(Self.phaseLabel(oldPhase), privacy: .public) → \(Self.phaseLabel(newPhase), privacy: .public)"
         )
+
+        if newPhase == .active {
+            // Window became visible again — cancel any pending downscale and restore
+            scenePhaseIdleTask?.cancel()
+            scenePhaseIdleTask = nil
+
+            if isIdleDownscaled {
+                AppLogger.photoWindow.info("[\(self.displayName, privacy: .public)] Restoring from scene-phase idle downscale")
+                Task {
+                    await restoreFromIdleDownscale()
+                }
+            }
+        } else if oldPhase == .active && (newPhase == .inactive || newPhase == .background) {
+            // Window moved to another room — start inactivity timer
+            scheduleScenePhaseIdleDownscale()
+        }
+    }
+
+    /// Schedule an idle downscale after the timeout period
+    private func scheduleScenePhaseIdleDownscale() {
+        scenePhaseIdleTask?.cancel()
+        scenePhaseIdleTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: .seconds(Self.scenePhaseIdleTimeout))
+            } catch {
+                return // Cancelled — window became active again
+            }
+
+            guard let self, !Task.isCancelled else { return }
+            guard !self.isIdleDownscaled else { return }
+
+            AppLogger.photoWindow.info("[\(self.displayName, privacy: .public)] Idle downscaling after scene-phase timeout")
+            await self.releaseMemoryForIdleDownscale()
+            await self.applyIdleDownscaleThumbnail()
+        }
     }
 
     private static func phaseLabel(_ phase: ScenePhase) -> String {
@@ -1580,6 +1621,8 @@ class PhotoWindowModel {
         }
 
         // Cancel all tasks
+        scenePhaseIdleTask?.cancel()
+        scenePhaseIdleTask = nil
         autoHideTask?.cancel()
         autoHideTask = nil
         windowControlsHideTask?.cancel()

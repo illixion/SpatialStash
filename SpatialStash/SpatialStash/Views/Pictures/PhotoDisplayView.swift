@@ -103,9 +103,9 @@ struct PhotoDisplayView: View {
             guard let direction else { return }
             performSlideshowTransition(direction: direction)
         }
-        // MARK: - ScenePhase Visibility Probe (diagnostic — remove after testing)
+        // MARK: - Scene Phase Idle Downscale
         .onChange(of: scenePhase) { oldPhase, newPhase in
-            windowModel.recordScenePhaseChange(from: oldPhase, to: newPhase)
+            windowModel.handleScenePhaseChange(from: oldPhase, to: newPhase)
         }
     }
 
