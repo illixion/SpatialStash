@@ -678,7 +678,7 @@ class PhotoWindowModel {
 
     /// Restore this window from idle-downscaled state to proper resolution.
     /// Called when the user interacts with a previously downscaled window.
-    private func restoreFromIdleDownscale() async {
+    func restoreFromIdleDownscale() async {
         guard isIdleDownscaled else { return }
 
         AppLogger.photoWindow.info("[\(self.displayName, privacy: .public)] Restoring window from idle downscale")

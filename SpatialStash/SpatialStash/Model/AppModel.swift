@@ -524,6 +524,10 @@ class AppModel {
             Task { @MainActor [weak self] in
                 guard let self else { return }
 
+                // Cancel any pending restore — memory is still under pressure
+                self.memoryPressureRestoreTask?.cancel()
+                self.memoryPressureRestoreTask = nil
+
                 await ImageLoader.shared.clearMemoryCache()
 
                 // LRU downscale handles 3D→2D conversion directly (phase 1),
@@ -531,6 +535,50 @@ class AppModel {
                 // where switchToLightweightDisplay() loads full-res images
                 // that immediately get downscaled again.
                 await self.downscaleLeastRecentWindows()
+
+                // Schedule delayed restore for any active-room windows that
+                // were downscaled — visionOS will likely free memory via swap
+                self.scheduleActiveRoomRestore()
+            }
+        }
+    }
+
+    // MARK: - Memory Pressure Active-Room Restore
+
+    /// Task that waits for memory to stabilize and then restores active-room
+    /// windows that were downscaled by memory pressure. Cancelled and restarted
+    /// if another memory warning arrives before the delay elapses.
+    private var memoryPressureRestoreTask: Task<Void, Never>?
+
+    /// Delay before attempting to restore active-room windows after memory pressure.
+    private static let memoryPressureRestoreDelay: TimeInterval = 30
+
+    /// Schedule a delayed restore of active-room windows that were downscaled
+    /// by memory pressure. Restores one window at a time to avoid re-spiking memory.
+    private func scheduleActiveRoomRestore() {
+        memoryPressureRestoreTask?.cancel()
+        memoryPressureRestoreTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: .seconds(Self.memoryPressureRestoreDelay))
+            } catch {
+                return // Cancelled — another memory warning arrived
+            }
+
+            guard let self, !Task.isCancelled else { return }
+
+            let models = Array(self.activePhotoWindowModels.values)
+            let activeRoomDownscaled = models.filter { $0.isInActiveRoom && $0.isIdleDownscaled }
+
+            guard !activeRoomDownscaled.isEmpty else { return }
+
+            AppLogger.appModel.info(
+                "Restoring \(activeRoomDownscaled.count, privacy: .public) active-room windows after memory pressure"
+            )
+
+            // Restore one at a time to avoid memory spikes
+            for model in activeRoomDownscaled {
+                guard !Task.isCancelled else { break }
+                await model.restoreFromIdleDownscale()
             }
         }
     }
