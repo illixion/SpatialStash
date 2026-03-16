@@ -382,7 +382,9 @@ class AppModel {
         didSet {
             if showDebugConsole != oldValue {
                 UserDefaults.standard.set(showDebugConsole, forKey: "showDebugConsole")
-                if !showDebugConsole {
+                if showDebugConsole {
+                    LogStore.shared.startPolling()
+                } else {
                     // Switch away from console tab and release log buffer
                     if selectedTab == .console {
                         selectedTab = .settings
@@ -505,6 +507,11 @@ class AppModel {
 
         // Apply default views on startup
         applyDefaultViewsOnStartup()
+
+        // Start log capture if the debug console was previously enabled
+        if loadedShowDebugConsole {
+            LogStore.shared.startPolling()
+        }
 
         // Monitor memory pressure and clear caches when warned.
         // Uses LRU strategy: downscales least-recently-interacted windows first.

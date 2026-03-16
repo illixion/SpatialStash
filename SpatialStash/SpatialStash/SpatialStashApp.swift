@@ -65,6 +65,15 @@ struct SpatialStashApp: App {
         .defaultSize(width: 1200, height: 700)
         .defaultLaunchBehavior(.suppressed)
 
+        // Pop-out debug console window (singleton)
+        Window("Console", id: "console") {
+            ConsoleWindowView()
+                .environment(appModel)
+        }
+        .defaultSize(width: 900, height: 600)
+        .windowResizability(.contentMinSize)
+        .defaultLaunchBehavior(.suppressed)
+
         // Immersive space for stereoscopic 3D video playback
         ImmersiveSpace(id: "StereoscopicVideoSpace") {
             ImmersiveVideoView()

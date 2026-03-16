@@ -8,6 +8,10 @@
 import SwiftUI
 
 struct DebugConsoleView: View {
+    /// When true, the console is in a standalone pop-out window (no pop-out button shown)
+    var isPopOut: Bool = false
+
+    @Environment(\.openWindow) private var openWindow
     @State private var logStore = LogStore.shared
     @State private var minimumLevel: LogLevel = .debug
     @State private var selectedCategory: String?
@@ -23,12 +27,8 @@ struct DebugConsoleView: View {
             }
             .navigationTitle("Console")
         }
-        .onAppear {
-            logStore.startPolling()
-        }
-        .onDisappear {
-            logStore.stopPolling()
-        }
+        // Polling lifecycle is managed by AppModel.showDebugConsole, not by
+        // view appearance, so logs are captured while using other tabs.
     }
 
     // MARK: - Filter Bar
@@ -83,6 +83,15 @@ struct DebugConsoleView: View {
                 Image(systemName: "trash")
             }
             .help("Clear log entries")
+
+            if !isPopOut {
+                Button {
+                    openWindow(id: "console")
+                } label: {
+                    Image(systemName: "arrow.up.right.square")
+                }
+                .help("Open in separate window")
+            }
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
