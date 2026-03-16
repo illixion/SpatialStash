@@ -1,4 +1,4 @@
-name: Build Unsigned IPA
+name: Build IPA
 
 on:
   push:
@@ -8,16 +8,15 @@ on:
 
 jobs:
   build:
-    runs-on: macos-15
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
 
       - name: Select Xcode
         run: |
-          # Requires Xcode 26+ for visionOS 26 SDK
-          XCODE_PATH=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
-          if [ -z "$XCODE_PATH" ]; then
-            echo "Error: Xcode 26+ not found on this runner"
+          XCODE_PATH="/Applications/Xcode_26.3.app"
+          if [ ! -d "$XCODE_PATH" ]; then
+            echo "Error: Xcode 26.3 not found at $XCODE_PATH"
             exit 1
           fi
           echo "Using $XCODE_PATH"
@@ -26,7 +25,7 @@ jobs:
       - name: Set build info
         run: ./scripts/set-build-info.sh
 
-      - name: Build for visionOS (unsigned)
+      - name: Build for visionOS
         run: |
           xcodebuild -quiet \
             -project SpatialStash/SpatialStash.xcodeproj \
@@ -40,15 +39,15 @@ jobs:
             PROVISIONING_PROFILE_SPECIFIER="" \
             build
 
-      - name: Package unsigned IPA
+      - name: Package IPA
         run: |
           APP_PATH=$(find build/DerivedData -name '*.app' -type d | head -1)
           mkdir -p build/Payload
           cp -R "$APP_PATH" build/Payload/
-          cd build && zip -qr SpatialStash-unsigned.ipa Payload
+          cd build && zip -qr SpatialStash.ipa Payload
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SpatialStash-unsigned
-          path: build/SpatialStash-unsigned.ipa
+          name: SpatialStash
+          path: build/SpatialStash.ipa
