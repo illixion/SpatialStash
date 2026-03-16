@@ -11,9 +11,13 @@ import SwiftUI
 
 struct VideoPlayerView: View {
     @Environment(AppModel.self) private var appModel
+    @Environment(\.scenePhase) private var scenePhase
 
     /// Extra bottom padding (in points) to prevent the ornament from overlapping video content
     private let ornamentBottomPadding: CGFloat = 60
+
+    /// Whether this window is in the user's current room
+    @State private var isInActiveRoom: Bool = true
 
     var body: some View {
         VStack(spacing: 0) {
@@ -36,7 +40,8 @@ struct VideoPlayerView: View {
                         WebVideoPlayerView(
                             videoURL: video.streamURL,
                             apiKey: appModel.stashAPIKey.isEmpty ? nil : appModel.stashAPIKey,
-                            showControls: !appModel.isUIHidden
+                            showControls: !appModel.isUIHidden,
+                            isRoomActive: isInActiveRoom
                         )
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .id("\(video.id)_2d")
@@ -47,6 +52,16 @@ struct VideoPlayerView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .scaleEffect(x: appModel.isVideoFlipped ? -1 : 1, y: 1)
+            .overlay {
+                // Transparent tap target that only appears when UI is hidden
+                if appModel.isUIHidden {
+                    Color.clear
+                        .contentShape(.rect)
+                        .onTapGesture {
+                            appModel.toggleUIVisibility()
+                        }
+                }
+            }
 
             // Bottom spacer to keep ornament below video content
             Spacer()
@@ -65,6 +80,9 @@ struct VideoPlayerView: View {
             appModel.isUIHidden = false
             appModel.startAutoHideTimer()
             lockWindowToVideoAspectRatio()
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            isInActiveRoom = (newPhase == .active)
         }
         .sheet(isPresented: Binding(
             get: { appModel.showVideo3DSettingsSheet },

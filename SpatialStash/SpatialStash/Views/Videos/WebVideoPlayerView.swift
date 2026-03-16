@@ -12,6 +12,9 @@ struct WebVideoPlayerView: UIViewRepresentable {
     let videoURL: URL
     let apiKey: String?
     var showControls: Bool = true
+    /// Whether the window is in the user's current room. When false, auto-resume
+    /// is suppressed and the video is paused to save resources.
+    var isRoomActive: Bool = true
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -51,6 +54,20 @@ struct WebVideoPlayerView: UIViewRepresentable {
             let js = "document.getElementById('player').controls = \(showControls);"
             webView.evaluateJavaScript(js)
         }
+
+        // Pause/resume and toggle auto-resume based on room activity
+        if coordinator.lastIsRoomActive != isRoomActive {
+            coordinator.lastIsRoomActive = isRoomActive
+            if isRoomActive {
+                // Room re-entered: re-enable auto-resume and play
+                let js = "window._roomActive = true; document.getElementById('player').play().catch(function() {});"
+                webView.evaluateJavaScript(js)
+            } else {
+                // Left room: disable auto-resume and pause
+                let js = "window._roomActive = false; document.getElementById('player').pause();"
+                webView.evaluateJavaScript(js)
+            }
+        }
     }
 
     static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
@@ -78,6 +95,7 @@ struct WebVideoPlayerView: UIViewRepresentable {
         var htmlFileURL: URL?
         var loadedURL: URL?
         var lastShowControls: Bool?
+        var lastIsRoomActive: Bool?
 
         func cleanupHTMLFile() {
             guard let url = htmlFileURL else { return }
@@ -149,10 +167,60 @@ struct WebVideoPlayerView: UIViewRepresentable {
             </div>
             <script>
                 const video = document.getElementById('player');
-                video.onerror = function() {
-                    const container = document.querySelector('.video-container');
-                    container.innerHTML = '<div class="error">Failed to load video</div>';
-                };
+                const originalSrc = video.src;
+                let retryCount = 0;
+                const maxRetries = 5;
+                const baseDelay = 3000; // 3 seconds initial delay
+
+                // Room activity flag — set by Swift via evaluateJavaScript.
+                // When false, auto-resume and error recovery are suppressed.
+                window._roomActive = true;
+
+                // Reload the video source after an error with exponential backoff
+                function reloadVideo() {
+                    if (!window._roomActive) return;
+                    if (retryCount >= maxRetries) return;
+                    retryCount++;
+                    const delay = baseDelay * Math.pow(2, retryCount - 1);
+                    setTimeout(function() {
+                        if (!window._roomActive) return;
+                        video.src = originalSrc;
+                        video.load();
+                        video.play().catch(function() {});
+                    }, delay);
+                }
+
+                // On error: attempt to reload instead of showing a permanent error
+                video.addEventListener('error', function() {
+                    reloadVideo();
+                });
+
+                // Also catch source-level errors (nested <source> or src attribute)
+                video.addEventListener('stalled', function() {
+                    // Only act if the video isn't playing
+                    if (video.paused && video.readyState < 3) {
+                        reloadVideo();
+                    }
+                });
+
+                // Reset retry count on successful playback
+                video.addEventListener('playing', function() {
+                    retryCount = 0;
+                });
+
+                // Resume playback if the video randomly pauses (e.g. after space restoration)
+                video.addEventListener('pause', function() {
+                    // Only auto-resume when room is active
+                    if (!window._roomActive) return;
+                    if (!video.ended && video.readyState >= 2) {
+                        setTimeout(function() {
+                            if (!window._roomActive) return;
+                            if (video.paused && !video.ended) {
+                                video.play().catch(function() {});
+                            }
+                        }, 500);
+                    }
+                });
             </script>
         </body>
         </html>

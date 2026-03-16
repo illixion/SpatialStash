@@ -12,21 +12,15 @@ struct GalleryThumbnailView: View {
     let image: GalleryImage
     var onTap: (() -> Void)? = nil
     @State private var loadedImage: UIImage?
-    @State private var imageData: Data?
     @State private var isLoading = true
     @State private var loadFailed = false
-    @State private var isAnimatedGIF = false
 
     var body: some View {
         ZStack {
             // Background
             Color.secondary.opacity(0.2)
             
-            if let imageData, isAnimatedGIF {
-                // Display animated GIF
-                AnimatedImageView(data: imageData, contentMode: .scaleAspectFill)
-                    .frame(width: 200, height: 200)
-            } else if let loadedImage {
+            if let loadedImage {
                 // Display static image
                 Image(uiImage: loadedImage)
                     .resizable()
@@ -63,10 +57,8 @@ struct GalleryThumbnailView: View {
     private func loadThumbnail() async {
         // Use efficient thumbnail loading (downsamples local files during decode)
         if let result = await ImageLoader.shared.loadThumbnailWithData(from: image.thumbnailURL) {
-            // Crop to square
+            // Crop to square — always show static thumbnail (GIFs play as video in detail view)
             loadedImage = cropToSquare(result.image)
-            imageData = result.data
-            isAnimatedGIF = result.isAnimatedGIF
         } else {
             AppLogger.views.warning("Failed to load thumbnail for: \(image.thumbnailURL.lastPathComponent, privacy: .private)")
             loadFailed = true

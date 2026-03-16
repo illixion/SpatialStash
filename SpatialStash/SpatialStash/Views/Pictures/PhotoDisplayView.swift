@@ -113,29 +113,53 @@ struct PhotoDisplayView: View {
 
     @ViewBuilder
     private var imageContent: some View {
-        if windowModel.isAnimatedGIF, let gifData = windowModel.currentImageData {
-            // Display animated GIF without RealityKit (no 3D conversion possible)
-            AnimatedGIFDetailView(imageData: gifData, hevcFileURL: windowModel.gifHEVCURL)
-                .aspectRatio(windowModel.imageAspectRatio, contentMode: .fit)
-                .clipShape(RoundedRectangle(cornerRadius: appModel.roundedCorners ? 50 : 0, style: .continuous))
-                .contentShape(.rect)
-                .onTapGesture {
-                    windowModel.toggleUIVisibility()
+        if windowModel.isAnimatedGIF, let hevcURL = windowModel.gifHEVCURL {
+            // Display converted GIF as video using the shared web video player
+            WebVideoPlayerView(
+                videoURL: hevcURL,
+                apiKey: nil,
+                showControls: !windowModel.isUIHidden,
+                isRoomActive: windowModel.isInActiveRoom
+            )
+            .aspectRatio(windowModel.imageAspectRatio, contentMode: .fit)
+            .clipShape(RoundedRectangle(cornerRadius: appModel.roundedCorners ? 50 : 0, style: .continuous))
+            .overlay {
+                // Transparent tap target to re-show photo ornaments when UI is hidden.
+                // When visible, taps pass through to the HTML video controls instead.
+                if windowModel.isUIHidden {
+                    Color.clear
+                        .contentShape(.rect)
+                        .onTapGesture {
+                            windowModel.toggleUIVisibility()
+                        }
                 }
-                .modifier(SwipeGestureModifier(enabled: isSwipeEnabled, onEnded: handleDragEnded))
-                .onAppear {
-                    resizeGIFWindowToFit(windowModel.imageAspectRatio, within: appModel.mainWindowSize)
+            }
+            .modifier(SwipeGestureModifier(enabled: isSwipeEnabled, onEnded: handleDragEnded))
+            .onAppear {
+                resizeGIFWindowToFit(windowModel.imageAspectRatio, within: appModel.mainWindowSize)
+            }
+            .onChange(of: windowModel.imageAspectRatio) { _, newAspectRatio in
+                guard !suppressWindowResize else { return }
+                resizeGIFWindowToFit(newAspectRatio, within: currentBounds)
+            }
+            .onChange(of: windowModel.isLoadingDetailImage) { wasLoading, isLoading in
+                if wasLoading && !isLoading {
+                    resizeGIFWindowToFit(windowModel.imageAspectRatio, within: currentBounds)
+                    scheduleWindowSizeVerification()
                 }
-                .onChange(of: windowModel.imageAspectRatio) { _, newAspectRatio in
-                    guard !suppressWindowResize else { return }
-                    resizeGIFWindowToFit(newAspectRatio, within: currentBounds)
-                }
-                .onChange(of: windowModel.isLoadingDetailImage) { wasLoading, isLoading in
-                    if wasLoading && !isLoading {
-                        resizeGIFWindowToFit(windowModel.imageAspectRatio, within: currentBounds)
-                        scheduleWindowSizeVerification()
-                    }
-                }
+            }
+        } else if windowModel.isAnimatedGIF {
+            // GIF detected but HEVC conversion still in progress — show loading indicator
+            ZStack {
+                Color.black
+                ProgressView("Converting...")
+                    .foregroundStyle(.white)
+            }
+            .aspectRatio(windowModel.imageAspectRatio, contentMode: .fit)
+            .clipShape(RoundedRectangle(cornerRadius: appModel.roundedCorners ? 50 : 0, style: .continuous))
+            .onAppear {
+                resizeGIFWindowToFit(windowModel.imageAspectRatio, within: appModel.mainWindowSize)
+            }
         } else if windowModel.is3DMode {
             // Display with RealityKit for 3D spatial conversion (full resolution)
             GeometryReader3D { geometry in

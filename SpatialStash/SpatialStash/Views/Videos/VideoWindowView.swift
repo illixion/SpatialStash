@@ -6,12 +6,14 @@
  containing only a gallery button that auto-hides after the configured delay.
  */
 
+import os
 import SwiftUI
 
 struct VideoWindowView: View {
     let windowValue: VideoWindowValue
     @Environment(AppModel.self) private var appModel
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var isUIHidden = false
     @State private var isWindowControlsHidden = false
@@ -21,6 +23,20 @@ struct VideoWindowView: View {
     @State private var video3DSettings: Video3DSettings?
     @State private var isVideoFlipped: Bool = false
 
+    // MARK: - Room Activity / Memory Management
+
+    /// Whether this window is in the user's current room
+    @State private var isInActiveRoom: Bool = true
+
+    /// Whether the video has been unloaded to free memory (WKWebView removed)
+    @State private var isVideoUnloaded: Bool = false
+
+    /// Task that fires after the inactivity timeout to unload the video
+    @State private var scenePhaseIdleTask: Task<Void, Never>?
+
+    /// How long a video window must remain in an inactive room before unloading
+    private static let scenePhaseIdleTimeout: TimeInterval = 5 * 60 // 5 minutes
+
     /// Extra bottom padding to prevent the ornament from overlapping video content
     private let ornamentBottomPadding: CGFloat = 60
 
@@ -29,7 +45,10 @@ struct VideoWindowView: View {
     var body: some View {
         VStack(spacing: 0) {
             Group {
-                if shouldUseStereoscopicPlayer {
+                if isVideoUnloaded {
+                    // Video unloaded to save memory while in inactive room
+                    unloadedPlaceholder
+                } else if shouldUseStereoscopicPlayer {
                     StereoscopicVideoView(
                         video: video,
                         initialSettings: video3DSettings,
@@ -45,7 +64,8 @@ struct VideoWindowView: View {
                     WebVideoPlayerView(
                         videoURL: video.streamURL,
                         apiKey: appModel.stashAPIKey.isEmpty ? nil : appModel.stashAPIKey,
-                        showControls: !isUIHidden
+                        showControls: !isUIHidden,
+                        isRoomActive: isInActiveRoom
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .id("\(video.id)_2d")
@@ -127,7 +147,12 @@ struct VideoWindowView: View {
         }
         .onDisappear {
             cancelAutoHideTimer()
+            scenePhaseIdleTask?.cancel()
+            scenePhaseIdleTask = nil
             restoreWindowResizing()
+        }
+        .onChange(of: scenePhase) { oldPhase, newPhase in
+            handleScenePhaseChange(from: oldPhase, to: newPhase)
         }
     }
 
@@ -205,5 +230,73 @@ struct VideoWindowView: View {
             .compactMap({ $0 as? UIWindowScene })
             .first(where: { $0.activationState == .foregroundActive }) else { return }
         windowScene.requestGeometryUpdate(.Vision(resizingRestrictions: .freeform))
+    }
+
+    // MARK: - Scene Phase / Room Activity
+
+    private var videoDisplayName: String {
+        video.title ?? video.streamURL.lastPathComponent
+    }
+
+    private func handleScenePhaseChange(from oldPhase: ScenePhase, to newPhase: ScenePhase) {
+        AppLogger.videoWindow.info(
+            "[\(videoDisplayName, privacy: .public)] scenePhase: \(phaseLabel(oldPhase), privacy: .public) → \(phaseLabel(newPhase), privacy: .public)"
+        )
+
+        if newPhase == .active {
+            isInActiveRoom = true
+
+            // Cancel any pending unload
+            scenePhaseIdleTask?.cancel()
+            scenePhaseIdleTask = nil
+
+            // Reload video if it was unloaded while in another room
+            if isVideoUnloaded {
+                AppLogger.videoWindow.info("[\(videoDisplayName, privacy: .public)] Restoring video after room re-entry")
+                isVideoUnloaded = false
+            }
+        } else if oldPhase == .active && (newPhase == .inactive || newPhase == .background) {
+            isInActiveRoom = false
+
+            // Schedule video unload after timeout to free memory
+            scheduleVideoUnload()
+        }
+    }
+
+    private func scheduleVideoUnload() {
+        scenePhaseIdleTask?.cancel()
+        scenePhaseIdleTask = Task {
+            do {
+                try await Task.sleep(for: .seconds(Self.scenePhaseIdleTimeout))
+            } catch {
+                return // Cancelled — window became active again
+            }
+
+            guard !Task.isCancelled, !isVideoUnloaded else { return }
+
+            AppLogger.videoWindow.info("[\(videoDisplayName, privacy: .public)] Unloading video after scene-phase timeout")
+            isVideoUnloaded = true
+        }
+    }
+
+    private func phaseLabel(_ phase: ScenePhase) -> String {
+        switch phase {
+        case .active: "active"
+        case .inactive: "inactive"
+        case .background: "background"
+        @unknown default: "unknown"
+        }
+    }
+
+    private var unloadedPlaceholder: some View {
+        VStack(spacing: 20) {
+            Image(systemName: "video.badge.ellipsis")
+                .font(.system(size: 64))
+                .foregroundColor(.secondary)
+            Text("Video paused — not in current room")
+                .font(.title2)
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

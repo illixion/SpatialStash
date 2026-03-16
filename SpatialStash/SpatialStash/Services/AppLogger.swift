@@ -66,6 +66,9 @@ enum AppLogger {
     /// GIF to HEVC conversion and caching
     static let gifConverter = Logger(subsystem: subsystem, category: "GIFConverter")
 
+    /// Video window model (per-window video state)
+    static let videoWindow = Logger(subsystem: subsystem, category: "VideoWindow")
+
     /// Window visibility heartbeat diagnostics
     static let visibilityProbe = Logger(subsystem: subsystem, category: "VisibilityProbe")
 }
