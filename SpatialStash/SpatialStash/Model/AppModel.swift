@@ -530,13 +530,17 @@ class AppModel {
 
     // MARK: - LRU Memory Pressure Downscale
 
-    /// Downscale the least-recently-interacted photo windows to free memory.
+    /// Downscale photo windows to free memory during system memory pressure.
     /// Uses a two-phase approach to avoid OOM during the downscale itself:
     ///
+    /// **Targeting priority:**
+    /// 1. All windows in inactive rooms (not currently visible to the user)
+    /// 2. 3D windows in the active room (highest per-window memory cost)
+    /// 3. Up to half the remaining 2D windows in the active room (LRU order)
+    ///
     /// **Phase 1 — Release memory (no allocations):**
-    /// First targets 3D windows (highest memory: RealityKit GPU textures), then
-    /// 2D windows, sorted by LRU in each group. Releases all heavy resources
-    /// (textures, raw data, display images, background removal caches).
+    /// Releases all heavy resources (textures, raw data, display images,
+    /// background removal caches) without allocating anything new.
     ///
     /// **Phase 2 — Generate thumbnails:**
     /// After all targeted windows have freed their memory, loads small 256px
@@ -552,23 +556,32 @@ class AppModel {
             return
         }
 
-        // Partition into 3D and 2D windows, each sorted by LRU (oldest first)
-        let windows3D = nonDownscaled
+        // Priority 1: All windows in inactive rooms (user can't see them)
+        let inactiveRoomWindows = nonDownscaled
+            .filter { !$0.isInActiveRoom }
+            .sorted { $0.lastInteractionTime < $1.lastInteractionTime }
+
+        // Priority 2+3: Windows in the active room, partitioned by type
+        let activeRoomWindows = nonDownscaled.filter { $0.isInActiveRoom }
+        let activeRoom3D = activeRoomWindows
             .filter { $0.is3DMode }
             .sorted { $0.lastInteractionTime < $1.lastInteractionTime }
-        let windows2D = nonDownscaled
+        let activeRoom2D = activeRoomWindows
             .filter { !$0.is3DMode }
             .sorted { $0.lastInteractionTime < $1.lastInteractionTime }
 
-        // Target all 3D windows first (they use the most memory), then
-        // up to half the remaining 2D windows (LRU order)
-        var windowsToDownscale = windows3D
-        if windows2D.count > 0 {
-            let count2D = max(1, windows2D.count / 2)
-            windowsToDownscale += Array(windows2D.prefix(count2D))
+        // Build the target list: inactive rooms first, then active room 3D,
+        // then up to half of active room 2D (LRU)
+        var windowsToDownscale = inactiveRoomWindows + activeRoom3D
+        if activeRoom2D.count > 0 {
+            let count2D = max(1, activeRoom2D.count / 2)
+            windowsToDownscale += Array(activeRoom2D.prefix(count2D))
         }
 
-        AppLogger.appModel.info("Idle-downscaling \(windowsToDownscale.count) of \(models.count) windows (\(windows3D.count) 3D, \(windowsToDownscale.count - windows3D.count) 2D, LRU)")
+        let activeRoom2DCount = windowsToDownscale.count - inactiveRoomWindows.count - activeRoom3D.count
+        AppLogger.appModel.info(
+            "Idle-downscaling \(windowsToDownscale.count, privacy: .public) of \(models.count, privacy: .public) windows (\(inactiveRoomWindows.count, privacy: .public) inactive-room, \(activeRoom3D.count, privacy: .public) active-3D, \(activeRoom2DCount, privacy: .public) active-2D LRU)"
+        )
 
         // Phase 1: Release all heavy memory first (no allocations)
         for model in windowsToDownscale {

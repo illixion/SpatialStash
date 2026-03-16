@@ -137,6 +137,11 @@ class PhotoWindowModel {
     /// How long a window must remain inactive/background before being downscaled
     private static let scenePhaseIdleTimeout: TimeInterval = 5 * 60 // 5 minutes
 
+    /// Whether this window is in the user's current room (scene phase is active).
+    /// Used by AppModel's memory pressure system to prioritize downscaling
+    /// windows in inactive rooms before touching windows the user can see.
+    private(set) var isInActiveRoom: Bool = true
+
     /// Display name for this window used in log messages
     private var displayName: String {
         image.title ?? image.fullSizeURL.deletingPathExtension().lastPathComponent
@@ -150,6 +155,8 @@ class PhotoWindowModel {
         )
 
         if newPhase == .active {
+            isInActiveRoom = true
+
             // Window became visible again — cancel any pending downscale and restore
             scenePhaseIdleTask?.cancel()
             scenePhaseIdleTask = nil
@@ -161,6 +168,8 @@ class PhotoWindowModel {
                 }
             }
         } else if oldPhase == .active && (newPhase == .inactive || newPhase == .background) {
+            isInActiveRoom = false
+
             // Window moved to another room — start inactivity timer
             scheduleScenePhaseIdleDownscale()
         }
@@ -630,14 +639,28 @@ class PhotoWindowModel {
     /// Phase 2: Load a small thumbnail so the window shows a recognizable preview
     /// instead of blank. Called after `releaseMemoryForIdleDownscale()` has freed
     /// memory from all targeted windows first.
+    ///
+    /// Tries sources in order of efficiency:
+    /// 1. ThumbnailCache (pre-generated HEIC on disk, cheapest to load)
+    /// 2. CGImageSource downsample from the full-res cached file
     func applyIdleDownscaleThumbnail() async {
         guard isIdleDownscaled else { return }
         // GIFs and windows with no display don't need a thumbnail
         guard !isAnimatedGIF else { return }
 
+        let thumbnailDim = Self.idleDownscaleDimension
+
+        // Try the pre-generated thumbnail cache first (tiny HEIC files, no decode of full image)
+        if let cached = await ThumbnailCache.shared.loadThumbnail(for: imageURL) {
+            displayImage = cached
+            imageAspectRatio = cached.size.width / cached.size.height
+            currentDisplayMaxDimension = thumbnailDim
+            return
+        }
+
+        // Fall back to CGImageSource downsample from the disk-cached full-res file
         guard let sourceURL = await resolveSourceFileURL() else { return }
 
-        let thumbnailDim = Self.idleDownscaleDimension
         let image = await Task.detached { [sourceURL, thumbnailDim] in
             ThumbnailGenerator.shared.downsampleImage(at: sourceURL, maxDimension: thumbnailDim)
         }.value
