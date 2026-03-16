@@ -40,6 +40,9 @@ class PhotoWindowModel {
     /// init closure will consume this flag and start generation.
     var pendingGenerate3D: Bool = false
 
+    /// Viewing mode queued while the image was still loading. Applied once loading finishes.
+    private var pendingViewingMode: ImagePresentationComponent.ViewingMode?
+
     /// Native image dimensions (read from file metadata without decoding)
     private var nativeImageDimensions: CGSize?
 
@@ -275,6 +278,7 @@ class PhotoWindowModel {
                 }
             }
             isInitialLoadInProgress = false
+            await applyPendingViewingMode()
         }
     }
 
@@ -960,7 +964,14 @@ class PhotoWindowModel {
     }
 
     /// Switch directly to a specific viewing mode without cycling.
+    /// If the image is still loading, the mode is queued and applied once loading finishes.
     func switchToViewingMode(_ mode: ImagePresentationComponent.ViewingMode) async {
+        if isLoadingDetailImage {
+            pendingViewingMode = mode
+            desiredViewingMode = mode
+            return
+        }
+        pendingViewingMode = nil
         if mode == .mono {
             await deactivate3DMode()
         } else if mode == .spatial3D {
@@ -1000,6 +1011,14 @@ class PhotoWindowModel {
                 Task { await self.trackViewingMode(.spatial3DImmersive) }
             }
         }
+    }
+
+    /// Apply a viewing mode that was queued while the image was loading.
+    private func applyPendingViewingMode() async {
+        guard let mode = pendingViewingMode else { return }
+        pendingViewingMode = nil
+        guard !isAnimatedGIF else { return }
+        await switchToViewingMode(mode)
     }
 
     /// Check if the current image was previously converted and auto-generate if so
@@ -1440,6 +1459,8 @@ class PhotoWindowModel {
                 isImageFlipped = true
             }
         }
+
+        await applyPendingViewingMode()
     }
 
     /// Perform the actual slideshow image switch (called by the view during animation phase 2).
@@ -1552,6 +1573,8 @@ class PhotoWindowModel {
         let generationActive = generateTask != nil
         generateTask?.cancel()
         generateTask = nil
+
+        pendingViewingMode = nil
 
         // Release Spatial3DImage GPU texture
         spatial3DImage = nil
