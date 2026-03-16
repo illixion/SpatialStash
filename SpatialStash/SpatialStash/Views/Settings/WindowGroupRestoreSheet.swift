@@ -10,12 +10,15 @@ import SwiftUI
 struct WindowGroupRestoreSheet: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dismissWindow) private var dismissWindow
 
     let group: SavedWindowGroup
     @State private var restoredImageIds: Set<UUID> = []
     @State private var showAddSheet = false
     @State private var isSelectionMode = false
     @State private var selectedImageIds: Set<UUID> = []
+    @State private var pendingDuplicateImage: GalleryImage? = nil
+    @State private var showDuplicateWindowAlert = false
 
     private let columns = [
         GridItem(.adaptive(minimum: 150, maximum: 200), spacing: 12)
@@ -38,8 +41,13 @@ struct WindowGroupRestoreSheet: View {
                                         selectedImageIds.insert(image.id)
                                     }
                                 } else {
-                                    appModel.enqueuePhotoWindowOpen(image)
-                                    restoredImageIds.insert(image.id)
+                                    if appModel.hasOpenPopOutWindow(for: image.fullSizeURL) {
+                                        pendingDuplicateImage = image
+                                        showDuplicateWindowAlert = true
+                                    } else {
+                                        appModel.enqueuePhotoWindowOpen(image)
+                                        restoredImageIds.insert(image.id)
+                                    }
                                 }
                             } label: {
                                 WindowGroupThumbnailView(image: image)
@@ -85,6 +93,34 @@ struct WindowGroupRestoreSheet: View {
             }
             .sheet(isPresented: $showAddSheet) {
                 AddFromOpenWindowsSheet(group: group)
+            }
+            .alert(
+                "Window Already Open",
+                isPresented: $showDuplicateWindowAlert
+            ) {
+                Button("Summon") {
+                    if let image = pendingDuplicateImage {
+                        let existingValues = appModel.popOutWindowValues(for: image.fullSizeURL)
+                        for value in existingValues {
+                            dismissWindow(id: "photo-detail", value: value)
+                        }
+                        appModel.enqueuePhotoWindowOpen(image, bypassDuplicatePrompt: true)
+                        restoredImageIds.insert(image.id)
+                        pendingDuplicateImage = nil
+                    }
+                }
+                Button("Open New") {
+                    if let image = pendingDuplicateImage {
+                        appModel.enqueuePhotoWindowOpen(image, bypassDuplicatePrompt: true)
+                        restoredImageIds.insert(image.id)
+                        pendingDuplicateImage = nil
+                    }
+                }
+                Button("Cancel", role: .cancel) {
+                    pendingDuplicateImage = nil
+                }
+            } message: {
+                Text("A window for this image is already open. You can summon it to your current position or open another window.")
             }
             .navigationTitle(group.name)
             .toolbar {
