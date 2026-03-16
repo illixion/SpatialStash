@@ -8,6 +8,7 @@
 
 /* Begin PBXFileReference section */
 		0778651A2D811C5500BCF113 /* SpatialStash.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SpatialStash.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		1DE40D9B2F67E27D00990AE2 /* BuildInfo.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = BuildInfo.xcconfig; sourceTree = "<group>"; };
 		8E9DA7BDAEB07F2CBEB7EEF5 /* SpatialStash.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = SpatialStash.xcconfig; path = ../Configuration/SpatialStash.xcconfig; sourceTree = "<group>"; };
 		A652FA6EBF76B35751285132 /* LICENSE.txt */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = LICENSE.txt; sourceTree = "<group>"; };
 		FB302A1BC44797EC0074C931 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = README.md; path = ../README.md; sourceTree = "<group>"; };
@@ -70,6 +71,7 @@
 			isa = PBXGroup;
 			children = (
 				8E9DA7BDAEB07F2CBEB7EEF5 /* SpatialStash.xcconfig */,
+				1DE40D9B2F67E27D00990AE2 /* BuildInfo.xcconfig */,
 			);
 			name = Configuration;
 			sourceTree = "<group>";

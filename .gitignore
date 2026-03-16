@@ -20,4 +20,7 @@ xcuserdata/
 **/*.playground/playground.xcworkspace/xcshareddata/*
 !**/*.playground/playground.xcworkspace/xcshareddata/WorkspaceSettings.xcsettings
 
+# Generated at build time by scripts/set-build-info.sh
+SpatialStash/BuildInfo.xcconfig
+
 **/internal_docs/**
