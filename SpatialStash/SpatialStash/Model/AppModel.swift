@@ -375,6 +375,21 @@ class AppModel {
         await ImageEnhancementTracker.shared.clearAll()
     }
 
+    // MARK: - Debug Console
+
+    /// When true, the Console tab appears in the tab bar ornament
+    var showDebugConsole: Bool {
+        didSet {
+            if showDebugConsole != oldValue {
+                UserDefaults.standard.set(showDebugConsole, forKey: "showDebugConsole")
+                // Switch away from console tab if disabling
+                if !showDebugConsole && selectedTab == .console {
+                    selectedTab = .settings
+                }
+            }
+        }
+    }
+
     // MARK: - Slideshow Settings
 
     /// Slideshow delay between images (in seconds)
@@ -439,6 +454,9 @@ class AppModel {
             ? UserDefaults.standard.bool(forKey: "rememberImageEnhancements")
             : true
 
+        // Load debug console visibility (default: false)
+        let loadedShowDebugConsole = UserDefaults.standard.bool(forKey: "showDebugConsole")
+
         // Initialize stored properties
         self.stashServerURL = loadedServerURL
         self.stashAPIKey = loadedAPIKey
@@ -448,6 +466,7 @@ class AppModel {
         self.roundedCorners = loadedRoundedCorners
         self.openImagesInSeparateWindows = loadedOpenImagesInSeparateWindows
         self.rememberImageEnhancements = loadedRememberImageEnhancements
+        self.showDebugConsole = loadedShowDebugConsole
 
         // Initialize API client and image sources
         let client: StashAPIClient
@@ -883,6 +902,7 @@ class AppModel {
             roundedCorners: roundedCorners,
             openImagesInSeparateWindows: openImagesInSeparateWindows,
             rememberImageEnhancements: rememberImageEnhancements,
+            showDebugConsole: showDebugConsole,
             savedViews: savedViews,
             savedVideoViews: savedVideoViews,
             savedWindowGroups: savedWindowGroups,
@@ -904,6 +924,7 @@ class AppModel {
         if let v = backup.roundedCorners { roundedCorners = v }
         if let v = backup.openImagesInSeparateWindows { openImagesInSeparateWindows = v }
         if let v = backup.rememberImageEnhancements { rememberImageEnhancements = v }
+        if let v = backup.showDebugConsole { showDebugConsole = v }
 
         // Complex settings
         if let v = backup.savedViews {

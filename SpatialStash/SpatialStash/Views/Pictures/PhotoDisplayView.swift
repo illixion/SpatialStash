@@ -16,6 +16,7 @@ struct PhotoDisplayView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(SceneDelegate.self) private var sceneDelegate: SceneDelegate?
     @Environment(\.surfaceSnappingInfo) private var snappingInfo: SurfaceSnappingInfo
+    @Environment(\.scenePhase) private var scenePhase
 
     /// Whether swipe navigation between gallery images is enabled
     let enableSwipeNavigation: Bool
@@ -101,6 +102,10 @@ struct PhotoDisplayView: View {
         .onChange(of: windowModel.slideshowTransitionDirection) { _, direction in
             guard let direction else { return }
             performSlideshowTransition(direction: direction)
+        }
+        // MARK: - ScenePhase Visibility Probe (diagnostic — remove after testing)
+        .onChange(of: scenePhase) { oldPhase, newPhase in
+            windowModel.recordScenePhaseChange(from: oldPhase, to: newPhase)
         }
     }
 

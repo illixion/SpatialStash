@@ -339,6 +339,15 @@ struct SettingsTabView: View {
                     }
                 }
 
+                Section("Developer") {
+                    Toggle("Show Debug Console", isOn: $appModel.showDebugConsole)
+                    if appModel.showDebugConsole {
+                        Text("The Console tab shows app log messages in real time. Useful when Xcode is not connected.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+
                 Section("About") {
                     HStack {
                         Text("App Name")

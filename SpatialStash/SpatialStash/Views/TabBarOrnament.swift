@@ -9,9 +9,18 @@ import SwiftUI
 struct TabBarOrnament: View {
     @Environment(AppModel.self) private var appModel
 
+    private var visibleTabs: [Tab] {
+        Tab.allCases.filter { tab in
+            if tab == .console {
+                return appModel.showDebugConsole
+            }
+            return true
+        }
+    }
+
     var body: some View {
         HStack(spacing: 24) {
-            ForEach(Tab.allCases) { tab in
+            ForEach(visibleTabs) { tab in
                 Button {
                     // Track last content tab for filter context
                     if tab == .pictures || tab == .videos {

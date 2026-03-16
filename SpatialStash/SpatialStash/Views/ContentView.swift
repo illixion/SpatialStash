@@ -24,6 +24,8 @@ struct ContentView: View {
                 FiltersTabView()
             case .settings:
                 SettingsTabView()
+            case .console:
+                DebugConsoleView()
             }
         }
         .environment(appModel)

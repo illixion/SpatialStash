@@ -129,6 +129,30 @@ class PhotoWindowModel {
     /// Max dimension used for idle-downscaled thumbnail display
     private static let idleDownscaleDimension: CGFloat = 256
 
+    // MARK: - ScenePhase Visibility Probe (diagnostic — remove after testing)
+
+    /// Track the last known scene phase for this window
+    private(set) var lastScenePhase: String = "unknown"
+
+    /// Record a scenePhase change for this window and log it
+    func recordScenePhaseChange(from oldPhase: ScenePhase, to newPhase: ScenePhase) {
+        let oldName = Self.phaseLabel(oldPhase)
+        let newName = Self.phaseLabel(newPhase)
+        lastScenePhase = newName
+        AppLogger.visibilityProbe.info(
+            "[\(self.image.title ?? "untitled", privacy: .public)] SCENE PHASE: \(oldName, privacy: .public) → \(newName, privacy: .public)"
+        )
+    }
+
+    private static func phaseLabel(_ phase: ScenePhase) -> String {
+        switch phase {
+        case .active: "active"
+        case .inactive: "inactive"
+        case .background: "background"
+        @unknown default: "unknown"
+        }
+    }
+
     // MARK: - Share State
 
     var isPreparingShare: Bool = false
