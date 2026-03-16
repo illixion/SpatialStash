@@ -556,7 +556,7 @@ class AppModel {
         let models = Array(activePhotoWindowModels.values)
         guard !models.isEmpty else { return }
 
-        let nonDownscaled = models.filter { !$0.isIdleDownscaled }
+        let nonDownscaled = models.filter { !$0.isIdleDownscaled && !$0.isRestoringFromIdle }
 
         guard !nonDownscaled.isEmpty else {
             AppLogger.appModel.info("All \(models.count) windows already idle-downscaled")

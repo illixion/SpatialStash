@@ -126,6 +126,10 @@ class PhotoWindowModel {
     /// has been released. Restored on next user interaction.
     private(set) var isIdleDownscaled: Bool = false
 
+    /// True while `restoreFromIdleDownscale` is running async work.
+    /// Prevents memory-pressure from immediately re-downscaling this window.
+    private(set) var isRestoringFromIdle: Bool = false
+
     /// Max dimension used for idle-downscaled thumbnail display
     private static let idleDownscaleDimension: CGFloat = 256
 
@@ -186,7 +190,7 @@ class PhotoWindowModel {
             }
 
             guard let self, !Task.isCancelled else { return }
-            guard !self.isIdleDownscaled else { return }
+            guard !self.isIdleDownscaled, !self.isRestoringFromIdle else { return }
 
             AppLogger.photoWindow.info("[\(self.displayName, privacy: .public)] Idle downscaling after scene-phase timeout")
             await self.releaseMemoryForIdleDownscale()
@@ -600,7 +604,7 @@ class PhotoWindowModel {
     /// After this, the window may show a stale display image or blank until
     /// `applyIdleDownscaleThumbnail()` replaces it with a small thumbnail.
     func releaseMemoryForIdleDownscale() async {
-        guard !isIdleDownscaled else { return }
+        guard !isIdleDownscaled, !isRestoringFromIdle else { return }
 
         AppLogger.photoWindow.info("Releasing memory for idle downscale")
 
@@ -677,10 +681,15 @@ class PhotoWindowModel {
     private func restoreFromIdleDownscale() async {
         guard isIdleDownscaled else { return }
 
-        AppLogger.photoWindow.info("Restoring window from idle downscale")
+        AppLogger.photoWindow.info("[\(self.displayName, privacy: .public)] Restoring window from idle downscale")
+        isRestoringFromIdle = true
         isIdleDownscaled = false
         currentDisplayMaxDimension = 0
         isLoadingDetailImage = true
+
+        // Update interaction time so this window isn't the oldest LRU target
+        // if memory pressure fires during the restore
+        lastInteractionTime = Date()
 
         let windowSize = lastWindowSize ?? appModel.mainWindowSize
 
@@ -700,6 +709,7 @@ class PhotoWindowModel {
         }
 
         isLoadingDetailImage = false
+        isRestoringFromIdle = false
     }
 
     // MARK: - Lightweight Display Transition
