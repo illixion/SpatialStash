@@ -67,12 +67,20 @@ final class LogStore {
     private let maxEntries = 2000
     private var lastPollDate: Date?
     private var pollTask: Task<Void, Never>?
+    private var delayedStopTask: Task<Void, Never>?
     private let subsystem = Bundle.main.bundleIdentifier ?? "com.illixion.spatial-stash"
+
+    /// How long polling continues after navigating away from the console tab
+    private static let pollingLingerDuration: Duration = .seconds(15)
 
     private init() {}
 
     /// Start polling for new log entries
     func startPolling() {
+        // Cancel any pending delayed stop — user returned to the console tab
+        delayedStopTask?.cancel()
+        delayedStopTask = nil
+
         guard !isPolling else { return }
         isPolling = true
 
@@ -90,17 +98,38 @@ final class LogStore {
         }
     }
 
-    /// Stop polling for new log entries
+    /// Schedule polling to stop after a delay.
+    /// Allows logs generated while using other tabs to still be captured.
     func stopPolling() {
+        delayedStopTask?.cancel()
+        delayedStopTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.pollingLingerDuration)
+            guard !Task.isCancelled else { return }
+            self?.stopPollingImmediately()
+        }
+    }
+
+    /// Stop polling immediately without delay
+    private func stopPollingImmediately() {
         isPolling = false
         pollTask?.cancel()
         pollTask = nil
+        delayedStopTask?.cancel()
+        delayedStopTask = nil
     }
 
     /// Clear all entries and reset the poll date
     func clear() {
         entries.removeAll()
         lastPollDate = Date()
+    }
+
+    /// Stop polling immediately and release all stored entries to free memory.
+    /// Called when the debug console is disabled in settings.
+    func stopAndClear() {
+        stopPollingImmediately()
+        entries.removeAll()
+        lastPollDate = nil
     }
 
     /// Fetch entries from OSLogStore, optionally filtering to entries after a date

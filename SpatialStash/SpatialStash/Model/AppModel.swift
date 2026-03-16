@@ -382,9 +382,12 @@ class AppModel {
         didSet {
             if showDebugConsole != oldValue {
                 UserDefaults.standard.set(showDebugConsole, forKey: "showDebugConsole")
-                // Switch away from console tab if disabling
-                if !showDebugConsole && selectedTab == .console {
-                    selectedTab = .settings
+                if !showDebugConsole {
+                    // Switch away from console tab and release log buffer
+                    if selectedTab == .console {
+                        selectedTab = .settings
+                    }
+                    LogStore.shared.stopAndClear()
                 }
             }
         }

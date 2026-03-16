@@ -64,6 +64,14 @@ struct DebugConsoleView: View {
             .toggleStyle(.button)
             .help("Auto-scroll to newest")
 
+            Button {
+                copyFilteredEntriesToClipboard()
+            } label: {
+                Image(systemName: "doc.on.clipboard")
+            }
+            .help("Copy filtered entries to clipboard")
+            .disabled(filteredEntries.isEmpty)
+
             Text("\(filteredEntries.count)")
                 .foregroundStyle(.secondary)
                 .font(.caption.monospacedDigit())
@@ -118,6 +126,23 @@ struct DebugConsoleView: View {
             && (searchText.isEmpty || entry.message.localizedCaseInsensitiveContains(searchText)
                 || entry.category.localizedCaseInsensitiveContains(searchText))
         }
+    }
+
+    // MARK: - Copy to Clipboard
+
+    private static let clipboardTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        return formatter
+    }()
+
+    private func copyFilteredEntriesToClipboard() {
+        let text = filteredEntries.map { entry in
+            let time = Self.clipboardTimeFormatter.string(from: entry.timestamp)
+            return "\(time) [\(entry.level.label)] \(entry.category): \(entry.message)"
+        }.joined(separator: "\n")
+
+        UIPasteboard.general.string = text
     }
 }
 
