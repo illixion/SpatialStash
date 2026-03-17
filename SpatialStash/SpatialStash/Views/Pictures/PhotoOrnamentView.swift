@@ -363,7 +363,13 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
                 ),
                 globalAdjustments: Binding(
                     get: { windowModel.appModel.globalVisualAdjustments },
-                    set: { windowModel.appModel.globalVisualAdjustments = $0 }
+                    set: {
+                        windowModel.appModel.globalVisualAdjustments = $0
+                        // If no per-image adjustments, global changes affect 3D display
+                        if !windowModel.currentAdjustments.isModified {
+                            windowModel.reloadImagePresentationWithAdjustments()
+                        }
+                    }
                 ),
                 showAutoEnhance: !windowModel.isAnimatedGIF,
                 isProcessingAutoEnhance: windowModel.isProcessingAutoEnhance,
@@ -376,6 +382,8 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
                     Task {
                         await windowModel.trackAdjustments()
                     }
+                    // In 3D mode, reload the ImagePresentationComponent with adjusted pixels
+                    windowModel.reloadImagePresentationWithAdjustments()
                 }
             )
         }

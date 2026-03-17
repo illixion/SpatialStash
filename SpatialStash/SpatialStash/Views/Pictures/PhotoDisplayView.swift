@@ -61,9 +61,6 @@ struct PhotoDisplayView: View {
         ZStack {
             imageContent
                 .scaleEffect(x: windowModel.isImageFlipped ? -1 : 1, y: 1)
-                .brightness(windowModel.effectiveAdjustments.brightness)
-                .contrast(windowModel.effectiveAdjustments.contrast)
-                .saturation(windowModel.effectiveAdjustments.saturation)
                 .offset(x: dragOffset)
         }
         .background(
@@ -124,6 +121,9 @@ struct PhotoDisplayView: View {
                 showControls: !windowModel.isUIHidden,
                 isRoomActive: windowModel.isInActiveRoom
             )
+            .brightness(windowModel.effectiveAdjustments.brightness)
+            .contrast(windowModel.effectiveAdjustments.contrast)
+            .saturation(windowModel.effectiveAdjustments.saturation)
             .aspectRatio(windowModel.imageAspectRatio, contentMode: .fit)
             .clipShape(RoundedRectangle(cornerRadius: appModel.roundedCorners ? 50 : 0, style: .continuous))
             .overlay {
@@ -263,6 +263,9 @@ struct PhotoDisplayView: View {
             Image(uiImage: uiImage)
                 .resizable()
                 .aspectRatio(contentMode: .fit)
+                .brightness(windowModel.effectiveAdjustments.brightness)
+                .contrast(windowModel.effectiveAdjustments.contrast)
+                .saturation(windowModel.effectiveAdjustments.saturation)
                 .clipShape(RoundedRectangle(cornerRadius: appModel.roundedCorners ? 50 : 0, style: .continuous))
                 .contentShape(.rect)
                 .onTapGesture {
