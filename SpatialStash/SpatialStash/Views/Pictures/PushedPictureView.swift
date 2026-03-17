@@ -74,12 +74,14 @@ struct PushedPictureView: View {
                         }
                         appModel.enqueuePhotoWindowOpen(image, bypassDuplicatePrompt: true)
                         pendingPopOutImage = nil
+                        onDismiss()
                     }
                 }
                 Button("Open New") {
                     if let image = pendingPopOutImage {
                         appModel.enqueuePhotoWindowOpen(image, bypassDuplicatePrompt: true)
                         pendingPopOutImage = nil
+                        onDismiss()
                     }
                 }
                 Button("Cancel", role: .cancel) {
@@ -100,9 +102,13 @@ struct PushedPictureView: View {
                 showDuplicateWindowAlert = true
             } else {
                 appModel.enqueuePhotoWindowOpen(image)
+                if windowModel.isSlideshowActive {
+                    windowModel.stopSlideshow()
+                }
+                onDismiss()
             }
         } label: {
-            Image(systemName: "rectangle.portrait.on.rectangle.portrait")
+            Image(systemName: "rectangle.portrait.and.arrow.forward")
                 .font(.title3)
         }
         .buttonStyle(.borderless)
