@@ -980,16 +980,20 @@ class PhotoWindowModel {
 
                 self.spatial3DImageState = .generated
 
-                // Check if we should restore immersive mode before updating tracker
-                let wasImmersive = self.appModel.rememberImageEnhancements
-                    ? await ImageEnhancementTracker.shared.lastViewingMode(url: self.imageURL) == .spatial3DImmersive
-                    : false
+                // Determine if immersive mode is desired — either because the user
+                // explicitly pressed the immersive button (desiredViewingMode) or
+                // because auto-restore found a saved immersive preference in the tracker.
+                var shouldBeImmersive = self.desiredViewingMode == .spatial3DImmersive
+                if !shouldBeImmersive && self.appModel.rememberImageEnhancements {
+                    let lastMode = await ImageEnhancementTracker.shared.lastViewingMode(url: self.imageURL)
+                    shouldBeImmersive = lastMode == .spatial3DImmersive
+                }
 
                 // Track that this image was converted
                 await self.trackImageConverted()
 
-                // Restore to the last viewing mode (immersive or spatial3D)
-                if wasImmersive {
+                // Apply the final viewing mode (immersive or spatial3D)
+                if shouldBeImmersive {
                     guard var ipc = self.contentEntity.components[ImagePresentationComponent.self] else { return }
                     ipc.desiredViewingMode = .spatial3DImmersive
                     self.desiredViewingMode = .spatial3DImmersive
