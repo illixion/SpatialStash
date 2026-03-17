@@ -25,9 +25,7 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
     var onGalleryButtonTap: () -> Void
     @ViewBuilder var extraButtons: () -> ExtraButtons
 
-    @State private var showMediaInfo = false
     @State private var isUpdatingMediaInfo = false
-    @State private var showAdjustmentsPopover = false
 
     var body: some View {
         HStack(spacing: 16) {
@@ -97,6 +95,14 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
         .glassBackgroundEffect()
+        .onChange(of: windowModel.showMediaInfoPopover) { _, isOpen in
+            if isOpen { windowModel.cancelAutoHideTimer() }
+            else { windowModel.startAutoHideTimer() }
+        }
+        .onChange(of: windowModel.showAdjustmentsPopover) { _, isOpen in
+            if isOpen { windowModel.cancelAutoHideTimer() }
+            else { windowModel.startAutoHideTimer() }
+        }
     }
 
     // MARK: - Slideshow Controls
@@ -346,7 +352,7 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
 
     private var adjustmentsButton: some View {
         Button {
-            showAdjustmentsPopover.toggle()
+            windowModel.showAdjustmentsPopover.toggle()
         } label: {
             Image(systemName: "slider.horizontal.3")
                 .font(.title3)
@@ -355,7 +361,7 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
         }
         .buttonStyle(.borderless)
         .help("Visual Adjustments")
-        .popover(isPresented: $showAdjustmentsPopover) {
+        .popover(isPresented: Bindable(windowModel).showAdjustmentsPopover) {
             VisualAdjustmentsPopover(
                 currentAdjustments: Binding(
                     get: { windowModel.currentAdjustments },
@@ -432,7 +438,7 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
 
     private var ratingButton: some View {
         Button {
-            showMediaInfo.toggle()
+            windowModel.showMediaInfoPopover.toggle()
         } label: {
             Image(systemName: windowModel.image.rating100 != nil ? "star.fill" : "star")
                 .font(.title3)
@@ -441,7 +447,7 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
         .buttonStyle(.borderless)
         .disabled(windowModel.isLoadingDetailImage)
         .help("Rating & O Count")
-        .popover(isPresented: $showMediaInfo) {
+        .popover(isPresented: Bindable(windowModel).showMediaInfoPopover) {
             MediaInfoPopover(
                 currentRating100: windowModel.image.rating100,
                 oCounter: windowModel.image.oCounter ?? 0,

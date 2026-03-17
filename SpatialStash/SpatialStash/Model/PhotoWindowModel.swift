@@ -116,6 +116,23 @@ class PhotoWindowModel {
     /// Whether to show the adjustments popover (driven from ornament button)
     var showAdjustmentsPopover: Bool = false
 
+    /// Whether to show the media info/rating popover (driven from ornament button)
+    var showMediaInfoPopover: Bool = false
+
+    /// Whether the view is temporarily showing a 2D preview while 3D adjustments are
+    /// being tuned. When true, is3DMode is false and displayImage holds a thumbnail.
+    /// The RealityKit component is removed; it gets rebuilt once sliders settle.
+    private(set) var isShowingAdjustmentPreview: Bool = false
+
+    /// Saved spatial3D generation state before entering adjustment preview mode,
+    /// so we know whether to re-generate 3D after the reload.
+    private var prePreviewSpatial3DState: Spatial3DImageState = .notGenerated
+
+    /// Whether any popover is currently open (used to suppress auto-hide timer)
+    var hasOpenPopover: Bool {
+        showAdjustmentsPopover || showMediaInfoPopover
+    }
+
     // MARK: - Image Flip State
 
     /// Whether the image is horizontally flipped (showing its "back side")
@@ -278,119 +295,133 @@ class PhotoWindowModel {
     private var adjustments3DReloadTask: Task<Void, Never>?
 
     /// Reload the ImagePresentationComponent with visual adjustments applied via CIFilter.
-    /// Called when adjustments change while in 3D mode. Debounced to avoid excessive reloads
-    /// during slider drags.
+    /// Called when adjustments change while in 3D mode. Switches to the lightweight 2D
+    /// SwiftUI Image branch with a thumbnail so SwiftUI modifiers provide instant feedback.
+    /// The expensive 3D recalculation runs after sliders settle for 2 seconds.
     func reloadImagePresentationWithAdjustments() {
-        guard is3DMode else { return }
+        guard is3DMode || isShowingAdjustmentPreview else { return }
 
+        // Switch from 3D to 2D preview mode on first call.
+        // This sets is3DMode = false so PhotoDisplayView renders the SwiftUI Image branch
+        // (which already has .brightness/.contrast/.saturation modifiers) at the correct
+        // window depth, avoiding z-fighting with ornaments.
+        if !isShowingAdjustmentPreview {
+            prePreviewSpatial3DState = spatial3DImageState
+            isShowingAdjustmentPreview = true
+
+            // Remove RealityKit resources
+            contentEntity.components.remove(ImagePresentationComponent.self)
+            spatial3DImage = nil
+            spatial3DImageState = .notGenerated
+
+            // Switch to 2D branch
+            is3DMode = false
+
+            // Load a thumbnail as displayImage for the 2D branch.
+            // Try cached thumbnail first; fall back to generating from in-memory data.
+            let url = imageURL
+            let imageData = currentImageData
+            Task { @MainActor [weak self] in
+                guard let self, self.isShowingAdjustmentPreview else { return }
+                if let thumbnail = await ThumbnailCache.shared.loadThumbnail(for: url) {
+                    self.displayImage = thumbnail
+                } else if let imageData {
+                    let thumbnail = await Task.detached {
+                        guard let source = CGImageSourceCreateWithData(imageData as CFData, nil) else { return nil as UIImage? }
+                        let options: [CFString: Any] = [
+                            kCGImageSourceThumbnailMaxPixelSize: 400,
+                            kCGImageSourceCreateThumbnailFromImageAlways: true,
+                            kCGImageSourceCreateThumbnailWithTransform: true,
+                            kCGImageSourceShouldCacheImmediately: true
+                        ]
+                        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil as UIImage? }
+                        return UIImage(cgImage: cgImage)
+                    }.value
+                    if self.isShowingAdjustmentPreview {
+                        self.displayImage = thumbnail
+                    }
+                }
+            }
+        }
+
+        // Cancel any pending 3D reload and start a new debounce
         adjustments3DReloadTask?.cancel()
         adjustments3DReloadTask = Task { @MainActor [weak self] in
-            // Debounce: wait for slider to settle
-            try? await Task.sleep(for: .milliseconds(500))
-            guard !Task.isCancelled, let self else { return }
+            // Wait for sliders to settle before expensive 3D recalculation.
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled, let self, self.isShowingAdjustmentPreview else { return }
 
             let adj = self.effectiveAdjustments
             let isIdentity = !adj.isModified || (!adj.isAutoEnhanced && adj.brightness == 0.0 && adj.contrast == 1.0 && adj.saturation == 1.0)
 
-            // If no adjustments, reload from original source
-            if isIdentity {
-                await self.createImagePresentationComponent()
-                // Restore 3D generation if it was previously generated
-                if self.spatial3DImageState == .generated || self.spatial3DImageState == .generating {
-                    self.spatial3DImageState = .notGenerated
-                    await self.autoGenerateSpatial3DIfNeeded()
+            if !isIdentity {
+                // Pre-create the adjusted ImagePresentationComponent BEFORE switching
+                // back to 3D mode, so the RealityView init finds it already set on the
+                // entity and doesn't race with a second creation.
+                guard let imageData = self.currentImageData,
+                      let ciImage = CIImage(data: imageData) else {
+                    AppLogger.visualAdjustments.warning("No image data available for 3D adjustment reload")
+                    return
                 }
-                return
-            }
 
-            // Apply CIFilter adjustments to the source image
-            guard let imageData = self.currentImageData,
-                  let ciImage = CIImage(data: imageData) else {
-                AppLogger.visualAdjustments.warning("No image data available for 3D adjustment reload")
-                return
-            }
+                let adjustedData = await Task.detached { () -> Data? in
+                    var result = ciImage
 
-            let adjustedData = await Task.detached { () -> Data? in
-                var result = ciImage
-
-                // Apply auto-enhance filters if enabled
-                if adj.isAutoEnhanced {
-                    let autoFilters = result.autoAdjustmentFilters(options: [
-                        .enhance: true,
-                        .redEye: false
-                    ])
-                    for filter in autoFilters {
-                        filter.setValue(result, forKey: kCIInputImageKey)
-                        if let output = filter.outputImage {
-                            result = output
+                    if adj.isAutoEnhanced {
+                        let autoFilters = result.autoAdjustmentFilters(options: [
+                            .enhance: true,
+                            .redEye: false
+                        ])
+                        for filter in autoFilters {
+                            filter.setValue(result, forKey: kCIInputImageKey)
+                            if let output = filter.outputImage {
+                                result = output
+                            }
                         }
                     }
+
+                    let colorControls = CIFilter(name: "CIColorControls")!
+                    colorControls.setValue(result, forKey: kCIInputImageKey)
+                    colorControls.setValue(adj.brightness, forKey: kCIInputBrightnessKey)
+                    colorControls.setValue(adj.contrast, forKey: kCIInputContrastKey)
+                    colorControls.setValue(adj.saturation, forKey: kCIInputSaturationKey)
+                    if let output = colorControls.outputImage { result = output }
+
+                    let context = CIContext(options: [.useSoftwareRenderer: false])
+                    guard let cgImage = context.createCGImage(result, from: result.extent) else { return nil }
+                    return UIImage(cgImage: cgImage).jpegData(compressionQuality: 0.95)
+                }.value
+
+                guard !Task.isCancelled, let adjustedData,
+                      let imageSource = CGImageSourceCreateWithData(adjustedData as CFData, nil) else {
+                    AppLogger.visualAdjustments.warning("Failed to create adjusted image for 3D reload")
+                    return
                 }
 
-                // Apply brightness (additive offset)
-                if adj.brightness != 0.0 {
-                    let filter = CIFilter(name: "CIColorControls")!
-                    filter.setValue(result, forKey: kCIInputImageKey)
-                    filter.setValue(adj.brightness, forKey: kCIInputBrightnessKey)
-                    if let output = filter.outputImage { result = output }
+                do {
+                    self.spatial3DImage = try await ImagePresentationComponent.Spatial3DImage(imageSource: imageSource)
+                    guard let spatial3DImage = self.spatial3DImage else { return }
+                    let ipc = ImagePresentationComponent(spatial3DImage: spatial3DImage)
+                    self.contentEntity.components.set(ipc)
+                    if let aspectRatio = ipc.aspectRatio(for: .mono) {
+                        self.imageAspectRatio = CGFloat(aspectRatio)
+                    }
+                } catch {
+                    AppLogger.visualAdjustments.error("Failed to reload ImagePresentationComponent: \(error.localizedDescription, privacy: .public)")
+                    return
                 }
-
-                // Apply contrast
-                if adj.contrast != 1.0 {
-                    let filter = CIFilter(name: "CIColorControls")!
-                    filter.setValue(result, forKey: kCIInputImageKey)
-                    filter.setValue(adj.contrast, forKey: kCIInputContrastKey)
-                    if let output = filter.outputImage { result = output }
-                }
-
-                // Apply saturation
-                if adj.saturation != 1.0 {
-                    let filter = CIFilter(name: "CIColorControls")!
-                    filter.setValue(result, forKey: kCIInputImageKey)
-                    filter.setValue(adj.saturation, forKey: kCIInputSaturationKey)
-                    if let output = filter.outputImage { result = output }
-                }
-
-                // Render to JPEG data
-                let context = CIContext(options: [.useSoftwareRenderer: false])
-                guard let cgImage = context.createCGImage(result, from: result.extent) else { return nil }
-                let uiImage = UIImage(cgImage: cgImage)
-                return uiImage.jpegData(compressionQuality: 0.95)
-            }.value
-
-            guard !Task.isCancelled, let adjustedData else {
-                AppLogger.visualAdjustments.warning("Failed to create adjusted image data for 3D reload")
-                return
             }
 
-            // Create CGImageSource from adjusted data and reload component
-            guard let imageSource = CGImageSourceCreateWithData(adjustedData as CFData, nil) else {
-                AppLogger.visualAdjustments.warning("Failed to create CGImageSource from adjusted data")
-                return
-            }
+            // Determine whether to re-generate 3D after restoring the component
+            let shouldRegenerate3D = self.prePreviewSpatial3DState == .generated
 
-            do {
-                let wasSpatial3D = self.spatial3DImageState == .generated
-                self.spatial3DImageState = .notGenerated
-                self.contentEntity.components.remove(ImagePresentationComponent.self)
-
-                self.spatial3DImage = try await ImagePresentationComponent.Spatial3DImage(imageSource: imageSource)
-
-                guard let spatial3DImage = self.spatial3DImage else { return }
-                let ipc = ImagePresentationComponent(spatial3DImage: spatial3DImage)
-                self.contentEntity.components.set(ipc)
-
-                if let aspectRatio = ipc.aspectRatio(for: .mono) {
-                    self.imageAspectRatio = CGFloat(aspectRatio)
-                }
-
-                // If 3D was previously generated, re-generate from the adjusted image
-                if wasSpatial3D {
-                    await self.generateSpatial3DImage()
-                }
-            } catch {
-                AppLogger.visualAdjustments.error("Failed to reload ImagePresentationComponent with adjustments: \(error.localizedDescription, privacy: .public)")
-            }
+            // Switch back to 3D mode — RealityView will be recreated.
+            // For identity adjustments, the RealityView init calls createImagePresentationComponent().
+            // For non-identity, the component is already set on contentEntity above.
+            self.displayImage = nil
+            self.isShowingAdjustmentPreview = false
+            self.is3DMode = true
+            self.pendingGenerate3D = shouldRegenerate3D
         }
     }
 
@@ -1111,6 +1142,8 @@ class PhotoWindowModel {
         contentEntity.components.remove(ImagePresentationComponent.self)
         is3DMode = false
         desiredViewingMode = .mono  // Reset to mono when exiting 3D entirely
+        isShowingAdjustmentPreview = false
+        adjustments3DReloadTask?.cancel()
 
         // Record that the user explicitly exited 3D so auto-restore doesn't re-enable it
         await trackViewingMode(.mono)
@@ -1130,6 +1163,18 @@ class PhotoWindowModel {
     /// Create the ImagePresentationComponent for the current image (3D mode only).
     /// Loads at full resolution from the disk cache.
     func createImagePresentationComponent() async {
+        // If a component was already pre-created (e.g. with baked-in adjustments
+        // by reloadImagePresentationWithAdjustments), keep it and skip recreation.
+        if contentEntity.components[ImagePresentationComponent.self] != nil {
+            inputPlaneEntity = Entity()
+            if desiredViewingMode != .spatial3DImmersive {
+                desiredViewingMode = .mono
+            }
+            displayImage = nil
+            isLoadingDetailImage = false
+            return
+        }
+
         // Reset state
         spatial3DImageState = .notGenerated
         spatial3DImage = nil
@@ -1709,10 +1754,11 @@ class PhotoWindowModel {
         cancelAutoHideTimer()
 
         guard appModel.autoHideDelay > 0 else { return }
+        guard !hasOpenPopover else { return }
 
         autoHideTask = Task {
             try? await Task.sleep(for: .seconds(appModel.autoHideDelay))
-            if !Task.isCancelled {
+            if !Task.isCancelled, !self.hasOpenPopover {
                 isUIHidden = true
                 // Schedule window controls to hide 1.5 seconds later
                 scheduleWindowControlsHiding()
@@ -1847,6 +1893,8 @@ class PhotoWindowModel {
         resolutionOverride = nil
         currentAdjustments = VisualAdjustments()
         autoEnhancedDisplayImage = nil
+        isShowingAdjustmentPreview = false
+        adjustments3DReloadTask?.cancel()
 
         // Restore per-image settings before loading
         if appModel.rememberImageEnhancements {
@@ -2012,6 +2060,7 @@ class PhotoWindowModel {
         gifHEVCURL = nil
         displayImage = nil
         autoEnhancedDisplayImage = nil
+        isShowingAdjustmentPreview = false
         clearBackgroundRemovalState()
 
         // Only remove the component if generation is NOT active.
