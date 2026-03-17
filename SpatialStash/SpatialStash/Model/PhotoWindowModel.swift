@@ -98,9 +98,11 @@ class PhotoWindowModel {
     /// Per-image visual adjustments (Current tab values)
     var currentAdjustments: VisualAdjustments = VisualAdjustments()
 
-    /// The auto-enhanced UIImage (result of CIImage.autoAdjustmentFilters applied to raw data).
-    /// Stored separately so toggling auto-enhance on/off doesn't require re-processing.
+    /// In-memory display-resolution auto-enhanced image (for fast toggle-back)
     private var autoEnhancedDisplayImage: UIImage? = nil
+
+    /// The original display image before auto-enhance was applied (for toggle-back)
+    private var preAutoEnhanceDisplayImage: UIImage? = nil
 
     /// Whether auto-enhance is currently being processed
     var isProcessingAutoEnhance: Bool = false
@@ -197,79 +199,147 @@ class PhotoWindowModel {
         guard !isProcessingAutoEnhance else { return }
 
         if currentAdjustments.isAutoEnhanced {
-            // Turn off: clear enhanced image, revert to normal displayImage pipeline
-            currentAdjustments.isAutoEnhanced = false
-            autoEnhancedDisplayImage = nil
-            if !is3DMode, !isAnimatedGIF, let windowSize = lastWindowSize {
-                currentDisplayMaxDimension = 0
-                await loadDisplayImage(for: windowSize)
-            }
+            // Turn off: restore original display image
+            restoreFromAutoEnhance()
         } else {
-            // Turn on: apply CIImage auto-adjustment
-            isProcessingAutoEnhance = true
-
-            guard let imageData = currentImageData,
-                  let ciImage = CIImage(data: imageData) else {
-                isProcessingAutoEnhance = false
-                return
+            // Turn on: 3-tier cache lookup (in-memory → disk → on-demand)
+            if let cached = autoEnhancedDisplayImage {
+                // Tier 1: in-memory (instant toggle-back)
+                preAutoEnhanceDisplayImage = displayImage
+                displayImage = cached
+                currentAdjustments.isAutoEnhanced = true
+                await trackAutoEnhanceState()
+            } else if let cachedData = await AutoEnhanceCache.shared.loadData(for: imageURL),
+                      let cachedImage = UIImage(data: cachedData) {
+                // Tier 2: persistent disk cache
+                await applyDownscaledAutoEnhance(cachedImage)
+            } else {
+                // Tier 3: process from raw data and cache
+                await performFullResolutionAutoEnhance()
             }
-
-            // Run auto-enhancement off the main thread
-            let enhanced = await Task.detached { () -> UIImage? in
-                let filters = ciImage.autoAdjustmentFilters(options: [
-                    .enhance: true,
-                    .redEye: false
-                ])
-                var result = ciImage
-                for filter in filters {
-                    filter.setValue(result, forKey: kCIInputImageKey)
-                    if let output = filter.outputImage {
-                        result = output
-                    }
-                }
-
-                let context = CIContext(options: [.useSoftwareRenderer: false])
-                guard let cgImage = context.createCGImage(result, from: result.extent) else { return nil }
-                return UIImage(cgImage: cgImage)
-            }.value
-
-            guard let enhanced else {
-                isProcessingAutoEnhance = false
-                return
-            }
-
-            // Downscale for display (respects current resolution settings)
-            let windowSize = lastWindowSize ?? appModel.mainWindowSize
-            let displayVersion = await Task.detached { [windowSize] () -> UIImage? in
-                let maxDim = max(windowSize.width, windowSize.height) * 2.5
-                let sourceSize = enhanced.size
-                let nativeMaxDim = max(sourceSize.width, sourceSize.height)
-                let targetDim = min(maxDim, nativeMaxDim)
-
-                let scale = targetDim / nativeMaxDim
-                if scale >= 0.95 { return enhanced }
-
-                let newSize = CGSize(
-                    width: sourceSize.width * scale,
-                    height: sourceSize.height * scale
-                )
-                let renderer = UIGraphicsImageRenderer(size: newSize)
-                return renderer.image { _ in
-                    enhanced.draw(in: CGRect(origin: .zero, size: newSize))
-                }
-            }.value
-
-            autoEnhancedDisplayImage = displayVersion
-            if !is3DMode, !isAnimatedGIF {
-                displayImage = displayVersion
-            }
-            currentAdjustments.isAutoEnhanced = true
-            isProcessingAutoEnhance = false
         }
 
-        Task { await trackAdjustments() }
         // In 3D mode, reload the component with adjusted pixels
         reloadImagePresentationWithAdjustments()
+    }
+
+    /// Apply auto-enhance from a full-resolution cached image (downscale for display).
+    private func applyDownscaledAutoEnhance(_ fullResImage: UIImage) async {
+        isProcessingAutoEnhance = true
+
+        let downscaled = await downscaleForDisplay(fullResImage)
+
+        autoEnhancedDisplayImage = downscaled
+        preAutoEnhanceDisplayImage = displayImage
+        if !is3DMode, !isAnimatedGIF {
+            displayImage = downscaled
+            imageAspectRatio = downscaled.size.width / downscaled.size.height
+        }
+        currentAdjustments.isAutoEnhanced = true
+        isProcessingAutoEnhance = false
+        isLoadingDetailImage = false
+
+        await trackAutoEnhanceState()
+    }
+
+    /// Process auto-enhancement from raw image data, cache result, and apply.
+    private func performFullResolutionAutoEnhance() async {
+        guard let imageData = currentImageData,
+              let ciImage = CIImage(data: imageData) else {
+            return
+        }
+
+        isProcessingAutoEnhance = true
+
+        let enhanced = await Task.detached { () -> UIImage? in
+            let filters = ciImage.autoAdjustmentFilters(options: [
+                .enhance: true,
+                .redEye: false
+            ])
+            var result = ciImage
+            for filter in filters {
+                filter.setValue(result, forKey: kCIInputImageKey)
+                if let output = filter.outputImage {
+                    result = output
+                }
+            }
+            let context = CIContext(options: [.useSoftwareRenderer: false])
+            guard let cgImage = context.createCGImage(result, from: result.extent) else { return nil }
+            return UIImage(cgImage: cgImage)
+        }.value
+
+        guard let enhanced else {
+            isProcessingAutoEnhance = false
+            isLoadingDetailImage = false
+            return
+        }
+
+        // Cache full-resolution result to disk
+        await AutoEnhanceCache.shared.saveImage(enhanced, for: imageURL)
+
+        // Downscale for display
+        let downscaled = await downscaleForDisplay(enhanced)
+
+        autoEnhancedDisplayImage = downscaled
+        preAutoEnhanceDisplayImage = displayImage
+        if !is3DMode, !isAnimatedGIF {
+            displayImage = downscaled
+            imageAspectRatio = downscaled.size.width / downscaled.size.height
+        }
+        currentAdjustments.isAutoEnhanced = true
+        isProcessingAutoEnhance = false
+        isLoadingDetailImage = false
+
+        await trackAutoEnhanceState()
+    }
+
+    /// Restore the original (non-enhanced) display image.
+    private func restoreFromAutoEnhance() {
+        currentAdjustments.isAutoEnhanced = false
+        if let original = preAutoEnhanceDisplayImage {
+            displayImage = original
+            imageAspectRatio = original.size.width / original.size.height
+        } else {
+            // Edge case: no original stored (e.g. auto-restored on open)
+            displayImage = nil
+            if let windowSize = lastWindowSize {
+                isLoadingDetailImage = true
+                Task { await loadDisplayImage(for: windowSize) }
+            }
+        }
+        Task { await trackAutoEnhanceState() }
+    }
+
+    /// Persist auto-enhance state via viewing mode and adjustments trackers.
+    private func trackAutoEnhanceState() async {
+        if currentAdjustments.isAutoEnhanced {
+            await trackViewingMode(.autoEnhanced)
+        } else {
+            await trackViewingMode(.mono)
+        }
+        await trackAdjustments()
+    }
+
+    /// Reload auto-enhanced image at the current effective resolution (for window resize).
+    private func reloadAutoEnhancedAtCurrentResolution() async {
+        guard currentAdjustments.isAutoEnhanced else { return }
+
+        guard let cachedData = await AutoEnhanceCache.shared.loadData(for: imageURL),
+              let fullResImage = UIImage(data: cachedData) else {
+            AppLogger.photoWindow.warning("Cannot reload auto-enhanced image: no cached data")
+            return
+        }
+
+        let downscaled = await downscaleForDisplay(fullResImage)
+        autoEnhancedDisplayImage = downscaled
+        displayImage = downscaled
+        imageAspectRatio = downscaled.size.width / downscaled.size.height
+    }
+
+    private func clearAutoEnhanceState() {
+        autoEnhancedDisplayImage = nil
+        preAutoEnhanceDisplayImage = nil
+        isProcessingAutoEnhance = false
     }
 
     /// Persist the current visual adjustments to the enhancement tracker.
@@ -280,15 +350,12 @@ class PhotoWindowModel {
         )
     }
 
-    /// Restore saved visual adjustments for the current image.
+    /// Restore saved visual adjustments (slider values) for the current image.
+    /// Auto-enhance restoration is handled separately by autoRestorePreviousEnhancement().
     private func restoreAdjustments() async {
         guard appModel.rememberImageEnhancements else { return }
-        if let savedAdjustments = await ImageEnhancementTracker.shared.adjustments(url: imageURL) {
-            currentAdjustments = savedAdjustments
-            if savedAdjustments.isAutoEnhanced && !is3DMode && !isAnimatedGIF {
-                await toggleAutoEnhance()
-            }
-        }
+        guard let savedAdjustments = await ImageEnhancementTracker.shared.adjustments(url: imageURL) else { return }
+        currentAdjustments = savedAdjustments
     }
 
     /// Debounce task for reloading ImagePresentationComponent with adjustments
@@ -664,8 +731,12 @@ class PhotoWindowModel {
                 }
             }
             await loadImageDataForDetail(url: imageURL)
+            // Restore slider values (brightness/contrast/saturation).
+            // Auto-enhance restoration is handled by autoRestorePreviousEnhancement()
+            // inside loadImageDataForDetail, so the display image is already set if active.
+            await restoreAdjustments()
             // If no enhancement was applied and it's not a GIF, load 2D display image
-            if !isAnimatedGIF && !is3DMode && backgroundRemovalState == .original {
+            if !isAnimatedGIF && !is3DMode && backgroundRemovalState == .original && !currentAdjustments.isAutoEnhanced {
                 let windowSize = lastWindowSize ?? appModel.mainWindowSize
                 await loadDisplayImage(for: windowSize)
             }
@@ -676,8 +747,6 @@ class PhotoWindowModel {
                     isImageFlipped = true
                 }
             }
-            // Restore visual adjustments
-            await restoreAdjustments()
             isInitialLoadInProgress = false
             await applyPendingViewingMode()
         }
@@ -765,6 +834,13 @@ class PhotoWindowModel {
                 desiredViewingMode = .spatial3DImmersive
             }
             activate3DMode()
+        } else if lastMode == .autoEnhanced {
+            if let cachedData = await AutoEnhanceCache.shared.loadData(for: imageURL),
+               let cachedImage = UIImage(data: cachedData) {
+                await applyDownscaledAutoEnhance(cachedImage)
+            } else {
+                await performFullResolutionAutoEnhance()
+            }
         } else if lastMode == .backgroundRemoved {
             if let cachedData = await BackgroundRemovalCache.shared.loadData(for: imageURL),
                let cachedImage = UIImage(data: cachedData) {
@@ -785,6 +861,7 @@ class PhotoWindowModel {
         guard !is3DMode else { return }
         guard !isLoadingDisplayImage else { return }
         guard backgroundRemovalState == .original else { return }
+        guard !currentAdjustments.isAutoEnhanced else { return }
 
         lastWindowSize = windowSize
 
@@ -857,7 +934,7 @@ class PhotoWindowModel {
 
         // Re-check after off-thread downsampling: an enhancement may have been applied
         // concurrently (e.g., from the start() task running in parallel with this load)
-        guard backgroundRemovalState == .original, !is3DMode else {
+        guard backgroundRemovalState == .original, !is3DMode, !currentAdjustments.isAutoEnhanced else {
             isLoadingDetailImage = false
             return
         }
@@ -901,6 +978,8 @@ class PhotoWindowModel {
 
             if self.backgroundRemovalState == .removed {
                 await self.reloadBackgroundRemovedAtCurrentResolution()
+            } else if self.currentAdjustments.isAutoEnhanced {
+                await self.reloadAutoEnhancedAtCurrentResolution()
             } else if self.backgroundRemovalState == .original {
                 await self.loadDisplayImage(for: newSize)
             }
@@ -1535,23 +1614,26 @@ class PhotoWindowModel {
             backgroundRemovalTask?.cancel()
             backgroundRemovalTask = nil
             backgroundRemovalState = .original
-            await trackViewingMode(.mono)
+            await trackViewingMode(currentAdjustments.isAutoEnhanced ? .autoEnhanced : .mono)
         case .removed:
             restoreOriginalBackground()
         }
     }
 
     /// Process background removal on the full-resolution image.
+    /// When auto-enhance is active, processes the enhanced version instead of the original.
     /// Caches the full-res result, then downscales for display.
     private func performFullResolutionBackgroundRemoval(isAutoDuringLoad: Bool) async {
-        guard let imageData = currentImageData else {
+        // When auto-enhance is active, use the enhanced image as the source
+        let fullResImage: UIImage
+        if currentAdjustments.isAutoEnhanced,
+           let enhancedData = await AutoEnhanceCache.shared.loadData(for: imageURL),
+           let enhancedImage = UIImage(data: enhancedData) {
+            fullResImage = enhancedImage
+        } else if let imageData = currentImageData, let image = UIImage(data: imageData) {
+            fullResImage = image
+        } else {
             AppLogger.photoWindow.warning("No image data available for full-resolution background removal")
-            return
-        }
-
-        // Load full-resolution image
-        guard let fullResImage = UIImage(data: imageData) else {
-            AppLogger.photoWindow.warning("Failed to create UIImage from data for background removal")
             return
         }
 
@@ -1691,7 +1773,7 @@ class PhotoWindowModel {
     private func restoreOriginalBackground() {
         backgroundRemovalState = .original
         Task {
-            await trackViewingMode(.mono)
+            await trackViewingMode(currentAdjustments.isAutoEnhanced ? .autoEnhanced : .mono)
         }
         if let original = originalDisplayImage {
             displayImage = original
@@ -1888,6 +1970,7 @@ class PhotoWindowModel {
         currentDisplayMaxDimension = 0
         isLoadingDisplayImage = false
         contentEntity.components.remove(ImagePresentationComponent.self)
+        clearAutoEnhanceState()
         clearBackgroundRemovalState()
 
         // Reset to 2D mode when switching images (RealityView will be recreated
@@ -1897,7 +1980,6 @@ class PhotoWindowModel {
         isImageFlipped = false
         resolutionOverride = nil
         currentAdjustments = VisualAdjustments()
-        autoEnhancedDisplayImage = nil
         isShowingAdjustmentPreview = false
         adjustments3DReloadTask?.cancel()
 
@@ -2064,8 +2146,8 @@ class PhotoWindowModel {
         currentImageData = nil
         gifHEVCURL = nil
         displayImage = nil
-        autoEnhancedDisplayImage = nil
         isShowingAdjustmentPreview = false
+        clearAutoEnhanceState()
         clearBackgroundRemovalState()
 
         // Only remove the component if generation is NOT active.
