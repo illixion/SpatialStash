@@ -716,7 +716,10 @@ class PhotoWindowModel {
     /// image in memory when the window size changes significantly.
     /// No-op when dynamic image resolution is disabled (already at full res).
     func handleWindowResize(_ newSize: CGSize) {
-        recordInteraction()
+        // Update LRU timestamp but don't trigger idle-downscale restore.
+        // SwiftUI fires geometry changes when content is cleared (e.g. during
+        // memory-pressure downscale), which would cause an immediate re-restore.
+        lastInteractionTime = Date()
         lastWindowSize = newSize
 
         // Persist window size (debounced alongside the image reload)
