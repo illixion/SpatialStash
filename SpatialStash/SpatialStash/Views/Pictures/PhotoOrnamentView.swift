@@ -27,6 +27,7 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
 
     @State private var showMediaInfo = false
     @State private var isUpdatingMediaInfo = false
+    @State private var showAdjustmentsPopover = false
 
     var body: some View {
         HStack(spacing: 16) {
@@ -74,6 +75,8 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
             if !windowModel.isRealityKitDisplay, !windowModel.isAnimatedGIF, windowModel.displayImage != nil {
                 resolutionMenu
             }
+
+            adjustmentsButton
 
             Divider()
                 .frame(height: 24)
@@ -337,6 +340,45 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
     private var resolutionOverrideLabel: String {
         guard let override = windowModel.resolutionOverride else { return "Auto" }
         return AppModel.maxImageResolutionOptions.first { $0.value == override }?.label ?? "\(override)px"
+    }
+
+    // MARK: - Visual Adjustments
+
+    private var adjustmentsButton: some View {
+        Button {
+            showAdjustmentsPopover.toggle()
+        } label: {
+            Image(systemName: "slider.horizontal.3")
+                .font(.title3)
+                .padding(6)
+                .background(windowModel.effectiveAdjustments.isModified ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
+        }
+        .buttonStyle(.borderless)
+        .help("Visual Adjustments")
+        .popover(isPresented: $showAdjustmentsPopover) {
+            VisualAdjustmentsPopover(
+                currentAdjustments: Binding(
+                    get: { windowModel.currentAdjustments },
+                    set: { windowModel.currentAdjustments = $0 }
+                ),
+                globalAdjustments: Binding(
+                    get: { windowModel.appModel.globalVisualAdjustments },
+                    set: { windowModel.appModel.globalVisualAdjustments = $0 }
+                ),
+                showAutoEnhance: !windowModel.isAnimatedGIF,
+                isProcessingAutoEnhance: windowModel.isProcessingAutoEnhance,
+                onToggleAutoEnhance: {
+                    Task {
+                        await windowModel.toggleAutoEnhance()
+                    }
+                },
+                onCurrentAdjustmentsChanged: { adjustments in
+                    Task {
+                        await windowModel.trackAdjustments()
+                    }
+                }
+            )
+        }
     }
 
     // MARK: - Share

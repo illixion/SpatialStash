@@ -40,6 +40,10 @@ struct SettingsBackup: Codable {
     var imageEnhancementResolutionOverrides: [String: Int]?
     var imageEnhancementWindowSizes: [String: [Double]]?
 
+    // Visual adjustments
+    var globalVisualAdjustments: Data?
+    var imageEnhancementAdjustments: [String: Data]?
+
     static let currentVersion = 1
 }
 

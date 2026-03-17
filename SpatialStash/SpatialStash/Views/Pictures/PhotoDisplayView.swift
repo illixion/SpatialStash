@@ -61,6 +61,9 @@ struct PhotoDisplayView: View {
         ZStack {
             imageContent
                 .scaleEffect(x: windowModel.isImageFlipped ? -1 : 1, y: 1)
+                .brightness(windowModel.effectiveAdjustments.brightness)
+                .contrast(windowModel.effectiveAdjustments.contrast)
+                .saturation(windowModel.effectiveAdjustments.saturation)
                 .offset(x: dragOffset)
         }
         .background(

@@ -22,6 +22,8 @@ struct VideoWindowView: View {
     @State private var stereoscopicOverride: Bool?
     @State private var video3DSettings: Video3DSettings?
     @State private var isVideoFlipped: Bool = false
+    @State private var videoAdjustments: VisualAdjustments = VisualAdjustments()
+    @State private var showAdjustmentsPopover: Bool = false
 
     // MARK: - Room Activity / Memory Management
 
@@ -76,6 +78,9 @@ struct VideoWindowView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .scaleEffect(x: isVideoFlipped ? -1 : 1, y: 1)
+            .brightness(effectivePopOutVideoAdjustments.brightness)
+            .contrast(effectivePopOutVideoAdjustments.contrast)
+            .saturation(effectivePopOutVideoAdjustments.saturation)
             .overlay {
                 // Transparent tap target that only appears when UI is hidden
                 if isUIHidden {
@@ -96,6 +101,27 @@ struct VideoWindowView: View {
             attachmentAnchor: .scene(.bottomFront),
             ornament: {
                 HStack(spacing: 16) {
+                    Button {
+                        showAdjustmentsPopover.toggle()
+                    } label: {
+                        Image(systemName: "slider.horizontal.3")
+                            .font(.title3)
+                            .padding(6)
+                            .background(effectivePopOutVideoAdjustments.isModified ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Visual Adjustments")
+                    .popover(isPresented: $showAdjustmentsPopover) {
+                        VisualAdjustmentsPopover(
+                            currentAdjustments: $videoAdjustments,
+                            globalAdjustments: Binding(
+                                get: { appModel.globalVisualAdjustments },
+                                set: { appModel.globalVisualAdjustments = $0 }
+                            ),
+                            showAutoEnhance: false
+                        )
+                    }
+
                     Button {
                         withAnimation(.easeInOut(duration: 0.3)) {
                             isVideoFlipped.toggle()
@@ -156,6 +182,13 @@ struct VideoWindowView: View {
         .onChange(of: scenePhase) { oldPhase, newPhase in
             handleScenePhaseChange(from: oldPhase, to: newPhase)
         }
+    }
+
+    // MARK: - Visual Adjustments
+
+    /// Effective adjustments: use per-window local if modified, otherwise global
+    private var effectivePopOutVideoAdjustments: VisualAdjustments {
+        videoAdjustments.isModified ? videoAdjustments : appModel.globalVisualAdjustments
     }
 
     // MARK: - Stereoscopic Mode

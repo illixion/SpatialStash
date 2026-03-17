@@ -92,6 +92,29 @@ class PhotoWindowModel {
     /// Task for background removal (tracked so cleanup can cancel it)
     private var backgroundRemovalTask: Task<Void, Never>?
 
+    // MARK: - Visual Adjustments State
+
+    /// Per-image visual adjustments (Current tab values)
+    var currentAdjustments: VisualAdjustments = VisualAdjustments()
+
+    /// The auto-enhanced UIImage (result of CIImage.autoAdjustmentFilters applied to raw data).
+    /// Stored separately so toggling auto-enhance on/off doesn't require re-processing.
+    private var autoEnhancedDisplayImage: UIImage? = nil
+
+    /// Whether auto-enhance is currently being processed
+    var isProcessingAutoEnhance: Bool = false
+
+    /// The effective adjustments to apply (per-image if modified, otherwise global defaults)
+    var effectiveAdjustments: VisualAdjustments {
+        if currentAdjustments.isModified {
+            return currentAdjustments
+        }
+        return appModel.globalVisualAdjustments
+    }
+
+    /// Whether to show the adjustments popover (driven from ornament button)
+    var showAdjustmentsPopover: Bool = false
+
     // MARK: - Image Flip State
 
     /// Whether the image is horizontally flipped (showing its "back side")
@@ -122,6 +145,130 @@ class PhotoWindowModel {
     private func trackWindowSize(_ size: CGSize) async {
         guard appModel.rememberImageEnhancements else { return }
         await ImageEnhancementTracker.shared.setWindowSize(url: imageURL, size: size)
+    }
+
+    // MARK: - Visual Adjustment Methods
+
+    /// Apply visual adjustments and persist to tracker.
+    func applyAdjustments(_ adjustments: VisualAdjustments) {
+        recordInteraction()
+        currentAdjustments = adjustments
+        Task { await trackAdjustments() }
+    }
+
+    /// Reset current per-image adjustments to defaults.
+    func resetCurrentAdjustments() {
+        recordInteraction()
+        currentAdjustments = VisualAdjustments()
+        if autoEnhancedDisplayImage != nil {
+            // Restore the non-enhanced display image
+            autoEnhancedDisplayImage = nil
+            currentDisplayMaxDimension = 0
+            if !is3DMode, !isAnimatedGIF, let windowSize = lastWindowSize {
+                Task { await loadDisplayImage(for: windowSize) }
+            }
+        }
+        Task { await trackAdjustments() }
+    }
+
+    /// Toggle auto-enhance: applies CIImage auto-adjustment filters to generate
+    /// an enhanced base image. Manual sliders (brightness/contrast/saturation) are
+    /// applied as SwiftUI view modifiers on top of this base.
+    func toggleAutoEnhance() async {
+        recordInteraction()
+        guard !isProcessingAutoEnhance else { return }
+
+        if currentAdjustments.isAutoEnhanced {
+            // Turn off: clear enhanced image, revert to normal displayImage pipeline
+            currentAdjustments.isAutoEnhanced = false
+            autoEnhancedDisplayImage = nil
+            if !is3DMode, !isAnimatedGIF, let windowSize = lastWindowSize {
+                currentDisplayMaxDimension = 0
+                await loadDisplayImage(for: windowSize)
+            }
+        } else {
+            // Turn on: apply CIImage auto-adjustment
+            isProcessingAutoEnhance = true
+
+            guard let imageData = currentImageData,
+                  let ciImage = CIImage(data: imageData) else {
+                isProcessingAutoEnhance = false
+                return
+            }
+
+            // Run auto-enhancement off the main thread
+            let enhanced = await Task.detached { () -> UIImage? in
+                let filters = ciImage.autoAdjustmentFilters(options: [
+                    .enhance: true,
+                    .redEye: false
+                ])
+                var result = ciImage
+                for filter in filters {
+                    filter.setValue(result, forKey: kCIInputImageKey)
+                    if let output = filter.outputImage {
+                        result = output
+                    }
+                }
+
+                let context = CIContext(options: [.useSoftwareRenderer: false])
+                guard let cgImage = context.createCGImage(result, from: result.extent) else { return nil }
+                return UIImage(cgImage: cgImage)
+            }.value
+
+            guard let enhanced else {
+                isProcessingAutoEnhance = false
+                return
+            }
+
+            // Downscale for display (respects current resolution settings)
+            let windowSize = lastWindowSize ?? appModel.mainWindowSize
+            let displayVersion = await Task.detached { [windowSize] () -> UIImage? in
+                let maxDim = max(windowSize.width, windowSize.height) * 2.5
+                let sourceSize = enhanced.size
+                let nativeMaxDim = max(sourceSize.width, sourceSize.height)
+                let targetDim = min(maxDim, nativeMaxDim)
+
+                let scale = targetDim / nativeMaxDim
+                if scale >= 0.95 { return enhanced }
+
+                let newSize = CGSize(
+                    width: sourceSize.width * scale,
+                    height: sourceSize.height * scale
+                )
+                let renderer = UIGraphicsImageRenderer(size: newSize)
+                return renderer.image { _ in
+                    enhanced.draw(in: CGRect(origin: .zero, size: newSize))
+                }
+            }.value
+
+            autoEnhancedDisplayImage = displayVersion
+            if !is3DMode, !isAnimatedGIF {
+                displayImage = displayVersion
+            }
+            currentAdjustments.isAutoEnhanced = true
+            isProcessingAutoEnhance = false
+        }
+
+        Task { await trackAdjustments() }
+    }
+
+    /// Persist the current visual adjustments to the enhancement tracker.
+    func trackAdjustments() async {
+        guard appModel.rememberImageEnhancements else { return }
+        await ImageEnhancementTracker.shared.setAdjustments(
+            url: imageURL, adjustments: currentAdjustments.isModified ? currentAdjustments : nil
+        )
+    }
+
+    /// Restore saved visual adjustments for the current image.
+    private func restoreAdjustments() async {
+        guard appModel.rememberImageEnhancements else { return }
+        if let savedAdjustments = await ImageEnhancementTracker.shared.adjustments(url: imageURL) {
+            currentAdjustments = savedAdjustments
+            if savedAdjustments.isAutoEnhanced && !is3DMode && !isAnimatedGIF {
+                await toggleAutoEnhance()
+            }
+        }
     }
 
     // MARK: - Idle Downscale State
@@ -370,6 +517,8 @@ class PhotoWindowModel {
                     isImageFlipped = true
                 }
             }
+            // Restore visual adjustments
+            await restoreAdjustments()
             isInitialLoadInProgress = false
             await applyPendingViewingMode()
         }
@@ -655,6 +804,7 @@ class PhotoWindowModel {
 
         // Release current display image to free decoded bitmap memory
         displayImage = nil
+        autoEnhancedDisplayImage = nil
 
         // For GIFs, release HEVC converted data too
         if isAnimatedGIF {
@@ -729,6 +879,15 @@ class PhotoWindowModel {
             let wasFlipped = await ImageEnhancementTracker.shared.isFlipped(url: imageURL)
             if wasFlipped {
                 isImageFlipped = true
+            }
+        }
+
+        // Restore visual adjustments (re-processes auto-enhance if needed)
+        if currentAdjustments.isAutoEnhanced && !is3DMode && !isAnimatedGIF {
+            let wasAutoEnhanced = currentAdjustments.isAutoEnhanced
+            currentAdjustments.isAutoEnhanced = false
+            if wasAutoEnhanced {
+                await toggleAutoEnhance()
             }
         }
 
@@ -1560,6 +1719,8 @@ class PhotoWindowModel {
         desiredViewingMode = .mono
         isImageFlipped = false
         resolutionOverride = nil
+        currentAdjustments = VisualAdjustments()
+        autoEnhancedDisplayImage = nil
 
         // Restore per-image settings before loading
         if appModel.rememberImageEnhancements {
@@ -1592,6 +1753,9 @@ class PhotoWindowModel {
                 isImageFlipped = true
             }
         }
+
+        // Restore visual adjustments for the new image
+        await restoreAdjustments()
 
         await applyPendingViewingMode()
     }
@@ -1719,6 +1883,7 @@ class PhotoWindowModel {
         currentImageData = nil
         gifHEVCURL = nil
         displayImage = nil
+        autoEnhancedDisplayImage = nil
         clearBackgroundRemovalState()
 
         // Only remove the component if generation is NOT active.

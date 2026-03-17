@@ -12,6 +12,7 @@ struct VideoOrnamentsView: View {
     let videoCount: Int
     @State private var showMediaInfo = false
     @State private var isUpdatingMediaInfo = false
+    @State private var showAdjustmentsPopover = false
 
     var body: some View {
         VStack {
@@ -149,6 +150,36 @@ struct VideoOrnamentsView: View {
                     }
                 }
 
+                // Visual adjustments
+                if appModel.selectedVideo != nil {
+                    Divider()
+                        .frame(height: 24)
+
+                    Button {
+                        showAdjustmentsPopover.toggle()
+                    } label: {
+                        Image(systemName: "slider.horizontal.3")
+                            .font(.title3)
+                            .padding(6)
+                            .background(effectiveVideoAdjustments.isModified ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Visual Adjustments")
+                    .popover(isPresented: $showAdjustmentsPopover) {
+                        VisualAdjustmentsPopover(
+                            currentAdjustments: Binding(
+                                get: { appModel.videoVisualAdjustments },
+                                set: { appModel.videoVisualAdjustments = $0 }
+                            ),
+                            globalAdjustments: Binding(
+                                get: { appModel.globalVisualAdjustments },
+                                set: { appModel.globalVisualAdjustments = $0 }
+                            ),
+                            showAutoEnhance: false
+                        )
+                    }
+                }
+
                 // Flip video
                 if appModel.selectedVideo != nil {
                     Divider()
@@ -196,6 +227,11 @@ struct VideoOrnamentsView: View {
             .padding()
         }
         .glassBackgroundEffect()
+    }
+
+    /// Effective adjustments: use per-video session if modified, otherwise global
+    private var effectiveVideoAdjustments: VisualAdjustments {
+        appModel.videoVisualAdjustments.isModified ? appModel.videoVisualAdjustments : appModel.globalVisualAdjustments
     }
 
     private func popOutVideo() {

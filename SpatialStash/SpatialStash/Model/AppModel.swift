@@ -375,6 +375,22 @@ class AppModel {
         await ImageEnhancementTracker.shared.clearAll()
     }
 
+    // MARK: - Visual Adjustments
+
+    /// Global default visual adjustments applied when no per-image adjustments are set
+    var globalVisualAdjustments: VisualAdjustments = VisualAdjustments() {
+        didSet {
+            if globalVisualAdjustments != oldValue {
+                if let data = try? JSONEncoder().encode(globalVisualAdjustments) {
+                    UserDefaults.standard.set(data, forKey: "globalVisualAdjustments")
+                }
+            }
+        }
+    }
+
+    /// Per-session video visual adjustments (not persisted across app launches)
+    var videoVisualAdjustments: VisualAdjustments = VisualAdjustments()
+
     // MARK: - Debug Console
 
     /// When true, the Console tab appears in the tab bar ornament
@@ -462,6 +478,15 @@ class AppModel {
         // Load debug console visibility (default: false)
         let loadedShowDebugConsole = UserDefaults.standard.bool(forKey: "showDebugConsole")
 
+        // Load global visual adjustments
+        let loadedGlobalVisualAdjustments: VisualAdjustments
+        if let data = UserDefaults.standard.data(forKey: "globalVisualAdjustments"),
+           let decoded = try? JSONDecoder().decode(VisualAdjustments.self, from: data) {
+            loadedGlobalVisualAdjustments = decoded
+        } else {
+            loadedGlobalVisualAdjustments = VisualAdjustments()
+        }
+
         // Initialize stored properties
         self.stashServerURL = loadedServerURL
         self.stashAPIKey = loadedAPIKey
@@ -472,6 +497,7 @@ class AppModel {
         self.openImagesInSeparateWindows = loadedOpenImagesInSeparateWindows
         self.rememberImageEnhancements = loadedRememberImageEnhancements
         self.showDebugConsole = loadedShowDebugConsole
+        self.globalVisualAdjustments = loadedGlobalVisualAdjustments
 
         // Initialize API client and image sources
         let client: StashAPIClient
@@ -993,7 +1019,9 @@ class AppModel {
             imageEnhancementLastViewingModes: imageEnhancementData.lastViewingModes,
             imageEnhancementFlippedURLs: imageEnhancementData.flippedURLs,
             imageEnhancementResolutionOverrides: imageEnhancementData.resolutionOverrides,
-            imageEnhancementWindowSizes: imageEnhancementData.windowSizes
+            imageEnhancementWindowSizes: imageEnhancementData.windowSizes,
+            globalVisualAdjustments: try? JSONEncoder().encode(globalVisualAdjustments),
+            imageEnhancementAdjustments: imageEnhancementData.adjustments
         )
     }
 
@@ -1034,8 +1062,15 @@ class AppModel {
                 lastViewingModes: modes,
                 flippedURLs: backup.imageEnhancementFlippedURLs,
                 resolutionOverrides: backup.imageEnhancementResolutionOverrides,
-                windowSizes: backup.imageEnhancementWindowSizes
+                windowSizes: backup.imageEnhancementWindowSizes,
+                adjustments: backup.imageEnhancementAdjustments
             )
+        }
+
+        // Global visual adjustments
+        if let data = backup.globalVisualAdjustments,
+           let loaded = try? JSONDecoder().decode(VisualAdjustments.self, from: data) {
+            globalVisualAdjustments = loaded
         }
 
         // Reconnect API client with potentially updated server config

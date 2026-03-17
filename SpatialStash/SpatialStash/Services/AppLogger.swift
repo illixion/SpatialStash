@@ -71,4 +71,7 @@ enum AppLogger {
 
     /// Window visibility heartbeat diagnostics
     static let visibilityProbe = Logger(subsystem: subsystem, category: "VisibilityProbe")
+
+    /// Visual adjustments (brightness, contrast, saturation)
+    static let visualAdjustments = Logger(subsystem: subsystem, category: "VisualAdjustments")
 }

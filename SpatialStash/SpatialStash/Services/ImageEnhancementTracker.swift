@@ -24,11 +24,13 @@ actor ImageEnhancementTracker {
     private let flippedKey = "imageFlippedState"
     private let resolutionOverrideKey = "imageResolutionOverride"
     private let windowSizeKey = "imageWindowSize"
+    private let adjustmentsKey = "imageVisualAdjustments"
     private var convertedImageURLs: Set<String>
     private var lastViewingModeByURL: [String: String]
     private var flippedByURL: Set<String>
     private var resolutionOverrideByURL: [String: Int]
     private var windowSizeByURL: [String: [Double]]
+    private var adjustmentsByURL: [String: Data]
 
     private init() {
         if let saved = UserDefaults.standard.array(forKey: userDefaultsKey) as? [String] {
@@ -62,6 +64,12 @@ actor ImageEnhancementTracker {
         } else {
             windowSizeByURL = [:]
         }
+
+        if let dict = UserDefaults.standard.dictionary(forKey: adjustmentsKey) as? [String: Data] {
+            adjustmentsByURL = dict
+        } else {
+            adjustmentsByURL = [:]
+        }
     }
 
     /// Mark an image as having been converted to spatial 3D
@@ -89,6 +97,7 @@ actor ImageEnhancementTracker {
         flippedByURL.removeAll()
         resolutionOverrideByURL.removeAll()
         windowSizeByURL.removeAll()
+        adjustmentsByURL.removeAll()
         save()
     }
 
@@ -103,17 +112,18 @@ actor ImageEnhancementTracker {
         UserDefaults.standard.set(Array(flippedByURL), forKey: flippedKey)
         UserDefaults.standard.set(resolutionOverrideByURL, forKey: resolutionOverrideKey)
         UserDefaults.standard.set(windowSizeByURL, forKey: windowSizeKey)
+        UserDefaults.standard.set(adjustmentsByURL, forKey: adjustmentsKey)
     }
 
     // MARK: - Backup Export / Import
 
     /// Export all tracking data for backup
-    func exportData() -> (convertedURLs: [String], lastViewingModes: [String: String], flippedURLs: [String], resolutionOverrides: [String: Int], windowSizes: [String: [Double]]) {
-        return (Array(convertedImageURLs), lastViewingModeByURL, Array(flippedByURL), resolutionOverrideByURL, windowSizeByURL)
+    func exportData() -> (convertedURLs: [String], lastViewingModes: [String: String], flippedURLs: [String], resolutionOverrides: [String: Int], windowSizes: [String: [Double]], adjustments: [String: Data]) {
+        return (Array(convertedImageURLs), lastViewingModeByURL, Array(flippedByURL), resolutionOverrideByURL, windowSizeByURL, adjustmentsByURL)
     }
 
     /// Import tracking data from backup, replacing current data
-    func importData(convertedURLs: [String], lastViewingModes: [String: String], flippedURLs: [String]? = nil, resolutionOverrides: [String: Int]? = nil, windowSizes: [String: [Double]]? = nil) {
+    func importData(convertedURLs: [String], lastViewingModes: [String: String], flippedURLs: [String]? = nil, resolutionOverrides: [String: Int]? = nil, windowSizes: [String: [Double]]? = nil, adjustments: [String: Data]? = nil) {
         convertedImageURLs = Set(convertedURLs)
         lastViewingModeByURL = lastViewingModes
         if let flippedURLs {
@@ -124,6 +134,9 @@ actor ImageEnhancementTracker {
         }
         if let windowSizes {
             windowSizeByURL = windowSizes
+        }
+        if let adjustments {
+            adjustmentsByURL = adjustments
         }
         save()
     }
@@ -189,5 +202,22 @@ actor ImageEnhancementTracker {
     func removeWindowSize(url: URL) {
         windowSizeByURL.removeValue(forKey: url.absoluteString)
         save()
+    }
+
+    // MARK: - Visual Adjustments Tracking
+
+    func setAdjustments(url: URL, adjustments: VisualAdjustments?) {
+        let urlString = url.absoluteString
+        if let adjustments, adjustments.isModified {
+            adjustmentsByURL[urlString] = try? JSONEncoder().encode(adjustments)
+        } else {
+            adjustmentsByURL.removeValue(forKey: urlString)
+        }
+        save()
+    }
+
+    func adjustments(url: URL) -> VisualAdjustments? {
+        guard let data = adjustmentsByURL[url.absoluteString] else { return nil }
+        return try? JSONDecoder().decode(VisualAdjustments.self, from: data)
     }
 }

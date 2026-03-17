@@ -16,6 +16,11 @@ struct VideoPlayerView: View {
     /// Extra bottom padding (in points) to prevent the ornament from overlapping video content
     private let ornamentBottomPadding: CGFloat = 60
 
+    /// Effective adjustments: use per-video session if modified, otherwise global
+    private var effectiveVideoAdjustments: VisualAdjustments {
+        appModel.videoVisualAdjustments.isModified ? appModel.videoVisualAdjustments : appModel.globalVisualAdjustments
+    }
+
     /// Whether this window is in the user's current room
     @State private var isInActiveRoom: Bool = true
 
@@ -55,6 +60,9 @@ struct VideoPlayerView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .scaleEffect(x: appModel.isVideoFlipped ? -1 : 1, y: 1)
+            .brightness(effectiveVideoAdjustments.brightness)
+            .contrast(effectiveVideoAdjustments.contrast)
+            .saturation(effectiveVideoAdjustments.saturation)
             .overlay {
                 // Transparent tap target that only appears when UI is hidden
                 if appModel.isUIHidden {

@@ -17,6 +17,8 @@ struct WebVideoPlayerView: UIViewRepresentable {
     var isRoomActive: Bool = true
     /// Called once when the video's native dimensions become known (from the HTML video element's loadedmetadata event).
     var onVideoSizeKnown: ((CGSize) -> Void)? = nil
+    /// Optional visual adjustments to apply as CSS filters on the video element
+    var visualAdjustments: VisualAdjustments? = nil
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -63,6 +65,18 @@ struct WebVideoPlayerView: UIViewRepresentable {
             webView.evaluateJavaScript(js)
         }
 
+        // Apply CSS filter adjustments when they change
+        if let adjustments = visualAdjustments, adjustments != coordinator.lastAdjustments {
+            coordinator.lastAdjustments = adjustments
+            let css = adjustments.cssFilterString
+            let js = "document.querySelector('.video-container').style.filter = '\(css)';"
+            webView.evaluateJavaScript(js)
+        } else if visualAdjustments == nil && coordinator.lastAdjustments != nil {
+            coordinator.lastAdjustments = nil
+            let js = "document.querySelector('.video-container').style.filter = '';"
+            webView.evaluateJavaScript(js)
+        }
+
         // Pause/resume and toggle auto-resume based on room activity
         if coordinator.lastIsRoomActive != isRoomActive {
             coordinator.lastIsRoomActive = isRoomActive
@@ -106,6 +120,7 @@ struct WebVideoPlayerView: UIViewRepresentable {
         var loadedURL: URL?
         var lastShowControls: Bool?
         var lastIsRoomActive: Bool?
+        var lastAdjustments: VisualAdjustments?
         var onVideoSizeKnown: ((CGSize) -> Void)?
         /// Prevents firing the callback more than once per video load
         private var didReportSize: Bool = false
