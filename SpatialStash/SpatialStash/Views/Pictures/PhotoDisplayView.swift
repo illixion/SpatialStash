@@ -181,16 +181,11 @@ struct PhotoDisplayView: View {
                     resizeWindowToFit(windowModel.imageAspectRatio, within: currentBounds)
 
                     // Only handle 3D generation when in explicit 3D mode.
-                    // Wait so RealityKit renders the mono image first —
-                    // the 3D generation animation morphs from the visible mono state
-                    // and needs at least one rendered frame as a visual baseline.
                     if windowModel.is3DMode {
                         if windowModel.pendingGenerate3D {
                             windowModel.pendingGenerate3D = false
-                            try? await Task.sleep(for: .milliseconds(500))
                             await windowModel.generateSpatial3DImage()
                         } else {
-                            try? await Task.sleep(for: .milliseconds(500))
                             await windowModel.autoGenerateSpatial3DIfNeeded()
                         }
                     }
