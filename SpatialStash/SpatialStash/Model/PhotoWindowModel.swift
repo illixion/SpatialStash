@@ -380,10 +380,15 @@ class PhotoWindowModel {
                         }
                     }
 
+                    // CIColorControls contrast is much more aggressive than SwiftUI's
+                    // .contrast() modifier. Empirically: SwiftUI 2.00 ≈ CIFilter 1.12,
+                    // SwiftUI 1.61 ≈ CIFilter 1.07. Remap by scaling the deviation from 1.0.
+                    let remappedContrast = 1.0 + (adj.contrast - 1.0) * 0.12
+
                     let colorControls = CIFilter(name: "CIColorControls")!
                     colorControls.setValue(result, forKey: kCIInputImageKey)
                     colorControls.setValue(adj.brightness, forKey: kCIInputBrightnessKey)
-                    colorControls.setValue(adj.contrast, forKey: kCIInputContrastKey)
+                    colorControls.setValue(remappedContrast, forKey: kCIInputContrastKey)
                     colorControls.setValue(adj.saturation, forKey: kCIInputSaturationKey)
                     if let output = colorControls.outputImage { result = output }
 
