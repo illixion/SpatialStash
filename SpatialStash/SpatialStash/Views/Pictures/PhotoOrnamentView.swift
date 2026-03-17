@@ -59,21 +59,6 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
             threeDButton
             immersive3DButton
 
-            // Background removal only available with lightweight 2D display
-            if !windowModel.isRealityKitDisplay {
-                backgroundRemovalButton
-            }
-
-            // Flip only available with lightweight 2D or GIF display (not RealityKit)
-            if !windowModel.isRealityKitDisplay, !windowModel.is3DMode {
-                flipButton
-            }
-
-            // Resolution indicator (only in lightweight 2D mode with a loaded image)
-            if !windowModel.isRealityKitDisplay, !windowModel.isAnimatedGIF, windowModel.displayImage != nil {
-                resolutionMenu
-            }
-
             adjustmentsButton
 
             Divider()
@@ -91,6 +76,11 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
 
             // Extra buttons (pop-out, save, etc.)
             extraButtons()
+
+            // Resolution indicator (only in lightweight 2D mode with a loaded image)
+            if !windowModel.isRealityKitDisplay, !windowModel.isAnimatedGIF, windowModel.displayImage != nil {
+                resolutionMenu
+            }
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
@@ -256,50 +246,6 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
         .help("Immersive 3D")
     }
 
-    // MARK: - Background Removal Toggle
-
-    private var backgroundRemovalButton: some View {
-        Button {
-            Task {
-                await windowModel.toggleBackgroundRemoval()
-            }
-        } label: {
-            Group {
-                if windowModel.backgroundRemovalState == .removing {
-                    ProgressView()
-                        .scaleEffect(0.8)
-                } else {
-                    Image(systemName: windowModel.backgroundRemovalState == .original ? "person.and.background.striped.horizontal" : "person.and.background.dotted")
-                }
-            }
-            .font(.title3)
-        }
-        .buttonStyle(.borderless)
-        .disabled(windowModel.is3DMode || windowModel.isAnimatedGIF || (windowModel.isLoadingDetailImage && windowModel.backgroundRemovalState != .removing))
-        .help(
-            windowModel.backgroundRemovalState == .original ? "Remove Background" :
-            windowModel.backgroundRemovalState == .removing ? "Cancel" : "Restore Background"
-        )
-    }
-
-    // MARK: - Flip Image
-
-    private var flipButton: some View {
-        Button {
-            withAnimation(.easeInOut(duration: 0.3)) {
-                windowModel.toggleFlip()
-            }
-        } label: {
-            Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right")
-                .font(.title3)
-                .padding(6)
-                .background(windowModel.isImageFlipped ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
-        }
-        .buttonStyle(.borderless)
-        .disabled(windowModel.isLoadingDetailImage)
-        .help("Flip Image")
-    }
-
     // MARK: - Resolution Menu
 
     private var resolutionMenu: some View {
@@ -390,6 +336,20 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
                     }
                     // In 3D mode, reload the ImagePresentationComponent with adjusted pixels
                     windowModel.reloadImagePresentationWithAdjustments()
+                },
+                showBackgroundRemoval: !windowModel.isRealityKitDisplay,
+                backgroundRemovalState: windowModel.backgroundRemovalState,
+                onToggleBackgroundRemoval: {
+                    Task {
+                        await windowModel.toggleBackgroundRemoval()
+                    }
+                },
+                showFlip: !windowModel.isRealityKitDisplay && !windowModel.is3DMode,
+                isImageFlipped: windowModel.isImageFlipped,
+                onToggleFlip: {
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        windowModel.toggleFlip()
+                    }
                 }
             )
         }

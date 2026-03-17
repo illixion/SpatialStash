@@ -35,6 +35,28 @@ struct VisualAdjustmentsPopover: View {
     /// Callback when current adjustments change (for persistence)
     var onCurrentAdjustmentsChanged: ((VisualAdjustments) -> Void)? = nil
 
+    // MARK: - Background Removal
+
+    /// Whether to show the background removal button
+    var showBackgroundRemoval: Bool = false
+
+    /// Current background removal state
+    var backgroundRemovalState: BackgroundRemovalState = .original
+
+    /// Callback for background removal toggle
+    var onToggleBackgroundRemoval: (() -> Void)? = nil
+
+    // MARK: - Flip Image
+
+    /// Whether to show the flip button
+    var showFlip: Bool = false
+
+    /// Whether the image is currently flipped
+    var isImageFlipped: Bool = false
+
+    /// Callback for flip toggle
+    var onToggleFlip: (() -> Void)? = nil
+
     var body: some View {
         VStack(spacing: 16) {
             Picker("", selection: $selectedTab) {
@@ -60,36 +82,47 @@ struct VisualAdjustmentsPopover: View {
     @ViewBuilder
     private var currentTabContent: some View {
         VStack(spacing: 14) {
-            // Auto-enhance toggle (photos only)
-            if showAutoEnhance {
-                Button {
-                    onToggleAutoEnhance?()
-                } label: {
-                    HStack(spacing: 8) {
-                        if isProcessingAutoEnhance {
-                            ProgressView()
-                                .scaleEffect(0.7)
-                        } else {
-                            Image(systemName: "wand.and.stars")
-                        }
-                        Text("Auto Enhance")
-                        Spacer()
-                        if currentAdjustments.isAutoEnhanced {
-                            Image(systemName: "checkmark")
-                                .foregroundColor(.accentColor)
+            // Action buttons row (auto-enhance, background removal, flip)
+            if showAutoEnhance || showBackgroundRemoval || showFlip {
+                HStack(spacing: 0) {
+                    if showAutoEnhance {
+                        actionToggle(
+                            icon: "wand.and.stars",
+                            tooltip: "Auto Enhance",
+                            isActive: currentAdjustments.isAutoEnhanced,
+                            isProcessing: isProcessingAutoEnhance
+                        ) {
+                            onToggleAutoEnhance?()
                         }
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(
-                        currentAdjustments.isAutoEnhanced
-                            ? Color.accentColor.opacity(0.15)
-                            : Color.secondary.opacity(0.1),
-                        in: .rect(cornerRadius: 8)
-                    )
+
+                    if showBackgroundRemoval {
+                        actionToggle(
+                            icon: backgroundRemovalState == .original
+                                ? "person.and.background.striped.horizontal"
+                                : "person.and.background.dotted",
+                            tooltip: backgroundRemovalState == .original
+                                ? "Remove Background"
+                                : backgroundRemovalState == .removing ? "Removing…" : "Restore Background",
+                            isActive: backgroundRemovalState == .removed,
+                            isProcessing: backgroundRemovalState == .removing
+                        ) {
+                            onToggleBackgroundRemoval?()
+                        }
+                    }
+
+                    if showFlip {
+                        actionToggle(
+                            icon: "arrow.left.and.right.righttriangle.left.righttriangle.right",
+                            tooltip: "Flip Image",
+                            isActive: isImageFlipped,
+                            isProcessing: false
+                        ) {
+                            onToggleFlip?()
+                        }
+                    }
                 }
-                .buttonStyle(.borderless)
-                .disabled(isProcessingAutoEnhance)
+                .background(Color.secondary.opacity(0.1), in: .capsule)
 
                 Divider()
             }
@@ -171,6 +204,36 @@ struct VisualAdjustmentsPopover: View {
             .buttonStyle(.bordered)
             .disabled(!globalAdjustments.isModified)
         }
+    }
+
+    // MARK: - Action Toggle
+
+    @ViewBuilder
+    private func actionToggle(
+        icon: String,
+        tooltip: String,
+        isActive: Bool,
+        isProcessing: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Group {
+                if isProcessing {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                } else {
+                    Image(systemName: icon)
+                        .fontWeight(isActive ? .semibold : .regular)
+                }
+            }
+            .font(.title3)
+            .frame(width: 44, height: 44)
+            .background(isActive ? Color.accentColor.opacity(0.2) : .clear, in: .capsule)
+            .contentShape(.capsule)
+        }
+        .buttonStyle(.borderless)
+        .disabled(isProcessing)
+        .help(tooltip)
     }
 
     // MARK: - Slider Component
