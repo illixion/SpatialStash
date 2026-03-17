@@ -604,6 +604,17 @@ class AppModel {
         let models = Array(activePhotoWindowModels.values)
         guard !models.isEmpty else { return }
 
+        // Skip downscale entirely if any window is mid-3D-generation or initial load.
+        // These cause transient memory spikes that resolve on their own — downscaling
+        // would just force an expensive re-do (reload image + regenerate 3D).
+        let hasTransientWork = models.contains {
+            $0.spatial3DImageState == .generating || $0.isInitialLoadInProgress
+        }
+        if hasTransientWork {
+            AppLogger.appModel.info("Skipping memory-pressure downscale — transient work in progress")
+            return
+        }
+
         let nonDownscaled = models.filter { !$0.isIdleDownscaled && !$0.isRestoringFromIdle }
 
         guard !nonDownscaled.isEmpty else {
