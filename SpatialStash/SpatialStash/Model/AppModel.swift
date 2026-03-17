@@ -981,7 +981,8 @@ class AppModel {
             imageEnhancementConvertedURLs: imageEnhancementData.convertedURLs,
             imageEnhancementLastViewingModes: imageEnhancementData.lastViewingModes,
             imageEnhancementFlippedURLs: imageEnhancementData.flippedURLs,
-            imageEnhancementResolutionOverrides: imageEnhancementData.resolutionOverrides
+            imageEnhancementResolutionOverrides: imageEnhancementData.resolutionOverrides,
+            imageEnhancementWindowSizes: imageEnhancementData.windowSizes
         )
     }
 
@@ -1021,7 +1022,8 @@ class AppModel {
                 convertedURLs: urls,
                 lastViewingModes: modes,
                 flippedURLs: backup.imageEnhancementFlippedURLs,
-                resolutionOverrides: backup.imageEnhancementResolutionOverrides
+                resolutionOverrides: backup.imageEnhancementResolutionOverrides,
+                windowSizes: backup.imageEnhancementWindowSizes
             )
         }
 

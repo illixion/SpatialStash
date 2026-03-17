@@ -26,10 +26,11 @@ struct PushedPictureView: View {
 
     var body: some View {
         PhotoDisplayView(windowModel: windowModel, enableSwipeNavigation: true)
-            .persistentSystemOverlays(windowModel.isWindowControlsHidden ? .hidden : .visible)
-            .ornament(
+        .persistentSystemOverlays(windowModel.isWindowControlsHidden ? .hidden : .visible)
+        .ornament(
                 visibility: windowModel.isUIHidden ? .hidden : .visible,
                 attachmentAnchor: .scene(.bottomFront),
+                contentAlignment: .top,
                 ornament: {
                     PhotoOrnamentView(
                         windowModel: windowModel,

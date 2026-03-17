@@ -52,9 +52,9 @@ struct PhotoDisplayView: View {
     /// Very large window size for immersive mode (fills field of vision)
     private let immersiveWindowSize: CGSize = CGSize(width: 3000, height: 3000)
 
-    /// The bounds used to fit images into — starts as main window size, then tracks viewer size
+    /// The bounds used to fit images into — starts as saved window size or main window size, then tracks viewer size
     private var currentBounds: CGSize {
-        viewerWindowSize ?? appModel.mainWindowSize
+        viewerWindowSize ?? windowModel.savedWindowSize ?? appModel.mainWindowSize
     }
 
     var body: some View {
@@ -136,7 +136,8 @@ struct PhotoDisplayView: View {
             }
             .modifier(SwipeGestureModifier(enabled: isSwipeEnabled, onEnded: handleDragEnded))
             .onAppear {
-                resizeGIFWindowToFit(windowModel.imageAspectRatio, within: appModel.mainWindowSize)
+                let initialBounds = windowModel.savedWindowSize ?? appModel.mainWindowSize
+                resizeGIFWindowToFit(windowModel.imageAspectRatio, within: initialBounds)
             }
             .onChange(of: windowModel.imageAspectRatio) { _, newAspectRatio in
                 guard !suppressWindowResize else { return }
@@ -158,7 +159,8 @@ struct PhotoDisplayView: View {
             .aspectRatio(windowModel.imageAspectRatio, contentMode: .fit)
             .clipShape(RoundedRectangle(cornerRadius: appModel.roundedCorners ? 50 : 0, style: .continuous))
             .onAppear {
-                resizeGIFWindowToFit(windowModel.imageAspectRatio, within: appModel.mainWindowSize)
+                let initialBounds = windowModel.savedWindowSize ?? appModel.mainWindowSize
+                resizeGIFWindowToFit(windowModel.imageAspectRatio, within: initialBounds)
             }
         } else if windowModel.is3DMode {
             // Display with RealityKit for 3D spatial conversion (full resolution)
@@ -266,7 +268,8 @@ struct PhotoDisplayView: View {
                 .modifier(SwipeGestureModifier(enabled: isSwipeEnabled, onEnded: handleDragEnded))
                 .onAppear {
                     setUniformResizing()
-                    resizeWindowToFit(windowModel.imageAspectRatio, within: appModel.mainWindowSize)
+                    let initialBounds = windowModel.savedWindowSize ?? appModel.mainWindowSize
+                    resizeWindowToFit(windowModel.imageAspectRatio, within: initialBounds)
                 }
                 .onChange(of: windowModel.imageAspectRatio) { _, newAspectRatio in
                     guard !suppressWindowResize else { return }
@@ -423,13 +426,18 @@ struct PhotoDisplayView: View {
     /// (e.g. a tall 600×900 window switching to a wide image would otherwise cap at 600 wide).
     private func windowSize(for aspectRatio: CGFloat, within bounds: CGSize) -> CGSize {
         let maxDim = max(bounds.width, bounds.height)
+        let imageWidth: CGFloat
+        let imageHeight: CGFloat
         if aspectRatio >= 1.0 {
             // Wide or square image: width is the dominant axis
-            return CGSize(width: maxDim, height: maxDim / aspectRatio)
+            imageWidth = maxDim
+            imageHeight = maxDim / aspectRatio
         } else {
             // Tall image: height is the dominant axis
-            return CGSize(width: maxDim * aspectRatio, height: maxDim)
+            imageWidth = maxDim * aspectRatio
+            imageHeight = maxDim
         }
+        return CGSize(width: imageWidth, height: imageHeight)
     }
 
     /// Resize window to fit image aspect ratio within given bounds
@@ -456,6 +464,7 @@ struct PhotoDisplayView: View {
     private func resizeGIFWindowToFit(_ aspectRatio: CGFloat, within bounds: CGSize) {
         guard let windowScene = resolvedWindowScene else { return }
 
+        // Use the same windowSize helper for consistent sizing
         let size = windowSize(for: aspectRatio, within: bounds)
         UIView.performWithoutAnimation {
             windowScene.requestGeometryUpdate(.Vision(size: size, resizingRestrictions: .uniform))
@@ -481,6 +490,7 @@ struct PhotoDisplayView: View {
               !windowModel.isLoadingDetailImage,
               !suppressWindowResize else { return }
 
+        // Compare the current window aspect ratio against the expected image aspect ratio
         let currentAR = currentSize.width / currentSize.height
         let expectedAR = windowModel.imageAspectRatio
         let ratio = currentAR / expectedAR

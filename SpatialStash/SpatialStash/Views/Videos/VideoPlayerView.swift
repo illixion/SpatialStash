@@ -41,7 +41,10 @@ struct VideoPlayerView: View {
                             videoURL: video.streamURL,
                             apiKey: appModel.stashAPIKey.isEmpty ? nil : appModel.stashAPIKey,
                             showControls: !appModel.isUIHidden,
-                            isRoomActive: isInActiveRoom
+                            isRoomActive: isInActiveRoom,
+                            onVideoSizeKnown: { size in
+                                lockWindowToVideoAspectRatio(videoSize: size)
+                            }
                         )
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .id("\(video.id)_2d")
@@ -69,7 +72,6 @@ struct VideoPlayerView: View {
         }
         .onAppear {
             appModel.startAutoHideTimer()
-            lockWindowToVideoAspectRatio()
         }
         .onDisappear {
             appModel.cancelAutoHideTimer()
@@ -79,7 +81,6 @@ struct VideoPlayerView: View {
             // Reset UI visibility and timer when video changes
             appModel.isUIHidden = false
             appModel.startAutoHideTimer()
-            lockWindowToVideoAspectRatio()
         }
         .onChange(of: scenePhase) { _, newPhase in
             isInActiveRoom = (newPhase == .active)
@@ -110,15 +111,13 @@ struct VideoPlayerView: View {
 
     // MARK: - Window Aspect Ratio Locking
 
-    /// Lock the main window's resize aspect ratio to the selected video's dimensions,
-    /// accounting for bottom padding that keeps the ornament from overlapping.
-    private func lockWindowToVideoAspectRatio() {
-        guard let video = appModel.selectedVideo,
-              let sourceWidth = video.sourceWidth, sourceWidth > 0,
-              let sourceHeight = video.sourceHeight, sourceHeight > 0,
+    /// Lock the main window's resize aspect ratio to the video's native dimensions
+    /// (reported by the HTML video element's loadedmetadata event).
+    private func lockWindowToVideoAspectRatio(videoSize: CGSize) {
+        guard videoSize.width > 0, videoSize.height > 0,
               let windowScene = mainWindowScene else { return }
 
-        let videoAspectRatio = CGFloat(sourceWidth) / CGFloat(sourceHeight)
+        let videoAspectRatio = videoSize.width / videoSize.height
 
         // Calculate a window size that fits the video at its aspect ratio
         // plus bottom padding for the ornament

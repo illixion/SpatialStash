@@ -57,6 +57,10 @@ class PhotoWindowModel {
     /// Last known window size for resize-triggered reloads
     private var lastWindowSize: CGSize?
 
+    /// Saved window size from a previous session, restored from the enhancement tracker.
+    /// Used by PhotoDisplayView for initial window sizing instead of mainWindowSize.
+    private(set) var savedWindowSize: CGSize?
+
     /// Debounce task for window resize
     private var resizeDebounceTask: Task<Void, Never>?
 
@@ -112,6 +116,12 @@ class PhotoWindowModel {
     private func trackResolutionOverride() async {
         guard appModel.rememberImageEnhancements else { return }
         await ImageEnhancementTracker.shared.setResolutionOverride(url: imageURL, resolution: resolutionOverride)
+    }
+
+    /// Persist the current window size to the enhancement tracker.
+    private func trackWindowSize(_ size: CGSize) async {
+        guard appModel.rememberImageEnhancements else { return }
+        await ImageEnhancementTracker.shared.setWindowSize(url: imageURL, size: size)
     }
 
     // MARK: - Idle Downscale State
@@ -333,13 +343,18 @@ class PhotoWindowModel {
             appModel.registerPopOutWindow(imageURL: imageURL, windowValue: windowValue)
         }
 
-        // Sequential load: resolution restore → data → enhancement check → 2D fallback → flip restore
+        // Sequential load: resolution restore → window size restore → data → enhancement check → 2D fallback → flip restore
         Task {
-            // Restore per-image resolution override before any image loading
+            // Restore per-image settings before any image loading
             if appModel.rememberImageEnhancements {
                 let savedOverride = await ImageEnhancementTracker.shared.resolutionOverride(url: imageURL)
                 if savedOverride != nil {
                     resolutionOverride = savedOverride
+                }
+                let savedSize = await ImageEnhancementTracker.shared.windowSize(url: imageURL)
+                if let savedSize {
+                    savedWindowSize = savedSize
+                    lastWindowSize = savedSize
                 }
             }
             await loadImageDataForDetail(url: imageURL)
@@ -553,17 +568,26 @@ class PhotoWindowModel {
     /// No-op when dynamic image resolution is disabled (already at full res).
     func handleWindowResize(_ newSize: CGSize) {
         recordInteraction()
-        guard effectiveMaxResolution > 0 else { return }
-        guard !is3DMode, !isAnimatedGIF else { return }
-        guard !isLoadingDetailImage, !isLoadingDisplayImage else { return }
-        guard !isInitialLoadInProgress else { return }
-        guard displayImage != nil else { return }
-
         lastWindowSize = newSize
+
+        // Persist window size (debounced alongside the image reload)
+        // This runs for all display modes so the size is remembered even for
+        // 3D, GIF, or full-resolution images that skip re-downsampling.
         resizeDebounceTask?.cancel()
         resizeDebounceTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(1))
             guard let self, !Task.isCancelled else { return }
+
+            // Persist the window size for this image
+            await self.trackWindowSize(newSize)
+
+            // Re-downsample display image if dynamic resolution is active
+            guard self.effectiveMaxResolution > 0 else { return }
+            guard !self.is3DMode, !self.isAnimatedGIF else { return }
+            guard !self.isLoadingDetailImage, !self.isLoadingDisplayImage else { return }
+            guard !self.isInitialLoadInProgress else { return }
+            guard self.displayImage != nil else { return }
+
             if self.backgroundRemovalState == .removed {
                 await self.reloadBackgroundRemovedAtCurrentResolution()
             } else if self.backgroundRemovalState == .original {
@@ -1533,12 +1557,19 @@ class PhotoWindowModel {
         isImageFlipped = false
         resolutionOverride = nil
 
-        // Restore per-image resolution override before loading
+        // Restore per-image settings before loading
         if appModel.rememberImageEnhancements {
             let savedOverride = await ImageEnhancementTracker.shared.resolutionOverride(url: newImage.fullSizeURL)
             if savedOverride != nil {
                 resolutionOverride = savedOverride
             }
+            let savedSize = await ImageEnhancementTracker.shared.windowSize(url: newImage.fullSizeURL)
+            savedWindowSize = savedSize
+            if let savedSize {
+                lastWindowSize = savedSize
+            }
+        } else {
+            savedWindowSize = nil
         }
 
         // Load image data to detect if it's a GIF

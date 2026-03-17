@@ -36,6 +36,7 @@ struct SharedPhotoWindowView: View {
         .ornament(
             visibility: windowModel.isUIHidden ? .hidden : .visible,
             attachmentAnchor: .scene(.bottomFront),
+            contentAlignment: .top,
             ornament: {
                 PhotoOrnamentView(
                     windowModel: windowModel,

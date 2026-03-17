@@ -65,7 +65,10 @@ struct VideoWindowView: View {
                         videoURL: video.streamURL,
                         apiKey: appModel.stashAPIKey.isEmpty ? nil : appModel.stashAPIKey,
                         showControls: !isUIHidden,
-                        isRoomActive: isInActiveRoom
+                        isRoomActive: isInActiveRoom,
+                        onVideoSizeKnown: { size in
+                            lockWindowToVideoAspectRatio(videoSize: size)
+                        }
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .id("\(video.id)_2d")
@@ -143,7 +146,6 @@ struct VideoWindowView: View {
             stereoscopicOverride = windowValue.stereoscopicOverride
             video3DSettings = windowValue.video3DSettings
             startAutoHideTimer()
-            lockWindowToVideoAspectRatio()
         }
         .onDisappear {
             cancelAutoHideTimer()
@@ -207,14 +209,15 @@ struct VideoWindowView: View {
 
     // MARK: - Window Aspect Ratio
 
-    private func lockWindowToVideoAspectRatio() {
-        guard let sourceWidth = video.sourceWidth, sourceWidth > 0,
-              let sourceHeight = video.sourceHeight, sourceHeight > 0,
+    /// Lock the window's resize aspect ratio to the video's native dimensions
+    /// (reported by the HTML video element's loadedmetadata event).
+    private func lockWindowToVideoAspectRatio(videoSize: CGSize) {
+        guard videoSize.width > 0, videoSize.height > 0,
               let windowScene = UIApplication.shared.connectedScenes
                 .compactMap({ $0 as? UIWindowScene })
                 .first(where: { $0.activationState == .foregroundActive }) else { return }
 
-        let videoAspectRatio = CGFloat(sourceWidth) / CGFloat(sourceHeight)
+        let videoAspectRatio = videoSize.width / videoSize.height
         let videoWidth: CGFloat = 1200
         let videoHeight = videoWidth / videoAspectRatio
         let totalHeight = videoHeight + ornamentBottomPadding

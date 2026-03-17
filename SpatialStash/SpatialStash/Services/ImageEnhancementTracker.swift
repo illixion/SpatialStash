@@ -23,10 +23,12 @@ actor ImageEnhancementTracker {
     private let lastModeKey = "spatial3DLastViewingMode"
     private let flippedKey = "imageFlippedState"
     private let resolutionOverrideKey = "imageResolutionOverride"
+    private let windowSizeKey = "imageWindowSize"
     private var convertedImageURLs: Set<String>
     private var lastViewingModeByURL: [String: String]
     private var flippedByURL: Set<String>
     private var resolutionOverrideByURL: [String: Int]
+    private var windowSizeByURL: [String: [Double]]
 
     private init() {
         if let saved = UserDefaults.standard.array(forKey: userDefaultsKey) as? [String] {
@@ -54,6 +56,12 @@ actor ImageEnhancementTracker {
         } else {
             resolutionOverrideByURL = [:]
         }
+
+        if let dict = UserDefaults.standard.dictionary(forKey: windowSizeKey) as? [String: [Double]] {
+            windowSizeByURL = dict
+        } else {
+            windowSizeByURL = [:]
+        }
     }
 
     /// Mark an image as having been converted to spatial 3D
@@ -80,6 +88,7 @@ actor ImageEnhancementTracker {
         lastViewingModeByURL.removeAll()
         flippedByURL.removeAll()
         resolutionOverrideByURL.removeAll()
+        windowSizeByURL.removeAll()
         save()
     }
 
@@ -93,17 +102,18 @@ actor ImageEnhancementTracker {
         UserDefaults.standard.set(lastViewingModeByURL, forKey: lastModeKey)
         UserDefaults.standard.set(Array(flippedByURL), forKey: flippedKey)
         UserDefaults.standard.set(resolutionOverrideByURL, forKey: resolutionOverrideKey)
+        UserDefaults.standard.set(windowSizeByURL, forKey: windowSizeKey)
     }
 
     // MARK: - Backup Export / Import
 
     /// Export all tracking data for backup
-    func exportData() -> (convertedURLs: [String], lastViewingModes: [String: String], flippedURLs: [String], resolutionOverrides: [String: Int]) {
-        return (Array(convertedImageURLs), lastViewingModeByURL, Array(flippedByURL), resolutionOverrideByURL)
+    func exportData() -> (convertedURLs: [String], lastViewingModes: [String: String], flippedURLs: [String], resolutionOverrides: [String: Int], windowSizes: [String: [Double]]) {
+        return (Array(convertedImageURLs), lastViewingModeByURL, Array(flippedByURL), resolutionOverrideByURL, windowSizeByURL)
     }
 
     /// Import tracking data from backup, replacing current data
-    func importData(convertedURLs: [String], lastViewingModes: [String: String], flippedURLs: [String]? = nil, resolutionOverrides: [String: Int]? = nil) {
+    func importData(convertedURLs: [String], lastViewingModes: [String: String], flippedURLs: [String]? = nil, resolutionOverrides: [String: Int]? = nil, windowSizes: [String: [Double]]? = nil) {
         convertedImageURLs = Set(convertedURLs)
         lastViewingModeByURL = lastViewingModes
         if let flippedURLs {
@@ -111,6 +121,9 @@ actor ImageEnhancementTracker {
         }
         if let resolutionOverrides {
             resolutionOverrideByURL = resolutionOverrides
+        }
+        if let windowSizes {
+            windowSizeByURL = windowSizes
         }
         save()
     }
@@ -157,5 +170,24 @@ actor ImageEnhancementTracker {
 
     func resolutionOverride(url: URL) -> Int? {
         resolutionOverrideByURL[url.absoluteString]
+    }
+
+    // MARK: - Window Size Tracking
+
+    func setWindowSize(url: URL, size: CGSize) {
+        let urlString = url.absoluteString
+        windowSizeByURL[urlString] = [size.width, size.height]
+        save()
+    }
+
+    func windowSize(url: URL) -> CGSize? {
+        guard let pair = windowSizeByURL[url.absoluteString],
+              pair.count == 2 else { return nil }
+        return CGSize(width: pair[0], height: pair[1])
+    }
+
+    func removeWindowSize(url: URL) {
+        windowSizeByURL.removeValue(forKey: url.absoluteString)
+        save()
     }
 }

@@ -23,30 +23,31 @@ struct PhotoWindowView: View {
 
     var body: some View {
         PhotoDisplayView(windowModel: windowModel, enableSwipeNavigation: true)
-            .persistentSystemOverlays(windowModel.isWindowControlsHidden ? .hidden : .visible)
-            .ornament(
-                visibility: windowModel.isUIHidden ? .hidden : .visible,
-                attachmentAnchor: .scene(.bottomFront),
-                ornament: {
-                    PhotoOrnamentView(
-                        windowModel: windowModel,
-                        context: .standalone,
-                        onGalleryButtonTap: {
-                            if windowModel.isSlideshowActive {
-                                windowModel.stopSlideshow()
-                            }
-                            appModel.showMainWindow(openWindow: openWindow)
-                        },
-                        extraButtons: { EmptyView() }
-                    )
-                }
-            )
-            .onAppear {
-                windowModel.start()
-                windowModel.startAutoHideTimer()
+        .persistentSystemOverlays(windowModel.isWindowControlsHidden ? .hidden : .visible)
+        .ornament(
+            visibility: windowModel.isUIHidden ? .hidden : .visible,
+            attachmentAnchor: .scene(.bottomFront),
+            contentAlignment: .top,
+            ornament: {
+                PhotoOrnamentView(
+                    windowModel: windowModel,
+                    context: .standalone,
+                    onGalleryButtonTap: {
+                        if windowModel.isSlideshowActive {
+                            windowModel.stopSlideshow()
+                        }
+                        appModel.showMainWindow(openWindow: openWindow)
+                    },
+                    extraButtons: { EmptyView() }
+                )
             }
-            .onDisappear {
-                windowModel.cleanup()
-            }
+        )
+        .onAppear {
+            windowModel.start()
+            windowModel.startAutoHideTimer()
+        }
+        .onDisappear {
+            windowModel.cleanup()
+        }
     }
 }

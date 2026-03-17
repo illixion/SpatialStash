@@ -15,15 +15,21 @@ struct WebVideoPlayerView: UIViewRepresentable {
     /// Whether the window is in the user's current room. When false, auto-resume
     /// is suppressed and the video is paused to save resources.
     var isRoomActive: Bool = true
+    /// Called once when the video's native dimensions become known (from the HTML video element's loadedmetadata event).
+    var onVideoSizeKnown: ((CGSize) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
     }
 
     func makeUIView(context: Context) -> WKWebView {
+        let coordinator = context.coordinator
+        coordinator.onVideoSizeKnown = onVideoSizeKnown
+
         let configuration = WKWebViewConfiguration()
         configuration.allowsInlineMediaPlayback = true
         configuration.mediaTypesRequiringUserActionForPlayback = []
+        configuration.userContentController.add(coordinator, name: "videoDimensions")
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.isOpaque = false
@@ -36,10 +42,12 @@ struct WebVideoPlayerView: UIViewRepresentable {
 
     func updateUIView(_ webView: WKWebView, context: Context) {
         let coordinator = context.coordinator
+        coordinator.onVideoSizeKnown = onVideoSizeKnown
 
         // Only reload the page when the video URL changes
         if coordinator.loadedURL != videoURL {
             coordinator.loadedURL = videoURL
+            coordinator.resetForNewVideo()
             if videoURL.isFileURL {
                 loadLocalVideo(webView: webView, coordinator: coordinator, fileURL: videoURL)
             } else {
@@ -71,6 +79,8 @@ struct WebVideoPlayerView: UIViewRepresentable {
     }
 
     static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: "videoDimensions")
+        coordinator.onVideoSizeKnown = nil
         coordinator.cleanupHTMLFile()
     }
 
@@ -91,16 +101,34 @@ struct WebVideoPlayerView: UIViewRepresentable {
         webView.loadFileURL(htmlFile, allowingReadAccessTo: videoDir)
     }
 
-    class Coordinator {
+    class Coordinator: NSObject, WKScriptMessageHandler {
         var htmlFileURL: URL?
         var loadedURL: URL?
         var lastShowControls: Bool?
         var lastIsRoomActive: Bool?
+        var onVideoSizeKnown: ((CGSize) -> Void)?
+        /// Prevents firing the callback more than once per video load
+        private var didReportSize: Bool = false
 
         func cleanupHTMLFile() {
             guard let url = htmlFileURL else { return }
             try? FileManager.default.removeItem(at: url)
             htmlFileURL = nil
+        }
+
+        func resetForNewVideo() {
+            didReportSize = false
+        }
+
+        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard message.name == "videoDimensions",
+                  let body = message.body as? [String: Any],
+                  let width = body["width"] as? Double,
+                  let height = body["height"] as? Double,
+                  width > 0, height > 0,
+                  !didReportSize else { return }
+            didReportSize = true
+            onVideoSizeKnown?(CGSize(width: width, height: height))
         }
     }
 
@@ -200,6 +228,16 @@ struct WebVideoPlayerView: UIViewRepresentable {
                     // Only act if the video isn't playing
                     if (video.paused && video.readyState < 3) {
                         reloadVideo();
+                    }
+                });
+
+                // Report native video dimensions to Swift once metadata is loaded
+                video.addEventListener('loadedmetadata', function() {
+                    if (video.videoWidth > 0 && video.videoHeight > 0 && window.webkit && window.webkit.messageHandlers.videoDimensions) {
+                        window.webkit.messageHandlers.videoDimensions.postMessage({
+                            width: video.videoWidth,
+                            height: video.videoHeight
+                        });
                     }
                 });
 
