@@ -137,14 +137,14 @@ struct VisualAdjustmentsPopover: View {
             adjustmentSlider(
                 label: "Contrast",
                 value: $currentAdjustments.contrast,
-                range: 0.3...3.0,
+                range: 0.2...5.0,
                 defaultValue: 1.0
             )
 
             adjustmentSlider(
                 label: "Saturation",
                 value: $currentAdjustments.saturation,
-                range: 0.0...3.0,
+                range: 0.0...5.0,
                 defaultValue: 1.0
             )
 
