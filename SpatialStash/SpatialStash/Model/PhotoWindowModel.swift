@@ -213,6 +213,7 @@ class PhotoWindowModel {
                 // Tier 1: in-memory (instant toggle-back)
                 preAutoEnhanceDisplayTexture = displayTexture
                 displayTexture = cached
+                imageAspectRatio = CGFloat(cached.width) / CGFloat(cached.height)
                 currentAdjustments.isAutoEnhanced = true
                 await trackAutoEnhanceState()
             } else if let cachedData = await AutoEnhanceCache.shared.loadData(for: imageURL),
@@ -1654,6 +1655,7 @@ class PhotoWindowModel {
             if let cached = backgroundRemovedTexture {
                 originalDisplayTexture = displayTexture
                 displayTexture = cached
+                imageAspectRatio = CGFloat(cached.width) / CGFloat(cached.height)
                 backgroundRemovalState = .removed
             } else {
                 // Then check persistent cache (full-res version)
@@ -1850,6 +1852,7 @@ class PhotoWindowModel {
         }
         if let original = originalDisplayTexture {
             displayTexture = original
+            imageAspectRatio = CGFloat(original.width) / CGFloat(original.height)
         } else {
             // Auto-restore case: originalDisplayTexture was nil because displayTexture hadn't loaded yet
             // when background removal ran. Clear displayTexture so PhotoDisplayView triggers a fresh load.
