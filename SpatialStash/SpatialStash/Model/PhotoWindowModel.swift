@@ -513,6 +513,12 @@ class PhotoWindowModel {
     /// Prevents memory-pressure from immediately re-downscaling this window.
     private(set) var isRestoringFromIdle: Bool = false
 
+    /// State captured before idle downscale so restore can skip the full
+    /// auto-restore pipeline and directly reload from cache.
+    private var hadBackgroundRemoval: Bool = false
+    private var had3DMode: Bool = false
+    private var hadAutoEnhance: Bool = false
+
     /// Max dimension used for idle-downscaled thumbnail display
     private static let idleDownscaleDimension: CGFloat = 256
 
@@ -1022,6 +1028,12 @@ class PhotoWindowModel {
 
         AppLogger.photoWindow.info("Releasing memory for idle downscale")
 
+        // Snapshot current enhancement state so restore can skip the full
+        // auto-restore pipeline and directly reload from cache
+        hadBackgroundRemoval = backgroundRemovalState == .removed
+        had3DMode = is3DMode
+        hadAutoEnhance = currentAdjustments.isAutoEnhanced
+
         // If in 3D mode, release RealityKit textures (GPU memory)
         if is3DMode {
             // Cancel any in-progress 3D generation first (RealityKit crashes otherwise)
@@ -1100,7 +1112,10 @@ class PhotoWindowModel {
         isRestoringFromIdle = true
         isIdleDownscaled = false
         currentDisplayMaxDimension = 0
-        isLoadingDetailImage = true
+
+        // Don't set isLoadingDetailImage — that triggers the ornament
+        // show/auto-hide cycle via PhotoDisplayView's onChange observer.
+        // Idle restore is not a user-initiated open.
 
         // Update interaction time so this window isn't the oldest LRU target
         // if memory pressure fires during the restore
@@ -1108,10 +1123,32 @@ class PhotoWindowModel {
 
         let windowSize = lastWindowSize ?? appModel.mainWindowSize
 
-        // Reload raw data and display image via the standard path
-        await loadImageDataForDetail(url: imageURL)
+        // Reload raw data without triggering the full auto-restore pipeline.
+        // We use the saved pre-downscale state to restore enhancements directly.
+        await loadImageDataForDetail(url: imageURL, autoRestore: false)
 
-        if !isAnimatedGIF && !is3DMode && backgroundRemovalState == .original {
+        if had3DMode {
+            // Re-activate 3D mode without the full activate3DMode() flow
+            // (which calls recordInteraction, clearBackgroundRemovalState, etc.)
+            is3DMode = true
+            pendingGenerate3D = true
+            // RealityView's init closure will consume pendingGenerate3D
+        } else if hadBackgroundRemoval {
+            // Load background-removed image directly from disk cache
+            if let cachedData = await BackgroundRemovalCache.shared.loadData(for: imageURL),
+               let cachedImage = UIImage(data: cachedData) {
+                await applyDownscaledCachedBackgroundRemoval(cachedImage)
+            } else {
+                // Cache miss — fall back to standard 2D load
+                await loadDisplayImage(for: windowSize)
+            }
+        } else if hadAutoEnhance {
+            // Load base display image first, then re-apply auto-enhance
+            currentAdjustments.isAutoEnhanced = false
+            await loadDisplayImage(for: windowSize)
+            await toggleAutoEnhance()
+        } else if !isAnimatedGIF {
+            // Standard 2D image — just reload at correct resolution
             await loadDisplayImage(for: windowSize)
         }
 
@@ -1123,16 +1160,6 @@ class PhotoWindowModel {
             }
         }
 
-        // Restore visual adjustments (re-processes auto-enhance if needed)
-        if currentAdjustments.isAutoEnhanced && !is3DMode && !isAnimatedGIF {
-            let wasAutoEnhanced = currentAdjustments.isAutoEnhanced
-            currentAdjustments.isAutoEnhanced = false
-            if wasAutoEnhanced {
-                await toggleAutoEnhance()
-            }
-        }
-
-        isLoadingDetailImage = false
         isRestoringFromIdle = false
     }
 
