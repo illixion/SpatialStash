@@ -78,7 +78,7 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
             extraButtons()
 
             // Resolution indicator (only in lightweight 2D mode with a loaded image)
-            if !windowModel.isRealityKitDisplay, !windowModel.isAnimatedGIF, windowModel.displayImage != nil {
+            if !windowModel.isRealityKitDisplay, !windowModel.isAnimatedGIF, windowModel.displayTexture != nil || windowModel.displayImage != nil {
                 resolutionMenu
             }
         }

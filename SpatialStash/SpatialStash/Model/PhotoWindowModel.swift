@@ -11,6 +11,7 @@
  */
 
 import ImageIO
+import Metal
 import os
 import RealityKit
 import SwiftUI
@@ -31,7 +32,12 @@ class PhotoWindowModel {
 
     // MARK: - 2D Display Image State
 
-    /// Downsampled UIImage for lightweight 2D display (nil when in 3D mode)
+    /// GPU-private texture for lightweight 2D display (nil when in 3D mode).
+    /// Preferred over displayImage — lives in GPU memory, not counted as dirty CPU pages.
+    var displayTexture: MTLTexture? = nil
+
+    /// Downsampled UIImage for lightweight 2D display.
+    /// Only used as a fallback for idle-downscale thumbnails and 3D adjustment previews.
     var displayImage: UIImage? = nil
 
     /// Whether the window is showing the RealityKit 3D view
@@ -84,11 +90,11 @@ class PhotoWindowModel {
     /// Current state of background removal processing
     var backgroundRemovalState: BackgroundRemovalState = .original
 
-    /// The original display image before background removal (stored for toggle-back)
-    private var originalDisplayImage: UIImage? = nil
+    /// The original display texture before background removal (stored for toggle-back)
+    private var originalDisplayTexture: MTLTexture? = nil
 
-    /// The background-removed version of the display image (cached for re-toggle)
-    private var backgroundRemovedImage: UIImage? = nil
+    /// The background-removed version as a GPU texture (cached for re-toggle)
+    private var backgroundRemovedTexture: MTLTexture? = nil
 
     /// Task for background removal (tracked so cleanup can cancel it)
     private var backgroundRemovalTask: Task<Void, Never>?
@@ -98,11 +104,11 @@ class PhotoWindowModel {
     /// Per-image visual adjustments (Current tab values)
     var currentAdjustments: VisualAdjustments = VisualAdjustments()
 
-    /// In-memory display-resolution auto-enhanced image (for fast toggle-back)
-    private var autoEnhancedDisplayImage: UIImage? = nil
+    /// In-memory display-resolution auto-enhanced texture (for fast toggle-back)
+    private var autoEnhancedDisplayTexture: MTLTexture? = nil
 
-    /// The original display image before auto-enhance was applied (for toggle-back)
-    private var preAutoEnhanceDisplayImage: UIImage? = nil
+    /// The original display texture before auto-enhance was applied (for toggle-back)
+    private var preAutoEnhanceDisplayTexture: MTLTexture? = nil
 
     /// Whether auto-enhance is currently being processed
     var isProcessingAutoEnhance: Bool = false
@@ -180,9 +186,9 @@ class PhotoWindowModel {
     func resetCurrentAdjustments() {
         recordInteraction()
         currentAdjustments = VisualAdjustments()
-        if autoEnhancedDisplayImage != nil {
+        if autoEnhancedDisplayTexture != nil {
             // Restore the non-enhanced display image
-            autoEnhancedDisplayImage = nil
+            autoEnhancedDisplayTexture = nil
             currentDisplayMaxDimension = 0
             if !is3DMode, !isAnimatedGIF, let windowSize = lastWindowSize {
                 Task { await loadDisplayImage(for: windowSize) }
@@ -203,10 +209,10 @@ class PhotoWindowModel {
             restoreFromAutoEnhance()
         } else {
             // Turn on: 3-tier cache lookup (in-memory → disk → on-demand)
-            if let cached = autoEnhancedDisplayImage {
+            if let cached = autoEnhancedDisplayTexture {
                 // Tier 1: in-memory (instant toggle-back)
-                preAutoEnhanceDisplayImage = displayImage
-                displayImage = cached
+                preAutoEnhanceDisplayTexture = displayTexture
+                displayTexture = cached
                 currentAdjustments.isAutoEnhanced = true
                 await trackAutoEnhanceState()
             } else if let cachedData = await AutoEnhanceCache.shared.loadData(for: imageURL),
@@ -227,13 +233,15 @@ class PhotoWindowModel {
     private func applyDownscaledAutoEnhance(_ fullResImage: UIImage) async {
         isProcessingAutoEnhance = true
 
-        let downscaled = await downscaleForDisplay(fullResImage)
+        let texture = await downscaleAndUploadTexture(fullResImage)
 
-        autoEnhancedDisplayImage = downscaled
-        preAutoEnhanceDisplayImage = displayImage
-        if !is3DMode, !isAnimatedGIF {
-            displayImage = downscaled
-            imageAspectRatio = downscaled.size.width / downscaled.size.height
+        autoEnhancedDisplayTexture = texture
+        preAutoEnhanceDisplayTexture = displayTexture
+        if !is3DMode, !isAnimatedGIF, let texture {
+            displayTexture = texture
+            let w = CGFloat(texture.width)
+            let h = CGFloat(texture.height)
+            imageAspectRatio = w / h
         }
         currentAdjustments.isAutoEnhanced = true
         isProcessingAutoEnhance = false
@@ -277,14 +285,16 @@ class PhotoWindowModel {
         // Cache full-resolution result to disk
         await AutoEnhanceCache.shared.saveImage(enhanced, for: imageURL)
 
-        // Downscale for display
-        let downscaled = await downscaleForDisplay(enhanced)
+        // Downscale and upload to GPU texture
+        let texture = await downscaleAndUploadTexture(enhanced)
 
-        autoEnhancedDisplayImage = downscaled
-        preAutoEnhanceDisplayImage = displayImage
-        if !is3DMode, !isAnimatedGIF {
-            displayImage = downscaled
-            imageAspectRatio = downscaled.size.width / downscaled.size.height
+        autoEnhancedDisplayTexture = texture
+        preAutoEnhanceDisplayTexture = displayTexture
+        if !is3DMode, !isAnimatedGIF, let texture {
+            displayTexture = texture
+            let w = CGFloat(texture.width)
+            let h = CGFloat(texture.height)
+            imageAspectRatio = w / h
         }
         currentAdjustments.isAutoEnhanced = true
         isProcessingAutoEnhance = false
@@ -296,12 +306,14 @@ class PhotoWindowModel {
     /// Restore the original (non-enhanced) display image.
     private func restoreFromAutoEnhance() {
         currentAdjustments.isAutoEnhanced = false
-        if let original = preAutoEnhanceDisplayImage {
-            displayImage = original
-            imageAspectRatio = original.size.width / original.size.height
+        if let original = preAutoEnhanceDisplayTexture {
+            displayTexture = original
+            let w = CGFloat(original.width)
+            let h = CGFloat(original.height)
+            imageAspectRatio = w / h
         } else {
             // Edge case: no original stored (e.g. auto-restored on open)
-            displayImage = nil
+            displayTexture = nil
             if let windowSize = lastWindowSize {
                 isLoadingDetailImage = true
                 Task { await loadDisplayImage(for: windowSize) }
@@ -330,15 +342,17 @@ class PhotoWindowModel {
             return
         }
 
-        let downscaled = await downscaleForDisplay(fullResImage)
-        autoEnhancedDisplayImage = downscaled
-        displayImage = downscaled
-        imageAspectRatio = downscaled.size.width / downscaled.size.height
+        let texture = await downscaleAndUploadTexture(fullResImage)
+        autoEnhancedDisplayTexture = texture
+        displayTexture = texture
+        if let texture {
+            imageAspectRatio = CGFloat(texture.width) / CGFloat(texture.height)
+        }
     }
 
     private func clearAutoEnhanceState() {
-        autoEnhancedDisplayImage = nil
-        preAutoEnhanceDisplayImage = nil
+        autoEnhancedDisplayTexture = nil
+        preAutoEnhanceDisplayTexture = nil
         isProcessingAutoEnhance = false
     }
 
@@ -490,6 +504,7 @@ class PhotoWindowModel {
             // Switch back to 3D mode — RealityView will be recreated.
             // For identity adjustments, the RealityView init calls createImagePresentationComponent().
             // For non-identity, the component is already set on contentEntity above.
+            self.displayTexture = nil
             self.displayImage = nil
             self.isShowingAdjustmentPreview = false
             self.is3DMode = true
@@ -920,20 +935,21 @@ class PhotoWindowModel {
         }
 
         // Skip if already loaded at a similar resolution (within 20%)
-        if displayImage != nil, currentDisplayMaxDimension > 0 {
+        if displayTexture != nil, currentDisplayMaxDimension > 0 {
             let ratio = targetDimension / currentDisplayMaxDimension
             if ratio > 0.8 && ratio < 1.2 {
                 return
             }
         }
 
-        // Downsample off main thread to avoid blocking UI
-        let image = await Task.detached { [sourceURL, targetDimension] in
-            ThumbnailGenerator.shared.downsampleImage(at: sourceURL, maxDimension: targetDimension)
+        // Downsample and upload to GPU texture off main thread
+        let sendable = await Task.detached { [sourceURL, targetDimension] () -> SendableTexture? in
+            guard let tex = MetalImageRenderer.shared?.createTexture(from: sourceURL, maxDimension: targetDimension) else { return nil }
+            return SendableTexture(texture: tex)
         }.value
 
-        guard let image else {
-            AppLogger.photoWindow.warning("Failed to downsample image for display")
+        guard let texture = sendable?.texture else {
+            AppLogger.photoWindow.warning("Failed to create display texture for image")
             isLoadingDetailImage = false
             return
         }
@@ -945,8 +961,8 @@ class PhotoWindowModel {
             return
         }
 
-        displayImage = image
-        imageAspectRatio = image.size.width / image.size.height
+        displayTexture = texture
+        imageAspectRatio = CGFloat(texture.width) / CGFloat(texture.height)
         currentDisplayMaxDimension = targetDimension
         isLoadingDetailImage = false
     }
@@ -980,7 +996,7 @@ class PhotoWindowModel {
             guard !self.is3DMode, !self.isAnimatedGIF else { return }
             guard !self.isLoadingDetailImage, !self.isLoadingDisplayImage else { return }
             guard !self.isInitialLoadInProgress else { return }
-            guard self.displayImage != nil else { return }
+            guard self.displayTexture != nil || self.displayImage != nil else { return }
 
             if self.backgroundRemovalState == .removed {
                 await self.reloadBackgroundRemovedAtCurrentResolution()
@@ -1055,9 +1071,13 @@ class PhotoWindowModel {
         // Release raw image data (can be reloaded from disk cache)
         currentImageData = nil
 
-        // Release current display image to free decoded bitmap memory
+        // Release GPU textures and CPU display images to free memory
+        displayTexture = nil
         displayImage = nil
-        autoEnhancedDisplayImage = nil
+        autoEnhancedDisplayTexture = nil
+        preAutoEnhanceDisplayTexture = nil
+        originalDisplayTexture = nil
+        backgroundRemovedTexture = nil
 
         // For GIFs, release HEVC converted data too
         if isAnimatedGIF {
@@ -1281,6 +1301,7 @@ class PhotoWindowModel {
             if desiredViewingMode != .spatial3DImmersive {
                 desiredViewingMode = .mono
             }
+            displayTexture = nil
             displayImage = nil
             isLoadingDetailImage = false
             return
@@ -1349,6 +1370,7 @@ class PhotoWindowModel {
         // The raw data can be reloaded from disk cache if needed (e.g. switching
         // back to 2D mode), but keeping it in RAM wastes dirty memory while the
         // GPU texture is resident.
+        displayTexture = nil
         displayImage = nil
         currentImageData = nil
 
@@ -1508,6 +1530,9 @@ class PhotoWindowModel {
     /// The current display resolution in pixels (longest edge of the displayed image).
     /// Returns 0 when no display image is loaded (e.g., in 3D mode or loading).
     var currentDisplayResolution: Int {
+        if let texture = displayTexture {
+            return max(texture.width, texture.height)
+        }
         guard let image = displayImage else { return 0 }
         return Int(max(image.size.width, image.size.height))
     }
@@ -1626,9 +1651,9 @@ class PhotoWindowModel {
         switch backgroundRemovalState {
         case .original:
             // First check in-memory cache
-            if let cached = backgroundRemovedImage {
-                originalDisplayImage = displayImage
-                displayImage = cached
+            if let cached = backgroundRemovedTexture {
+                originalDisplayTexture = displayTexture
+                displayTexture = cached
                 backgroundRemovalState = .removed
             } else {
                 // Then check persistent cache (full-res version)
@@ -1684,13 +1709,15 @@ class PhotoWindowModel {
                     // Cache the full-resolution background-removed image
                     await BackgroundRemovalCache.shared.saveImage(processed, for: self.imageURL)
 
-                    // Now downscale the result for display
-                    let displayImage = await self.downscaleForDisplay(processed)
+                    // Downscale and upload to GPU texture
+                    let texture = await self.downscaleAndUploadTexture(processed)
 
-                    self.backgroundRemovedImage = displayImage
-                    self.originalDisplayImage = self.displayImage
-                    self.displayImage = displayImage
-                    self.imageAspectRatio = displayImage.size.width / displayImage.size.height
+                    self.backgroundRemovedTexture = texture
+                    self.originalDisplayTexture = self.displayTexture
+                    self.displayTexture = texture
+                    if let texture {
+                        self.imageAspectRatio = CGFloat(texture.width) / CGFloat(texture.height)
+                    }
                     self.backgroundRemovalState = .removed
 
                     await self.trackViewingMode(.backgroundRemoved)
@@ -1718,18 +1745,20 @@ class PhotoWindowModel {
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
 
-            // Downscale the full-res cached version for display
-            let displayImage = await self.downscaleForDisplay(fullResImage)
+            // Downscale and upload to GPU texture
+            let texture = await self.downscaleAndUploadTexture(fullResImage)
 
             guard !Task.isCancelled else {
                 self.backgroundRemovalState = .original
                 return
             }
 
-            self.backgroundRemovedImage = displayImage
-            self.originalDisplayImage = self.displayImage
-            self.displayImage = displayImage
-            self.imageAspectRatio = displayImage.size.width / displayImage.size.height
+            self.backgroundRemovedTexture = texture
+            self.originalDisplayTexture = self.displayTexture
+            self.displayTexture = texture
+            if let texture {
+                self.imageAspectRatio = CGFloat(texture.width) / CGFloat(texture.height)
+            }
             self.backgroundRemovalState = .removed
 
             await self.trackViewingMode(.backgroundRemoved)
@@ -1783,6 +1812,17 @@ class PhotoWindowModel {
         }
     }
 
+    /// Downscale a UIImage for display and upload directly to a GPU-private texture.
+    /// The intermediate UIImage is freed after upload, keeping only the GPU texture alive.
+    private func downscaleAndUploadTexture(_ image: UIImage) async -> MTLTexture? {
+        let downscaled = await downscaleForDisplay(image)
+        let sendable = await Task.detached {
+            guard let tex = MetalImageRenderer.shared?.createTexture(from: downscaled) else { return nil as SendableTexture? }
+            return SendableTexture(texture: tex)
+        }.value
+        return sendable?.texture
+    }
+
     /// Reload the background-removed image at the current effective resolution.
     /// Fetches the full-res cached version from disk and re-downscales it.
     private func reloadBackgroundRemovedAtCurrentResolution() async {
@@ -1795,10 +1835,12 @@ class PhotoWindowModel {
             return
         }
 
-        let downscaled = await downscaleForDisplay(fullResImage)
-        backgroundRemovedImage = downscaled
-        displayImage = downscaled
-        imageAspectRatio = downscaled.size.width / downscaled.size.height
+        let texture = await downscaleAndUploadTexture(fullResImage)
+        backgroundRemovedTexture = texture
+        displayTexture = texture
+        if let texture {
+            imageAspectRatio = CGFloat(texture.width) / CGFloat(texture.height)
+        }
     }
 
     private func restoreOriginalBackground() {
@@ -1806,12 +1848,12 @@ class PhotoWindowModel {
         Task {
             await trackViewingMode(currentAdjustments.isAutoEnhanced ? .autoEnhanced : .mono)
         }
-        if let original = originalDisplayImage {
-            displayImage = original
+        if let original = originalDisplayTexture {
+            displayTexture = original
         } else {
-            // Auto-restore case: originalDisplayImage was nil because displayImage hadn't loaded yet
-            // when background removal ran. Clear displayImage so PhotoDisplayView triggers a fresh load.
-            displayImage = nil
+            // Auto-restore case: originalDisplayTexture was nil because displayTexture hadn't loaded yet
+            // when background removal ran. Clear displayTexture so PhotoDisplayView triggers a fresh load.
+            displayTexture = nil
             if let windowSize = lastWindowSize {
                 isLoadingDetailImage = true
                 Task { await loadDisplayImage(for: windowSize) }
@@ -1823,8 +1865,8 @@ class PhotoWindowModel {
         backgroundRemovalTask?.cancel()
         backgroundRemovalTask = nil
         backgroundRemovalState = .original
-        originalDisplayImage = nil
-        backgroundRemovedImage = nil
+        originalDisplayTexture = nil
+        backgroundRemovedTexture = nil
     }
 
     // MARK: - Share
@@ -1996,6 +2038,7 @@ class PhotoWindowModel {
         isAnimatedGIF = false
         currentImageData = nil
         gifHEVCURL = nil
+        displayTexture = nil
         displayImage = nil
         nativeImageDimensions = nil
         currentDisplayMaxDimension = 0
@@ -2176,6 +2219,7 @@ class PhotoWindowModel {
         // Release image data
         currentImageData = nil
         gifHEVCURL = nil
+        displayTexture = nil
         displayImage = nil
         isShowingAdjustmentPreview = false
         clearAutoEnhanceState()

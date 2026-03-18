@@ -70,7 +70,7 @@ struct PhotoDisplayView: View {
                         viewerWindowSize = geo.size
                         containerWidth = geo.size.width
                         // If image is already loaded but window may be mis-sized (restoration case)
-                        if windowModel.displayImage != nil || windowModel.isAnimatedGIF || windowModel.is3DMode {
+                        if windowModel.displayTexture != nil || windowModel.displayImage != nil || windowModel.isAnimatedGIF || windowModel.is3DMode {
                             scheduleWindowSizeVerification()
                         }
                     }
@@ -258,8 +258,40 @@ struct PhotoDisplayView: View {
                 cornerRadius: (appModel.roundedCorners && !windowModel.isViewingSpatial3DImmersive) ? 50 : 0,
                 style: .continuous
             ))
+        } else if let texture = windowModel.displayTexture {
+            // GPU-backed 2D display using Metal (texture lives in GPU private memory,
+            // not counted as dirty CPU pages — reduces jetsam pressure significantly)
+            MetalImageView(
+                texture: texture,
+                brightness: Float(windowModel.effectiveAdjustments.brightness),
+                contrast: Float(windowModel.effectiveAdjustments.contrast),
+                saturation: Float(windowModel.effectiveAdjustments.saturation)
+            )
+            .aspectRatio(windowModel.imageAspectRatio, contentMode: .fit)
+            .clipShape(RoundedRectangle(cornerRadius: appModel.roundedCorners ? 50 : 0, style: .continuous))
+            .contentShape(.rect)
+            .onTapGesture {
+                windowModel.toggleUIVisibility()
+            }
+            .modifier(SwipeGestureModifier(enabled: isSwipeEnabled, onEnded: handleDragEnded))
+            .onAppear {
+                setUniformResizing()
+                let initialBounds = windowModel.savedWindowSize ?? appModel.mainWindowSize
+                resizeWindowToFit(windowModel.imageAspectRatio, within: initialBounds)
+            }
+            .onChange(of: windowModel.imageAspectRatio) { _, newAspectRatio in
+                guard !suppressWindowResize else { return }
+                resizeWindowToFit(newAspectRatio, within: currentBounds)
+            }
+            .onChange(of: windowModel.isLoadingDetailImage) { wasLoading, isLoading in
+                if wasLoading && !isLoading {
+                    resizeWindowToFit(windowModel.imageAspectRatio, within: currentBounds)
+                    scheduleWindowSizeVerification()
+                }
+            }
         } else if let uiImage = windowModel.displayImage {
-            // Lightweight 2D display with downsampled UIImage (no RealityKit, low memory)
+            // Fallback: lightweight 2D display with UIImage (used for idle-downscale thumbnails
+            // and 3D adjustment previews where Metal overhead isn't justified)
             Image(uiImage: uiImage)
                 .resizable()
                 .aspectRatio(contentMode: .fit)
