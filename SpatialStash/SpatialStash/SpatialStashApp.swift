@@ -95,7 +95,7 @@ private struct MainWindowView: View {
     var body: some View {
         ContentView()
             .environment(appModel)
-            .frame(minWidth: 320, maxWidth: 2000, minHeight: 320, maxHeight: 2000)
+            .frame(minWidth: 320, maxWidth: 3000, minHeight: 320, maxHeight: 3000)
             .onAppear {
                 if appModel.isMainWindowOpen {
                     let timeSinceLaunch = Date().timeIntervalSince(appModel.launchTime)
