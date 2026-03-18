@@ -88,7 +88,7 @@ actor BackgroundRemovalCache {
         let fileURL = cacheFileURL(for: url)
 
         if fileManager.fileExists(atPath: fileURL.path) {
-            guard let data = try? Data(contentsOf: fileURL) else {
+            guard let data = try? Data(contentsOf: fileURL, options: .mappedIfSafe) else {
                 return nil
             }
 
@@ -107,7 +107,7 @@ actor BackgroundRemovalCache {
 
         let legacyURL = legacyCacheFileURL(for: url)
         guard fileManager.fileExists(atPath: legacyURL.path),
-              let legacyData = try? Data(contentsOf: legacyURL) else {
+              let legacyData = try? Data(contentsOf: legacyURL, options: .mappedIfSafe) else {
             return nil
         }
 
@@ -344,7 +344,7 @@ actor BackgroundRemovalCache {
                 continue
             }
 
-            guard let data = try? Data(contentsOf: fileURL) else { continue }
+            guard let data = try? Data(contentsOf: fileURL, options: .mappedIfSafe) else { continue }
 
             let destinationURL = cacheDirectory.appendingPathComponent(fileURL.lastPathComponent + ".heic")
             if migrateLegacyDataToHeic(data, legacyURL: fileURL, destinationURL: destinationURL) != nil {

@@ -79,7 +79,9 @@ actor DiskImageCache {
             ofItemAtPath: fileURL.path
         )
 
-        return try? Data(contentsOf: fileURL)
+        // Use memory-mapped I/O: pages are loaded on demand and the kernel
+        // can evict them without increasing dirty memory or triggering jetsam.
+        return try? Data(contentsOf: fileURL, options: .mappedIfSafe)
     }
 
     /// Save image data to disk cache

@@ -567,6 +567,48 @@ class AppModel {
                 self.scheduleActiveRoomRestore()
             }
         }
+
+        // Finer-grained memory pressure via DispatchSource.
+        // Responds at .warning level by proactively trimming caches before
+        // the system escalates to the critical notification above. This
+        // reduces the frequency of expensive downscale-restore cycles.
+        setupMemoryPressureSource()
+    }
+
+    // MARK: - DispatchSource Memory Pressure
+
+    /// Dispatch source for system memory pressure events.
+    /// Provides finer-grained signals (.warning, .critical) than
+    /// UIApplication.didReceiveMemoryWarningNotification alone.
+    private var memoryPressureSource: (any DispatchSourceMemoryPressure)?
+
+    private func setupMemoryPressureSource() {
+        let source = DispatchSource.makeMemoryPressureSource(
+            eventMask: [.warning, .critical],
+            queue: .main
+        )
+        source.setEventHandler { [weak self] in
+            guard let self else { return }
+            let event = source.data
+
+            if event.contains(.critical) {
+                // Critical is already handled by didReceiveMemoryWarningNotification
+                // (which fires at the same threshold), so nothing extra needed here.
+                AppLogger.appModel.warning("DispatchSource: critical memory pressure")
+            } else if event.contains(.warning) {
+                // Warning fires earlier than the UIKit notification. Proactively
+                // trim the in-memory image cache to reduce dirty memory before
+                // the system escalates to critical pressure.
+                AppLogger.appModel.info("DispatchSource: warning memory pressure — trimming caches")
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    await ImageLoader.shared.clearMemoryCache()
+                    await ThumbnailCache.shared.clearMemoryCache()
+                }
+            }
+        }
+        source.resume()
+        memoryPressureSource = source
     }
 
     // MARK: - Memory Pressure Active-Room Restore

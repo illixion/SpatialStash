@@ -50,20 +50,23 @@ actor ImageLoader {
             return image
         }
 
-        // Redraw the image in a new graphics context with a compatible pixel format
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = image.scale
-        format.opaque = false
+        // autoreleasepool ensures the intermediate graphics context and
+        // temporary CGImage copies are drained immediately rather than
+        // accumulating until the next event-loop drain.
+        return autoreleasepool {
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = image.scale
+            format.opaque = false
 
-        let renderer = UIGraphicsImageRenderer(
-            size: CGSize(width: cgImage.width, height: cgImage.height),
-            format: format
-        )
+            let renderer = UIGraphicsImageRenderer(
+                size: CGSize(width: cgImage.width, height: cgImage.height),
+                format: format
+            )
 
-        return renderer.image { context in
-            // Draw the original image into the new context
-            UIImage(cgImage: cgImage, scale: 1.0, orientation: image.imageOrientation)
-                .draw(in: CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height))
+            return renderer.image { context in
+                UIImage(cgImage: cgImage, scale: 1.0, orientation: image.imageOrientation)
+                    .draw(in: CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height))
+            }
         }
     }
 
@@ -214,9 +217,9 @@ actor ImageLoader {
             return cached.data
         }
 
-        // Handle local file URLs directly
+        // Handle local file URLs directly (memory-mapped to reduce dirty memory)
         if url.isFileURL {
-            return try Data(contentsOf: url)
+            return try Data(contentsOf: url, options: .mappedIfSafe)
         }
 
         // Check disk cache for remote URLs
@@ -314,8 +317,9 @@ actor ImageLoader {
 
     /// Load image from a local file URL
     private func loadLocalImageWithData(from url: URL) async throws -> (image: UIImage, data: Data)? {
-        // Read data from local file
-        let data = try Data(contentsOf: url)
+        // Memory-mapped read: pages loaded on demand, kernel can evict without
+        // increasing dirty memory or triggering jetsam pressure.
+        let data = try Data(contentsOf: url, options: .mappedIfSafe)
 
         guard let rawImage = UIImage(data: data) else {
             AppLogger.imageLoader.warning("Failed to create UIImage from local file: \(url.lastPathComponent, privacy: .private)")
@@ -381,7 +385,7 @@ actor ImageLoader {
             if isAnimated {
                 // For animated GIFs, we need the full data for playback
                 // But we can still be memory-efficient by not caching the full image
-                guard let data = try? Data(contentsOf: url) else {
+                guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else {
                     return nil
                 }
                 // Create a small preview image for non-animated display

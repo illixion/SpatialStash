@@ -1345,8 +1345,12 @@ class PhotoWindowModel {
             imageAspectRatio = CGFloat(aspectRatio)
         }
 
-        // Release 2D display image since RealityKit is rendering now
+        // Release CPU-side resources since RealityKit owns the GPU texture now.
+        // The raw data can be reloaded from disk cache if needed (e.g. switching
+        // back to 2D mode), but keeping it in RAM wastes dirty memory while the
+        // GPU texture is resident.
         displayImage = nil
+        currentImageData = nil
 
         isLoadingDetailImage = false
         // Note: Auto-generation is handled by PhotoWindowView after entity is added to scene

@@ -62,7 +62,7 @@ actor AutoEnhanceCache {
     func loadData(for url: URL) -> Data? {
         let fileURL = cacheFileURL(for: url)
         guard fileManager.fileExists(atPath: fileURL.path),
-              let data = try? Data(contentsOf: fileURL) else {
+              let data = try? Data(contentsOf: fileURL, options: .mappedIfSafe) else {
             return nil
         }
 

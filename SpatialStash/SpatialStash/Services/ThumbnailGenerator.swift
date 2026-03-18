@@ -99,31 +99,33 @@ actor ThumbnailGenerator {
 
     /// Synchronous thumbnail creation using CGImageSource
     private nonisolated func createThumbnailSync(for url: URL, maxSize: CGFloat) -> UIImage? {
-        // Create image source from file
-        guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil) else {
-            AppLogger.imageLoader.warning("Failed to create image source for thumbnail: \(url.lastPathComponent, privacy: .private)")
-            return nil
+        // autoreleasepool drains the intermediate CGImageSource and any
+        // temporary Core Graphics buffers immediately, preventing transient
+        // memory spikes when many thumbnails are generated in sequence.
+        autoreleasepool {
+            guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil) else {
+                AppLogger.imageLoader.warning("Failed to create image source for thumbnail: \(url.lastPathComponent, privacy: .private)")
+                return nil
+            }
+
+            let options: [CFString: Any] = [
+                kCGImageSourceThumbnailMaxPixelSize: maxSize,
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceShouldCacheImmediately: true
+            ]
+
+            guard let thumbnailRef = CGImageSourceCreateThumbnailAtIndex(
+                imageSource,
+                0,
+                options as CFDictionary
+            ) else {
+                AppLogger.imageLoader.warning("Failed to create thumbnail for: \(url.lastPathComponent, privacy: .private)")
+                return nil
+            }
+
+            return UIImage(cgImage: thumbnailRef)
         }
-
-        // Configure thumbnail options for memory efficiency
-        let options: [CFString: Any] = [
-            kCGImageSourceThumbnailMaxPixelSize: maxSize,
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceCreateThumbnailWithTransform: true, // Apply orientation
-            kCGImageSourceShouldCacheImmediately: true
-        ]
-
-        // Generate thumbnail - this downsamples during decode
-        guard let thumbnailRef = CGImageSourceCreateThumbnailAtIndex(
-            imageSource,
-            0,
-            options as CFDictionary
-        ) else {
-            AppLogger.imageLoader.warning("Failed to create thumbnail for: \(url.lastPathComponent, privacy: .private)")
-            return nil
-        }
-
-        return UIImage(cgImage: thumbnailRef)
     }
 
     /// Get image dimensions without loading the full image

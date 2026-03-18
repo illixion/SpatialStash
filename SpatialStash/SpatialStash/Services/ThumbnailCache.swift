@@ -83,7 +83,7 @@ actor ThumbnailCache {
         // Check disk cache
         let fileURL = cacheFileURL(for: url)
         guard fileManager.fileExists(atPath: fileURL.path),
-              let data = try? Data(contentsOf: fileURL),
+              let data = try? Data(contentsOf: fileURL, options: .mappedIfSafe),
               let image = UIImage(data: data) else {
             return nil
         }
@@ -220,6 +220,12 @@ actor ThumbnailCache {
         }
 
         AppLogger.diskCache.info("Freed \(freedSize / 1024 / 1024, privacy: .public) MB from thumbnail cache")
+    }
+
+    /// Clear only the in-memory thumbnail cache, preserving disk cache.
+    /// Called during early memory pressure to reduce dirty memory quickly.
+    func clearMemoryCache() {
+        memoryCache.removeAllObjects()
     }
 
     /// Clear entire thumbnail cache
