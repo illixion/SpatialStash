@@ -35,9 +35,9 @@ Four tabs defined in `Tab.swift`: Pictures, Videos, Filters, Settings. Tab switc
 
 ### Photo Viewer Architecture
 All three photo viewer windows share the same rendering components:
-- **PhotoDisplayView** - Shared image display handling animated GIF, RealityKit 3D, and lightweight 2D UIImage modes. Manages window sizing, swipe navigation, and resize-triggered re-downsampling.
+- **PhotoDisplayView** - Shared image display with four rendering paths (in priority order): animated GIF (HEVC video player), RealityKit 3D (`ImagePresentationComponent`), GPU-backed 2D (`MetalImageView` with `MTLTexture`), and fallback UIImage. Manages window sizing, swipe navigation, and resize-triggered re-downsampling.
 - **PhotoOrnamentView** - Unified ornament bar with `PhotoViewerContext` enum (`.pushedFromGallery`, `.standalone`, `.shared`) controlling which buttons appear.
-- **PhotoWindowModel** - Per-window state. Created with `@State` in each wrapper view.
+- **PhotoWindowModel** - Per-window state. Created with `@State` in each wrapper view. Primary display property is `displayTexture: MTLTexture?` with `displayImage: UIImage?` as fallback. Cached texture variants: `backgroundRemovedTexture`, `originalDisplayTexture`, `autoEnhancedDisplayTexture`, `preAutoEnhanceDisplayTexture`.
 
 The three thin wrapper views:
 - **PushedPictureView** - Pushed from gallery grid via `pushWindow`, dismisses back to gallery. Has pop-out button.
@@ -47,12 +47,16 @@ The three thin wrapper views:
 **Important pattern:** `PhotoWindowModel.init` must be side-effect-free because SwiftUI may re-create the view struct multiple times while `@State` discards duplicate models. All side effects (window count tracking, image loading tasks) are deferred to the `start()` method called from `onAppear`.
 
 ### Image Display Strategy
-- **Default (Dynamic Image Resolution on):** Images open in lightweight 2D mode using a downsampled UIImage via `CGImageSource`. The display image is re-downsampled on window resize (1-second debounce, 20% threshold). RealityKit is only loaded when the user activates 3D mode.
+- **Default (Dynamic Image Resolution on):** Images open in GPU-backed 2D mode using an `MTLTexture` with `.private` storage (not counted as dirty CPU memory by jetsam). The source is downsampled via `CGImageSource`, uploaded to GPU via `CIContext.render`, and displayed through `MetalImageView` (MTKView wrapper). Re-downsampled on window resize (1-second debounce, 20% threshold). RealityKit is only loaded when the user activates 3D mode.
 - **Dynamic Image Resolution off:** Images load at full native resolution. No re-downsampling on resize.
+- **Deep color preservation:** Images with >8 bits per component (e.g. 16-bit JXL) use `rgba16Float` textures with `extendedLinearDisplayP3` color space. Standard 8-bit images use `bgra8Unorm` with `deviceRGB`.
 - **Auto-3D restoration:** If an image was previously converted to 3D and the user didn't explicitly switch back to 2D, it auto-activates 3D mode on reopen (tracked via `Spatial3DConversionTracker`).
+- **Important:** When swapping `displayTexture` (e.g. toggling background removal or auto-enhance from in-memory cache), `imageAspectRatio` must always be updated from the new texture's dimensions. The Metal renderer stretches the texture to fill its view — aspect ratio is controlled externally by SwiftUI's `.aspectRatio()` modifier driven by `imageAspectRatio`.
 
 ### Spatial 3D Images
-Uses RealityKit's `ImagePresentationComponent` for 2D→3D conversion. States tracked via `Spatial3DImageState` enum: notGenerated → generating → generated.
+Uses RealityKit's `ImagePresentationComponent` for 2D→3D conversion. States tracked via `Spatial3DImageState` enum: notGenerated → generating → generated. `ImagePresentationComponent` is a black-box component — it manages its own geometry and materials internally, so there's no direct access to its mesh or rendering pipeline.
+
+**visionOS limitation:** `PostProcessEffect` / `PostProcessEffectContext` are unavailable on visionOS. Custom post-processing on `RealityView` content must use SwiftUI-level modifiers (`.mask()`, `.overlay()`) instead.
 
 ### Video Infrastructure
 - **VideoPlayerView** - Standard video playback with ornaments
@@ -62,20 +66,31 @@ Uses RealityKit's `ImagePresentationComponent` for 2D→3D conversion. States tr
 - **Video3DSettingsSheet** - Manual override for stereoscopic format detection
 
 ### Memory Management
+- **GPU-private textures:** 2D display uses `MTLTexture` with `.private` storage mode. These live in GPU memory (not dirty CPU pages), avoiding jetsam pressure. Apple Silicon applies automatic lossless compression to private textures (~30-50% savings).
+- **`SendableTexture` wrapper:** `@unchecked Sendable` struct wrapping `MTLTexture` for crossing actor/Task boundaries, since `MTLTexture` protocol doesn't declare `Sendable`.
+- **`DispatchSource` memory pressure:** `AppModel` monitors system memory pressure via `DispatchSource.makeMemoryPressureSource`. On critical pressure, triggers LRU idle-downscale of photo windows. On warning, trims caches.
+- **`.mappedIfSafe` data loading:** Disk cache reads use `Data(contentsOf:options:.mappedIfSafe)` for memory-mapped I/O where possible.
+- **`autoreleasepool`:** Used around image decode/upload paths to promptly release transient Objective-C objects.
 - `useLightweightDisplay` flag triggers all photo windows to switch from RealityKit to SwiftUI Image on memory warning
 - `openPhotoWindowCount` tracks active photo windows; `memoryBudgetExceeded` gates new window creation
 - `ImageLoader` uses NSCache with 512MB memory limit
 - `PhotoWindowModel.cleanup()` explicitly releases GPU textures and image data on window dismiss
 
 ### Services
+- **MetalImageRenderer** - Sendable singleton managing Metal device, command queue, CIContext, and two render pipeline states (8-bit bgra8Unorm and 16-bit rgba16Float). Creates GPU-private textures from CGImage, UIImage, or URL (with CGImageSource downsampling). Uses `CIContext.render` for correct handling of all source pixel formats and color spaces. Flips CIImage vertically before render (CIImage origin is bottom-left, Metal expects top-left).
+- **Shaders.metal** - Vertex shader (procedural fullscreen quad, 6 vertices, no vertex buffer) + fragment shader (brightness/contrast/saturation adjustments matching SwiftUI modifiers).
+- **MetalImageView** - `UIViewRepresentable` wrapping `MTKView`. Draw-on-demand mode (`isPaused=true`, `enableSetNeedsDisplay=true`). Transparent background. Auto-detects deep color textures and switches framebuffer format and pipeline state.
 - **StashAPIClient** - Actor for GraphQL communication with Stash server
 - **ImageLoader** - Actor-based image loader with NSCache and disk cache
-- **DiskImageCache/DiskVideoCache** - Persistent disk caching (excluded from backup)
+- **DiskImageCache/DiskVideoCache** - Persistent disk caching (excluded from backup). Files stored as SHA256 hashes with `.heic` extension.
 - **ThumbnailCache** - HEIC-format thumbnail cache
 - **ThumbnailGenerator** - Generates thumbnails and performs CGImageSource downsampling
+- **BackgroundRemover** - Actor using Vision `VNGenerateForegroundInstanceMaskRequest` + CIFilter blendWithMask for background removal with auto-crop of transparent margins
+- **BackgroundRemovalCache** - HEIC-format persistent cache for background-removed images (separate from main disk cache)
+- **AutoEnhanceCache** - Persistent cache for auto-enhanced images
+- **ImageEnhancementTracker** - Tracks per-image viewing mode (mono/backgroundRemoved/autoEnhanced/spatial3D) for auto-restoration on reopen
 - **SharedMediaCache** - Temporary storage for share sheet media
 - **SharedMediaSaver** - Saves shared media to Documents folder
-- **Spatial3DConversionTracker** - Tracks which images were converted to 3D and last viewing mode
 - **AppLogger** - Structured os.Logger instances across domains
 
 ### API Client
