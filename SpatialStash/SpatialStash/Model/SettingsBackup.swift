@@ -26,6 +26,7 @@ struct SettingsBackup: Codable {
     var openImagesInSeparateWindows: Bool?
     var rememberImageEnhancements: Bool?
     var showDebugConsole: Bool?
+    var respectMemoryAlerts: Bool?
 
     // Complex Codable settings
     var savedViews: [SavedView]?

@@ -287,24 +287,6 @@ struct SettingsTabView: View {
                     .disabled(isClearingGIFHEVCCache || gifHEVCCacheStats.fileCount == 0)
                 }
 
-                Section {
-                    Button("Refresh All Content") {
-                        AppLogger.settings.debug("Refresh button pressed")
-                        Task {
-                            AppLogger.settings.debug("Starting gallery refresh...")
-                            await appModel.loadInitialGallery()
-                            AppLogger.settings.debug("Gallery refresh complete, images: \(appModel.galleryImages.count, privacy: .public)")
-                            await appModel.loadInitialVideos()
-                            AppLogger.settings.debug("Video refresh complete, videos: \(appModel.galleryVideos.count, privacy: .public)")
-                        }
-                    }
-
-                    Button("Close All Windows", role: .destructive) {
-                        closeAllSecondaryWindows()
-                    }
-                    .disabled(!hasSecondaryWindows)
-                }
-
                 Section("Backup") {
                     Button {
                         isExporting = true
@@ -340,12 +322,49 @@ struct SettingsTabView: View {
                 }
 
                 Section("Developer") {
-                    Toggle("Show Debug Console", isOn: $appModel.showDebugConsole)
+                    Toggle("Show Debug Console", isOn: Binding(
+                        get: { appModel.showDebugConsole },
+                        set: { newValue in
+                            appModel.showDebugConsole = newValue
+                            Task {
+                                try? await Task.sleep(for: .milliseconds(50))
+                                if newValue {
+                                    LogStore.shared.startPolling()
+                                } else {
+                                    if appModel.selectedTab == .console {
+                                        appModel.selectedTab = .settings
+                                    }
+                                    LogStore.shared.stopAndClear()
+                                }
+                            }
+                        }
+                    ))
                     if appModel.showDebugConsole {
                         Text("The Console tab shows app log messages in real time. Useful when Xcode is not connected.")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
+
+                    Toggle("Respect System Memory Alerts", isOn: $appModel.respectMemoryAlerts)
+                    Text("When disabled, the app will not unload images or downscale windows in response to system memory pressure.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                    Button("Refresh All Content") {
+                        AppLogger.settings.debug("Refresh button pressed")
+                        Task {
+                            AppLogger.settings.debug("Starting gallery refresh...")
+                            await appModel.loadInitialGallery()
+                            AppLogger.settings.debug("Gallery refresh complete, images: \(appModel.galleryImages.count, privacy: .public)")
+                            await appModel.loadInitialVideos()
+                            AppLogger.settings.debug("Video refresh complete, videos: \(appModel.galleryVideos.count, privacy: .public)")
+                        }
+                    }
+
+                    Button("Close All Windows", role: .destructive) {
+                        closeAllSecondaryWindows()
+                    }
+                    .disabled(!hasSecondaryWindows)
                 }
 
                 Section("About") {

@@ -398,15 +398,17 @@ class AppModel {
         didSet {
             if showDebugConsole != oldValue {
                 UserDefaults.standard.set(showDebugConsole, forKey: "showDebugConsole")
-                if showDebugConsole {
-                    LogStore.shared.startPolling()
-                } else {
-                    // Switch away from console tab and release log buffer
-                    if selectedTab == .console {
-                        selectedTab = .settings
-                    }
-                    LogStore.shared.stopAndClear()
-                }
+            }
+        }
+    }
+
+    /// When true, the app responds to system memory pressure by downscaling
+    /// images and clearing caches. When false, memory pressure events are
+    /// logged but not acted upon.
+    var respectMemoryAlerts: Bool {
+        didSet {
+            if respectMemoryAlerts != oldValue {
+                UserDefaults.standard.set(respectMemoryAlerts, forKey: "respectMemoryAlerts")
             }
         }
     }
@@ -478,6 +480,11 @@ class AppModel {
         // Load debug console visibility (default: false)
         let loadedShowDebugConsole = UserDefaults.standard.bool(forKey: "showDebugConsole")
 
+        // Load respect memory alerts (default: true)
+        let loadedRespectMemoryAlerts = UserDefaults.standard.object(forKey: "respectMemoryAlerts") != nil
+            ? UserDefaults.standard.bool(forKey: "respectMemoryAlerts")
+            : true
+
         // Load global visual adjustments
         let loadedGlobalVisualAdjustments: VisualAdjustments
         if let data = UserDefaults.standard.data(forKey: "globalVisualAdjustments"),
@@ -497,6 +504,7 @@ class AppModel {
         self.openImagesInSeparateWindows = loadedOpenImagesInSeparateWindows
         self.rememberImageEnhancements = loadedRememberImageEnhancements
         self.showDebugConsole = loadedShowDebugConsole
+        self.respectMemoryAlerts = loadedRespectMemoryAlerts
         self.globalVisualAdjustments = loadedGlobalVisualAdjustments
 
         // Initialize API client and image sources
@@ -546,25 +554,30 @@ class AppModel {
             object: nil,
             queue: .main
         ) { _ in
-            AppLogger.appModel.warning("Memory warning received — LRU idle-downscaling windows")
             Task { @MainActor [weak self] in
                 guard let self else { return }
 
-                // Cancel any pending restore — memory is still under pressure
-                self.memoryPressureRestoreTask?.cancel()
-                self.memoryPressureRestoreTask = nil
+                if self.respectMemoryAlerts {
+                    AppLogger.appModel.warning("Memory warning received — LRU idle-downscaling windows")
 
-                await ImageLoader.shared.clearMemoryCache()
+                    // Cancel any pending restore — memory is still under pressure
+                    self.memoryPressureRestoreTask?.cancel()
+                    self.memoryPressureRestoreTask = nil
 
-                // LRU downscale handles 3D→2D conversion directly (phase 1),
-                // so we don't set useLightweightDisplay here to avoid a race
-                // where switchToLightweightDisplay() loads full-res images
-                // that immediately get downscaled again.
-                await self.downscaleLeastRecentWindows()
+                    await ImageLoader.shared.clearMemoryCache()
 
-                // Schedule delayed restore for any active-room windows that
-                // were downscaled — visionOS will likely free memory via swap
-                self.scheduleActiveRoomRestore()
+                    // LRU downscale handles 3D→2D conversion directly (phase 1),
+                    // so we don't set useLightweightDisplay here to avoid a race
+                    // where switchToLightweightDisplay() loads full-res images
+                    // that immediately get downscaled again.
+                    await self.downscaleLeastRecentWindows()
+
+                    // Schedule delayed restore for any active-room windows that
+                    // were downscaled — visionOS will likely free memory via swap
+                    self.scheduleActiveRoomRestore()
+                } else {
+                    AppLogger.appModel.warning("Memory warning received — ignored (Respect System Memory Alerts is off)")
+                }
             }
         }
 
@@ -594,16 +607,20 @@ class AppModel {
             if event.contains(.critical) {
                 // Critical is already handled by didReceiveMemoryWarningNotification
                 // (which fires at the same threshold), so nothing extra needed here.
-                AppLogger.appModel.warning("DispatchSource: critical memory pressure")
+                AppLogger.appModel.warning("DispatchSource: critical memory pressure (respectMemoryAlerts=\(self.respectMemoryAlerts, privacy: .public))")
             } else if event.contains(.warning) {
-                // Warning fires earlier than the UIKit notification. Proactively
-                // trim the in-memory image cache to reduce dirty memory before
-                // the system escalates to critical pressure.
-                AppLogger.appModel.info("DispatchSource: warning memory pressure — trimming caches")
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    await ImageLoader.shared.clearMemoryCache()
-                    await ThumbnailCache.shared.clearMemoryCache()
+                if self.respectMemoryAlerts {
+                    // Warning fires earlier than the UIKit notification. Proactively
+                    // trim the in-memory image cache to reduce dirty memory before
+                    // the system escalates to critical pressure.
+                    AppLogger.appModel.info("DispatchSource: warning memory pressure — trimming caches")
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        await ImageLoader.shared.clearMemoryCache()
+                        await ThumbnailCache.shared.clearMemoryCache()
+                    }
+                } else {
+                    AppLogger.appModel.info("DispatchSource: warning memory pressure — ignored (Respect System Memory Alerts is off)")
                 }
             }
         }
@@ -1053,6 +1070,7 @@ class AppModel {
             openImagesInSeparateWindows: openImagesInSeparateWindows,
             rememberImageEnhancements: rememberImageEnhancements,
             showDebugConsole: showDebugConsole,
+            respectMemoryAlerts: respectMemoryAlerts,
             savedViews: savedViews,
             savedVideoViews: savedVideoViews,
             savedWindowGroups: savedWindowGroups,
@@ -1078,6 +1096,7 @@ class AppModel {
         if let v = backup.openImagesInSeparateWindows { openImagesInSeparateWindows = v }
         if let v = backup.rememberImageEnhancements { rememberImageEnhancements = v }
         if let v = backup.showDebugConsole { showDebugConsole = v }
+        if let v = backup.respectMemoryAlerts { respectMemoryAlerts = v }
 
         // Complex settings
         if let v = backup.savedViews {
