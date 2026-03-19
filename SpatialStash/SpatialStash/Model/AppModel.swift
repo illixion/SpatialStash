@@ -547,8 +547,11 @@ class AppModel {
             LogStore.shared.startPolling()
         }
 
-        // Monitor memory pressure and clear caches when warned.
-        // Uses LRU strategy: downscales least-recently-interacted windows first.
+        // Monitor memory pressure and downscale windows that have been
+        // backgrounded (not in active room) for at least 2 minutes.
+        // Windows in the current room are never touched — the OS can
+        // evict/restore GPU-private texture pages more efficiently than
+        // app-level downscale-restore cycles.
         NotificationCenter.default.addObserver(
             forName: UIApplication.didReceiveMemoryWarningNotification,
             object: nil,
@@ -558,41 +561,27 @@ class AppModel {
                 guard let self else { return }
 
                 if self.respectMemoryAlerts {
-                    AppLogger.appModel.warning("Memory warning received — LRU idle-downscaling windows")
-
-                    // Cancel any pending restore — memory is still under pressure
-                    self.memoryPressureRestoreTask?.cancel()
-                    self.memoryPressureRestoreTask = nil
+                    AppLogger.appModel.warning("Memory warning received — downscaling long-backgrounded windows")
 
                     await ImageLoader.shared.clearMemoryCache()
-
-                    // LRU downscale handles 3D→2D conversion directly (phase 1),
-                    // so we don't set useLightweightDisplay here to avoid a race
-                    // where switchToLightweightDisplay() loads full-res images
-                    // that immediately get downscaled again.
-                    await self.downscaleLeastRecentWindows()
-
-                    // Schedule delayed restore for any active-room windows that
-                    // were downscaled — visionOS will likely free memory via swap
-                    self.scheduleActiveRoomRestore()
+                    await self.downscaleLongBackgroundedWindows()
                 } else {
                     AppLogger.appModel.warning("Memory warning received — ignored (Respect System Memory Alerts is off)")
                 }
             }
         }
 
-        // Finer-grained memory pressure via DispatchSource.
-        // Responds at .warning level by proactively trimming caches before
-        // the system escalates to the critical notification above. This
-        // reduces the frequency of expensive downscale-restore cycles.
+        // DispatchSource for logging memory pressure events.
+        // Only listens for .critical — .warning events are left for the OS
+        // to handle via its own page eviction, which is more granular than
+        // app-level cache clearing.
         setupMemoryPressureSource()
     }
 
     // MARK: - DispatchSource Memory Pressure
 
     /// Dispatch source for system memory pressure events.
-    /// Provides finer-grained signals (.warning, .critical) than
-    /// UIApplication.didReceiveMemoryWarningNotification alone.
+    /// Monitors .critical events for logging and diagnostics.
     private var memoryPressureSource: (any DispatchSourceMemoryPressure)?
 
     private func setupMemoryPressureSource() {
@@ -605,78 +594,25 @@ class AppModel {
             let event = source.data
 
             if event.contains(.critical) {
-                // Critical is already handled by didReceiveMemoryWarningNotification
-                // (which fires at the same threshold), so nothing extra needed here.
                 AppLogger.appModel.warning("DispatchSource: critical memory pressure (respectMemoryAlerts=\(self.respectMemoryAlerts, privacy: .public))")
             } else if event.contains(.warning) {
-                if self.respectMemoryAlerts {
-                    // Warning fires earlier than the UIKit notification. Proactively
-                    // trim the in-memory image cache to reduce dirty memory before
-                    // the system escalates to critical pressure.
-                    AppLogger.appModel.info("DispatchSource: warning memory pressure — trimming caches")
-                    Task { @MainActor [weak self] in
-                        guard let self else { return }
-                        await ImageLoader.shared.clearMemoryCache()
-                        await ThumbnailCache.shared.clearMemoryCache()
-                    }
-                } else {
-                    AppLogger.appModel.info("DispatchSource: warning memory pressure — ignored (Respect System Memory Alerts is off)")
-                }
+                AppLogger.appModel.info("DispatchSource: warning memory pressure — no action (OS handles page eviction)")
             }
         }
         source.resume()
         memoryPressureSource = source
     }
 
-    // MARK: - Memory Pressure Active-Room Restore
+    // MARK: - Memory Pressure Downscale (Backgrounded Windows Only)
 
-    /// Task that waits for memory to stabilize and then restores active-room
-    /// windows that were downscaled by memory pressure. Cancelled and restarted
-    /// if another memory warning arrives before the delay elapses.
-    private var memoryPressureRestoreTask: Task<Void, Never>?
+    /// Minimum duration a window must be outside the active room before
+    /// memory pressure can downscale it.
+    private static let backgroundedDownscaleThreshold: TimeInterval = 2 * 60 // 2 minutes
 
-    /// Delay before attempting to restore active-room windows after memory pressure.
-    private static let memoryPressureRestoreDelay: TimeInterval = 30
-
-    /// Schedule a delayed restore of active-room windows that were downscaled
-    /// by memory pressure. Restores one window at a time to avoid re-spiking memory.
-    private func scheduleActiveRoomRestore() {
-        memoryPressureRestoreTask?.cancel()
-        memoryPressureRestoreTask = Task { [weak self] in
-            do {
-                try await Task.sleep(for: .seconds(Self.memoryPressureRestoreDelay))
-            } catch {
-                return // Cancelled — another memory warning arrived
-            }
-
-            guard let self, !Task.isCancelled else { return }
-
-            let models = Array(self.activePhotoWindowModels.values)
-            let activeRoomDownscaled = models.filter { $0.isInActiveRoom && $0.isIdleDownscaled }
-
-            guard !activeRoomDownscaled.isEmpty else { return }
-
-            AppLogger.appModel.info(
-                "Restoring \(activeRoomDownscaled.count, privacy: .public) active-room windows after memory pressure"
-            )
-
-            // Restore one at a time to avoid memory spikes
-            for model in activeRoomDownscaled {
-                guard !Task.isCancelled else { break }
-                await model.restoreFromIdleDownscale()
-            }
-        }
-    }
-
-    // MARK: - LRU Memory Pressure Downscale
-
-    /// Downscale photo windows to free memory during system memory pressure.
-    /// Uses a two-phase approach to avoid OOM during the downscale itself:
-    ///
-    /// **Targeting priority:**
-    /// 1. All windows in inactive rooms (not currently visible to the user)
-    /// 2. 3D windows in the active room (highest per-window memory cost)
-    /// 3. Up to half the remaining 2D windows in the active room (LRU order)
+    /// Downscale photo windows that have been backgrounded (not in the active
+    /// room) for longer than the threshold. Windows in the current room are
+    /// never touched — the OS manages GPU-private texture page eviction more
+    /// efficiently at that granularity.
     ///
     /// **Phase 1 — Release memory (no allocations):**
     /// Releases all heavy resources (textures, raw data, display images,
@@ -685,62 +621,46 @@ class AppModel {
     /// **Phase 2 — Generate thumbnails:**
     /// After all targeted windows have freed their memory, loads small 256px
     /// thumbnails so windows show a recognizable preview instead of blank.
-    private func downscaleLeastRecentWindows() async {
+    private func downscaleLongBackgroundedWindows() async {
         let models = Array(activePhotoWindowModels.values)
         guard !models.isEmpty else { return }
 
-        // Skip downscale entirely if any window is mid-3D-generation or initial load.
-        // These cause transient memory spikes that resolve on their own — downscaling
-        // would just force an expensive re-do (reload image + regenerate 3D).
-        let hasTransientWork = models.contains {
-            $0.spatial3DImageState == .generating || $0.isInitialLoadInProgress
+        let now = Date()
+        let threshold = Self.backgroundedDownscaleThreshold
+
+        // Only target windows that are: not in active room, backgrounded for
+        // longer than the threshold, not already downscaled, and not restoring.
+        let eligible = models.filter { model in
+            guard !model.isInActiveRoom,
+                  !model.isIdleDownscaled,
+                  !model.isRestoringFromIdle,
+                  let since = model.backgroundedSince else { return false }
+            return now.timeIntervalSince(since) >= threshold
         }
-        if hasTransientWork {
-            AppLogger.appModel.info("Skipping memory-pressure downscale — transient work in progress")
+
+        guard !eligible.isEmpty else {
+            let activeCount = models.filter { $0.isInActiveRoom }.count
+            let recentBackgroundCount = models.filter { model in
+                !model.isInActiveRoom && !model.isIdleDownscaled
+                && (model.backgroundedSince.map { now.timeIntervalSince($0) < threshold } ?? true)
+            }.count
+            AppLogger.appModel.info(
+                "Memory pressure: no eligible windows to downscale (\(activeCount, privacy: .public) active-room, \(recentBackgroundCount, privacy: .public) recently backgrounded, \(models.filter { $0.isIdleDownscaled }.count, privacy: .public) already downscaled)"
+            )
             return
         }
 
-        let nonDownscaled = models.filter { !$0.isIdleDownscaled && !$0.isRestoringFromIdle }
-
-        guard !nonDownscaled.isEmpty else {
-            AppLogger.appModel.info("All \(models.count) windows already idle-downscaled")
-            return
-        }
-
-        // Priority 1: All windows in inactive rooms (user can't see them)
-        let inactiveRoomWindows = nonDownscaled
-            .filter { !$0.isInActiveRoom }
-            .sorted { $0.lastInteractionTime < $1.lastInteractionTime }
-
-        // Priority 2+3: Windows in the active room, partitioned by type
-        let activeRoomWindows = nonDownscaled.filter { $0.isInActiveRoom }
-        let activeRoom3D = activeRoomWindows
-            .filter { $0.is3DMode }
-            .sorted { $0.lastInteractionTime < $1.lastInteractionTime }
-        let activeRoom2D = activeRoomWindows
-            .filter { !$0.is3DMode }
-            .sorted { $0.lastInteractionTime < $1.lastInteractionTime }
-
-        // Build the target list: inactive rooms first, then active room 3D,
-        // then up to half of active room 2D (LRU)
-        var windowsToDownscale = inactiveRoomWindows + activeRoom3D
-        if activeRoom2D.count > 0 {
-            let count2D = max(1, activeRoom2D.count / 2)
-            windowsToDownscale += Array(activeRoom2D.prefix(count2D))
-        }
-
-        let activeRoom2DCount = windowsToDownscale.count - inactiveRoomWindows.count - activeRoom3D.count
         AppLogger.appModel.info(
-            "Idle-downscaling \(windowsToDownscale.count, privacy: .public) of \(models.count, privacy: .public) windows (\(inactiveRoomWindows.count, privacy: .public) inactive-room, \(activeRoom3D.count, privacy: .public) active-3D, \(activeRoom2DCount, privacy: .public) active-2D LRU)"
+            "Downscaling \(eligible.count, privacy: .public) of \(models.count, privacy: .public) windows (backgrounded > \(Int(threshold), privacy: .public)s)"
         )
 
         // Phase 1: Release all heavy memory first (no allocations)
-        for model in windowsToDownscale {
+        for model in eligible {
             await model.releaseMemoryForIdleDownscale()
         }
 
         // Phase 2: Now that memory is freed, generate small thumbnails
-        for model in windowsToDownscale {
+        for model in eligible {
             await model.applyIdleDownscaleThumbnail()
         }
     }

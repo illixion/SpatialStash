@@ -551,6 +551,11 @@ class PhotoWindowModel {
     /// windows in inactive rooms before touching windows the user can see.
     private(set) var isInActiveRoom: Bool = true
 
+    /// Timestamp when this window last left the active room (scene phase
+    /// transitioned away from .active). Used by the memory pressure handler
+    /// to only downscale windows that have been backgrounded long enough.
+    private(set) var backgroundedSince: Date?
+
     /// Display name for this window used in log messages
     private var displayName: String {
         image.title ?? image.fullSizeURL.deletingPathExtension().lastPathComponent
@@ -565,6 +570,7 @@ class PhotoWindowModel {
 
         if newPhase == .active {
             isInActiveRoom = true
+            backgroundedSince = nil
 
             // Window became visible again — cancel any pending downscale and restore
             scenePhaseIdleTask?.cancel()
@@ -578,6 +584,7 @@ class PhotoWindowModel {
             }
         } else if oldPhase == .active && (newPhase == .inactive || newPhase == .background) {
             isInActiveRoom = false
+            backgroundedSince = Date()
 
             // Window moved to another room — start inactivity timer
             scheduleScenePhaseIdleDownscale()
