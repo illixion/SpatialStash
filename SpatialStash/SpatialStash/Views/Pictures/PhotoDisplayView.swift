@@ -520,26 +520,31 @@ struct PhotoDisplayView: View {
         }
     }
 
-    /// Verify the window size matches the loaded image's aspect ratio.
-    /// If they differ by more than 5%, re-trigger resize.
+    /// Verify the window size matches the loaded image's aspect ratio and saved size.
+    /// If they differ by more than 5%, re-trigger resize using the saved window size
+    /// (if available) to restore the user's previous window dimensions after reboot.
     private func verifyWindowSizeMatchesContent() {
         guard let currentSize = viewerWindowSize,
               windowModel.imageAspectRatio > 0,
               !windowModel.isLoadingDetailImage,
               !suppressWindowResize else { return }
 
-        // Compare the current window aspect ratio against the expected image aspect ratio
-        let currentAR = currentSize.width / currentSize.height
-        let expectedAR = windowModel.imageAspectRatio
-        let ratio = currentAR / expectedAR
+        // Use saved window size as the target bounds when available — this ensures
+        // post-reboot restoration uses the persisted size rather than the scene default.
+        let targetBounds = windowModel.savedWindowSize ?? currentBounds
 
-        guard ratio < 0.95 || ratio > 1.05 else { return }
+        // Compare the current window against the expected size for the image AR within target bounds
+        let expectedSize = windowSize(for: windowModel.imageAspectRatio, within: targetBounds)
+        let widthRatio = currentSize.width / expectedSize.width
+        let heightRatio = currentSize.height / expectedSize.height
 
-        AppLogger.views.info("Window size mismatch detected (window AR: \(currentAR, privacy: .public), image AR: \(expectedAR, privacy: .public)). Resizing.")
+        guard widthRatio < 0.95 || widthRatio > 1.05 || heightRatio < 0.95 || heightRatio > 1.05 else { return }
+
+        AppLogger.views.info("Window size mismatch detected (current: \(currentSize.width, privacy: .public)x\(currentSize.height, privacy: .public), expected: \(expectedSize.width, privacy: .public)x\(expectedSize.height, privacy: .public)). Resizing.")
         if windowModel.isAnimatedGIF {
-            resizeGIFWindowToFit(windowModel.imageAspectRatio, within: currentBounds)
+            resizeGIFWindowToFit(windowModel.imageAspectRatio, within: targetBounds)
         } else {
-            resizeWindowToFit(windowModel.imageAspectRatio, within: currentBounds)
+            resizeWindowToFit(windowModel.imageAspectRatio, within: targetBounds)
         }
     }
 

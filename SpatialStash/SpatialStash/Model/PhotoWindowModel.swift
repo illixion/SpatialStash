@@ -871,9 +871,8 @@ class PhotoWindowModel {
                 await performFullResolutionAutoEnhance()
             }
         } else if lastMode == .backgroundRemoved {
-            if let cachedData = await BackgroundRemovalCache.shared.loadData(for: imageURL),
-               let cachedImage = UIImage(data: cachedData) {
-                await applyDownscaledCachedBackgroundRemoval(cachedImage)
+            if let cachedURL = await BackgroundRemovalCache.shared.cachedFileURL(for: imageURL) {
+                await applyCachedBackgroundRemovalFromURL(cachedURL)
             } else {
                 await performFullResolutionBackgroundRemoval(isAutoDuringLoad: true)
             }
@@ -989,15 +988,18 @@ class PhotoWindowModel {
         lastWindowSize = newSize
 
         // Persist window size (debounced alongside the image reload)
-        // This runs for all display modes so the size is remembered even for
-        // 3D, GIF, or full-resolution images that skip re-downsampling.
+        // Skip persistence when in 3D immersive mode — the window is
+        // temporarily expanded to fill the field of vision and should
+        // not overwrite the user's actual window size.
         resizeDebounceTask?.cancel()
         resizeDebounceTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(1))
             guard let self, !Task.isCancelled else { return }
 
-            // Persist the window size for this image
-            await self.trackWindowSize(newSize)
+            // Persist the window size for this image (skip during immersive 3D)
+            if !self.isViewingSpatial3DImmersive {
+                await self.trackWindowSize(newSize)
+            }
 
             // Re-downsample display image if dynamic resolution is active
             guard self.effectiveMaxResolution > 0 else { return }
@@ -1162,10 +1164,9 @@ class PhotoWindowModel {
             pendingGenerate3D = true
             // RealityView's init closure will consume pendingGenerate3D
         } else if hadBackgroundRemoval {
-            // Load background-removed image directly from disk cache
-            if let cachedData = await BackgroundRemovalCache.shared.loadData(for: imageURL),
-               let cachedImage = UIImage(data: cachedData) {
-                await applyDownscaledCachedBackgroundRemoval(cachedImage)
+            // Load background-removed image directly from disk cache (URL-based for efficiency)
+            if let cachedURL = await BackgroundRemovalCache.shared.cachedFileURL(for: imageURL) {
+                await applyCachedBackgroundRemovalFromURL(cachedURL)
             } else {
                 // Cache miss — fall back to standard 2D load
                 await loadDisplayImage(for: windowSize)
@@ -1778,6 +1779,51 @@ class PhotoWindowModel {
         isLoadingDetailImage = false
     }
 
+    /// Apply a cached background-removed image directly from a file URL.
+    /// Uses CGImageSource downsampling → Metal texture upload, bypassing the
+    /// intermediate Data → UIImage → downscale → texture pipeline for faster restore.
+    private func applyCachedBackgroundRemovalFromURL(_ cachedURL: URL) async {
+        backgroundRemovalState = .removing
+
+        let targetDimension = backgroundRemovalTargetDimension()
+        let sendable = await Task.detached { [cachedURL, targetDimension] () -> SendableTexture? in
+            guard let tex = MetalImageRenderer.shared?.createTexture(from: cachedURL, maxDimension: targetDimension) else { return nil }
+            return SendableTexture(texture: tex)
+        }.value
+
+        guard let texture = sendable?.texture else {
+            backgroundRemovalState = .original
+            isLoadingDetailImage = false
+            return
+        }
+
+        backgroundRemovedTexture = texture
+        originalDisplayTexture = displayTexture
+        displayTexture = texture
+        imageAspectRatio = CGFloat(texture.width) / CGFloat(texture.height)
+        backgroundRemovalState = .removed
+        isLoadingDetailImage = false
+
+        await trackViewingMode(.backgroundRemoved)
+    }
+
+    /// Calculate the target dimension for background-removed image downsampling.
+    /// Mirrors the logic from loadDisplayImage / downscaleForDisplay.
+    private func backgroundRemovalTargetDimension() -> CGFloat {
+        let effectiveRes = effectiveMaxResolution
+        guard effectiveRes > 0 else { return 8192 } // No limit
+
+        let maxRes = CGFloat(effectiveRes)
+        if isInitialLoadInProgress {
+            return maxRes
+        }
+        let windowSize = lastWindowSize ?? appModel.mainWindowSize
+        return min(
+            max(windowSize.width, windowSize.height) * Self.displayScaleFactor,
+            maxRes
+        )
+    }
+
     /// Downscale an image for display using the same strategy as loadDisplayImage.
     /// Mirrors the target-dimension logic: min(windowSize × scale, maxRes, nativeMax).
     private func downscaleForDisplay(_ image: UIImage) async -> UIImage {
@@ -1833,23 +1879,25 @@ class PhotoWindowModel {
     }
 
     /// Reload the background-removed image at the current effective resolution.
-    /// Fetches the full-res cached version from disk and re-downscales it.
+    /// Fetches the cached version from disk and re-downscales it using CGImageSource.
     private func reloadBackgroundRemovedAtCurrentResolution() async {
         guard backgroundRemovalState == .removed else { return }
 
-        // Try to load the full-res background-removed image from persistent cache
-        guard let cachedData = await BackgroundRemovalCache.shared.loadData(for: imageURL),
-              let fullResImage = UIImage(data: cachedData) else {
-            AppLogger.photoWindow.warning("Cannot reload background-removed image: no cached data")
+        guard let cachedURL = await BackgroundRemovalCache.shared.cachedFileURL(for: imageURL) else {
+            AppLogger.photoWindow.warning("Cannot reload background-removed image: no cached file")
             return
         }
 
-        let texture = await downscaleAndUploadTexture(fullResImage)
+        let targetDimension = backgroundRemovalTargetDimension()
+        let sendable = await Task.detached { [cachedURL, targetDimension] () -> SendableTexture? in
+            guard let tex = MetalImageRenderer.shared?.createTexture(from: cachedURL, maxDimension: targetDimension) else { return nil }
+            return SendableTexture(texture: tex)
+        }.value
+
+        guard let texture = sendable?.texture else { return }
         backgroundRemovedTexture = texture
         displayTexture = texture
-        if let texture {
-            imageAspectRatio = CGFloat(texture.width) / CGFloat(texture.height)
-        }
+        imageAspectRatio = CGFloat(texture.width) / CGFloat(texture.height)
     }
 
     private func restoreOriginalBackground() {
