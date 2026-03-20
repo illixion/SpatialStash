@@ -466,6 +466,11 @@ struct LocalMediaThumbnailView: View {
         .task {
             await loadThumbnail()
         }
+        .onDisappear {
+            loadedImage = nil
+            isLoading = true
+            loadFailed = false
+        }
     }
 
     private func loadThumbnail() async {
