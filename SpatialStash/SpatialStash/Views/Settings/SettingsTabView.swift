@@ -44,7 +44,7 @@ struct SettingsTabView: View {
                 Section("Display") {
                     Toggle("Rounded Corners", isOn: $appModel.roundedCorners)
 
-                    Toggle("Open images in separate windows", isOn: $appModel.openImagesInSeparateWindows)
+                    Toggle("Open media in new windows", isOn: $appModel.openMediaInNewWindows)
 
                     Toggle("Remember Image Enhancements", isOn: Binding(
                         get: { appModel.rememberImageEnhancements },

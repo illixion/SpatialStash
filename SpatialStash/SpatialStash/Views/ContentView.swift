@@ -30,16 +30,10 @@ struct ContentView: View {
         }
         .environment(appModel)
         .ornament(
-            visibility: shouldShowOrnament ? .visible : .hidden,
+            visibility: .visible,
             attachmentAnchor: .scene(.bottomFront),
             ornament: {
-                if (appModel.selectedTab == .videos || appModel.selectedTab == .local) && appModel.isShowingVideoDetail {
-                    // Show video player controls
-                    VideoOrnamentsView(videoCount: appModel.selectedTab == .videos ? appModel.galleryVideos.count : 0)
-                } else {
-                    // Show tab bar for all tabs
-                    TabBarOrnament()
-                }
+                TabBarOrnament()
             }
         )
         .background(
@@ -53,21 +47,7 @@ struct ContentView: View {
                     }
             }
         )
-        .ornament(
-            visibility: shouldShowRestoreButton ? .visible : .hidden,
-            attachmentAnchor: .scene(.bottomFront),
-            ornament: {
-                Button {
-                    appModel.toggleUIVisibility()
-                } label: {
-                    Image(systemName: "ellipsis.circle.fill")
-                        .font(.title)
-                }
-                .buttonStyle(.borderless)
-                .padding(8)
-                .glassBackgroundEffect()
-            }
-        )
+
         .alert(
             "Window Already Open",
             isPresented: Binding(
@@ -93,24 +73,6 @@ struct ContentView: View {
         .onChange(of: appModel.activePhotoWindowOpenRequest?.id) { _, _ in
             handlePhotoWindowOpenIfNeeded()
         }
-    }
-
-    private var shouldShowOrnament: Bool {
-        // Hide ornament when picture viewer is active (it has its own ornament)
-        if appModel.isPictureViewerActive {
-            return false
-        }
-        // Hide ornament when user has hidden UI in video detail view
-        if appModel.isShowingVideoDetail && appModel.isUIHidden {
-            return false
-        }
-        return true
-    }
-
-    private var shouldShowRestoreButton: Bool {
-        // Show restore button only when UI is hidden in video detail view
-        // (picture viewer uses tap-to-unhide instead)
-        appModel.isShowingVideoDetail && appModel.isUIHidden
     }
 
     private var shouldShowDuplicatePrompt: Bool {

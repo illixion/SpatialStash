@@ -10,6 +10,10 @@ struct VideoOrnamentsView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.openWindow) private var openWindow
     let videoCount: Int
+    /// Custom dismiss action (used by pushed windows to call dismissWindow)
+    var onDismiss: (() -> Void)? = nil
+    /// Custom pop-out action (used by pushed windows to open a new window and dismiss self)
+    var onPopOut: (() -> Void)? = nil
     @State private var showMediaInfo = false
     @State private var isUpdatingMediaInfo = false
     @State private var showAdjustmentsPopover = false
@@ -19,7 +23,11 @@ struct VideoOrnamentsView: View {
             HStack(spacing: 16) {
                 // Back to Gallery button
                 Button {
-                    appModel.dismissVideoDetail()
+                    if let onDismiss {
+                        onDismiss()
+                    } else {
+                        appModel.dismissVideoDetail()
+                    }
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "chevron.left")
@@ -205,7 +213,11 @@ struct VideoOrnamentsView: View {
                         .frame(height: 24)
 
                     Button {
-                        popOutVideo()
+                        if let onPopOut {
+                            onPopOut()
+                        } else {
+                            popOutVideo()
+                        }
                     } label: {
                         Image(systemName: "rectangle.portrait.and.arrow.forward")
                             .font(.title3)

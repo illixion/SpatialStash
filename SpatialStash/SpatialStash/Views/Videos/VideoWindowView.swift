@@ -1,9 +1,12 @@
 /*
  Spatial Stash - Video Window View
 
- Standalone pop-out window for video playback.
- Shows the same video player as the main window with a minimal ornament
- containing only a gallery button that auto-hides after the configured delay.
+ Window view for video playback.
+ Handles two modes:
+ - Pushed (wasPushed=true): opened via pushWindow from gallery, dismiss returns to gallery.
+   Shows full ornament with navigation, rating, share, adjustments, flip, pop-out.
+ - Standalone (wasPushed=false): opened via openWindow as independent pop-out window.
+   Shows minimal ornament with adjustments, flip, gallery button.
  */
 
 import os
@@ -13,6 +16,7 @@ struct VideoWindowView: View {
     let windowValue: VideoWindowValue
     @Environment(AppModel.self) private var appModel
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismissWindow) private var dismissWindow
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var isUIHidden = false
@@ -100,53 +104,11 @@ struct VideoWindowView: View {
             visibility: isUIHidden ? .hidden : .visible,
             attachmentAnchor: .scene(.bottomFront),
             ornament: {
-                HStack(spacing: 16) {
-                    Button {
-                        showAdjustmentsPopover.toggle()
-                    } label: {
-                        Image(systemName: "slider.horizontal.3")
-                            .font(.title3)
-                            .padding(6)
-                            .background(effectivePopOutVideoAdjustments.isModified ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Visual Adjustments")
-                    .popover(isPresented: $showAdjustmentsPopover) {
-                        VisualAdjustmentsPopover(
-                            currentAdjustments: $videoAdjustments,
-                            globalAdjustments: Binding(
-                                get: { appModel.globalVisualAdjustments },
-                                set: { appModel.globalVisualAdjustments = $0 }
-                            ),
-                            showAutoEnhance: false
-                        )
-                    }
-
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.3)) {
-                            isVideoFlipped.toggle()
-                        }
-                    } label: {
-                        Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right")
-                            .font(.title3)
-                            .padding(6)
-                            .background(isVideoFlipped ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Flip Video")
-
-                    Button {
-                        appModel.showMainWindow(openWindow: openWindow)
-                    } label: {
-                        Image(systemName: "square.grid.2x2")
-                            .font(.title3)
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Show Gallery")
+                if windowValue.wasPushed {
+                    pushedOrnament
+                } else {
+                    standaloneOrnament
                 }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 12)
-                .glassBackgroundEffect()
             }
         )
         .sheet(isPresented: Binding(
@@ -172,12 +134,19 @@ struct VideoWindowView: View {
             stereoscopicOverride = windowValue.stereoscopicOverride
             video3DSettings = windowValue.video3DSettings
             startAutoHideTimer()
+            if windowValue.wasPushed {
+                // Set AppModel video state so VideoOrnamentsView works
+                appModel.selectVideoForDetail(video)
+            }
         }
         .onDisappear {
             cancelAutoHideTimer()
             scenePhaseIdleTask?.cancel()
             scenePhaseIdleTask = nil
             restoreWindowResizing()
+            if windowValue.wasPushed {
+                appModel.dismissVideoDetail()
+            }
         }
         .onChange(of: scenePhase) { oldPhase, newPhase in
             handleScenePhaseChange(from: oldPhase, to: newPhase)
@@ -189,6 +158,79 @@ struct VideoWindowView: View {
     /// Effective adjustments: use per-window local if modified, otherwise global
     private var effectivePopOutVideoAdjustments: VisualAdjustments {
         videoAdjustments.isModified ? videoAdjustments : appModel.globalVisualAdjustments
+    }
+
+    // MARK: - Ornaments
+
+    /// Full ornament shown when window was pushed from gallery
+    private var pushedOrnament: some View {
+        VideoOrnamentsView(
+            videoCount: appModel.galleryVideos.count,
+            onDismiss: {
+                dismissWindow()
+            },
+            onPopOut: {
+                let windowValue = VideoWindowValue(
+                    video: video,
+                    stereoscopicOverride: stereoscopicOverride,
+                    video3DSettings: video3DSettings
+                )
+                openWindow(id: "video-detail", value: windowValue)
+                appModel.dismissVideoDetail()
+                dismissWindow()
+            }
+        )
+    }
+
+    /// Minimal ornament shown for standalone pop-out windows
+    private var standaloneOrnament: some View {
+        HStack(spacing: 16) {
+            Button {
+                showAdjustmentsPopover.toggle()
+            } label: {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.title3)
+                    .padding(6)
+                    .background(effectivePopOutVideoAdjustments.isModified ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
+            }
+            .buttonStyle(.borderless)
+            .help("Visual Adjustments")
+            .popover(isPresented: $showAdjustmentsPopover) {
+                VisualAdjustmentsPopover(
+                    currentAdjustments: $videoAdjustments,
+                    globalAdjustments: Binding(
+                        get: { appModel.globalVisualAdjustments },
+                        set: { appModel.globalVisualAdjustments = $0 }
+                    ),
+                    showAutoEnhance: false
+                )
+            }
+
+            Button {
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    isVideoFlipped.toggle()
+                }
+            } label: {
+                Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right")
+                    .font(.title3)
+                    .padding(6)
+                    .background(isVideoFlipped ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
+            }
+            .buttonStyle(.borderless)
+            .help("Flip Video")
+
+            Button {
+                appModel.showMainWindow(openWindow: openWindow)
+            } label: {
+                Image(systemName: "square.grid.2x2")
+                    .font(.title3)
+            }
+            .buttonStyle(.borderless)
+            .help("Show Gallery")
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+        .glassBackgroundEffect()
     }
 
     // MARK: - Stereoscopic Mode

@@ -19,10 +19,15 @@ struct VideoWindowValue: Identifiable, Codable, Hashable {
     /// Snapshot of custom 3D settings at pop-out time
     var video3DSettings: Video3DSettings?
 
-    init(video: GalleryVideo, stereoscopicOverride: Bool? = nil, video3DSettings: Video3DSettings? = nil) {
+    /// Whether this window was opened via pushWindow (back button dismisses)
+    /// vs openWindow (standalone pop-out with gallery button)
+    var wasPushed: Bool
+
+    init(video: GalleryVideo, stereoscopicOverride: Bool? = nil, video3DSettings: Video3DSettings? = nil, wasPushed: Bool = false) {
         self.id = UUID()
         self.video = video
         self.stereoscopicOverride = stereoscopicOverride
         self.video3DSettings = video3DSettings
+        self.wasPushed = wasPushed
     }
 }

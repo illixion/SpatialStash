@@ -13,8 +13,13 @@ struct PhotoWindowValue: Identifiable, Codable, Hashable {
     let id: UUID
     var image: GalleryImage
 
-    init(image: GalleryImage) {
+    /// Whether this window was opened via pushWindow (back button dismisses)
+    /// vs openWindow (standalone pop-out with gallery button)
+    var wasPushed: Bool
+
+    init(image: GalleryImage, wasPushed: Bool = false) {
         self.id = UUID()
         self.image = image
+        self.wasPushed = wasPushed
     }
 }

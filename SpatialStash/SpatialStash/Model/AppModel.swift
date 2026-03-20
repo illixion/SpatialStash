@@ -28,7 +28,7 @@ class AppModel {
 
     var selectedTab: Tab = .pictures
     var isShowingVideoDetail: Bool = false
-    var isPictureViewerActive: Bool = false
+
 
     /// Tracks the last content tab (pictures or videos) for filter context
     var lastContentTab: Tab = .pictures
@@ -351,11 +351,12 @@ class AppModel {
         }
     }
 
-    /// When true, image selections open in separate pop-out windows.
-    var openImagesInSeparateWindows: Bool {
+    /// When true, media selections open in separate pop-out windows (openWindow).
+    /// When false, media selections use pushWindow for in-place navigation.
+    var openMediaInNewWindows: Bool {
         didSet {
-            if openImagesInSeparateWindows != oldValue {
-                UserDefaults.standard.set(openImagesInSeparateWindows, forKey: "openImagesInSeparateWindows")
+            if openMediaInNewWindows != oldValue {
+                UserDefaults.standard.set(openMediaInNewWindows, forKey: "openMediaInNewWindows")
             }
         }
     }
@@ -467,10 +468,19 @@ class AppModel {
             ? UserDefaults.standard.bool(forKey: "roundedCorners")
             : true
 
-        // Load image opening mode (default: false = open in main window)
-        let loadedOpenImagesInSeparateWindows = UserDefaults.standard.object(forKey: "openImagesInSeparateWindows") != nil
-            ? UserDefaults.standard.bool(forKey: "openImagesInSeparateWindows")
-            : false
+        // Load media opening mode (default: false = pushWindow navigation)
+        // Migrate from old key "openImagesInSeparateWindows" if new key doesn't exist
+        let loadedOpenMediaInNewWindows: Bool
+        if UserDefaults.standard.object(forKey: "openMediaInNewWindows") != nil {
+            loadedOpenMediaInNewWindows = UserDefaults.standard.bool(forKey: "openMediaInNewWindows")
+        } else if UserDefaults.standard.object(forKey: "openImagesInSeparateWindows") != nil {
+            loadedOpenMediaInNewWindows = UserDefaults.standard.bool(forKey: "openImagesInSeparateWindows")
+            // Migrate to new key
+            UserDefaults.standard.set(loadedOpenMediaInNewWindows, forKey: "openMediaInNewWindows")
+            UserDefaults.standard.removeObject(forKey: "openImagesInSeparateWindows")
+        } else {
+            loadedOpenMediaInNewWindows = false
+        }
 
         // Load remember image enhancements (default: true)
         let loadedRememberImageEnhancements = UserDefaults.standard.object(forKey: "rememberImageEnhancements") != nil
@@ -501,7 +511,7 @@ class AppModel {
         self.slideshowDelay = loadedSlideshowDelay
         self.maxImageResolution = loadedMaxImageResolution
         self.roundedCorners = loadedRoundedCorners
-        self.openImagesInSeparateWindows = loadedOpenImagesInSeparateWindows
+        self.openMediaInNewWindows = loadedOpenMediaInNewWindows
         self.rememberImageEnhancements = loadedRememberImageEnhancements
         self.showDebugConsole = loadedShowDebugConsole
         self.respectMemoryAlerts = loadedRespectMemoryAlerts
@@ -987,7 +997,7 @@ class AppModel {
             slideshowDelay: slideshowDelay,
             maxImageResolution: maxImageResolution,
             roundedCorners: roundedCorners,
-            openImagesInSeparateWindows: openImagesInSeparateWindows,
+            openMediaInNewWindows: openMediaInNewWindows,
             rememberImageEnhancements: rememberImageEnhancements,
             showDebugConsole: showDebugConsole,
             respectMemoryAlerts: respectMemoryAlerts,
@@ -1013,7 +1023,7 @@ class AppModel {
         if let v = backup.slideshowDelay { slideshowDelay = v }
         if let v = backup.maxImageResolution { maxImageResolution = v }
         if let v = backup.roundedCorners { roundedCorners = v }
-        if let v = backup.openImagesInSeparateWindows { openImagesInSeparateWindows = v }
+        if let v = backup.openMediaInNewWindows ?? backup.openImagesInSeparateWindows { openMediaInNewWindows = v }
         if let v = backup.rememberImageEnhancements { rememberImageEnhancements = v }
         if let v = backup.showDebugConsole { showDebugConsole = v }
         if let v = backup.respectMemoryAlerts { respectMemoryAlerts = v }

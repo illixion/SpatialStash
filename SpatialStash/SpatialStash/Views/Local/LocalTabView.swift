@@ -11,7 +11,6 @@ import SwiftUI
 struct LocalTabView: View {
     @Environment(AppModel.self) private var appModel
     @State private var selectedFolderPath: [String] = []
-    @State private var selectedImage: GalleryImage? = nil
 
     enum LocalMediaFolder: String, CaseIterable, Identifiable {
         case photos = "Photos"
@@ -48,9 +47,7 @@ struct LocalTabView: View {
                     onSelectFolder: { folderName in
                         selectedFolderPath.append(folderName)
                     },
-                    onSelectImage: { image in
-                        selectedImage = image
-                    }
+                    onSelectImage: { _ in }
                 )
             }
         }
@@ -60,7 +57,6 @@ struct LocalTabView: View {
             // When Local tab is re-tapped while already viewing it, close folders and return to root
             if !selectedFolderPath.isEmpty {
                 selectedFolderPath = []
-                selectedImage = nil
             }
         }
     }
@@ -133,6 +129,8 @@ struct FolderListView: View {
 struct LocalMediaListView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(SceneDelegate.self) private var sceneDelegate: SceneDelegate?
+    @Environment(\.pushWindow) private var pushWindow
+    @Environment(\.openWindow) private var openWindow
 
     let folderPath: [String]
     let onBack: () -> Void
@@ -142,8 +140,6 @@ struct LocalMediaListView: View {
     @State private var mediaFiles: [LocalMediaFile] = []
     @State private var subfolders: [String] = []
     @State private var isLoading = true
-    @State private var selectedImage: GalleryImage? = nil
-    @State private var isShowingLocalVideo = false
 
     let columns = [
         GridItem(.adaptive(minimum: 150, maximum: 250), spacing: 16)
@@ -159,14 +155,7 @@ struct LocalMediaListView: View {
 
     var body: some View {
         Group {
-            if isShowingLocalVideo, appModel.selectedVideo != nil {
-                VideoPlayerView()
-            } else if !appModel.openImagesInSeparateWindows, let image = selectedImage {
-                PushedPictureView(image: image, appModel: appModel, onDismiss: {
-                    selectedImage = nil
-                })
-            } else {
-                VStack(spacing: 0) {
+            VStack(spacing: 0) {
                     // Breadcrumb/Path display
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Local / \(currentPath)")
@@ -246,10 +235,10 @@ struct LocalMediaListView: View {
                                                 url: file.url,
                                                 title: file.name
                                             )
-                                            if appModel.openImagesInSeparateWindows {
+                                            if appModel.openMediaInNewWindows {
                                                 appModel.enqueuePhotoWindowOpen(image)
                                             } else {
-                                                selectedImage = image
+                                                pushWindow(id: "photo-detail", value: PhotoWindowValue(image: image, wasPushed: true))
                                             }
                                         } else if folderPath.first == "Videos" {
                                             let video = GalleryVideo(
@@ -258,8 +247,11 @@ struct LocalMediaListView: View {
                                                 streamURL: file.url,
                                                 title: file.name
                                             )
-                                            appModel.selectVideoForDetail(video)
-                                            isShowingLocalVideo = true
+                                            if appModel.openMediaInNewWindows {
+                                                openWindow(id: "video-detail", value: VideoWindowValue(video: video))
+                                            } else {
+                                                pushWindow(id: "video-detail", value: VideoWindowValue(video: video, wasPushed: true))
+                                            }
                                         }
                                     }
                                 }
@@ -296,19 +288,8 @@ struct LocalMediaListView: View {
                         ))
                     }
                 }
-            }
         }
         .environment(appModel)
-        .onChange(of: appModel.isShowingVideoDetail) { _, isShowing in
-            if !isShowing {
-                isShowingLocalVideo = false
-            }
-        }
-        .onChange(of: appModel.openImagesInSeparateWindows) { _, isEnabled in
-            if isEnabled {
-                selectedImage = nil
-            }
-        }
     }
 
     private func loadContent() {

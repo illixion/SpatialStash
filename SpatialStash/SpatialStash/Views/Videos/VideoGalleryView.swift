@@ -8,6 +8,8 @@ import SwiftUI
 
 struct VideoGalleryView: View {
     @Environment(AppModel.self) private var appModel
+    @Environment(\.pushWindow) private var pushWindow
+    @Environment(\.openWindow) private var openWindow
 
     let columns = [
         GridItem(.adaptive(minimum: 250, maximum: 350), spacing: 16)
@@ -48,7 +50,7 @@ struct VideoGalleryView: View {
                                 VideoThumbnailView(video: video)
                                     .id(video.id)
                                     .onTapGesture {
-                                        appModel.selectVideoForDetail(video)
+                                        openVideoDetail(video)
                                     }
                                     .onAppear {
                                         // Lazy loading trigger
@@ -86,6 +88,15 @@ struct VideoGalleryView: View {
             if appModel.galleryVideos.isEmpty {
                 await appModel.loadInitialVideos()
             }
+        }
+    }
+
+    private func openVideoDetail(_ video: GalleryVideo) {
+        appModel.lastViewedVideoId = video.id
+        if appModel.openMediaInNewWindows {
+            openWindow(id: "video-detail", value: VideoWindowValue(video: video))
+        } else {
+            pushWindow(id: "video-detail", value: VideoWindowValue(video: video, wasPushed: true))
         }
     }
 }

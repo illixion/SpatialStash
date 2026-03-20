@@ -2,37 +2,25 @@
  Spatial Stash - Pictures Tab View
 
  Container view for the Pictures tab.
- Pictures open as an in-window view swap within the main window.
+ Pictures open via pushWindow (gallery is backgrounded and restored on dismiss)
+ or via openWindow when "Open media in new windows" is enabled.
  */
 
 import SwiftUI
 
 struct PicturesTabView: View {
     @Environment(AppModel.self) private var appModel
-    @State private var selectedImage: GalleryImage? = nil
-
+    @Environment(\.pushWindow) private var pushWindow
+    
     var body: some View {
-        Group {
-            if !appModel.openImagesInSeparateWindows, let image = selectedImage {
-                PushedPictureView(image: image, appModel: appModel, onDismiss: {
-                    selectedImage = nil
-                })
+        GalleryGridView(onImageSelected: { image in
+            if appModel.openMediaInNewWindows {
+                appModel.enqueuePhotoWindowOpen(image)
             } else {
-                GalleryGridView(onImageSelected: { image in
-                    if appModel.openImagesInSeparateWindows {
-                        appModel.enqueuePhotoWindowOpen(image)
-                    } else {
-                        selectedImage = image
-                    }
-                })
+                pushWindow(id: "photo-detail", value: PhotoWindowValue(image: image, wasPushed: true))
             }
-        }
+        })
         .environment(appModel)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onChange(of: appModel.openImagesInSeparateWindows) { _, isEnabled in
-            if isEnabled {
-                selectedImage = nil
-            }
-        }
     }
 }
