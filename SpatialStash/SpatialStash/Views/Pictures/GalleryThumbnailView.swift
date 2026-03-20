@@ -60,18 +60,27 @@ struct GalleryThumbnailView: View {
     }
 
     private func loadThumbnail() async {
-        // Use efficient thumbnail loading (downsamples local files during decode)
-        if let result = await ImageLoader.shared.loadThumbnailWithData(from: image.thumbnailURL) {
-            // Crop to square — always show static thumbnail (GIFs play as video in detail view)
-            loadedImage = cropToSquare(result.image)
+        if image.thumbnailURL.isFileURL {
+            // Local files: use efficient downsampling path
+            if let result = await ImageLoader.shared.loadThumbnailWithData(from: image.thumbnailURL) {
+                loadedImage = Self.cropToSquare(result.image)
+            } else {
+                AppLogger.views.warning("Failed to load thumbnail for: \(image.thumbnailURL.lastPathComponent, privacy: .private)")
+                loadFailed = true
+            }
         } else {
-            AppLogger.views.warning("Failed to load thumbnail for: \(image.thumbnailURL.lastPathComponent, privacy: .private)")
-            loadFailed = true
+            // Remote URLs: use cached thumbnail path (stores cropped result in ThumbnailCache)
+            if let result = await ImageLoader.shared.loadRemoteThumbnailCached(from: image.thumbnailURL, crop: Self.cropToSquare) {
+                loadedImage = result
+            } else {
+                AppLogger.views.warning("Failed to load thumbnail for: \(image.thumbnailURL.lastPathComponent, privacy: .private)")
+                loadFailed = true
+            }
         }
         isLoading = false
     }
     
-    private func cropToSquare(_ image: UIImage) -> UIImage {
+    private nonisolated static func cropToSquare(_ image: UIImage) -> UIImage {
         let side = min(image.size.width, image.size.height)
         let xOffset = (image.size.width - side) / 2
         let yOffset = (image.size.height - side) / 2

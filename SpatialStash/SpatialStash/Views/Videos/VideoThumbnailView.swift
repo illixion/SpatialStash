@@ -118,18 +118,27 @@ struct VideoThumbnailView: View {
     }
 
     private func loadThumbnail() async {
-        // Use efficient thumbnail loading
-        if let image = await ImageLoader.shared.loadThumbnail(from: video.thumbnailURL) {
-            // Crop to 16:9
-            loadedImage = cropTo16x9(image)
+        if video.thumbnailURL.isFileURL {
+            // Local files: use efficient downsampling path
+            if let image = await ImageLoader.shared.loadThumbnail(from: video.thumbnailURL) {
+                loadedImage = Self.cropTo16x9(image)
+            } else {
+                AppLogger.views.warning("Failed to load video thumbnail: \(video.thumbnailURL.lastPathComponent, privacy: .private)")
+                loadFailed = true
+            }
         } else {
-            AppLogger.views.warning("Failed to load video thumbnail: \(video.thumbnailURL.lastPathComponent, privacy: .private)")
-            loadFailed = true
+            // Remote URLs: use cached thumbnail path (stores cropped result in ThumbnailCache)
+            if let image = await ImageLoader.shared.loadRemoteThumbnailCached(from: video.thumbnailURL, crop: Self.cropTo16x9) {
+                loadedImage = image
+            } else {
+                AppLogger.views.warning("Failed to load video thumbnail: \(video.thumbnailURL.lastPathComponent, privacy: .private)")
+                loadFailed = true
+            }
         }
         isLoading = false
     }
     
-    private func cropTo16x9(_ image: UIImage) -> UIImage {
+    nonisolated static func cropTo16x9(_ image: UIImage) -> UIImage {
         let targetAspect: CGFloat = 16.0 / 9.0
         let imageAspect = image.size.width / image.size.height
         

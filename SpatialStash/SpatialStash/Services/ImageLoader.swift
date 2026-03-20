@@ -412,6 +412,32 @@ actor ImageLoader {
         return nil
     }
 
+    /// Load a remote thumbnail and cache the final result in ThumbnailCache for fast reload.
+    /// This avoids the expensive normalizeImage() path on every scroll-back.
+    /// - Parameters:
+    ///   - url: The remote thumbnail URL
+    ///   - crop: Optional transform to apply before caching (e.g. crop to square or 16:9)
+    /// - Returns: The cached thumbnail UIImage
+    func loadRemoteThumbnailCached(from url: URL, crop: ((UIImage) -> UIImage)? = nil) async -> UIImage? {
+        // Check ThumbnailCache first (fast memory cache, then HEIC disk)
+        if let cached = await ThumbnailCache.shared.loadThumbnail(for: url) {
+            return cached
+        }
+
+        // Fall back to full load (memory cache → disk cache → network + normalizeImage)
+        guard let image = try? await loadImage(from: url) else {
+            return nil
+        }
+
+        // Apply crop transform if provided
+        let thumbnail = crop?(image) ?? image
+
+        // Store in ThumbnailCache for fast future reloads
+        await ThumbnailCache.shared.saveThumbnail(thumbnail, for: url)
+
+        return thumbnail
+    }
+
     /// Load thumbnail for a local file using memory-efficient downsampling
     private func loadLocalThumbnail(from url: URL, maxSize: CGFloat) async -> UIImage? {
         // Check thumbnail cache first

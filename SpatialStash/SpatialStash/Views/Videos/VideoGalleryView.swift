@@ -59,6 +59,8 @@ struct VideoGalleryView: View {
                                                 await appModel.loadNextVideoPage()
                                             }
                                         }
+                                        // Prefetch upcoming thumbnails
+                                        prefetchThumbnails(around: video)
                                     }
                             }
 
@@ -87,6 +89,27 @@ struct VideoGalleryView: View {
         .task {
             if appModel.galleryVideos.isEmpty {
                 await appModel.loadInitialVideos()
+            }
+        }
+    }
+
+    /// Prefetch thumbnails for items ahead of the currently appearing item.
+    /// Covers ~2-3 rows beyond the visible area so thumbnails are cached before scrolling reveals them.
+    private func prefetchThumbnails(around video: GalleryVideo) {
+        guard let index = appModel.galleryVideos.firstIndex(where: { $0.id == video.id }) else { return }
+        let videos = appModel.galleryVideos
+        let prefetchCount = 12
+        let endIndex = min(index + prefetchCount, videos.count)
+        guard endIndex > index + 1 else { return }
+
+        let upcoming = videos[(index + 1)..<endIndex]
+        for upcoming in upcoming {
+            let url = upcoming.thumbnailURL
+            Task.detached(priority: .utility) {
+                // Skip if already cached in ThumbnailCache
+                if await ThumbnailCache.shared.isCached(for: url) { return }
+                // Warm the cache — result is discarded, but ThumbnailCache stores it
+                _ = await ImageLoader.shared.loadRemoteThumbnailCached(from: url, crop: VideoThumbnailView.cropTo16x9)
             }
         }
     }
