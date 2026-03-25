@@ -22,8 +22,11 @@ struct PhotoWindowView: View {
 
     init(windowValue: PhotoWindowValue, appModel: AppModel) {
         self.wasPushed = windowValue.wasPushed
+        // Re-resolve local file URLs in case this is a visionOS scene restoration
+        // where the sandbox container UUID has changed since the window was saved.
+        let resolvedImage = windowValue.image.resolvingLocalFileURL()
         _windowModel = State(initialValue: PhotoWindowModel(
-            image: windowValue.image,
+            image: resolvedImage,
             appModel: appModel,
             // Only register as pop-out for standalone windows (not pushed)
             // so pushed windows don't trigger duplicate detection against themselves

@@ -853,8 +853,16 @@ class AppModel {
 
     private func loadSavedWindowGroups() {
         if let data = UserDefaults.standard.data(forKey: Self.savedWindowGroupsKey),
-           let groups = try? JSONDecoder().decode([SavedWindowGroup].self, from: data) {
+           var groups = try? JSONDecoder().decode([SavedWindowGroup].self, from: data) {
+            // Re-resolve local image file URLs — the app sandbox container UUID
+            // changes on every launch, so persisted absolute file URLs become stale.
+            for groupIndex in groups.indices {
+                for imageIndex in groups[groupIndex].images.indices {
+                    groups[groupIndex].images[imageIndex] = groups[groupIndex].images[imageIndex].resolvingLocalFileURL()
+                }
+            }
             savedWindowGroups = groups
+            persistSavedWindowGroups()
             AppLogger.windowState.info("Loaded \(groups.count, privacy: .public) saved window groups")
         }
     }

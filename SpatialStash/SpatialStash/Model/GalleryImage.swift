@@ -45,6 +45,52 @@ struct GalleryImage: Identifiable, Equatable, Hashable {
     }
 }
 
+// MARK: - Local File URL Re-resolution
+
+extension GalleryImage {
+    /// Returns a copy with file URLs re-resolved against the current Documents directory.
+    /// On visionOS/iOS the app sandbox container UUID changes on every launch, so
+    /// persisted absolute file URLs become stale. This extracts the relative path
+    /// after "Documents/" and reconstructs it using the current container path.
+    /// Returns self unchanged for non-local images or when the file can't be found.
+    func resolvingLocalFileURL() -> GalleryImage {
+        guard source == "local", fullSizeURL.isFileURL else { return self }
+
+        guard let documentsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            return self
+        }
+
+        // If the URL already points to a valid file, no fixup needed
+        if FileManager.default.fileExists(atPath: fullSizeURL.path) { return self }
+
+        let pathComponents = fullSizeURL.pathComponents
+        guard let docIndex = pathComponents.lastIndex(of: "Documents"),
+              docIndex + 1 < pathComponents.count else {
+            return self
+        }
+
+        let relativeParts = pathComponents[(docIndex + 1)...]
+        var resolvedURL = documentsDir
+        for part in relativeParts {
+            resolvedURL = resolvedURL.appendingPathComponent(part)
+        }
+
+        guard FileManager.default.fileExists(atPath: resolvedURL.path) else { return self }
+
+        return GalleryImage(
+            id: id,
+            stashId: stashId,
+            thumbnailURL: resolvedURL,
+            fullSizeURL: resolvedURL,
+            title: title,
+            rating100: rating100,
+            oCounter: oCounter,
+            source: source,
+            fileName: fileName
+        )
+    }
+}
+
 // MARK: - Codable with Backward Compatibility
 
 extension GalleryImage: Codable {
