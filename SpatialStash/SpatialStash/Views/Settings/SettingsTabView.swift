@@ -11,6 +11,7 @@ import UniformTypeIdentifiers
 struct SettingsTabView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(SceneDelegate.self) private var sceneDelegate: SceneDelegate?
+    @Environment(\.openWindow) private var openWindow
     @State private var imageCacheStats: (fileCount: Int, totalSize: Int64) = (0, 0)
     @State private var videoCacheStats: (fileCount: Int, totalSize: Int64) = (0, 0)
     @State private var backgroundRemovalCacheStats: (fileCount: Int, totalSize: Int64) = (0, 0)
@@ -349,6 +350,17 @@ struct SettingsTabView: View {
                     Text("When disabled, the app will not unload images or downscale windows in response to system memory pressure.")
                         .font(.caption)
                         .foregroundColor(.secondary)
+
+                    Toggle("Lossy Texture Compression", isOn: $appModel.useLossyTextureCompression)
+                    Text("Reduces GPU memory per image by ~2-4x using hardware lossy compression. Slight quality reduction. New images use the updated setting; existing windows are unaffected until reloaded.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                    Button {
+                        openWindow(id: "gpu-memory")
+                    } label: {
+                        Label("Open GPU Memory Monitor", systemImage: "memorychip")
+                    }
 
                     Button("Refresh All Content") {
                         AppLogger.settings.debug("Refresh button pressed")

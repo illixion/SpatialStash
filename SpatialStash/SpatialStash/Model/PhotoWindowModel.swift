@@ -950,8 +950,9 @@ class PhotoWindowModel {
         }
 
         // Downsample and upload to GPU texture off main thread
-        let sendable = await Task.detached { [sourceURL, targetDimension] () -> SendableTexture? in
-            guard let tex = MetalImageRenderer.shared?.createTexture(from: sourceURL, maxDimension: targetDimension) else { return nil }
+        let useLossy = appModel.useLossyTextureCompression
+        let sendable = await Task.detached { [sourceURL, targetDimension, useLossy] () -> SendableTexture? in
+            guard let tex = MetalImageRenderer.shared?.createTexture(from: sourceURL, maxDimension: targetDimension, useLossyCompression: useLossy) else { return nil }
             return SendableTexture(texture: tex)
         }.value
 
@@ -1786,8 +1787,9 @@ class PhotoWindowModel {
         backgroundRemovalState = .removing
 
         let targetDimension = backgroundRemovalTargetDimension()
-        let sendable = await Task.detached { [cachedURL, targetDimension] () -> SendableTexture? in
-            guard let tex = MetalImageRenderer.shared?.createTexture(from: cachedURL, maxDimension: targetDimension) else { return nil }
+        let useLossy = appModel.useLossyTextureCompression
+        let sendable = await Task.detached { [cachedURL, targetDimension, useLossy] () -> SendableTexture? in
+            guard let tex = MetalImageRenderer.shared?.createTexture(from: cachedURL, maxDimension: targetDimension, useLossyCompression: useLossy) else { return nil }
             return SendableTexture(texture: tex)
         }.value
 
@@ -1871,8 +1873,9 @@ class PhotoWindowModel {
     /// The intermediate UIImage is freed after upload, keeping only the GPU texture alive.
     private func downscaleAndUploadTexture(_ image: UIImage) async -> MTLTexture? {
         let downscaled = await downscaleForDisplay(image)
-        let sendable = await Task.detached {
-            guard let tex = MetalImageRenderer.shared?.createTexture(from: downscaled) else { return nil as SendableTexture? }
+        let useLossy = appModel.useLossyTextureCompression
+        let sendable = await Task.detached { [useLossy] in
+            guard let tex = MetalImageRenderer.shared?.createTexture(from: downscaled, useLossyCompression: useLossy) else { return nil as SendableTexture? }
             return SendableTexture(texture: tex)
         }.value
         return sendable?.texture
@@ -1889,8 +1892,9 @@ class PhotoWindowModel {
         }
 
         let targetDimension = backgroundRemovalTargetDimension()
-        let sendable = await Task.detached { [cachedURL, targetDimension] () -> SendableTexture? in
-            guard let tex = MetalImageRenderer.shared?.createTexture(from: cachedURL, maxDimension: targetDimension) else { return nil }
+        let useLossy = appModel.useLossyTextureCompression
+        let sendable = await Task.detached { [cachedURL, targetDimension, useLossy] () -> SendableTexture? in
+            guard let tex = MetalImageRenderer.shared?.createTexture(from: cachedURL, maxDimension: targetDimension, useLossyCompression: useLossy) else { return nil }
             return SendableTexture(texture: tex)
         }.value
 

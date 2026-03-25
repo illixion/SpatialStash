@@ -414,6 +414,17 @@ class AppModel {
         }
     }
 
+    /// When true, Metal textures are created with lossy compression to reduce
+    /// GPU memory footprint. Slight quality reduction in exchange for ~2-4x
+    /// memory savings per texture. Requires Apple Silicon (apple5+ GPU family).
+    var useLossyTextureCompression: Bool {
+        didSet {
+            if useLossyTextureCompression != oldValue {
+                UserDefaults.standard.set(useLossyTextureCompression, forKey: "useLossyTextureCompression")
+            }
+        }
+    }
+
     // MARK: - Slideshow Settings
 
     /// Slideshow delay between images (in seconds)
@@ -495,6 +506,11 @@ class AppModel {
             ? UserDefaults.standard.bool(forKey: "respectMemoryAlerts")
             : true
 
+        // Load lossy texture compression (default: false — opt-in since it's a quality tradeoff)
+        let loadedUseLossyTextureCompression = UserDefaults.standard.object(forKey: "useLossyTextureCompression") != nil
+            ? UserDefaults.standard.bool(forKey: "useLossyTextureCompression")
+            : false
+
         // Load global visual adjustments
         let loadedGlobalVisualAdjustments: VisualAdjustments
         if let data = UserDefaults.standard.data(forKey: "globalVisualAdjustments"),
@@ -515,6 +531,7 @@ class AppModel {
         self.rememberImageEnhancements = loadedRememberImageEnhancements
         self.showDebugConsole = loadedShowDebugConsole
         self.respectMemoryAlerts = loadedRespectMemoryAlerts
+        self.useLossyTextureCompression = loadedUseLossyTextureCompression
         self.globalVisualAdjustments = loadedGlobalVisualAdjustments
 
         // Initialize API client and image sources

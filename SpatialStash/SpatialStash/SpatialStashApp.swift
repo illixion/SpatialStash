@@ -74,6 +74,15 @@ struct SpatialStashApp: App {
         .windowResizability(.contentMinSize)
         .defaultLaunchBehavior(.suppressed)
 
+        // GPU memory monitor window (singleton)
+        Window("GPU Memory", id: "gpu-memory") {
+            GPUMemoryMonitorView()
+                .environment(appModel)
+        }
+        .defaultSize(width: 500, height: 350)
+        .windowResizability(.contentMinSize)
+        .defaultLaunchBehavior(.suppressed)
+
         // Immersive space for stereoscopic 3D video playback
         ImmersiveSpace(id: "StereoscopicVideoSpace") {
             ImmersiveVideoView()

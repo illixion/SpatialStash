@@ -84,7 +84,7 @@ final class MetalImageRenderer: Sendable {
     /// Create a GPU-private texture from a CGImage.
     /// Uses CIContext to render into a Metal texture, correctly handling all
     /// source pixel formats, color spaces, and bit depths.
-    func createTexture(from cgImage: CGImage) -> MTLTexture? {
+    func createTexture(from cgImage: CGImage, useLossyCompression: Bool = false) -> MTLTexture? {
         let width = cgImage.width
         let height = cgImage.height
         guard width > 0, height > 0 else { return nil }
@@ -92,17 +92,19 @@ final class MetalImageRenderer: Sendable {
         let isDeepColor = cgImage.bitsPerComponent > 8
         let pixelFormat: MTLPixelFormat = isDeepColor ? .rgba16Float : .bgra8Unorm
 
-        // Create a writable texture for CIContext to render into
-        let desc = MTLTextureDescriptor.texture2DDescriptor(
+        // Create a writable staging texture for CIContext to render into.
+        // CIContext.render requires .shaderWrite, which is incompatible with
+        // lossy compression, so we always render to an uncompressed texture first.
+        let stagingDesc = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: pixelFormat,
             width: width,
             height: height,
             mipmapped: false
         )
-        desc.usage = [.shaderRead, .shaderWrite]
-        desc.storageMode = .private
+        stagingDesc.usage = [.shaderRead, .shaderWrite]
+        stagingDesc.storageMode = .private
 
-        guard let texture = device.makeTexture(descriptor: desc),
+        guard let stagingTexture = device.makeTexture(descriptor: stagingDesc),
               let cmdBuf = commandQueue.makeCommandBuffer() else { return nil }
 
         // CIImage origin is bottom-left; Metal textures expect top-left.
@@ -119,27 +121,65 @@ final class MetalImageRenderer: Sendable {
 
         ciContext.render(
             ciImage,
-            to: texture,
+            to: stagingTexture,
             commandBuffer: cmdBuf,
             bounds: CGRect(x: 0, y: 0, width: width, height: height),
             colorSpace: colorSpace
         )
 
+        if useLossyCompression {
+            // Blit-copy from the uncompressed staging texture into a lossy-compressed
+            // read-only texture. The staging texture is released after the copy completes.
+            let lossyDesc = MTLTextureDescriptor.texture2DDescriptor(
+                pixelFormat: pixelFormat,
+                width: width,
+                height: height,
+                mipmapped: false
+            )
+            lossyDesc.usage = [.shaderRead]
+            lossyDesc.storageMode = .private
+            lossyDesc.compressionType = .lossy
+
+            guard let lossyTexture = device.makeTexture(descriptor: lossyDesc),
+                  let blit = cmdBuf.makeBlitCommandEncoder() else {
+                // Fall back to returning the uncompressed staging texture
+                cmdBuf.commit()
+                cmdBuf.waitUntilCompleted()
+                return stagingTexture
+            }
+
+            blit.copy(
+                from: stagingTexture,
+                sourceSlice: 0,
+                sourceLevel: 0,
+                sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
+                sourceSize: MTLSize(width: width, height: height, depth: 1),
+                to: lossyTexture,
+                destinationSlice: 0,
+                destinationLevel: 0,
+                destinationOrigin: MTLOrigin(x: 0, y: 0, z: 0)
+            )
+            blit.endEncoding()
+
+            cmdBuf.commit()
+            cmdBuf.waitUntilCompleted()
+            return lossyTexture
+        }
+
         cmdBuf.commit()
         cmdBuf.waitUntilCompleted()
-
-        return texture
+        return stagingTexture
     }
 
     /// Create a GPU-private texture from a UIImage.
-    func createTexture(from uiImage: UIImage) -> MTLTexture? {
+    func createTexture(from uiImage: UIImage, useLossyCompression: Bool = false) -> MTLTexture? {
         guard let cgImage = uiImage.cgImage else { return nil }
-        return createTexture(from: cgImage)
+        return createTexture(from: cgImage, useLossyCompression: useLossyCompression)
     }
 
     /// Downsample an image from a URL and upload directly to a GPU-private texture.
     /// Uses CGImageSource for memory-efficient decoding without loading the full image.
-    func createTexture(from url: URL, maxDimension: CGFloat) -> MTLTexture? {
+    func createTexture(from url: URL, maxDimension: CGFloat, useLossyCompression: Bool = false) -> MTLTexture? {
         autoreleasepool {
             guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else {
                 return nil
@@ -162,7 +202,7 @@ final class MetalImageRenderer: Sendable {
                 return nil
             }
 
-            return createTexture(from: cgImage)
+            return createTexture(from: cgImage, useLossyCompression: useLossyCompression)
         }
     }
 }
