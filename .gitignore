@@ -23,4 +23,7 @@ xcuserdata/
 # Generated at build time by scripts/set-build-info.sh
 SpatialStash/BuildInfo.xcconfig
 
+# Local signing overrides (per-developer)
+Configuration/LocalSigning.xcconfig
+
 **/internal_docs/**

@@ -1,0 +1,8 @@
+// Default signing configuration for the repository.
+// To override locally, copy LocalSigning.xcconfig.example to LocalSigning.xcconfig and edit.
+
+CODE_SIGN_STYLE = Automatic
+CODE_SIGN_IDENTITY = Apple Development
+DEVELOPMENT_TEAM = 9T5F88VJFL
+PRODUCT_BUNDLE_IDENTIFIER = com.illixion.spatialstash
+PROVISIONING_PROFILE_SPECIFIER =

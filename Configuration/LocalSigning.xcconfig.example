@@ -1,0 +1,16 @@
+// Local signing overrides — copy this file to LocalSigning.xcconfig and edit.
+// LocalSigning.xcconfig is gitignored and will never be committed.
+//
+// Conditional syntax: [sdk=xros*] applies only to visionOS device builds.
+// Compound conditionals: [sdk=xros*][config=Debug] applies to visionOS device + Debug config.
+
+// CODE_SIGN_STYLE = Manual
+// CODE_SIGN_IDENTITY = Apple Development
+// CODE_SIGN_IDENTITY[sdk=xros*][config=Debug] = iPhone Developer
+// CODE_SIGN_IDENTITY[sdk=xros*][config=Release] = iPhone Distribution
+// DEVELOPMENT_TEAM =
+// DEVELOPMENT_TEAM[sdk=xros*] = YOUR_TEAM_ID
+// PRODUCT_BUNDLE_IDENTIFIER = your.bundle.id
+// PROVISIONING_PROFILE_SPECIFIER =
+// PROVISIONING_PROFILE_SPECIFIER[sdk=xros*][config=Debug] = your_dev_profile
+// PROVISIONING_PROFILE_SPECIFIER[sdk=xros*][config=Release] = your_dist_profile
