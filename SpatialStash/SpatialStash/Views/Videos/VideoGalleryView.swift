@@ -72,6 +72,9 @@ struct VideoGalleryView: View {
                         }
                         .padding()
                     }
+                    .refreshable {
+                        await appModel.loadInitialVideos()
+                    }
                     .onAppear {
                         // Restore scroll position when returning from detail view
                         if let lastViewedId = appModel.lastViewedVideoId {

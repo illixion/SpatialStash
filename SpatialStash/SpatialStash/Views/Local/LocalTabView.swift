@@ -169,7 +169,7 @@ struct LocalMediaListView: View {
                     .padding()
                     .background(Color.secondary.opacity(0.05))
 
-                    // Content
+                    // Content (with pull-to-refresh)
                     if isLoading {
                         VStack(spacing: 20) {
                             ProgressView()
@@ -271,6 +271,9 @@ struct LocalMediaListView: View {
                                 }
                             }
                             .padding()
+                        }
+                        .refreshable {
+                            loadContent()
                         }
                     }
                 }

@@ -362,17 +362,6 @@ struct SettingsTabView: View {
                         Label("Open GPU Memory Monitor", systemImage: "memorychip")
                     }
 
-                    Button("Refresh All Content") {
-                        AppLogger.settings.debug("Refresh button pressed")
-                        Task {
-                            AppLogger.settings.debug("Starting gallery refresh...")
-                            await appModel.loadInitialGallery()
-                            AppLogger.settings.debug("Gallery refresh complete, images: \(appModel.galleryImages.count, privacy: .public)")
-                            await appModel.loadInitialVideos()
-                            AppLogger.settings.debug("Video refresh complete, videos: \(appModel.galleryVideos.count, privacy: .public)")
-                        }
-                    }
-
                     Button("Close All Windows", role: .destructive) {
                         closeAllSecondaryWindows()
                     }

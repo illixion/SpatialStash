@@ -68,6 +68,9 @@ struct GalleryGridView: View {
                         }
                         .padding()
                     }
+                    .refreshable {
+                        await appModel.loadInitialGallery()
+                    }
                     .onAppear {
                         if let lastId = appModel.lastViewedImageId {
                             // Delay to allow LazyVGrid to materialize items before scrolling
