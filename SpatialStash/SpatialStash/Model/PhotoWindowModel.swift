@@ -1339,7 +1339,17 @@ class PhotoWindowModel {
                 sourceURL = imageURL
             }
 
-            spatial3DImage = try await ImagePresentationComponent.Spatial3DImage(contentsOf: sourceURL)
+            // Respect the max image resolution setting by downsampling the source
+            // image before passing it to RealityKit's Spatial3DImage
+            let effectiveRes = effectiveMaxResolution
+            if effectiveRes > 0,
+               let downsampledData = Self.createDownsampledImageData(from: sourceURL, maxDimension: CGFloat(effectiveRes)),
+               let downsampledSource = CGImageSourceCreateWithData(downsampledData as CFData, nil) {
+                AppLogger.photoWindow.debug("3D conversion using downsampled source (max \(effectiveRes, privacy: .public)px)")
+                spatial3DImage = try await ImagePresentationComponent.Spatial3DImage(imageSource: downsampledSource)
+            } else {
+                spatial3DImage = try await ImagePresentationComponent.Spatial3DImage(contentsOf: sourceURL)
+            }
         } catch {
             AppLogger.photoWindow.error("Unable to initialize spatial 3D image: \(error.localizedDescription, privacy: .public)")
             isLoadingDetailImage = false
@@ -1386,6 +1396,37 @@ class PhotoWindowModel {
 
         isLoadingDetailImage = false
         // Note: Auto-generation is handled by PhotoWindowView after entity is added to scene
+    }
+
+    /// Creates downsampled JPEG data from an image URL for use with RealityKit's Spatial3DImage.
+    /// Returns nil if the image is already within the max dimension or downsampling fails,
+    /// allowing the caller to fall back to the full-resolution URL-based initializer.
+    private static func createDownsampledImageData(from url: URL, maxDimension: CGFloat) -> Data? {
+        guard let data = try? Data(contentsOf: url, options: .mappedIfSafe),
+              let source = CGImageSourceCreateWithData(data as CFData, nil) else {
+            return nil
+        }
+
+        // Check native dimensions — skip downsampling if already within limit
+        if let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+           let width = properties[kCGImagePropertyPixelWidth] as? CGFloat,
+           let height = properties[kCGImagePropertyPixelHeight] as? CGFloat,
+           max(width, height) <= maxDimension {
+            return nil
+        }
+
+        // Downsample using CGImageSource thumbnail API (memory-efficient, no full decode)
+        let options: [CFString: Any] = [
+            kCGImageSourceThumbnailMaxPixelSize: maxDimension,
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true
+        ]
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+            return nil
+        }
+
+        return UIImage(cgImage: cgImage).jpegData(compressionQuality: 0.95)
     }
 
     /// Called after the entity is added to the RealityKit scene to auto-generate spatial 3D
