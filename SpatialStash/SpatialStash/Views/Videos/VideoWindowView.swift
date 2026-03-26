@@ -135,6 +135,8 @@ struct VideoWindowView: View {
             video3DSettings = windowValue.video3DSettings
             startAutoHideTimer()
             if windowValue.wasPushed {
+                appModel.activePushedViewerCount += 1
+                Task { await ThumbnailCache.shared.clearMemoryCache() }
                 // Set AppModel video state so VideoOrnamentsView works
                 appModel.selectVideoForDetail(video)
             }
@@ -145,6 +147,7 @@ struct VideoWindowView: View {
             scenePhaseIdleTask = nil
             restoreWindowResizing()
             if windowValue.wasPushed {
+                appModel.activePushedViewerCount -= 1
                 appModel.dismissVideoDetail()
             }
         }

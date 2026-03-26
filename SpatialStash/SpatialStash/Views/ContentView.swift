@@ -83,8 +83,9 @@ struct ContentView: View {
     private func handlePhotoWindowOpenIfNeeded() {
         guard let request = appModel.activePhotoWindowOpenRequest else { return }
         guard !appModel.shouldConfirmDuplicateOpen(for: request) else { return }
-        openWindow(id: "photo-detail", value: PhotoWindowValue(image: request.image))
+        // Advance queue before opening to prevent other ContentViews from double-processing
         appModel.advancePhotoWindowOpenQueue()
+        openWindow(id: "photo-detail", value: PhotoWindowValue(image: request.image))
     }
 
     private func summonDuplicatePhotoWindow() {

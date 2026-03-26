@@ -415,6 +415,7 @@ struct LocalMediaListView: View {
 // MARK: - Local Media Thumbnail View
 
 struct LocalMediaThumbnailView: View {
+    @Environment(AppModel.self) private var appModel
     let file: LocalMediaFile
     var onTap: (() -> Void)? = nil
 
@@ -473,6 +474,13 @@ struct LocalMediaThumbnailView: View {
             loadedImage = nil
             isLoading = true
             loadFailed = false
+        }
+        .onChange(of: appModel.activePushedViewerCount) { _, count in
+            if count > 0 {
+                loadedImage = nil
+            } else if loadedImage == nil && !isLoading {
+                Task { await loadThumbnail() }
+            }
         }
     }
 

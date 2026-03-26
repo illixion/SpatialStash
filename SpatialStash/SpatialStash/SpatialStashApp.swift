@@ -13,8 +13,12 @@ struct SpatialStashApp: App {
     @UIApplicationDelegateAdaptor private var appDelegate: AppDelegate
 
     var body: some Scene {
-        Window("Spatial Stash", id: "main") {
+        // Main gallery window — WindowGroup allows multiple instances.
+        // UUID identity ensures each openWindow call creates a new window.
+        WindowGroup("Spatial Stash", id: "main", for: UUID.self) { $windowId in
             MainWindowView(appModel: appModel)
+        } defaultValue: {
+            UUID()
         }
         .defaultSize(width: 1200, height: 800)
         .windowResizability(.contentMinSize)
@@ -96,41 +100,11 @@ struct SpatialStashApp: App {
 private struct MainWindowView: View {
     let appModel: AppModel
     @Environment(\.openWindow) private var openWindow
-    @Environment(\.dismiss) private var dismiss
-    /// Tracks whether THIS view instance claimed primary main-window status.
-    /// Only the primary instance resets `isMainWindowOpen` on disappear.
-    @State private var isPrimary = false
 
     var body: some View {
         ContentView()
             .environment(appModel)
             .frame(minWidth: 320, maxWidth: 3000, minHeight: 320, maxHeight: 3000)
-            .onAppear {
-                if appModel.isMainWindowOpen {
-                    let timeSinceLaunch = Date().timeIntervalSince(appModel.launchTime)
-                    if timeSinceLaunch < 3.0 {
-                        // Launch-time duplicate (restoration + defaultLaunchBehavior both fired).
-                        // dismiss() closes THIS instance only, unlike dismissWindow(id:)
-                        // which would close ALL main windows.
-                        AppLogger.app.info("Duplicate main window at launch, dismissing this instance")
-                        dismiss()
-                        return
-                    }
-                    // After launch window, this is a keyboard/sheet-triggered scene recreation.
-                    // Don't dismiss — let it take over as primary to preserve visionOS
-                    // spatial tracking and window placement for new pop-out windows.
-                    AppLogger.app.info("Main window scene recreated, taking over as primary")
-                }
-                appModel.isMainWindowOpen = true
-                isPrimary = true
-                AppLogger.app.info("Main window appeared")
-            }
-            .onDisappear {
-                if isPrimary {
-                    appModel.isMainWindowOpen = false
-                    isPrimary = false
-                }
-            }
             .onOpenURL { url in
                 Task { @MainActor in
                     await handleIncomingURL(url)

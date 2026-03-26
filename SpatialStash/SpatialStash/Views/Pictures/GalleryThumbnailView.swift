@@ -9,6 +9,7 @@ import os
 import SwiftUI
 
 struct GalleryThumbnailView: View {
+    @Environment(AppModel.self) private var appModel
     let image: GalleryImage
     var onTap: (() -> Void)? = nil
     @State private var loadedImage: UIImage?
@@ -56,6 +57,13 @@ struct GalleryThumbnailView: View {
             loadedImage = nil
             isLoading = true
             loadFailed = false
+        }
+        .onChange(of: appModel.activePushedViewerCount) { _, count in
+            if count > 0 {
+                loadedImage = nil
+            } else if loadedImage == nil && !isLoading {
+                Task { await loadThumbnail() }
+            }
         }
     }
 

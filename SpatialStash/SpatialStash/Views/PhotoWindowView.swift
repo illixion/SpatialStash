@@ -70,10 +70,17 @@ struct PhotoWindowView: View {
         )
         .onAppear {
             appModel.lastViewedImageId = windowModel.image.id
+            if wasPushed {
+                appModel.activePushedViewerCount += 1
+                Task { await ThumbnailCache.shared.clearMemoryCache() }
+            }
             windowModel.start()
             windowModel.startAutoHideTimer()
         }
         .onDisappear {
+            if wasPushed {
+                appModel.activePushedViewerCount -= 1
+            }
             windowModel.cleanup()
         }
         .alert(

@@ -149,14 +149,11 @@ class AppModel {
 
     // MARK: - Main Window State
 
-    /// Whether the main gallery window is currently open (prevents duplicates)
-    var isMainWindowOpen: Bool = false
-
-    /// Timestamp of AppModel creation — used to distinguish launch-time duplicate
-    /// windows from keyboard/sheet-triggered scene recreations.
-    let launchTime = Date()
-
     var mainWindowSize: CGSize = CGSize(width: 1200, height: 800)
+
+    /// Number of pushed photo/video viewers currently covering gallery windows.
+    /// When > 0, gallery thumbnails unload to free memory (disk cache is available for reload).
+    var activePushedViewerCount: Int = 0
 
     // MARK: - Photo Window Memory Management
 
@@ -1095,11 +1092,10 @@ class AppModel {
 
     // MARK: - API Client Management
 
-    /// Opens the main window or brings it to the front if already open.
-    /// Since the main scene is a singleton `Window` (not `WindowGroup`),
-    /// calling openWindow(id:) on an already-open Window orders it to the front.
+    /// Opens a new main gallery window.
+    /// Each call creates a fresh instance (UUID-keyed WindowGroup).
     func showMainWindow(openWindow: OpenWindowAction) {
-        openWindow(id: "main")
+        openWindow(id: "main", value: UUID())
     }
 
     func updateAPIClient() {
