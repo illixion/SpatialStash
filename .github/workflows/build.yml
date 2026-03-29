@@ -3,12 +3,16 @@ name: Build IPA
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: macos-26
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -51,3 +55,46 @@ jobs:
         with:
           name: SpatialStash
           path: build/SpatialStash.ipa
+
+      - name: Create a version string
+        id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+            VERSION="${TAG#v}"
+          else
+            TAG="v0.1.0-${GITHUB_SHA::8}"
+            VERSION="0.1.0-${GITHUB_SHA::8}"
+          fi
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Rename IPA with version
+        id: ipa
+        run: |
+          IPA_NAME="SpatialStash-${{ steps.version.outputs.version }}-unsigned.ipa"
+          cp build/SpatialStash.ipa "$IPA_NAME"
+          echo "ipa_file=$IPA_NAME" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        if: github.event_name != 'pull_request'
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          release_name: ${{ steps.version.outputs.version }}
+          draft: false
+          prerelease: false
+
+      - name: Upload Release Asset
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ${{ steps.ipa.outputs.ipa_file }}
+          asset_name: ${{ steps.ipa.outputs.ipa_file }}
+          asset_content_type: application/octet-stream
