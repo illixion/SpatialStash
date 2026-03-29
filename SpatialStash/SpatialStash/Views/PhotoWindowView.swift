@@ -49,11 +49,7 @@ struct PhotoWindowView: View {
                         if windowModel.isSlideshowActive {
                             windowModel.stopSlideshow()
                         }
-                        if wasPushed {
-                            dismissWindow()
-                        } else {
-                            appModel.showMainWindow(openWindow: openWindow)
-                        }
+                        appModel.showMainWindow(openWindow: openWindow)
                     },
                     extraButtons: {
                         if wasPushed {
@@ -70,17 +66,10 @@ struct PhotoWindowView: View {
         )
         .onAppear {
             appModel.lastViewedImageId = windowModel.image.id
-            if wasPushed {
-                appModel.activePushedViewerCount += 1
-                Task { await ThumbnailCache.shared.clearMemoryCache() }
-            }
             windowModel.start()
             windowModel.startAutoHideTimer()
         }
         .onDisappear {
-            if wasPushed {
-                appModel.activePushedViewerCount -= 1
-            }
             windowModel.cleanup()
         }
         .alert(

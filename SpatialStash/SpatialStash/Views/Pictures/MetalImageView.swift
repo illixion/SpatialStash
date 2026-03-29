@@ -113,7 +113,10 @@ struct MetalImageView: UIViewRepresentable {
         var saturation: Float = 1
 
         func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
-            // No action needed — we redraw on demand
+            // Redraw when drawable size changes — ensures the image is rendered
+            // at the correct resolution after layout (especially on first appear
+            // when the view may initially have zero size).
+            view.setNeedsDisplay()
         }
 
         func draw(in view: MTKView) {

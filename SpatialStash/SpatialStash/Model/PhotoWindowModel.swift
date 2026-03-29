@@ -949,10 +949,13 @@ class PhotoWindowModel {
             }
         }
 
-        // Downsample and upload to GPU texture off main thread
+        // Downsample and upload to GPU texture off main thread.
+        // When effective resolution is off (0), force full-quality decode to bypass
+        // CGImageSource thumbnail API which can introduce interpolation artifacts.
         let useLossy = appModel.useLossyTextureCompression
-        let sendable = await Task.detached { [sourceURL, targetDimension, useLossy] () -> SendableTexture? in
-            guard let tex = MetalImageRenderer.shared?.createTexture(from: sourceURL, maxDimension: targetDimension, useLossyCompression: useLossy) else { return nil }
+        let fullDecode = effectiveRes == 0
+        let sendable = await Task.detached { [sourceURL, targetDimension, useLossy, fullDecode] () -> SendableTexture? in
+            guard let tex = MetalImageRenderer.shared?.createTexture(from: sourceURL, maxDimension: targetDimension, useLossyCompression: useLossy, forceFullDecode: fullDecode) else { return nil }
             return SendableTexture(texture: tex)
         }.value
 

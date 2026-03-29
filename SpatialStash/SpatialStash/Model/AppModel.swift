@@ -151,10 +151,6 @@ class AppModel {
 
     var mainWindowSize: CGSize = CGSize(width: 1200, height: 800)
 
-    /// Number of pushed photo/video viewers currently covering gallery windows.
-    /// When > 0, gallery thumbnails unload to free memory (disk cache is available for reload).
-    var activePushedViewerCount: Int = 0
-
     // MARK: - Photo Window Memory Management
 
     /// Number of currently open pop-out photo windows

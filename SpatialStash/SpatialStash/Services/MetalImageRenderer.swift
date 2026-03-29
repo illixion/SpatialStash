@@ -179,7 +179,10 @@ final class MetalImageRenderer: Sendable {
 
     /// Downsample an image from a URL and upload directly to a GPU-private texture.
     /// Uses CGImageSource for memory-efficient decoding without loading the full image.
-    func createTexture(from url: URL, maxDimension: CGFloat, useLossyCompression: Bool = false) -> MTLTexture? {
+    /// When `forceFullDecode` is true or `maxDimension` >= native size, uses
+    /// `CGImageSourceCreateImageAtIndex` for full-quality decode (avoids quality loss
+    /// with certain codecs like JXL and prevents thumbnail API interpolation artifacts).
+    func createTexture(from url: URL, maxDimension: CGFloat, useLossyCompression: Bool = false, forceFullDecode: Bool = false) -> MTLTexture? {
         autoreleasepool {
             guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else {
                 return nil
@@ -189,18 +192,45 @@ final class MetalImageRenderer: Sendable {
                 return nil
             }
 
-            let options: [CFString: Any] = [
-                kCGImageSourceThumbnailMaxPixelSize: maxDimension,
-                kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceCreateThumbnailWithTransform: true,
-                kCGImageSourceShouldCacheImmediately: true
-            ]
+            let cgImage: CGImage?
+            if forceFullDecode {
+                // Caller explicitly requested full-quality decode (e.g. effectiveMaxResolution == 0)
+                let fullOptions: [CFString: Any] = [
+                    kCGImageSourceShouldCacheImmediately: true
+                ]
+                cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, fullOptions as CFDictionary)
+            } else {
+                // Read native dimensions to decide decode path.
+                // Use NSNumber bridge for robust conversion — CGImageSource properties
+                // may store pixel dimensions as integer CFNumber types.
+                let nativeMaxDim: CGFloat
+                if let properties = CGImageSourceCopyPropertiesAtIndex(imageSource, 0, nil) as? [CFString: Any],
+                   let pw = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.doubleValue,
+                   let ph = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.doubleValue {
+                    nativeMaxDim = max(CGFloat(pw), CGFloat(ph))
+                } else {
+                    nativeMaxDim = 0
+                }
 
-            guard let cgImage = CGImageSourceCreateThumbnailAtIndex(
-                imageSource, 0, options as CFDictionary
-            ) else {
-                return nil
+                if nativeMaxDim > 0 && maxDimension >= nativeMaxDim {
+                    // Full-resolution decode — avoids thumbnail path quality loss
+                    let fullOptions: [CFString: Any] = [
+                        kCGImageSourceShouldCacheImmediately: true
+                    ]
+                    cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, fullOptions as CFDictionary)
+                } else {
+                    // Downsampled decode via thumbnail API
+                    let thumbOptions: [CFString: Any] = [
+                        kCGImageSourceThumbnailMaxPixelSize: maxDimension,
+                        kCGImageSourceCreateThumbnailFromImageAlways: true,
+                        kCGImageSourceCreateThumbnailWithTransform: true,
+                        kCGImageSourceShouldCacheImmediately: true
+                    ]
+                    cgImage = CGImageSourceCreateThumbnailAtIndex(imageSource, 0, thumbOptions as CFDictionary)
+                }
             }
+
+            guard let cgImage else { return nil }
 
             return createTexture(from: cgImage, useLossyCompression: useLossyCompression)
         }
