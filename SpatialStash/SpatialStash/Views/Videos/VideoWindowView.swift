@@ -46,7 +46,14 @@ struct VideoWindowView: View {
     /// Extra bottom padding to prevent the ornament from overlapping video content
     private let ornamentBottomPadding: CGFloat = 60
 
-    private var video: GalleryVideo { windowValue.video }
+    /// For pushed windows, follow AppModel.selectedVideo so prev/next navigation works.
+    /// For standalone pop-outs, use the snapshot from windowValue.
+    private var video: GalleryVideo {
+        if windowValue.wasPushed, let selected = appModel.selectedVideo {
+            return selected
+        }
+        return windowValue.video
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -146,6 +153,14 @@ struct VideoWindowView: View {
             restoreWindowResizing()
             if windowValue.wasPushed {
                 appModel.dismissVideoDetail()
+            }
+        }
+        .onChange(of: appModel.selectedVideo) { _, newVideo in
+            // When prev/next navigation changes the selected video, reset per-video state
+            if windowValue.wasPushed, newVideo != nil {
+                stereoscopicOverride = nil
+                video3DSettings = nil
+                isVideoFlipped = false
             }
         }
         .onChange(of: scenePhase) { oldPhase, newPhase in
