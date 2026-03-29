@@ -2024,7 +2024,7 @@ class PhotoWindowModel {
 
         autoHideTask = Task {
             try? await Task.sleep(for: .seconds(appModel.autoHideDelay))
-            if !Task.isCancelled, !self.hasOpenPopover {
+            if !Task.isCancelled, !self.hasOpenPopover, !self.isLoadingDetailImage {
                 isUIHidden = true
                 // Schedule window controls to hide 1.5 seconds later
                 scheduleWindowControlsHiding()
