@@ -27,6 +27,64 @@ actor BackgroundRemover {
             return nil
         }
 
+        let (maskCIImage, originalCIImage) = try generateForegroundMask(cgImage: cgImage)
+
+        return applyMaskAndCrop(
+            inputImage: originalCIImage,
+            maskImage: maskCIImage,
+            scale: image.scale,
+            orientation: image.imageOrientation
+        )
+    }
+
+    /// Remove background and produce both regular and auto-enhanced variants.
+    /// The foreground mask is generated once from the original image for stable edge
+    /// detection. Auto-enhancement is applied to the full original (preserving context
+    /// for correct exposure analysis), then the same mask is composited over it.
+    /// Returns (regular, autoEnhanced) — either may be nil on failure.
+    func removeBackgroundWithAutoEnhance(from image: UIImage) async throws -> (regular: UIImage?, autoEnhanced: UIImage?) {
+        guard let cgImage = image.cgImage else {
+            AppLogger.backgroundRemover.warning("No CGImage available for background removal")
+            return (nil, nil)
+        }
+
+        let (maskCIImage, originalCIImage) = try generateForegroundMask(cgImage: cgImage)
+
+        // 1. Apply mask to original → regular bg-removed
+        let regularResult = applyMaskAndCrop(
+            inputImage: originalCIImage,
+            maskImage: maskCIImage,
+            scale: image.scale,
+            orientation: image.imageOrientation
+        )
+
+        // 2. Auto-enhance the original CIImage (full-image context for correct analysis)
+        let autoFilters = originalCIImage.autoAdjustmentFilters(options: [
+            .enhance: true,
+            .redEye: false
+        ])
+        var enhancedCI = originalCIImage
+        for filter in autoFilters {
+            filter.setValue(enhancedCI, forKey: kCIInputImageKey)
+            if let output = filter.outputImage {
+                enhancedCI = output
+            }
+        }
+
+        // 3. Apply the same mask to the enhanced version
+        let enhancedResult = applyMaskAndCrop(
+            inputImage: enhancedCI,
+            maskImage: maskCIImage,
+            scale: image.scale,
+            orientation: image.imageOrientation
+        )
+
+        return (regularResult, enhancedResult)
+    }
+
+    /// Generate the foreground mask from a CGImage using Vision.
+    /// Returns the mask CIImage and the original CIImage.
+    private func generateForegroundMask(cgImage: CGImage) throws -> (mask: CIImage, original: CIImage) {
         let request = VNGenerateForegroundInstanceMaskRequest()
         let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
 
@@ -34,7 +92,7 @@ actor BackgroundRemover {
 
         guard let result = request.results?.first else {
             AppLogger.backgroundRemover.warning("No foreground mask results")
-            return nil
+            throw BackgroundRemovalError.noMaskResults
         }
 
         let maskPixelBuffer = try result.generateScaledMaskForImage(
@@ -42,13 +100,24 @@ actor BackgroundRemover {
             from: handler
         )
 
-        let maskCIImage = CIImage(cvPixelBuffer: maskPixelBuffer)
-        let originalCIImage = CIImage(cgImage: cgImage)
+        return (CIImage(cvPixelBuffer: maskPixelBuffer), CIImage(cgImage: cgImage))
+    }
 
+    enum BackgroundRemovalError: Error {
+        case noMaskResults
+    }
+
+    /// Apply a foreground mask to an image and crop transparent margins.
+    private func applyMaskAndCrop(
+        inputImage: CIImage,
+        maskImage: CIImage,
+        scale: CGFloat,
+        orientation: UIImage.Orientation
+    ) -> UIImage? {
         let filter = CIFilter.blendWithMask()
-        filter.inputImage = originalCIImage
+        filter.inputImage = inputImage
         filter.backgroundImage = CIImage.empty()
-        filter.maskImage = maskCIImage
+        filter.maskImage = maskImage
 
         guard let outputCIImage = filter.outputImage else {
             AppLogger.backgroundRemover.warning("CIFilter blendWithMask produced no output")
@@ -57,13 +126,13 @@ actor BackgroundRemover {
 
         guard let outputCGImage = ciContext.createCGImage(
             outputCIImage,
-            from: originalCIImage.extent
+            from: inputImage.extent
         ) else {
             AppLogger.backgroundRemover.warning("Failed to render CIImage to CGImage")
             return nil
         }
 
-        let processedImage = UIImage(cgImage: outputCGImage, scale: image.scale, orientation: image.imageOrientation)
+        let processedImage = UIImage(cgImage: outputCGImage, scale: scale, orientation: orientation)
 
         // Auto-crop to remove fully transparent margins
         if let croppedImage = cropTransparentSpace(from: processedImage) {

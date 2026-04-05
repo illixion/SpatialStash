@@ -43,10 +43,14 @@ actor BackgroundRemovalCache {
         }
     }
 
-    /// Generate a cache key from a URL with background removal suffix
-    private func cacheKey(for url: URL) -> String {
-        // Use SHA256 hash of URL string + "backgroundRemoved" suffix as filename
-        let urlString = url.absoluteString + ":backgroundRemoved"
+    /// Generate a cache key from a URL with background removal suffix.
+    /// When `isAutoEnhanced` is true, the key includes an additional suffix
+    /// so regular and auto-enhanced variants are stored as separate cache entries.
+    private func cacheKey(for url: URL, isAutoEnhanced: Bool = false) -> String {
+        var urlString = url.absoluteString + ":backgroundRemoved"
+        if isAutoEnhanced {
+            urlString += ":autoEnhanced"
+        }
         let data = Data(urlString.utf8)
         var hash = [UInt8](repeating: 0, count: 32)
         data.withUnsafeBytes { bytes in
@@ -56,8 +60,8 @@ actor BackgroundRemovalCache {
     }
 
     /// Get the file URL for a cached background-removed image
-    private func cacheFileURL(for url: URL) -> URL {
-        let key = cacheKey(for: url)
+    private func cacheFileURL(for url: URL, isAutoEnhanced: Bool = false) -> URL {
+        let key = cacheKey(for: url, isAutoEnhanced: isAutoEnhanced)
         return cacheDirectory.appendingPathComponent(key + ".heic")
     }
 
@@ -68,24 +72,29 @@ actor BackgroundRemovalCache {
     }
 
     /// Return cached file URL if present
-    func cachedFileURL(for url: URL) -> URL? {
-        let fileURL = cacheFileURL(for: url)
+    func cachedFileURL(for url: URL, isAutoEnhanced: Bool = false) -> URL? {
+        let fileURL = cacheFileURL(for: url, isAutoEnhanced: isAutoEnhanced)
         if fileManager.fileExists(atPath: fileURL.path) {
             return fileURL
         }
 
-        let legacyURL = legacyCacheFileURL(for: url)
-        return fileManager.fileExists(atPath: legacyURL.path) ? legacyURL : nil
+        // Legacy fallback only applies to regular (non-enhanced) variant
+        if !isAutoEnhanced {
+            let legacyURL = legacyCacheFileURL(for: url)
+            return fileManager.fileExists(atPath: legacyURL.path) ? legacyURL : nil
+        }
+
+        return nil
     }
 
     /// Check if a background-removed image is cached
-    func isCached(url: URL) -> Bool {
-        return cachedFileURL(for: url) != nil
+    func isCached(url: URL, isAutoEnhanced: Bool = false) -> Bool {
+        return cachedFileURL(for: url, isAutoEnhanced: isAutoEnhanced) != nil
     }
 
     /// Load background-removed image data from disk cache
-    func loadData(for url: URL) -> Data? {
-        let fileURL = cacheFileURL(for: url)
+    func loadData(for url: URL, isAutoEnhanced: Bool = false) -> Data? {
+        let fileURL = cacheFileURL(for: url, isAutoEnhanced: isAutoEnhanced)
 
         if fileManager.fileExists(atPath: fileURL.path) {
             guard let data = try? Data(contentsOf: fileURL, options: .mappedIfSafe) else {
@@ -104,6 +113,9 @@ actor BackgroundRemovalCache {
 
             return data
         }
+
+        // Legacy fallback only for regular variant
+        guard !isAutoEnhanced else { return nil }
 
         let legacyURL = legacyCacheFileURL(for: url)
         guard fileManager.fileExists(atPath: legacyURL.path),
@@ -125,8 +137,8 @@ actor BackgroundRemovalCache {
     }
 
     /// Save background-removed image to disk cache as HEIC
-    func saveImage(_ image: UIImage, for url: URL) {
-        let fileURL = cacheFileURL(for: url)
+    func saveImage(_ image: UIImage, for url: URL, isAutoEnhanced: Bool = false) {
+        let fileURL = cacheFileURL(for: url, isAutoEnhanced: isAutoEnhanced)
 
         guard let heicData = encodeHeicData(from: image) else {
             AppLogger.diskCache.warning("Failed to encode background-removed image as HEIC")

@@ -96,6 +96,9 @@ class PhotoWindowModel {
     /// The background-removed version as a GPU texture (cached for re-toggle)
     private var backgroundRemovedTexture: MTLTexture? = nil
 
+    /// The auto-enhanced background-removed version as a GPU texture (cached for re-toggle)
+    private var autoEnhancedBackgroundRemovedTexture: MTLTexture? = nil
+
     /// Task for background removal (tracked so cleanup can cancel it)
     private var backgroundRemovalTask: Task<Void, Never>?
 
@@ -186,7 +189,13 @@ class PhotoWindowModel {
     func resetCurrentAdjustments() {
         recordInteraction()
         currentAdjustments = VisualAdjustments()
-        if autoEnhancedDisplayTexture != nil {
+        if backgroundRemovalState == .removed {
+            // Swap to regular bg-removed texture (auto-enhance is now off)
+            if let regular = backgroundRemovedTexture {
+                displayTexture = regular
+                imageAspectRatio = CGFloat(regular.width) / CGFloat(regular.height)
+            }
+        } else if autoEnhancedDisplayTexture != nil {
             // Restore the non-enhanced display image
             autoEnhancedDisplayTexture = nil
             currentDisplayMaxDimension = 0
@@ -200,9 +209,58 @@ class PhotoWindowModel {
     /// Toggle auto-enhance: applies CIImage auto-adjustment filters to generate
     /// an enhanced base image. Manual sliders (brightness/contrast/saturation) are
     /// applied as SwiftUI view modifiers on top of this base.
+    /// When background removal is active, swaps between regular and auto-enhanced
+    /// bg-removed variants instead of running the standard auto-enhance pipeline.
     func toggleAutoEnhance() async {
         recordInteraction()
         guard !isProcessingAutoEnhance else { return }
+
+        // Special handling when background removal is active: swap between bg-removed variants
+        if backgroundRemovalState == .removed {
+            if currentAdjustments.isAutoEnhanced {
+                // Turn off: swap to regular bg-removed texture
+                if let regular = backgroundRemovedTexture {
+                    displayTexture = regular
+                    imageAspectRatio = CGFloat(regular.width) / CGFloat(regular.height)
+                }
+                currentAdjustments.isAutoEnhanced = false
+                await trackAutoEnhanceState()
+            } else {
+                // Turn on: swap to auto-enhanced bg-removed texture
+                if let enhanced = autoEnhancedBackgroundRemovedTexture {
+                    // In-memory cache hit
+                    displayTexture = enhanced
+                    imageAspectRatio = CGFloat(enhanced.width) / CGFloat(enhanced.height)
+                    currentAdjustments.isAutoEnhanced = true
+                    await trackAutoEnhanceState()
+                } else if let enhancedURL = await BackgroundRemovalCache.shared.cachedFileURL(for: imageURL, isAutoEnhanced: true) {
+                    // Disk cache hit — load and upload to GPU
+                    isProcessingAutoEnhance = true
+                    let targetDimension = backgroundRemovalTargetDimension()
+                    let useLossy = appModel.useLossyTextureCompression
+                    let sendable = await Task.detached { [enhancedURL, targetDimension, useLossy] () -> SendableTexture? in
+                        guard let tex = MetalImageRenderer.shared?.createTexture(from: enhancedURL, maxDimension: targetDimension, useLossyCompression: useLossy) else { return nil }
+                        return SendableTexture(texture: tex)
+                    }.value
+                    if let texture = sendable?.texture {
+                        autoEnhancedBackgroundRemovedTexture = texture
+                        displayTexture = texture
+                        imageAspectRatio = CGFloat(texture.width) / CGFloat(texture.height)
+                        currentAdjustments.isAutoEnhanced = true
+                        await trackAutoEnhanceState()
+                    }
+                    isProcessingAutoEnhance = false
+                } else {
+                    // No cached enhanced variant (e.g. bg removal ran before this feature).
+                    // Generate on-demand from the regular bg-removed cache.
+                    await generateEnhancedBgRemovedVariant()
+                }
+            }
+
+            // In 3D mode, reload the component with adjusted pixels
+            reloadImagePresentationWithAdjustments()
+            return
+        }
 
         if currentAdjustments.isAutoEnhanced {
             // Turn off: restore original display image
@@ -247,6 +305,61 @@ class PhotoWindowModel {
         currentAdjustments.isAutoEnhanced = true
         isProcessingAutoEnhance = false
         isLoadingDetailImage = false
+
+        await trackAutoEnhanceState()
+    }
+
+    /// Generate the auto-enhanced bg-removed variant on-demand when it doesn't
+    /// exist in cache (e.g. bg removal ran before this feature was added).
+    /// Loads the regular bg-removed image from disk, applies auto-enhance filters,
+    /// caches and displays the result.
+    private func generateEnhancedBgRemovedVariant() async {
+        // Load regular bg-removed image from disk cache
+        guard let regularData = await BackgroundRemovalCache.shared.loadData(for: imageURL),
+              let regularImage = UIImage(data: regularData),
+              let cgImage = regularImage.cgImage else {
+            AppLogger.photoWindow.warning("Cannot generate enhanced bg-removed variant: no cached regular image")
+            return
+        }
+
+        isProcessingAutoEnhance = true
+
+        let enhanced = await Task.detached { () -> UIImage? in
+            let ciImage = CIImage(cgImage: cgImage)
+            let filters = ciImage.autoAdjustmentFilters(options: [
+                .enhance: true,
+                .redEye: false
+            ])
+            var result = ciImage
+            for filter in filters {
+                filter.setValue(result, forKey: kCIInputImageKey)
+                if let output = filter.outputImage {
+                    result = output
+                }
+            }
+            let context = CIContext(options: [.useSoftwareRenderer: false])
+            guard let outputCG = context.createCGImage(result, from: result.extent) else { return nil }
+            return UIImage(cgImage: outputCG, scale: regularImage.scale, orientation: regularImage.imageOrientation)
+        }.value
+
+        guard let enhanced else {
+            isProcessingAutoEnhance = false
+            return
+        }
+
+        // Cache the enhanced variant to disk
+        await BackgroundRemovalCache.shared.saveImage(enhanced, for: imageURL, isAutoEnhanced: true)
+
+        // Downscale and upload to GPU texture
+        let texture = await downscaleAndUploadTexture(enhanced)
+        autoEnhancedBackgroundRemovedTexture = texture
+
+        if let texture {
+            displayTexture = texture
+            imageAspectRatio = CGFloat(texture.width) / CGFloat(texture.height)
+        }
+        currentAdjustments.isAutoEnhanced = true
+        isProcessingAutoEnhance = false
 
         await trackAutoEnhanceState()
     }
@@ -325,10 +438,18 @@ class PhotoWindowModel {
 
     /// Persist auto-enhance state via viewing mode and adjustments trackers.
     private func trackAutoEnhanceState() async {
-        if currentAdjustments.isAutoEnhanced {
-            await trackViewingMode(.autoEnhanced)
+        if backgroundRemovalState == .removed {
+            if currentAdjustments.isAutoEnhanced {
+                await trackViewingMode(.backgroundRemovedAutoEnhanced)
+            } else {
+                await trackViewingMode(.backgroundRemoved)
+            }
         } else {
-            await trackViewingMode(.mono)
+            if currentAdjustments.isAutoEnhanced {
+                await trackViewingMode(.autoEnhanced)
+            } else {
+                await trackViewingMode(.mono)
+            }
         }
         await trackAdjustments()
     }
@@ -870,6 +991,14 @@ class PhotoWindowModel {
             } else {
                 await performFullResolutionAutoEnhance()
             }
+        } else if lastMode == .backgroundRemovedAutoEnhanced {
+            // Combined state: restore bg removal with auto-enhance active
+            currentAdjustments.isAutoEnhanced = true
+            if let cachedURL = await BackgroundRemovalCache.shared.cachedFileURL(for: imageURL) {
+                await applyCachedBackgroundRemovalFromURL(cachedURL)
+            } else {
+                await performFullResolutionBackgroundRemoval(isAutoDuringLoad: true)
+            }
         } else if lastMode == .backgroundRemoved {
             if let cachedURL = await BackgroundRemovalCache.shared.cachedFileURL(for: imageURL) {
                 await applyCachedBackgroundRemovalFromURL(cachedURL)
@@ -1092,6 +1221,7 @@ class PhotoWindowModel {
         preAutoEnhanceDisplayTexture = nil
         originalDisplayTexture = nil
         backgroundRemovedTexture = nil
+        autoEnhancedBackgroundRemovedTexture = nil
 
         // For GIFs, release HEVC converted data too
         if isAnimatedGIF {
@@ -1167,6 +1297,14 @@ class PhotoWindowModel {
             is3DMode = true
             pendingGenerate3D = true
             // RealityView's init closure will consume pendingGenerate3D
+        } else if hadBackgroundRemoval && hadAutoEnhance {
+            // Combined state: restore bg removal with auto-enhance active
+            currentAdjustments.isAutoEnhanced = true
+            if let cachedURL = await BackgroundRemovalCache.shared.cachedFileURL(for: imageURL) {
+                await applyCachedBackgroundRemovalFromURL(cachedURL)
+            } else {
+                await loadDisplayImage(for: windowSize)
+            }
         } else if hadBackgroundRemoval {
             // Load background-removed image directly from disk cache (URL-based for efficiency)
             if let cachedURL = await BackgroundRemovalCache.shared.cachedFileURL(for: imageURL) {
@@ -1707,8 +1845,11 @@ class PhotoWindowModel {
             // First check in-memory cache
             if let cached = backgroundRemovedTexture {
                 originalDisplayTexture = displayTexture
-                displayTexture = cached
-                imageAspectRatio = CGFloat(cached.width) / CGFloat(cached.height)
+                // Display the appropriate variant based on current auto-enhance state
+                let showEnhanced = currentAdjustments.isAutoEnhanced
+                let displayTex = showEnhanced ? (autoEnhancedBackgroundRemovedTexture ?? cached) : cached
+                displayTexture = displayTex
+                imageAspectRatio = CGFloat(displayTex.width) / CGFloat(displayTex.height)
                 backgroundRemovalState = .removed
             } else {
                 // Then check persistent cache (full-res version)
@@ -1732,52 +1873,70 @@ class PhotoWindowModel {
     }
 
     /// Process background removal on the full-resolution image.
-    /// When auto-enhance is active, processes the enhanced version instead of the original.
-    /// Caches the full-res result, then downscales for display.
+    /// Always uses the original image data for stable edge detection (not auto-enhanced).
+    /// When auto-enhance is active, produces both regular and auto-enhanced variants
+    /// using a single Vision pass (shared foreground mask). Otherwise only produces the regular variant.
     private func performFullResolutionBackgroundRemoval(isAutoDuringLoad: Bool) async {
-        // When auto-enhance is active, use the enhanced image as the source
-        let fullResImage: UIImage
-        if currentAdjustments.isAutoEnhanced,
-           let enhancedData = await AutoEnhanceCache.shared.loadData(for: imageURL),
-           let enhancedImage = UIImage(data: enhancedData) {
-            fullResImage = enhancedImage
-        } else if let imageData = currentImageData, let image = UIImage(data: imageData) {
-            fullResImage = image
-        } else {
+        // Always use original image data for stable edge detection
+        guard let imageData = currentImageData, let fullResImage = UIImage(data: imageData) else {
             AppLogger.photoWindow.warning("No image data available for full-resolution background removal")
             return
         }
 
         backgroundRemovalState = .removing
+        let showEnhanced = currentAdjustments.isAutoEnhanced
 
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                let processed = try await BackgroundRemover.shared.removeBackground(from: fullResImage)
+                let regular: UIImage?
+                let autoEnhanced: UIImage?
+
+                if showEnhanced {
+                    // Generate both variants in one Vision pass (shared mask)
+                    let result = try await BackgroundRemover.shared.removeBackgroundWithAutoEnhance(from: fullResImage)
+                    regular = result.regular
+                    autoEnhanced = result.autoEnhanced
+                } else {
+                    // Only generate the regular variant
+                    regular = try await BackgroundRemover.shared.removeBackground(from: fullResImage)
+                    autoEnhanced = nil
+                }
 
                 guard !Task.isCancelled else {
                     self.backgroundRemovalState = .original
                     return
                 }
 
-                if let processed {
-                    // Cache the full-resolution background-removed image
-                    await BackgroundRemovalCache.shared.saveImage(processed, for: self.imageURL)
+                if let regular {
+                    // Cache variant(s)
+                    await BackgroundRemovalCache.shared.saveImage(regular, for: self.imageURL)
+                    if let autoEnhanced {
+                        await BackgroundRemovalCache.shared.saveImage(autoEnhanced, for: self.imageURL, isAutoEnhanced: true)
+                    }
 
-                    // Downscale and upload to GPU texture
-                    let texture = await self.downscaleAndUploadTexture(processed)
+                    // Downscale and upload to GPU texture(s)
+                    let regularTexture = await self.downscaleAndUploadTexture(regular)
+                    self.backgroundRemovedTexture = regularTexture
 
-                    self.backgroundRemovedTexture = texture
+                    if let autoEnhanced {
+                        let enhancedTexture = await self.downscaleAndUploadTexture(autoEnhanced)
+                        self.autoEnhancedBackgroundRemovedTexture = enhancedTexture
+                    }
+
                     self.originalDisplayTexture = self.displayTexture
-                    self.displayTexture = texture
-                    if let texture {
-                        self.imageAspectRatio = CGFloat(texture.width) / CGFloat(texture.height)
+
+                    // Display the appropriate variant
+                    let displayTex = showEnhanced ? (self.autoEnhancedBackgroundRemovedTexture ?? regularTexture) : regularTexture
+                    self.displayTexture = displayTex
+                    if let displayTex {
+                        self.imageAspectRatio = CGFloat(displayTex.width) / CGFloat(displayTex.height)
                     }
                     self.backgroundRemovalState = .removed
 
-                    await self.trackViewingMode(.backgroundRemoved)
+                    await self.trackViewingMode(showEnhanced ? .backgroundRemovedAutoEnhanced : .backgroundRemoved)
                 } else {
-                    self.backgroundRemovalState = isAutoDuringLoad ? .original : .original
+                    self.backgroundRemovalState = .original
                     AppLogger.photoWindow.warning("Background removal returned nil")
                 }
             } catch {
@@ -1794,13 +1953,24 @@ class PhotoWindowModel {
     }
 
     /// Apply a downscaled version of a cached background-removed image.
+    /// Only loads the auto-enhanced variant when auto-enhance is currently active.
     private func applyDownscaledCachedBackgroundRemoval(_ fullResImage: UIImage) async {
         backgroundRemovalState = .removing
+
+        let showEnhanced = currentAdjustments.isAutoEnhanced
+
+        // Only load the auto-enhanced variant from cache when auto-enhance is active
+        let enhancedImage: UIImage?
+        if showEnhanced, let enhancedData = await BackgroundRemovalCache.shared.loadData(for: imageURL, isAutoEnhanced: true) {
+            enhancedImage = UIImage(data: enhancedData)
+        } else {
+            enhancedImage = nil
+        }
 
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
 
-            // Downscale and upload to GPU texture
+            // Downscale and upload regular variant
             let texture = await self.downscaleAndUploadTexture(fullResImage)
 
             guard !Task.isCancelled else {
@@ -1809,14 +1979,23 @@ class PhotoWindowModel {
             }
 
             self.backgroundRemovedTexture = texture
+
+            // Upload auto-enhanced variant only when needed
+            if let enhancedImage {
+                self.autoEnhancedBackgroundRemovedTexture = await self.downscaleAndUploadTexture(enhancedImage)
+            }
+
             self.originalDisplayTexture = self.displayTexture
-            self.displayTexture = texture
-            if let texture {
-                self.imageAspectRatio = CGFloat(texture.width) / CGFloat(texture.height)
+
+            // Display the appropriate variant based on current auto-enhance state
+            let displayTex = showEnhanced ? (self.autoEnhancedBackgroundRemovedTexture ?? texture) : texture
+            self.displayTexture = displayTex
+            if let displayTex {
+                self.imageAspectRatio = CGFloat(displayTex.width) / CGFloat(displayTex.height)
             }
             self.backgroundRemovalState = .removed
 
-            await self.trackViewingMode(.backgroundRemoved)
+            await self.trackViewingMode(showEnhanced ? .backgroundRemovedAutoEnhanced : .backgroundRemoved)
         }
         backgroundRemovalTask = task
         await task.value
@@ -1827,11 +2006,15 @@ class PhotoWindowModel {
     /// Apply a cached background-removed image directly from a file URL.
     /// Uses CGImageSource downsampling → Metal texture upload, bypassing the
     /// intermediate Data → UIImage → downscale → texture pipeline for faster restore.
+    /// Only loads the auto-enhanced variant when auto-enhance is currently active.
     private func applyCachedBackgroundRemovalFromURL(_ cachedURL: URL) async {
         backgroundRemovalState = .removing
 
+        let showEnhanced = currentAdjustments.isAutoEnhanced
         let targetDimension = backgroundRemovalTargetDimension()
         let useLossy = appModel.useLossyTextureCompression
+
+        // Load regular variant
         let sendable = await Task.detached { [cachedURL, targetDimension, useLossy] () -> SendableTexture? in
             guard let tex = MetalImageRenderer.shared?.createTexture(from: cachedURL, maxDimension: targetDimension, useLossyCompression: useLossy) else { return nil }
             return SendableTexture(texture: tex)
@@ -1844,13 +2027,26 @@ class PhotoWindowModel {
         }
 
         backgroundRemovedTexture = texture
+
+        // Only load the auto-enhanced variant when auto-enhance is active
+        if showEnhanced, let enhancedURL = await BackgroundRemovalCache.shared.cachedFileURL(for: imageURL, isAutoEnhanced: true) {
+            let enhancedSendable = await Task.detached { [enhancedURL, targetDimension, useLossy] () -> SendableTexture? in
+                guard let tex = MetalImageRenderer.shared?.createTexture(from: enhancedURL, maxDimension: targetDimension, useLossyCompression: useLossy) else { return nil }
+                return SendableTexture(texture: tex)
+            }.value
+            autoEnhancedBackgroundRemovedTexture = enhancedSendable?.texture
+        }
+
         originalDisplayTexture = displayTexture
-        displayTexture = texture
-        imageAspectRatio = CGFloat(texture.width) / CGFloat(texture.height)
+
+        // Display the appropriate variant based on current auto-enhance state
+        let displayTex = showEnhanced ? (autoEnhancedBackgroundRemovedTexture ?? texture) : texture
+        displayTexture = displayTex
+        imageAspectRatio = CGFloat(displayTex.width) / CGFloat(displayTex.height)
         backgroundRemovalState = .removed
         isLoadingDetailImage = false
 
-        await trackViewingMode(.backgroundRemoved)
+        await trackViewingMode(showEnhanced ? .backgroundRemovedAutoEnhanced : .backgroundRemoved)
     }
 
     /// Calculate the target dimension for background-removed image downsampling.
@@ -1927,10 +2123,18 @@ class PhotoWindowModel {
 
     /// Reload the background-removed image at the current effective resolution.
     /// Fetches the cached version from disk and re-downscales it using CGImageSource.
+    /// Reload the background-removed image at the current effective resolution.
+    /// Fetches the correct variant (regular or auto-enhanced) from disk cache.
     private func reloadBackgroundRemovedAtCurrentResolution() async {
         guard backgroundRemovalState == .removed else { return }
 
-        guard let cachedURL = await BackgroundRemovalCache.shared.cachedFileURL(for: imageURL) else {
+        let showEnhanced = currentAdjustments.isAutoEnhanced
+        // Try the enhanced variant first if auto-enhance is active, fall back to regular
+        var cachedURL = await BackgroundRemovalCache.shared.cachedFileURL(for: imageURL, isAutoEnhanced: showEnhanced)
+        if cachedURL == nil && showEnhanced {
+            cachedURL = await BackgroundRemovalCache.shared.cachedFileURL(for: imageURL)
+        }
+        guard let cachedURL else {
             AppLogger.photoWindow.warning("Cannot reload background-removed image: no cached file")
             return
         }
@@ -1943,17 +2147,40 @@ class PhotoWindowModel {
         }.value
 
         guard let texture = sendable?.texture else { return }
-        backgroundRemovedTexture = texture
+        if showEnhanced {
+            autoEnhancedBackgroundRemovedTexture = texture
+        } else {
+            backgroundRemovedTexture = texture
+        }
         displayTexture = texture
         imageAspectRatio = CGFloat(texture.width) / CGFloat(texture.height)
     }
 
     private func restoreOriginalBackground() {
         backgroundRemovalState = .original
+        autoEnhancedBackgroundRemovedTexture = nil
         Task {
             await trackViewingMode(currentAdjustments.isAutoEnhanced ? .autoEnhanced : .mono)
         }
-        if let original = originalDisplayTexture {
+
+        if currentAdjustments.isAutoEnhanced {
+            // Auto-enhance is still active — restore to the auto-enhanced (non-bg-removed) texture
+            if let enhanced = autoEnhancedDisplayTexture {
+                displayTexture = enhanced
+                imageAspectRatio = CGFloat(enhanced.width) / CGFloat(enhanced.height)
+            } else if let original = originalDisplayTexture {
+                // originalDisplayTexture may already be the auto-enhanced version
+                // (if auto-enhance was active when bg removal was toggled on)
+                displayTexture = original
+                imageAspectRatio = CGFloat(original.width) / CGFloat(original.height)
+            } else {
+                displayTexture = nil
+                if let windowSize = lastWindowSize {
+                    isLoadingDetailImage = true
+                    Task { await loadDisplayImage(for: windowSize) }
+                }
+            }
+        } else if let original = originalDisplayTexture {
             displayTexture = original
             imageAspectRatio = CGFloat(original.width) / CGFloat(original.height)
         } else {
@@ -1973,6 +2200,7 @@ class PhotoWindowModel {
         backgroundRemovalState = .original
         originalDisplayTexture = nil
         backgroundRemovedTexture = nil
+        autoEnhancedBackgroundRemovedTexture = nil
     }
 
     // MARK: - Share

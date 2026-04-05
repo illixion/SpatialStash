@@ -14,6 +14,7 @@ enum ViewingModePreference: String {
     case spatial3DImmersive
     case backgroundRemoved
     case autoEnhanced
+    case backgroundRemovedAutoEnhanced
 }
 
 actor ImageEnhancementTracker {
