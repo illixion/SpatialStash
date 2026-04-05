@@ -238,6 +238,10 @@ struct VisualAdjustmentsPopover: View {
 
     // MARK: - Slider Component
 
+    /// Exponent for non-linear slider curve. Higher values give more precision
+    /// near the default and faster acceleration toward the extremes.
+    private static let curveExponent: Double = 2.0
+
     @ViewBuilder
     private func adjustmentSlider(
         label: String,
@@ -255,22 +259,65 @@ struct VisualAdjustmentsPopover: View {
                     .monospacedDigit()
                     .foregroundColor(value.wrappedValue != defaultValue ? .accentColor : .secondary)
             }
-            Slider(value: value, in: range)
+            Slider(
+                value: nonLinearBinding(value: value, range: range, defaultValue: defaultValue),
+                in: 0...1
+            )
         }
     }
 
-    /// Format a slider value for display, showing "+/-" prefix for brightness-style values
+    /// Creates a binding that maps between a normalized 0...1 slider position and the
+    /// actual value using a power curve. The default value always sits at slider center (0.5),
+    /// giving high precision for small adjustments and accelerating toward the extremes.
+    private func nonLinearBinding(
+        value: Binding<Double>,
+        range: ClosedRange<Double>,
+        defaultValue: Double
+    ) -> Binding<Double> {
+        let exponent = Self.curveExponent
+        let lower = range.lowerBound
+        let upper = range.upperBound
+
+        return Binding<Double>(
+            get: {
+                let v = value.wrappedValue
+                if v <= defaultValue {
+                    let fraction = defaultValue > lower
+                        ? (defaultValue - v) / (defaultValue - lower)
+                        : 0
+                    return 0.5 - pow(fraction, 1.0 / exponent) * 0.5
+                } else {
+                    let fraction = upper > defaultValue
+                        ? (v - defaultValue) / (upper - defaultValue)
+                        : 0
+                    return 0.5 + pow(fraction, 1.0 / exponent) * 0.5
+                }
+            },
+            set: { t in
+                if t <= 0.5 {
+                    let halfT = (0.5 - t) / 0.5
+                    value.wrappedValue = defaultValue - pow(halfT, exponent) * (defaultValue - lower)
+                } else {
+                    let halfT = (t - 0.5) / 0.5
+                    value.wrappedValue = defaultValue + pow(halfT, exponent) * (upper - defaultValue)
+                }
+            }
+        )
+    }
+
+    /// Format a slider value for display, showing "+/-" prefix for brightness-style values.
+    /// Uses 3 decimal places to reflect the non-linear slider's higher precision near center.
     private func formatValue(_ value: Double, defaultValue: Double) -> String {
         if defaultValue == 0.0 {
             // Brightness-style: show +/- prefix
             if value >= 0 {
-                return String(format: "+%.2f", value)
+                return String(format: "+%.3f", value)
             } else {
-                return String(format: "%.2f", value)
+                return String(format: "%.3f", value)
             }
         } else {
             // Contrast/saturation-style: show as multiplier
-            return String(format: "%.2f", value)
+            return String(format: "%.3f", value)
         }
     }
 }
