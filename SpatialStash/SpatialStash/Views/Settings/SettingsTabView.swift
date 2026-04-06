@@ -320,6 +320,12 @@ struct SettingsTabView: View {
                     } label: {
                         Label("Import Settings", systemImage: "square.and.arrow.down")
                     }
+
+                    Button {
+                        importFromDocuments()
+                    } label: {
+                        Label("Import from Documents Folder", systemImage: "folder")
+                    }
                 }
 
                 Section("Developer") {
@@ -494,6 +500,40 @@ struct SettingsTabView: View {
             } message: {
                 Text("Would you like to clear existing remembered enhancements? Keeping the data allows them to be restored if you re-enable this setting.")
             }
+        }
+    }
+
+    private func importFromDocuments() {
+        let documentsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        let fileManager = FileManager.default
+
+        do {
+            let contents = try fileManager.contentsOfDirectory(
+                at: documentsDir,
+                includingPropertiesForKeys: [.contentModificationDateKey],
+                options: [.skipsHiddenFiles]
+            )
+            let jsonFiles = contents
+                .filter { $0.pathExtension.lowercased() == "json" }
+                .sorted { a, b in
+                    let dateA = (try? a.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                    let dateB = (try? b.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                    return dateA > dateB
+                }
+
+            guard let firstJSON = jsonFiles.first else {
+                importErrorMessage = "No JSON files found in Documents folder. Place a settings backup file there and try again."
+                showImportError = true
+                return
+            }
+
+            let data = try Data(contentsOf: firstJSON)
+            pendingImportData = data
+            showImportConfirmation = true
+            AppLogger.settings.info("Found settings backup in Documents: \(firstJSON.lastPathComponent, privacy: .public)")
+        } catch {
+            importErrorMessage = error.localizedDescription
+            showImportError = true
         }
     }
 
