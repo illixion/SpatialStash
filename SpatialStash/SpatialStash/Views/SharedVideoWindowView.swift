@@ -20,7 +20,9 @@ struct SharedVideoWindowView: View {
 
     var body: some View {
         Group {
-            if FileManager.default.fileExists(atPath: item.cachedFileURL.path) {
+            if appModel.allWindowsHidden {
+                Color.clear
+            } else if FileManager.default.fileExists(atPath: item.cachedFileURL.path) {
                 LocalVideoPlayerView(videoURL: item.cachedFileURL)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {

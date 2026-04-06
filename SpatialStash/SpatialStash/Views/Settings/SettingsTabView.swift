@@ -362,8 +362,14 @@ struct SettingsTabView: View {
                         Label("Open GPU Memory Monitor", systemImage: "memorychip")
                     }
 
+                    Button(appModel.allWindowsHidden ? "Unhide All Windows" : "Hide All Windows") {
+                        appModel.allWindowsHidden.toggle()
+                    }
+                    .disabled(!hasSecondaryWindows && !appModel.allWindowsHidden)
+
                     Button("Close All Windows", role: .destructive) {
                         closeAllSecondaryWindows()
+                        appModel.allWindowsHidden = false
                     }
                     .disabled(!hasSecondaryWindows)
                 }

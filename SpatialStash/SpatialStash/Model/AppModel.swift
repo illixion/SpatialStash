@@ -255,6 +255,10 @@ class AppModel {
     /// instead of RealityKit. Activated on memory warning to free GPU resources.
     var useLightweightDisplay: Bool = false
 
+    /// Whether all secondary windows should hide their content and pause videos.
+    /// Toggled from the Developer section in Settings.
+    var allWindowsHidden: Bool = false
+
     // MARK: - Photo Window Model Registry (for LRU Memory Pressure)
 
     /// Registry of active PhotoWindowModel instances. Used by the memory pressure

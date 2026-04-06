@@ -58,7 +58,9 @@ struct VideoWindowView: View {
     var body: some View {
         VStack(spacing: 0) {
             Group {
-                if isVideoUnloaded {
+                if appModel.allWindowsHidden {
+                    Color.clear
+                } else if isVideoUnloaded {
                     // Video unloaded to save memory while in inactive room
                     unloadedPlaceholder
                 } else if shouldUseStereoscopicPlayer {

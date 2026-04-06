@@ -32,6 +32,7 @@ struct SharedPhotoWindowView: View {
                 unavailableContent
             }
         }
+        .opacity(appModel.allWindowsHidden ? 0 : 1)
         .persistentSystemOverlays(windowModel.isWindowControlsHidden ? .hidden : .visible)
         .ornament(
             visibility: windowModel.isUIHidden ? .hidden : .visible,

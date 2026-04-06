@@ -36,6 +36,7 @@ struct PhotoWindowView: View {
 
     var body: some View {
         PhotoDisplayView(windowModel: windowModel, enableSwipeNavigation: true)
+        .opacity(appModel.allWindowsHidden ? 0 : 1)
         .persistentSystemOverlays(windowModel.isWindowControlsHidden ? .hidden : .visible)
         .ornament(
             visibility: windowModel.isUIHidden ? .hidden : .visible,
