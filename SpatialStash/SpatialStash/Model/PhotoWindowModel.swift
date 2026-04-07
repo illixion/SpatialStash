@@ -1743,6 +1743,12 @@ class PhotoWindowModel {
             return
         }
 
+        if currentAdjustments.isAutoEnhanced {
+            // Re-downscale the auto-enhanced image at the new resolution
+            await reloadAutoEnhancedAtCurrentResolution()
+            return
+        }
+
         guard backgroundRemovalState == .original else { return }
 
         // Reset current dimension to force reload
