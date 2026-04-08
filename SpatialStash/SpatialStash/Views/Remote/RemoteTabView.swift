@@ -14,9 +14,6 @@ struct RemoteTabView: View {
     @State private var editingConfig = RemoteViewerConfig(name: "New Configuration")
     @State private var showSaveAlert = false
     @State private var saveName = ""
-    @State private var showRenameAlert = false
-    @State private var renamingConfig: RemoteViewerConfig?
-    @State private var renameText = ""
     @State private var newTag = ""
     @State private var selectedConfigId: UUID?
     @State private var blockedTagsExpanded = false
@@ -48,10 +45,25 @@ struct RemoteTabView: View {
                                     selectedConfigId = config.id
                                 }
                                 .buttonStyle(.borderless)
-                                Button("Rename") {
-                                    renamingConfig = config
-                                    renameText = config.name
-                                    showRenameAlert = true
+                                Button("Copy") {
+                                    var copy = config
+                                    copy = RemoteViewerConfig(name: config.name + " (Copy)")
+                                    copy.apiEndpoint = config.apiEndpoint
+                                    copy.wsEndpoint = config.wsEndpoint
+                                    copy.wsDeviceId = config.wsDeviceId
+                                    copy.delay = config.delay
+                                    copy.showClock = config.showClock
+                                    copy.showSensors = config.showSensors
+                                    copy.useAspectRatio = config.useAspectRatio
+                                    copy.enableKenBurns = config.enableKenBurns
+                                    copy.transparentBackground = config.transparentBackground
+                                    copy.textSize = config.textSize
+                                    copy.tagLists = config.tagLists
+                                    copy.defaultTagListIndex = config.defaultTagListIndex
+                                    copy.blockedPosts = config.blockedPosts
+                                    copy.blockedTags = config.blockedTags
+                                    copy.homeAssistantURL = config.homeAssistantURL
+                                    appModel.saveRemoteConfig(copy)
                                 }
                                 .buttonStyle(.borderless)
                                 Button("Launch") {
@@ -255,19 +267,6 @@ struct RemoteTabView: View {
                     }
                 }
                 Button("Cancel", role: .cancel) {}
-            }
-            .alert("Rename Configuration", isPresented: $showRenameAlert) {
-                TextField("Name", text: $renameText)
-                Button("Rename") {
-                    let name = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !name.isEmpty, let config = renamingConfig {
-                        appModel.renameRemoteConfig(config, newName: name)
-                    }
-                    renamingConfig = nil
-                }
-                Button("Cancel", role: .cancel) {
-                    renamingConfig = nil
-                }
             }
         }
     }
