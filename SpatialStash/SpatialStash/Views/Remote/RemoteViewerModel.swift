@@ -92,6 +92,7 @@ class RemoteViewerModel {
     var currentTagListIndex: Int = 0
     var dbCursor: String?
     var isFetching: Bool = false
+    var fetchReturnedEmpty: Bool = false
 
     // MARK: - Blocking (merged from server + local config)
 
@@ -216,7 +217,17 @@ class RemoteViewerModel {
     // MARK: - Navigation
 
     func goToNextImage() {
-        Task { await advanceToNextImage() }
+        // Restart the slideshow timer with an immediate advance
+        slideshowTask?.cancel()
+        slideshowTask = Task { [weak self] in
+            guard let self else { return }
+            await advanceToNextImage()
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(config.delay))
+                guard !Task.isCancelled else { break }
+                await advanceToNextImage()
+            }
+        }
     }
 
     func previousImage() {
@@ -278,6 +289,19 @@ class RemoteViewerModel {
         }
     }
 
+    func switchToTagList(_ index: Int) {
+        guard index < config.tagLists.count, index != currentTagListIndex else { return }
+        currentTagListIndex = index
+        fetchReturnedEmpty = false
+        cachedPosts.removeAll()
+        prefetchedImages.removeAll()
+        prefetchTask?.cancel()
+        dbCursor = String(Double.random(in: 0..<1))
+        let firstTag = config.tagLists[index].first ?? ""
+        showToast("List \(index + 1)/\(config.tagLists.count): \(firstTag)")
+        goToNextImage()
+    }
+
     func cycleTagList() {
         guard !config.tagLists.isEmpty else { return }
         currentTagListIndex = (currentTagListIndex + 1) % config.tagLists.count
@@ -303,7 +327,8 @@ class RemoteViewerModel {
     // MARK: - Private: Slideshow
 
     private func startSlideshow() {
-        slideshowTask?.cancel()
+        // Don't restart if already running
+        guard slideshowTask == nil else { return }
         slideshowTask = Task { [weak self] in
             guard let self else { return }
 
@@ -317,6 +342,8 @@ class RemoteViewerModel {
                 guard !Task.isCancelled else { break }
                 await advanceToNextImage()
             }
+            // Clear reference so startSlideshow can restart
+            slideshowTask = nil
         }
     }
 
@@ -336,6 +363,7 @@ class RemoteViewerModel {
 
         guard let post = nextNonBlockedPost() else {
             AppLogger.remoteViewer.warning("No posts available")
+            fetchReturnedEmpty = true
             return
         }
 
@@ -516,38 +544,49 @@ class RemoteViewerModel {
             ratioRange = String(format: "%.2f..%.2f", min, max)
         }
 
-        do {
-            let response = try await apiClient.search(
-                baseURL: config.apiEndpoint,
-                tags: tags,
-                ratioRange: ratioRange,
-                cursor: dbCursor
-            )
-
-            // Filter blocked posts client-side
-            let filtered = response.results.filter { post in
-                !blockedPosts.contains(post._id) &&
-                !post.tags.contains(where: { blockedTags.contains($0) })
+        // Run the network request in a detached task so it isn't cancelled
+        // when the slideshow task is replaced (e.g. by goToNextImage or scene phase changes)
+        let apiClient = self.apiClient
+        let baseURL = config.apiEndpoint
+        let cursor = dbCursor
+        let result: RemoteSearchResponse? = await Task.detached {
+            do {
+                return try await apiClient.search(
+                    baseURL: baseURL,
+                    tags: tags,
+                    ratioRange: ratioRange,
+                    cursor: cursor
+                )
+            } catch {
+                AppLogger.remoteViewer.error("Fetch failed: \(error.localizedDescription, privacy: .public)")
+                return nil
             }
+        }.value
 
-            cachedPosts.append(contentsOf: filtered)
+        guard let response = result else { return }
 
-            // Update cursor from server response. If server returns 0,
-            // it means we've wrapped around — re-randomize to avoid
-            // fetching the same set repeatedly.
-            if let next = response.nextCursor {
-                let cursorStr = next.stringValue
-                if cursorStr == "0" {
-                    dbCursor = String(Double.random(in: 0..<1))
-                } else {
-                    dbCursor = cursorStr
-                }
-            }
-
-            AppLogger.remoteViewer.info("Fetched \(response.results.count, privacy: .public) posts, \(filtered.count, privacy: .public) after filtering")
-        } catch {
-            AppLogger.remoteViewer.error("Fetch failed: \(error.localizedDescription, privacy: .public)")
+        // Filter blocked posts client-side
+        let filtered = response.results.filter { post in
+            !blockedPosts.contains(post._id) &&
+            !post.tags.contains(where: { blockedTags.contains($0) })
         }
+
+        cachedPosts.append(contentsOf: filtered)
+        if !filtered.isEmpty { fetchReturnedEmpty = false }
+
+        // Update cursor from server response. If server returns 0,
+        // it means we've wrapped around — re-randomize to avoid
+        // fetching the same set repeatedly.
+        if let next = response.nextCursor {
+            let cursorStr = next.stringValue
+            if cursorStr == "0" {
+                dbCursor = String(Double.random(in: 0..<1))
+            } else {
+                dbCursor = cursorStr
+            }
+        }
+
+        AppLogger.remoteViewer.info("Fetched \(response.results.count, privacy: .public) posts, \(filtered.count, privacy: .public) after filtering")
     }
 
     /// Fetch images from the app's gallery source for gallery mode slideshow

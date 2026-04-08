@@ -77,21 +77,8 @@ struct RemoteViewerOrnamentView: View {
                 .disabled(model.config.homeAssistantURL.isEmpty)
                 .help("Home Assistant")
 
-                // Cycle Tag List
-                Button {
-                    model.cycleTagList()
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "arrow.triangle.2.circlepath")
-                            .font(.title3)
-                        Text("\(model.currentTagListIndex + 1)/\(model.config.tagLists.count)")
-                            .font(.callout)
-                            .foregroundColor(.secondary)
-                    }
-                }
-                .buttonStyle(.borderless)
-                .disabled(model.config.tagLists.count <= 1)
-                .help("Cycle Tag List")
+                // Tag List Selector (spinner while loading, warning if empty)
+                tagListMenu
 
                 // Display Sync Toggle
                 Button {
@@ -126,6 +113,53 @@ struct RemoteViewerOrnamentView: View {
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
         .glassBackgroundEffect()
+    }
+
+    private var tagListMenu: some View {
+        Group {
+            if model.isFetching && model.currentImage == nil {
+                ProgressView()
+                    .font(.title3)
+            } else if model.fetchReturnedEmpty && model.currentImage == nil {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.title3)
+                    .foregroundStyle(.yellow)
+                    .help("No posts found")
+            } else {
+                Menu {
+                    ForEach(model.config.tagLists.indices, id: \.self) { index in
+                        Button {
+                            model.switchToTagList(index)
+                        } label: {
+                            HStack {
+                                Text(tagListLabel(index))
+                                if model.currentTagListIndex == index {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                            .font(.title3)
+                        Text("\(model.currentTagListIndex + 1)/\(model.config.tagLists.count)")
+                            .font(.callout)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .menuStyle(.button)
+                .buttonStyle(.borderless)
+                .disabled(model.config.tagLists.count <= 1)
+                .help("Tag List")
+            }
+        }
+    }
+
+    private func tagListLabel(_ index: Int) -> String {
+        let tags = model.config.tagLists[index]
+        let firstTag = tags.first ?? ""
+        return "List \(index + 1): \(firstTag)"
     }
 
     private var adjustmentsButton: some View {

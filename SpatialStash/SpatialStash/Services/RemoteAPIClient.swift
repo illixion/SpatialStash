@@ -29,7 +29,7 @@ actor RemoteAPIClient {
         if let ratioRange {
             query += " ratio:\(ratioRange)"
         }
-        query += " limit:80"
+        query += " limit:20"
 
         // Build URL manually — URLQueryItem over-encodes characters like "="
         // inside values (e.g. "score:>=30" becomes "score:%3E%3D30" instead of
