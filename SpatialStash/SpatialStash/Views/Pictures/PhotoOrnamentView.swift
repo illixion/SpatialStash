@@ -153,6 +153,8 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
             var newConfig = RemoteViewerConfig(name: "Gallery Slideshow")
             newConfig.apiEndpoint = ""
             newConfig.delay = appModel.slideshowDelay
+            newConfig.showClock = false
+            newConfig.transparentBackground = true
             appModel.gallerySlideshowConfig = newConfig
             config = newConfig
         }
