@@ -18,12 +18,31 @@ struct VisualAdjustments: Codable, Equatable {
     /// SwiftUI .saturation() range: 0.0 to 3.0, where 1.0 = no change
     var saturation: Double = 1.0
 
+    /// SwiftUI .opacity() range: 0.0 to 1.0, where 1.0 = fully opaque
+    var opacity: Double = 1.0
+
     /// Whether CIImage auto-enhancement filters have been applied (photos only)
     var isAutoEnhanced: Bool = false
 
+    /// Decode with backward compatibility — older persisted data lacks the opacity field
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        brightness = try container.decodeIfPresent(Double.self, forKey: .brightness) ?? 0.0
+        contrast = try container.decodeIfPresent(Double.self, forKey: .contrast) ?? 1.0
+        saturation = try container.decodeIfPresent(Double.self, forKey: .saturation) ?? 1.0
+        opacity = try container.decodeIfPresent(Double.self, forKey: .opacity) ?? 1.0
+        isAutoEnhanced = try container.decodeIfPresent(Bool.self, forKey: .isAutoEnhanced) ?? false
+    }
+
+    init() {}
+
+    private enum CodingKeys: String, CodingKey {
+        case brightness, contrast, saturation, opacity, isAutoEnhanced
+    }
+
     /// Whether any adjustment differs from the neutral defaults
     var isModified: Bool {
-        brightness != 0.0 || contrast != 1.0 || saturation != 1.0 || isAutoEnhanced
+        brightness != 0.0 || contrast != 1.0 || saturation != 1.0 || opacity != 1.0 || isAutoEnhanced
     }
 
     /// Reset all values to their neutral defaults
@@ -31,6 +50,7 @@ struct VisualAdjustments: Codable, Equatable {
         brightness = 0.0
         contrast = 1.0
         saturation = 1.0
+        opacity = 1.0
         isAutoEnhanced = false
     }
 
@@ -40,6 +60,6 @@ struct VisualAdjustments: Codable, Equatable {
     /// Contrast and saturation use the same scale in both systems.
     var cssFilterString: String {
         let cssBrightness = 1.0 + brightness
-        return "brightness(\(cssBrightness)) contrast(\(contrast)) saturate(\(saturation))"
+        return "brightness(\(cssBrightness)) contrast(\(contrast)) saturate(\(saturation)) opacity(\(opacity))"
     }
 }

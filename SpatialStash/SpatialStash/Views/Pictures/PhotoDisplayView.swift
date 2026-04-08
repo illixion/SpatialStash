@@ -120,6 +120,7 @@ struct PhotoDisplayView: View {
             .brightness(windowModel.effectiveAdjustments.brightness)
             .contrast(windowModel.effectiveAdjustments.contrast)
             .saturation(windowModel.effectiveAdjustments.saturation)
+            .opacity(windowModel.effectiveAdjustments.opacity)
             .aspectRatio(windowModel.imageAspectRatio, contentMode: .fit)
             .clipShape(RoundedRectangle(cornerRadius: appModel.roundedCorners ? 50 : 0, style: .continuous))
             .overlay {
@@ -250,6 +251,7 @@ struct PhotoDisplayView: View {
                 }
             }
             .aspectRatio(windowModel.imageAspectRatio, contentMode: .fit)
+            .opacity(windowModel.effectiveAdjustments.opacity)
             .clipShape(RoundedRectangle(
                 cornerRadius: (appModel.roundedCorners && !windowModel.isViewingSpatial3DImmersive) ? 50 : 0,
                 style: .continuous
@@ -263,6 +265,7 @@ struct PhotoDisplayView: View {
                 contrast: Float(windowModel.effectiveAdjustments.contrast),
                 saturation: Float(windowModel.effectiveAdjustments.saturation)
             )
+            .opacity(windowModel.effectiveAdjustments.opacity)
             .aspectRatio(windowModel.imageAspectRatio, contentMode: .fit)
             .clipShape(RoundedRectangle(cornerRadius: appModel.roundedCorners ? 50 : 0, style: .continuous))
             .contentShape(.rect)
@@ -294,6 +297,7 @@ struct PhotoDisplayView: View {
                 .brightness(windowModel.effectiveAdjustments.brightness)
                 .contrast(windowModel.effectiveAdjustments.contrast)
                 .saturation(windowModel.effectiveAdjustments.saturation)
+            .opacity(windowModel.effectiveAdjustments.opacity)
                 .clipShape(RoundedRectangle(cornerRadius: appModel.roundedCorners ? 50 : 0, style: .continuous))
                 .contentShape(.rect)
                 .onTapGesture {

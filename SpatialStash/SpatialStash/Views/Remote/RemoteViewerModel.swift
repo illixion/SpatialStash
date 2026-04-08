@@ -76,6 +76,10 @@ class RemoteViewerModel {
         currentAdjustments.saturation * globalAdjustments.saturation
     }
 
+    var effectiveOpacity: Double {
+        currentAdjustments.opacity * globalAdjustments.opacity
+    }
+
     /// Reference to global adjustments from AppModel
     var globalAdjustments: VisualAdjustments = VisualAdjustments()
 

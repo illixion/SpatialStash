@@ -81,6 +81,7 @@ struct VideoWindowView: View {
             .brightness(effectiveVideoAdjustments.brightness)
             .contrast(effectiveVideoAdjustments.contrast)
             .saturation(effectiveVideoAdjustments.saturation)
+            .opacity(effectiveVideoAdjustments.opacity)
             .overlay {
                 // Transparent tap target that only appears when UI is hidden
                 if isUIHidden {

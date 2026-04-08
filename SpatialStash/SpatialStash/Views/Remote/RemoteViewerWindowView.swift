@@ -45,6 +45,7 @@ struct RemoteViewerWindowView: View {
                         .brightness(model.effectiveBrightness)
                         .contrast(model.effectiveContrast)
                         .saturation(model.effectiveSaturation)
+                        .opacity(model.effectiveOpacity)
                 }
 
                 // Clock overlay

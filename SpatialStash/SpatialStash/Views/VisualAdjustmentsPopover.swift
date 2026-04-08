@@ -163,10 +163,19 @@ struct VisualAdjustmentsPopover: View {
                 defaultValue: 1.0
             )
 
+            adjustmentSlider(
+                label: "Opacity",
+                value: $currentAdjustments.opacity,
+                range: 0.01...1.0,
+                defaultValue: 1.0,
+                linear: true
+            )
+
             Button("Reset") {
                 currentAdjustments.brightness = 0.0
                 currentAdjustments.contrast = 1.0
                 currentAdjustments.saturation = 1.0
+                currentAdjustments.opacity = 1.0
                 // Note: auto-enhance is toggled separately, not reset here
                 onCurrentAdjustmentsChanged?(currentAdjustments)
             }
@@ -175,6 +184,7 @@ struct VisualAdjustmentsPopover: View {
                 currentAdjustments.brightness == 0.0
                 && currentAdjustments.contrast == 1.0
                 && currentAdjustments.saturation == 1.0
+                && currentAdjustments.opacity == 1.0
             )
         }
         .onChange(of: currentAdjustments) { _, newValue in
@@ -211,6 +221,14 @@ struct VisualAdjustmentsPopover: View {
                 value: $globalAdjustments.saturation,
                 range: 0.0...3.0,
                 defaultValue: 1.0
+            )
+
+            adjustmentSlider(
+                label: "Opacity",
+                value: $globalAdjustments.opacity,
+                range: 0.01...1.0,
+                defaultValue: 1.0,
+                linear: true
             )
 
             Button("Reset") {
@@ -301,7 +319,8 @@ struct VisualAdjustmentsPopover: View {
         label: String,
         value: Binding<Double>,
         range: ClosedRange<Double>,
-        defaultValue: Double
+        defaultValue: Double,
+        linear: Bool = false
     ) -> some View {
         VStack(spacing: 4) {
             HStack {
@@ -313,10 +332,14 @@ struct VisualAdjustmentsPopover: View {
                     .monospacedDigit()
                     .foregroundColor(value.wrappedValue != defaultValue ? .accentColor : .secondary)
             }
-            Slider(
-                value: nonLinearBinding(value: value, range: range, defaultValue: defaultValue),
-                in: 0...1
-            )
+            if linear {
+                Slider(value: value, in: range)
+            } else {
+                Slider(
+                    value: nonLinearBinding(value: value, range: range, defaultValue: defaultValue),
+                    in: 0...1
+                )
+            }
         }
     }
 
