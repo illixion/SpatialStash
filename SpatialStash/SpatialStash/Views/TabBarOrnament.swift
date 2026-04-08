@@ -14,6 +14,9 @@ struct TabBarOrnament: View {
             if tab == .console {
                 return appModel.showDebugConsole
             }
+            if tab == .remote {
+                return appModel.enableRemoteViewer
+            }
             return true
         }
     }

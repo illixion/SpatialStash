@@ -13,6 +13,7 @@ struct VisualAdjustmentsPopover: View {
     enum Tab: String, CaseIterable {
         case current = "Current"
         case global = "Global"
+        case viewer = "Viewer"
     }
 
     @State private var selectedTab: Tab = .current
@@ -57,10 +58,22 @@ struct VisualAdjustmentsPopover: View {
     /// Callback for flip toggle
     var onToggleFlip: (() -> Void)? = nil
 
+    // MARK: - Remote Viewer Display Toggles
+
+    /// Optional remote viewer model — when provided, shows a "Viewer" tab
+    var remoteViewerModel: RemoteViewerModel? = nil
+
+    private var visibleTabs: [Tab] {
+        if remoteViewerModel != nil {
+            return Tab.allCases
+        }
+        return [.current, .global]
+    }
+
     var body: some View {
         VStack(spacing: 16) {
             Picker("", selection: $selectedTab) {
-                ForEach(Tab.allCases, id: \.self) { tab in
+                ForEach(visibleTabs, id: \.self) { tab in
                     Text(tab.rawValue).tag(tab)
                 }
             }
@@ -71,6 +84,8 @@ struct VisualAdjustmentsPopover: View {
                 currentTabContent
             case .global:
                 globalTabContent
+            case .viewer:
+                viewerTabContent
             }
         }
         .padding(20)
@@ -203,6 +218,45 @@ struct VisualAdjustmentsPopover: View {
             }
             .buttonStyle(.bordered)
             .disabled(!globalAdjustments.isModified)
+        }
+    }
+
+    // MARK: - Viewer Tab (Remote Viewer only)
+
+    @ViewBuilder
+    private var viewerTabContent: some View {
+        if let model = remoteViewerModel {
+            VStack(spacing: 14) {
+                Text("Display toggles for this viewer session.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Toggle("Show Clock", isOn: Binding(
+                    get: { model.showClock },
+                    set: { model.showClock = $0 }
+                ))
+
+                Toggle("Show Sensors", isOn: Binding(
+                    get: { model.showSensors },
+                    set: { model.showSensors = $0 }
+                ))
+
+                Toggle("Ken Burns Effect", isOn: Binding(
+                    get: { model.config.enableKenBurns },
+                    set: { model.config.enableKenBurns = $0 }
+                ))
+
+                Toggle("Transparent Background", isOn: Binding(
+                    get: { model.config.transparentBackground },
+                    set: { model.config.transparentBackground = $0 }
+                ))
+
+                Toggle("Fit to Aspect Ratio", isOn: Binding(
+                    get: { model.config.useAspectRatio },
+                    set: { model.config.useAspectRatio = $0 }
+                ))
+            }
         }
     }
 

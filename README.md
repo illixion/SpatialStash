@@ -103,6 +103,20 @@ Create complex queries to filter your media (Stash server only):
 - **Stash Server** - Configure server URL and API key
 - **Cache Management** - View and clear image/video disk caches
 
+### Remote API Viewer (Developer)
+A slideshow viewer for displaying images from a [RoboFrame](https://github.com/illixion/RoboFrame) proxy API, with WebSocket-based remote control and Home Assistant sensor integration. Enable in Settings → Developer → Enable Remote API Viewer.
+
+- **Configurable API endpoint** with saved configuration profiles
+- **Tag list management** with per-config tag lists and bulk update across all configs
+- **Image prefetching** for instant transitions (3 images buffered ahead)
+- **Ken Burns effect** with Sobel edge detection to zoom toward interesting regions
+- **Dynamic brightness** that auto-boosts dark images based on luminance analysis
+- **Clock and sensor overlays** with configurable text size and semi-opaque backgrounds
+- **WebSocket RPC** for remote display control, multi-device sync, and Home Assistant sensor data
+- **Critical alerts** — `playVideo` and `showText` WebSocket commands open new windows for home system notifications
+- **Client-side content filtering** with blocked post/tag lists (merged from server on connect)
+- **Visual adjustments** shared with the photo/video viewer system (brightness, contrast, saturation)
+
 ## Architecture
 
 The app follows a SwiftUI architecture with:

@@ -16,7 +16,7 @@ xcodebuild -quiet -project SpatialStash/SpatialStash.xcodeproj -scheme SpatialSt
 ## Architecture
 
 ### App Structure
-- **SpatialStashApp.swift** - App entry point defining six scenes: main window, pushed-picture viewer, photo-detail pop-out, shared-photo viewer, shared-video player, and StereoscopicVideoSpace (immersive)
+- **SpatialStashApp.swift** - App entry point defining scenes: main window, photo-detail pop-out, video-detail, shared-photo viewer, shared-video player, console, GPU memory monitor, remote-viewer, remote-video, remote-alert, and StereoscopicVideoSpace (immersive)
 - **AppModel.swift** - Central `@Observable` state container for gallery data, server config, filter state, video playback state, memory monitoring, and persisted settings (UserDefaults)
 - **PhotoWindowModel.swift** - Per-window `@Observable` model for individual photo viewers. Manages image loading, 2D/3D display mode, gallery navigation, slideshow, and resource cleanup. All three photo viewer windows use this model.
 
@@ -31,7 +31,7 @@ Source protocols:
 - `VideoSource` - Protocol for paginated video fetching
 
 ### Tab Navigation
-Four tabs defined in `Tab.swift`: Pictures, Videos, Filters, Settings. Tab switching managed by `ContentView` with ornament-based navigation via `TabBarOrnament`.
+Tabs defined in `Tab.swift`: Pictures, Videos, Local, Filters, Settings, Remote (developer), Console (developer). Tab switching managed by `ContentView` with ornament-based navigation via `TabBarOrnament`. Remote and Console tabs are conditionally visible based on `appModel.enableRemoteViewer` and `appModel.showDebugConsole`.
 
 ### Photo Viewer Architecture
 All three photo viewer windows share the same rendering components:
@@ -95,6 +95,38 @@ Uses RealityKit's `ImagePresentationComponent` for 2D→3D conversion. States tr
 
 ### API Client
 `StashAPIClient` is an actor that handles GraphQL communication with Stash server. Supports queries for images, videos (scenes), galleries, and tags. Server config persisted via UserDefaults.
+
+### Remote API Viewer
+A slideshow viewer that fetches images from a [RoboFrame](https://github.com/illixion/RoboFrame) API and displays them with clock/sensor overlays, Ken Burns animation, WebSocket control, and Home Assistant integration. Enabled via Settings → Developer → Enable Remote API Viewer, which adds a "Remote" tab.
+
+**Architecture:**
+- **RemoteViewerConfig** — Codable config struct with all settings, saved to UserDefaults via AppModel
+- **RemoteViewerModel** — `@MainActor @Observable` slideshow engine. Manages prefetch buffer (3 images ahead), crossfade transitions, Sobel-based Ken Burns focus, dynamic brightness, WS integration, and client-side block filtering
+- **RemoteViewerWindowView** — Main viewer window with image/clock/sensor layers, ornament with auto-hide
+- **RemoteAPIClient** — Actor for search/get/save/history HTTP endpoints
+- **RemoteWebSocketClient** — `@Observable` class managing URLSessionWebSocketTask with reconnection
+- **SobelFocusAnalyzer** — Pure functions for Sobel edge detection (Ken Burns focus) and average luminance (dynamic brightness)
+
+**RoboFrame Proxy API:**
+- `GET {baseURL}/search?q={tags}&cursor={cursor}` → `{ results: [RemotePost], nextCursor: number }`
+- `GET {baseURL}/get?id={postId}` → serves image directly (used as img src)
+- `GET {baseURL}/save?id={postId}` → saves post, returns status text
+- `GET {baseURL}/addtohistory?id={postId}` → adds to viewing history
+- URL is built manually (not via URLQueryItem) to avoid over-encoding `>=` in tag queries
+
+**WebSocket Protocol (JSON, `{ action, payload }`):**
+- **Outgoing:** `getBlocked`, `getDisplayState`, `block {postId}`, `displaySync {currentPost, nextPost, currentList, dbCursor}`
+- **Incoming:** `blocked {blockedPosts, blockedTags}`, `displayState {state}`, `currentTagList {listNumber}`, `playVideo {url}`, `stopVideo`, `showText {text, bgColorHex, imageUrl}`, `dismissText`, `update {entity, state, attributes}` (HA sensors), `refresh`, `displaySync`
+- `playVideo`/`showText` open new windows via `openWindow()`; `stopVideo`/`dismissText` dismiss them
+
+**Key implementation details:**
+- Cursor is randomized on initial load (`Double.random(in: 0..<1)`) and re-randomized when server returns `nextCursor: 0` (wrap-around)
+- Ratio filter uses `..` separator (e.g. `ratio:1.32..1.79`), matching server expectations
+- Blocked posts/tags from WS `getBlocked` are merged into local config and persisted
+- Save button has 1.5s grace period after image transition (saves previous post)
+- Visual adjustments (brightness/contrast/saturation) stack: auto (luminance-based) + per-viewer + global
+- Ornament: [ Grid | Prev | Next | Save | Home | Cycle Tags | Clock | Adjustments | Block ]
+- Adjustments popover has a "Viewer" tab with display toggles (clock, sensors, Ken Burns, background, aspect ratio)
 
 ## Key Patterns
 

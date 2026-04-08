@@ -88,6 +88,37 @@ struct SpatialStashApp: App {
         .windowResizability(.contentMinSize)
         .defaultLaunchBehavior(.suppressed)
 
+        // Remote viewer - slideshow from RoboFrame API
+        WindowGroup(id: "remote-viewer", for: RemoteViewerWindowValue.self) { $windowValue in
+            if let windowValue = windowValue {
+                RemoteViewerWindowView(windowValue: windowValue)
+                    .environment(appModel)
+            }
+        }
+        .windowStyle(.plain)
+        .defaultSize(width: 1400, height: 900)
+        .defaultLaunchBehavior(.suppressed)
+
+        // Remote video - WebSocket-triggered video playback
+        WindowGroup(id: "remote-video", for: RemoteVideoWindowValue.self) { $windowValue in
+            if let windowValue = windowValue {
+                RemoteVideoWindowView(windowValue: windowValue)
+            }
+        }
+        .windowStyle(.plain)
+        .defaultSize(width: 1200, height: 700)
+        .defaultLaunchBehavior(.suppressed)
+
+        // Remote alert - WebSocket-triggered text alerts
+        WindowGroup(id: "remote-alert", for: RemoteAlertWindowValue.self) { $windowValue in
+            if let windowValue = windowValue {
+                RemoteAlertWindowView(windowValue: windowValue)
+            }
+        }
+        .windowStyle(.plain)
+        .defaultSize(width: 800, height: 500)
+        .defaultLaunchBehavior(.suppressed)
+
         // Immersive space for stereoscopic 3D video playback
         ImmersiveSpace(id: "StereoscopicVideoSpace") {
             ImmersiveVideoView()

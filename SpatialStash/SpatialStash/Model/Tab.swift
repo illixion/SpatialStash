@@ -12,6 +12,7 @@ enum Tab: String, CaseIterable, Identifiable {
     case local = "Local"
     case filters = "Filters"
     case settings = "Settings"
+    case remote = "Remote"
     case console = "Console"
 
     var id: String { rawValue }
@@ -23,6 +24,7 @@ enum Tab: String, CaseIterable, Identifiable {
         case .local: return "folder"
         case .filters: return "line.3.horizontal.decrease.circle"
         case .settings: return "gearshape"
+        case .remote: return "network"
         case .console: return "apple.terminal"
         }
     }

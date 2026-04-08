@@ -329,6 +329,16 @@ struct SettingsTabView: View {
                 }
 
                 Section("Developer") {
+                    Toggle("Enable Remote API Viewer", isOn: Binding(
+                        get: { appModel.enableRemoteViewer },
+                        set: { newValue in
+                            appModel.enableRemoteViewer = newValue
+                            if !newValue && appModel.selectedTab == .remote {
+                                appModel.selectedTab = .settings
+                            }
+                        }
+                    ))
+
                     Toggle("Show Debug Console", isOn: Binding(
                         get: { appModel.showDebugConsole },
                         set: { newValue in

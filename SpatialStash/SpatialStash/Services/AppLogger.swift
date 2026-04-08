@@ -74,4 +74,7 @@ enum AppLogger {
 
     /// Visual adjustments (brightness, contrast, saturation)
     static let visualAdjustments = Logger(subsystem: subsystem, category: "VisualAdjustments")
+
+    /// Remote API viewer (slideshow, WebSocket, API)
+    static let remoteViewer = Logger(subsystem: subsystem, category: "RemoteViewer")
 }

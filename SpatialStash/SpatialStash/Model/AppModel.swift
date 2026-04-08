@@ -389,6 +389,44 @@ class AppModel {
     /// Per-session video visual adjustments (not persisted across app launches)
     var videoVisualAdjustments: VisualAdjustments = VisualAdjustments()
 
+    // MARK: - Remote Viewer
+
+    /// When true, the Remote tab appears in the tab bar ornament
+    var enableRemoteViewer: Bool {
+        didSet {
+            if enableRemoteViewer != oldValue {
+                UserDefaults.standard.set(enableRemoteViewer, forKey: "enableRemoteViewer")
+            }
+        }
+    }
+
+    /// Saved remote viewer configurations
+    var savedRemoteConfigs: [RemoteViewerConfig] = [] {
+        didSet {
+            if let data = try? JSONEncoder().encode(savedRemoteConfigs) {
+                UserDefaults.standard.set(data, forKey: "savedRemoteConfigs")
+            }
+        }
+    }
+
+    func saveRemoteConfig(_ config: RemoteViewerConfig) {
+        if let index = savedRemoteConfigs.firstIndex(where: { $0.id == config.id }) {
+            savedRemoteConfigs[index] = config
+        } else {
+            savedRemoteConfigs.append(config)
+        }
+    }
+
+    func deleteRemoteConfig(_ config: RemoteViewerConfig) {
+        savedRemoteConfigs.removeAll { $0.id == config.id }
+    }
+
+    func renameRemoteConfig(_ config: RemoteViewerConfig, newName: String) {
+        if let index = savedRemoteConfigs.firstIndex(where: { $0.id == config.id }) {
+            savedRemoteConfigs[index].name = newName
+        }
+    }
+
     // MARK: - Debug Console
 
     /// When true, the Console tab appears in the tab bar ornament
@@ -495,6 +533,9 @@ class AppModel {
             ? UserDefaults.standard.bool(forKey: "rememberImageEnhancements")
             : true
 
+        // Load remote viewer (default: false)
+        let loadedEnableRemoteViewer = UserDefaults.standard.bool(forKey: "enableRemoteViewer")
+
         // Load debug console visibility (default: false)
         let loadedShowDebugConsole = UserDefaults.standard.bool(forKey: "showDebugConsole")
 
@@ -526,6 +567,7 @@ class AppModel {
         self.roundedCorners = loadedRoundedCorners
         self.openMediaInNewWindows = loadedOpenMediaInNewWindows
         self.rememberImageEnhancements = loadedRememberImageEnhancements
+        self.enableRemoteViewer = loadedEnableRemoteViewer
         self.showDebugConsole = loadedShowDebugConsole
         self.respectMemoryAlerts = loadedRespectMemoryAlerts
         self.useLossyTextureCompression = loadedUseLossyTextureCompression
@@ -562,6 +604,7 @@ class AppModel {
         loadSavedViews()
         loadSavedVideoViews()
         loadSavedWindowGroups()
+        loadSavedRemoteConfigs()
 
         // Apply default views on startup
         applyDefaultViewsOnStartup()
@@ -864,6 +907,14 @@ class AppModel {
         }
     }
 
+    private func loadSavedRemoteConfigs() {
+        if let data = UserDefaults.standard.data(forKey: "savedRemoteConfigs"),
+           let configs = try? JSONDecoder().decode([RemoteViewerConfig].self, from: data) {
+            savedRemoteConfigs = configs
+            AppLogger.remoteViewer.info("Loaded \(configs.count, privacy: .public) saved remote configs")
+        }
+    }
+
     func persistSavedWindowGroups() {
         if let data = try? JSONEncoder().encode(savedWindowGroups) {
             UserDefaults.standard.set(data, forKey: Self.savedWindowGroupsKey)
@@ -1023,9 +1074,11 @@ class AppModel {
             rememberImageEnhancements: rememberImageEnhancements,
             showDebugConsole: showDebugConsole,
             respectMemoryAlerts: respectMemoryAlerts,
+            enableRemoteViewer: enableRemoteViewer,
             savedViews: savedViews,
             savedVideoViews: savedVideoViews,
             savedWindowGroups: savedWindowGroups,
+            savedRemoteConfigs: savedRemoteConfigs,
             video3DSettings: video3DData,
             imageEnhancementConvertedURLs: imageEnhancementData.convertedURLs,
             imageEnhancementLastViewingModes: imageEnhancementData.lastViewingModes,
@@ -1049,6 +1102,7 @@ class AppModel {
         if let v = backup.rememberImageEnhancements { rememberImageEnhancements = v }
         if let v = backup.showDebugConsole { showDebugConsole = v }
         if let v = backup.respectMemoryAlerts { respectMemoryAlerts = v }
+        if let v = backup.enableRemoteViewer { enableRemoteViewer = v }
 
         // Complex settings
         if let v = backup.savedViews {
@@ -1062,6 +1116,9 @@ class AppModel {
         if let v = backup.savedWindowGroups {
             savedWindowGroups = v
             persistSavedWindowGroups()
+        }
+        if let v = backup.savedRemoteConfigs {
+            savedRemoteConfigs = v
         }
 
         // Actor-based trackers

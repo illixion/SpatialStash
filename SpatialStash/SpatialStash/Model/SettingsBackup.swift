@@ -29,11 +29,13 @@ struct SettingsBackup: Codable {
     var rememberImageEnhancements: Bool?
     var showDebugConsole: Bool?
     var respectMemoryAlerts: Bool?
+    var enableRemoteViewer: Bool?
 
     // Complex Codable settings
     var savedViews: [SavedView]?
     var savedVideoViews: [SavedVideoView]?
     var savedWindowGroups: [SavedWindowGroup]?
+    var savedRemoteConfigs: [RemoteViewerConfig]?
 
     // Actor-based tracker data
     var video3DSettings: [String: Video3DSettings]?
