@@ -391,6 +391,10 @@ class AppModel {
 
     // MARK: - Remote Viewer
 
+    /// Persistent config for the gallery slideshow launched from photo viewer ornament.
+    /// Stored separately from savedRemoteConfigs so it doesn't clutter the Remote tab.
+    var gallerySlideshowConfig: RemoteViewerConfig?
+
     /// When true, the Remote tab appears in the tab bar ornament
     var enableRemoteViewer: Bool {
         didSet {

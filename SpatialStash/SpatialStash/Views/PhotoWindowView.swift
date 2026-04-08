@@ -47,9 +47,6 @@ struct PhotoWindowView: View {
                     windowModel: windowModel,
                     context: wasPushed ? .pushedFromGallery : .standalone,
                     onGalleryButtonTap: {
-                        if windowModel.isSlideshowActive {
-                            windowModel.stopSlideshow()
-                        }
                         appModel.showMainWindow(openWindow: openWindow)
                     },
                     extraButtons: {
@@ -113,9 +110,6 @@ struct PhotoWindowView: View {
                 showDuplicateWindowAlert = true
             } else {
                 appModel.enqueuePhotoWindowOpen(image)
-                if windowModel.isSlideshowActive {
-                    windowModel.stopSlideshow()
-                }
                 dismissWindow()
             }
         } label: {

@@ -140,6 +140,13 @@ struct RemoteViewerWindowView: View {
         .onChange(of: appModel.globalVisualAdjustments) { _, newValue in
             viewerModel?.globalAdjustments = newValue
         }
+        .onChange(of: viewerModel?.showAdjustmentsPopover) { _, isOpen in
+            if isOpen == true {
+                autoHideTimer?.cancel()
+            } else {
+                resetAutoHideTimer()
+            }
+        }
         .onTapGesture {
             controlsVisible = true
             resetAutoHideTimer()
@@ -260,14 +267,26 @@ struct RemoteViewerWindowView: View {
     }
 
     private func setupModel() {
-        guard let config = appModel.savedRemoteConfigs.first(where: { $0.id == windowValue.configId }) else {
+        // Look up config from saved configs or the gallery slideshow config
+        let config: RemoteViewerConfig
+        if let saved = appModel.savedRemoteConfigs.first(where: { $0.id == windowValue.configId }) {
+            config = saved
+        } else if let gallery = appModel.gallerySlideshowConfig, gallery.id == windowValue.configId {
+            config = gallery
+        } else {
             AppLogger.remoteViewer.error("No config found for id \(windowValue.configId.uuidString, privacy: .public)")
             return
         }
 
         let model = RemoteViewerModel(config: config)
         model.globalAdjustments = appModel.globalVisualAdjustments
+        model.maxImageResolution = appModel.maxImageResolution
         model.updateWindowAspectRatio(windowSize)
+
+        // Gallery mode: use the app's image source instead of remote API
+        if config.apiEndpoint.isEmpty {
+            model.galleryImageSource = appModel.imageSource
+        }
 
         // Wire up window callbacks
         model.onOpenVideoWindow = { [openWindow] url in

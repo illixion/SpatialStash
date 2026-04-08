@@ -53,64 +53,58 @@ struct RemoteViewerOrnamentView: View {
             Divider()
                 .frame(height: 24)
 
-            // Save
-            Button {
-                model.saveCurrentPost()
-            } label: {
-                Image(systemName: "square.and.arrow.down")
-                    .font(.title3)
-            }
-            .buttonStyle(.borderless)
-            .disabled(model.saveablePost == nil)
-            .help("Save Image")
+            if !model.isGalleryMode {
+                // Save (API mode only)
+                Button {
+                    model.saveCurrentPost()
+                } label: {
+                    Image(systemName: "square.and.arrow.down")
+                        .font(.title3)
+                }
+                .buttonStyle(.borderless)
+                .disabled(model.saveablePost == nil)
+                .help("Save Image")
 
-            // Home Assistant
-            Button {
-                withAnimation { showHomeAssistant.toggle() }
-                if showHistory { showHistory = false }
-            } label: {
-                Image(systemName: showHomeAssistant ? "house.fill" : "house")
-                    .font(.title3)
-            }
-            .buttonStyle(.borderless)
-            .disabled(model.config.homeAssistantURL.isEmpty)
-            .help("Home Assistant")
+                // Home Assistant
+                Button {
+                    withAnimation { showHomeAssistant.toggle() }
+                    if showHistory { showHistory = false }
+                } label: {
+                    Image(systemName: showHomeAssistant ? "house.fill" : "house")
+                        .font(.title3)
+                }
+                .buttonStyle(.borderless)
+                .disabled(model.config.homeAssistantURL.isEmpty)
+                .help("Home Assistant")
 
-            // Cycle Tag List
-            Button {
-                model.cycleTagList()
-            } label: {
-                Image(systemName: "arrow.triangle.2.circlepath")
-                    .font(.title3)
+                // Cycle Tag List
+                Button {
+                    model.cycleTagList()
+                } label: {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .font(.title3)
+                }
+                .buttonStyle(.borderless)
+                .disabled(model.config.tagLists.count <= 1)
+                .help("Cycle Tag List (\(model.currentTagListIndex + 1)/\(model.config.tagLists.count))")
             }
-            .buttonStyle(.borderless)
-            .disabled(model.config.tagLists.count <= 1)
-            .help("Cycle Tag List (\(model.currentTagListIndex + 1)/\(model.config.tagLists.count))")
-
-            // Toggle Clock
-            Button {
-                model.toggleClock()
-            } label: {
-                Image(systemName: model.showClock ? "clock.fill" : "clock")
-                    .font(.title3)
-            }
-            .buttonStyle(.borderless)
-            .help("Toggle Clock")
 
             // Visual Adjustments
             adjustmentsButton
 
-            // Block
-            Button {
-                model.blockCurrentPost()
-            } label: {
-                Image(systemName: "hand.raised.fill")
-                    .font(.title3)
-                    .foregroundStyle(.red)
+            if !model.isGalleryMode {
+                // Block (API mode only)
+                Button {
+                    model.blockCurrentPost()
+                } label: {
+                    Image(systemName: "hand.raised.fill")
+                        .font(.title3)
+                        .foregroundStyle(.red)
+                }
+                .buttonStyle(.borderless)
+                .disabled(model.currentPost == nil)
+                .help("Block Post")
             }
-            .buttonStyle(.borderless)
-            .disabled(model.currentPost == nil)
-            .help("Block Post")
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)

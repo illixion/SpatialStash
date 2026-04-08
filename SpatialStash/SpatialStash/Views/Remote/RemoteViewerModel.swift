@@ -18,6 +18,14 @@ class RemoteViewerModel {
 
     var config: RemoteViewerConfig
 
+    // MARK: - Gallery Mode
+
+    /// When set, the viewer pulls images from the app's gallery instead of the remote API.
+    /// Tag lists, blocked posts, WS, and API features are disabled in this mode.
+    var galleryImageSource: (any ImageSource)?
+    var isGalleryMode: Bool { galleryImageSource != nil }
+    private var galleryPage: Int = 0
+
     // MARK: - Display State
 
     var currentImage: UIImage?
@@ -103,10 +111,16 @@ class RemoteViewerModel {
     let apiClient = RemoteAPIClient()
     let wsClient = RemoteWebSocketClient()
 
+    /// Max dimension for downsampling loaded images (0 = no limit)
+    var maxImageResolution: Int = 0
+
     // MARK: - Private
 
     private var slideshowTask: Task<Void, Never>?
     private var prefetchTask: Task<Void, Never>?
+    private var backgroundUnloadTask: Task<Void, Never>?
+    private var backgroundedAt: Date?
+    private static let backgroundUnloadDelay: TimeInterval = 30
     private var windowAspectRatio: Double = 16.0 / 9.0
 
     /// Pre-downloaded images ready for instant display
@@ -132,11 +146,13 @@ class RemoteViewerModel {
     // MARK: - Lifecycle
 
     func start() {
-        // Randomize cursor on initial load so we don't always start at the same position
-        if dbCursor == nil {
-            dbCursor = String(Double.random(in: 0..<1))
+        if !isGalleryMode {
+            // Randomize cursor on initial load so we don't always start at the same position
+            if dbCursor == nil {
+                dbCursor = String(Double.random(in: 0..<1))
+            }
+            setupWebSocket()
         }
-        setupWebSocket()
         startSlideshow()
     }
 
@@ -145,19 +161,45 @@ class RemoteViewerModel {
         slideshowTask = nil
         prefetchTask?.cancel()
         prefetchTask = nil
+        backgroundUnloadTask?.cancel()
+        backgroundUnloadTask = nil
         wsClient.disconnect()
     }
 
     func handleScenePhaseChange(from oldPhase: ScenePhase, to newPhase: ScenePhase) {
         if newPhase == .active && oldPhase != .active {
+            // Returning to active
             wsClient.sendVisibilityChange(visible: true)
+            backgroundUnloadTask?.cancel()
+            backgroundUnloadTask = nil
+
+            let wasBackgrounded = backgroundedAt
+            backgroundedAt = nil
+
             if !isPaused {
+                // If backgrounded > 30s, image was unloaded — advance to next
+                if let wasBackgrounded,
+                   Date().timeIntervalSince(wasBackgrounded) >= Self.backgroundUnloadDelay {
+                    goToNextImage()
+                }
                 startSlideshow()
             }
         } else if oldPhase == .active && newPhase != .active {
+            // Entering background — pause slideshow, schedule image unload
             wsClient.sendVisibilityChange(visible: false)
             slideshowTask?.cancel()
             slideshowTask = nil
+            backgroundedAt = Date()
+
+            backgroundUnloadTask = Task {
+                try? await Task.sleep(for: .seconds(Self.backgroundUnloadDelay))
+                guard !Task.isCancelled else { return }
+                // Unload images to free memory
+                currentImage = nil
+                nextImage = nil
+                prefetchedImages.removeAll()
+                AppLogger.remoteViewer.info("Background unload: released images after 30s")
+            }
         }
     }
 
@@ -310,11 +352,11 @@ class RemoteViewerModel {
         isLoading = true
         defer { isLoading = false }
 
-        guard let imageURL = apiClient.getImageURL(baseURL: config.apiEndpoint, postId: post._id) else { return }
+        guard let imageURL = resolveImageURL(for: post) else { return }
 
         do {
             let (data, _) = try await URLSession.shared.data(from: imageURL)
-            guard let image = UIImage(data: data) else { return }
+            guard let image = imageFromData(data) else { return }
             await displayImage(image, post: post, url: imageURL)
         } catch {
             AppLogger.remoteViewer.error("Failed to load post \(post._id, privacy: .public): \(error.localizedDescription, privacy: .public)")
@@ -339,9 +381,11 @@ class RemoteViewerModel {
         historyImageURLs[post._id] = url
         if postHistory.count > 100 { postHistory.removeFirst() }
 
-        // Add to server history
-        Task {
-            try? await apiClient.addToHistory(baseURL: config.apiEndpoint, postId: post._id)
+        // Add to server history (API mode only)
+        if !isGalleryMode {
+            Task {
+                try? await apiClient.addToHistory(baseURL: config.apiEndpoint, postId: post._id)
+            }
         }
 
         // Analyze image for Ken Burns and brightness
@@ -380,13 +424,15 @@ class RemoteViewerModel {
         nextImage = nil
         isTransitioning = false
 
-        // Send display sync
-        wsClient.sendDisplaySync(
-            currentPost: (id: post._id, url: url.absoluteString),
-            nextPost: prefetchedImages.first.map { (id: $0.post._id, url: $0.url.absoluteString) },
-            currentList: currentTagListIndex,
-            dbCursor: dbCursor
-        )
+        // Send display sync (API mode only)
+        if !isGalleryMode {
+            wsClient.sendDisplaySync(
+                currentPost: (id: post._id, url: url.absoluteString),
+                nextPost: prefetchedImages.first.map { (id: $0.post._id, url: $0.url.absoluteString) },
+                currentList: currentTagListIndex,
+                dbCursor: dbCursor
+            )
+        }
     }
 
     /// Kick off background prefetch to keep the buffer full
@@ -406,12 +452,12 @@ class RemoteViewerModel {
             }
 
             guard let post = nextNonBlockedPost() else { break }
-            guard let imageURL = apiClient.getImageURL(baseURL: config.apiEndpoint, postId: post._id) else { continue }
+            guard let imageURL = resolveImageURL(for: post) else { continue }
 
             do {
                 let (data, _) = try await URLSession.shared.data(from: imageURL)
                 guard !Task.isCancelled else { break }
-                guard let image = UIImage(data: data) else { continue }
+                guard let image = imageFromData(data) else { continue }
                 prefetchedImages.append((post: post, image: image, url: imageURL))
                 AppLogger.remoteViewer.debug("Prefetched post \(post._id, privacy: .public) (\(self.prefetchedImages.count, privacy: .public)/\(Self.prefetchTarget, privacy: .public))")
             } catch {
@@ -428,6 +474,11 @@ class RemoteViewerModel {
     // MARK: - Private: Fetching
 
     private func fetchMorePosts() async {
+        if isGalleryMode {
+            await fetchGalleryPosts()
+            return
+        }
+
         guard !isFetching else { return }
         isFetching = true
         defer { isFetching = false }
@@ -479,6 +530,74 @@ class RemoteViewerModel {
         } catch {
             AppLogger.remoteViewer.error("Fetch failed: \(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    /// Fetch images from the app's gallery source for gallery mode slideshow
+    private func fetchGalleryPosts() async {
+        guard let source = galleryImageSource, !isFetching else { return }
+        isFetching = true
+        defer { isFetching = false }
+
+        do {
+            var filter = ImageFilterCriteria()
+            filter.sortField = .random
+            filter.randomSeed = nil
+            let result = try await source.fetchImages(page: galleryPage, pageSize: 20, filter: filter)
+            galleryPage += 1
+
+            let posts = result.images.map { image in
+                RemotePost(
+                    _id: abs(image.id.hashValue),
+                    file_ext: image.fullSizeURL.pathExtension,
+                    tags: [],
+                    rating: nil, image_width: nil, image_height: nil,
+                    fav_count: nil, md5: nil, parent_id: nil,
+                    score: nil, ratio: nil, path: image.fullSizeURL.absoluteString,
+                    duration: nil
+                )
+            }
+            // Store the URL mapping so prefetch/display can resolve them
+            for (image, post) in zip(result.images, posts) {
+                galleryURLMap[post._id] = image.fullSizeURL
+            }
+            cachedPosts.append(contentsOf: posts)
+            AppLogger.remoteViewer.info("Gallery: fetched \(posts.count, privacy: .public) images")
+        } catch {
+            AppLogger.remoteViewer.error("Gallery fetch failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// URL mapping for gallery mode posts (RemotePost._id → fullSizeURL)
+    private var galleryURLMap: [Int: URL] = [:]
+
+    /// Downsample image data if maxImageResolution is set, otherwise return full-size UIImage
+    private func imageFromData(_ data: Data) -> UIImage? {
+        if maxImageResolution > 0 {
+            let maxDim = CGFloat(maxImageResolution)
+            let options: [CFString: Any] = [kCGImageSourceShouldCache: false]
+            guard let source = CGImageSourceCreateWithData(data as CFData, options as CFDictionary) else {
+                return UIImage(data: data)
+            }
+            let downsampleOptions: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceThumbnailMaxPixelSize: maxDim,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceShouldCacheImmediately: true
+            ]
+            guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, downsampleOptions as CFDictionary) else {
+                return UIImage(data: data)
+            }
+            return UIImage(cgImage: cgImage)
+        }
+        return UIImage(data: data)
+    }
+
+    /// Resolve the image URL for a post — gallery mode uses the URL map, API mode uses the /get endpoint
+    func resolveImageURL(for post: RemotePost) -> URL? {
+        if isGalleryMode {
+            return galleryURLMap[post._id]
+        }
+        return apiClient.getImageURL(baseURL: config.apiEndpoint, postId: post._id)
     }
 
     // MARK: - Private: WebSocket

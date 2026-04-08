@@ -10,7 +10,7 @@ A visionOS app for Apple Vision Pro that transforms your 2D images into immersiv
 - **Share Sheet Support** - Receive images and videos from other apps via the system share sheet, with save-to-files option
 - **Advanced Filtering** - Filter by galleries, tags, ratings, performers and more with saved filter presets
 - **Swipe Navigation** - Swipe between images in the gallery with smooth transitions
-- **Slideshow** - Random image slideshow with configurable delay
+- **Slideshow** - Random image slideshow with Ken Burns animation, dynamic brightness, clock overlay, and visual adjustments. Launches in a dedicated viewer window with configurable display options
 - **Rating & O-Count** - View and edit image ratings and O-count directly from the viewer
 - **Video Playback** - Stream videos directly from your Stash server or play local files
 - **Stereoscopic 3D Video** - Automatically detects SBS/OU stereoscopic formats from tags, converts to MV-HEVC, and plays in full immersive mode
@@ -78,7 +78,7 @@ Browse your image gallery in a grid view. Tap any image to open it in the viewer
 - **Swipe** left/right to navigate between images
 - Tap the **2D/3D** button to generate a spatial 3D version and toggle it on/off (3D generation may take a few seconds)
 - Tap the **person outline** button to toggle background removal
-- Tap the **play** button to start a random slideshow
+- Tap the **play** button to launch a slideshow viewer with Ken Burns animation, clock overlay, and visual adjustment controls
 - Tap the **star** button to view/edit rating and O-count (Stash server only)
 - Tap the **pop-out** button to open the image in its own window
 - Images that were previously viewed in 3D will automatically restore to 3D mode

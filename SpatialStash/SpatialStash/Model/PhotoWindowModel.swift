@@ -758,26 +758,6 @@ class PhotoWindowModel {
     private var autoHideTask: Task<Void, Never>?
     private var windowControlsHideTask: Task<Void, Never>?
 
-    // MARK: - Slideshow State
-
-    enum SlideshowTransitionDirection {
-        case next
-        case previous
-    }
-
-    var isSlideshowActive: Bool = false
-    var slideshowImages: [GalleryImage] = []
-    var slideshowIndex: Int = 0
-    private var slideshowTask: Task<Void, Never>?
-    private var slideshowHistory: [GalleryImage] = []
-
-    /// Signal for the view to perform a slide animation during slideshow transitions.
-    /// Set by the model, observed and cleared by PhotoDisplayView.
-    var slideshowTransitionDirection: SlideshowTransitionDirection? = nil
-
-    /// Task for preloading the next slideshow image data
-    private var slideshowPreloadTask: Task<Void, Never>?
-
     // MARK: - Gallery Navigation State
 
     /// Snapshot of gallery images when this window was opened
@@ -2293,240 +2273,12 @@ class PhotoWindowModel {
         }
     }
 
-    // MARK: - Slideshow
-
-    /// Start a random slideshow in this window
-    func startSlideshow() async {
-        recordInteraction()
-        guard !isSlideshowActive else { return }
-
-        isSlideshowActive = true
-        slideshowHistory = [image]  // Start with current image in history
-        slideshowImages = []
-        slideshowIndex = 0
-
-        // Fetch initial batch of random images (no seed for true randomness)
-        await fetchRandomSlideshowImages()
-
-        // Preload the first slideshow image so it's ready when the timer fires
-        preloadNextSlideshowImage()
-
-        // Start the slideshow timer
-        startSlideshowTimer()
-    }
-
-    /// Fetch a batch of random images for the slideshow
-    private func fetchRandomSlideshowImages() async {
-        // Create a filter with random sort and no seed (unseeded = different order each time)
-        var randomFilter = ImageFilterCriteria()
-        randomFilter.sortField = .random
-        randomFilter.randomSeed = nil  // Unseeded for true random
-
-        do {
-            let result = try await appModel.imageSource.fetchImages(page: 0, pageSize: 10, filter: randomFilter)
-            slideshowImages = result.images
-            AppLogger.photoWindow.debug("Fetched \(result.images.count, privacy: .public) random images for slideshow")
-        } catch {
-            AppLogger.photoWindow.error("Failed to fetch slideshow images: \(error.localizedDescription, privacy: .public)")
-        }
-    }
-
-    /// Start the slideshow timer
-    private func startSlideshowTimer() {
-        slideshowTask?.cancel()
-        slideshowTask = Task { @MainActor in
-            while isSlideshowActive && !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(appModel.slideshowDelay))
-                if !Task.isCancelled && isSlideshowActive {
-                    advanceSlideshow()
-                }
-            }
-        }
-    }
-
-    /// Signal the view to animate to the next slideshow image
-    private func advanceSlideshow() {
-        // Don't queue another transition if one is already in progress
-        guard slideshowTransitionDirection == nil else { return }
-        slideshowTransitionDirection = .next
-    }
-
-    /// Switch to displaying a different image
-    private func switchToImage(_ newImage: GalleryImage) async {
-        let oldImageURL = imageURL
-        image = newImage
-        imageURL = newImage.fullSizeURL
-        isLoadingDetailImage = true
-
-        // Update pop-out window tracking so saved window groups capture the current image
-        if let windowValue = popOutWindowValue {
-            appModel.updatePopOutWindowImage(windowValueId: windowValue.id, oldImageURL: oldImageURL, newImage: newImage)
-        }
-
-        // Wait for any in-progress generation to finish before removing the
-        // component. RealityKit crashes if we remove ImagePresentationComponent
-        // while generate() is still running internally.
-        if let task = generateTask {
-            task.cancel()
-            await task.value
-            generateTask = nil
-        }
-
-        // Release all previous image resources
-        spatial3DImageState = .notGenerated
-        spatial3DImage = nil
-        isAnimatedGIF = false
-        currentImageData = nil
-        gifHEVCURL = nil
-        displayTexture = nil
-        displayImage = nil
-        nativeImageDimensions = nil
-        currentDisplayMaxDimension = 0
-        isLoadingDisplayImage = false
-        contentEntity.components.remove(ImagePresentationComponent.self)
-        clearAutoEnhanceState()
-        clearBackgroundRemovalState()
-
-        // Reset to 2D mode when switching images (RealityView will be recreated
-        // if needed when activate3DMode sets is3DMode back to true)
-        is3DMode = false
-        desiredViewingMode = .mono
-        isImageFlipped = false
-        resolutionOverride = nil
-        currentAdjustments = VisualAdjustments()
-        isShowingAdjustmentPreview = false
-        adjustments3DReloadTask?.cancel()
-
-        // Restore per-image settings before loading
-        if appModel.rememberImageEnhancements {
-            let savedOverride = await ImageEnhancementTracker.shared.resolutionOverride(url: newImage.fullSizeURL)
-            if savedOverride != nil {
-                resolutionOverride = savedOverride
-            }
-            let savedSize = await ImageEnhancementTracker.shared.windowSize(url: newImage.fullSizeURL)
-            savedWindowSize = savedSize
-            if let savedSize {
-                lastWindowSize = savedSize
-            }
-        } else {
-            savedWindowSize = nil
-        }
-
-        // Load image data to detect if it's a GIF
-        await loadImageDataForDetail(url: newImage.fullSizeURL)
-
-        // Load 2D display image if not a GIF and not using RealityKit display
-        // (useRealityKitDisplay images go through autoRestorePreviousEnhancement → activate3DMode)
-        if !isAnimatedGIF && !useRealityKitDisplay, let windowSize = lastWindowSize {
-            await loadDisplayImage(for: windowSize)
-        }
-
-        // Restore flip state (independent of other enhancements, but not for 3D/RealityKit)
-        if appModel.rememberImageEnhancements, !is3DMode {
-            let wasFlipped = await ImageEnhancementTracker.shared.isFlipped(url: newImage.fullSizeURL)
-            if wasFlipped {
-                isImageFlipped = true
-            }
-        }
-
-        // Restore visual adjustments for the new image
-        await restoreAdjustments()
-
-        await applyPendingViewingMode()
-    }
-
-    /// Perform the actual slideshow image switch (called by the view during animation phase 2).
-    func performSlideshowSwitch(direction: SlideshowTransitionDirection) async {
-        switch direction {
-        case .next:
-            slideshowIndex += 1
-            if slideshowIndex >= slideshowImages.count {
-                await fetchRandomSlideshowImages()
-                slideshowIndex = 0
-            }
-            if slideshowIndex < slideshowImages.count {
-                let nextImage = slideshowImages[slideshowIndex]
-                await switchToImage(nextImage)
-                slideshowHistory.append(nextImage)
-            }
-        case .previous:
-            guard slideshowHistory.count > 1 else { return }
-            slideshowHistory.removeLast()
-            if let previousImage = slideshowHistory.last {
-                await switchToImage(previousImage)
-            }
-        }
-    }
-
-    /// Called by the view after the slideshow transition animation finishes.
-    func slideshowTransitionCompleted() {
-        slideshowTransitionDirection = nil
-        preloadNextSlideshowImage()
-    }
-
-    /// Preload the next slideshow image data into disk cache for instant display.
-    private func preloadNextSlideshowImage() {
-        slideshowPreloadTask?.cancel()
-
-        let nextIndex = slideshowIndex + 1
-        guard nextIndex < slideshowImages.count else {
-            // Next image requires a new batch fetch — skip preload for this one
-            return
-        }
-
-        let imageToPreload = slideshowImages[nextIndex]
-        slideshowPreloadTask = Task { @MainActor in
-            do {
-                _ = try await ImageLoader.shared.loadRawData(from: imageToPreload.fullSizeURL)
-                AppLogger.photoWindow.debug("Preloaded next slideshow image")
-            } catch {
-                AppLogger.photoWindow.debug("Slideshow preload failed: \(error.localizedDescription, privacy: .public)")
-            }
-        }
-    }
-
-    /// Go to the next slideshow image manually
-    func nextSlideshowImage() {
-        guard isSlideshowActive, slideshowTransitionDirection == nil else { return }
-        startSlideshowTimer()
-        slideshowTransitionDirection = .next
-    }
-
-    /// Go to the previous slideshow image
-    func previousSlideshowImage() {
-        guard isSlideshowActive, slideshowHistory.count > 1, slideshowTransitionDirection == nil else { return }
-        startSlideshowTimer()
-        slideshowTransitionDirection = .previous
-    }
-
-    /// Stop the slideshow
-    func stopSlideshow() {
-        isSlideshowActive = false
-        slideshowTask?.cancel()
-        slideshowTask = nil
-        slideshowPreloadTask?.cancel()
-        slideshowPreloadTask = nil
-        slideshowTransitionDirection = nil
-        slideshowImages = []
-        slideshowHistory = []
-        slideshowIndex = 0
-    }
-
-    /// Check if there's a previous slideshow image available
-    var hasPreviousSlideshowImage: Bool {
-        slideshowHistory.count > 1
-    }
-
     // MARK: - Resource Cleanup
 
     /// Explicitly release large resources when the window is being dismissed.
     /// Ensures GPU textures and image data are freed promptly rather than
     /// waiting for ARC/deinit which may be delayed by SwiftUI state retention.
     func cleanup() {
-        if isSlideshowActive {
-            stopSlideshow()
-        }
-
         // Cancel all tasks
         scenePhaseIdleTask?.cancel()
         scenePhaseIdleTask = nil
@@ -2534,8 +2286,6 @@ class PhotoWindowModel {
         autoHideTask = nil
         windowControlsHideTask?.cancel()
         windowControlsHideTask = nil
-        slideshowTask?.cancel()
-        slideshowTask = nil
         resizeDebounceTask?.cancel()
         resizeDebounceTask = nil
         adjustments3DReloadTask?.cancel()
@@ -2573,8 +2323,6 @@ class PhotoWindowModel {
 
         // Clear collection references
         galleryImages = []
-        slideshowImages = []
-        slideshowHistory = []
 
         // Unregister pop-out window
         if let windowValue = popOutWindowValue {
@@ -2588,6 +2336,81 @@ class PhotoWindowModel {
     }
 
     // MARK: - Gallery Navigation
+
+    /// Switch to displaying a different image, releasing previous resources and loading new ones.
+    private func switchToImage(_ newImage: GalleryImage) async {
+        let oldImageURL = imageURL
+        image = newImage
+        imageURL = newImage.fullSizeURL
+        isLoadingDetailImage = true
+
+        // Update pop-out window tracking so saved window groups capture the current image
+        if let windowValue = popOutWindowValue {
+            appModel.updatePopOutWindowImage(windowValueId: windowValue.id, oldImageURL: oldImageURL, newImage: newImage)
+        }
+
+        // Wait for any in-progress generation to finish before removing the
+        // component. RealityKit crashes if we remove ImagePresentationComponent
+        // while generate() is still running internally.
+        if let task = generateTask {
+            task.cancel()
+            await task.value
+            generateTask = nil
+        }
+
+        // Release all previous image resources
+        spatial3DImageState = .notGenerated
+        spatial3DImage = nil
+        isAnimatedGIF = false
+        currentImageData = nil
+        gifHEVCURL = nil
+        displayTexture = nil
+        displayImage = nil
+        nativeImageDimensions = nil
+        currentDisplayMaxDimension = 0
+        isLoadingDisplayImage = false
+        contentEntity.components.remove(ImagePresentationComponent.self)
+        clearAutoEnhanceState()
+        clearBackgroundRemovalState()
+
+        is3DMode = false
+        desiredViewingMode = .mono
+        isImageFlipped = false
+        resolutionOverride = nil
+        currentAdjustments = VisualAdjustments()
+        isShowingAdjustmentPreview = false
+        adjustments3DReloadTask?.cancel()
+
+        if appModel.rememberImageEnhancements {
+            let savedOverride = await ImageEnhancementTracker.shared.resolutionOverride(url: newImage.fullSizeURL)
+            if savedOverride != nil {
+                resolutionOverride = savedOverride
+            }
+            let savedSize = await ImageEnhancementTracker.shared.windowSize(url: newImage.fullSizeURL)
+            savedWindowSize = savedSize
+            if let savedSize {
+                lastWindowSize = savedSize
+            }
+        } else {
+            savedWindowSize = nil
+        }
+
+        await loadImageDataForDetail(url: newImage.fullSizeURL)
+
+        if !isAnimatedGIF && !useRealityKitDisplay, let windowSize = lastWindowSize {
+            await loadDisplayImage(for: windowSize)
+        }
+
+        if appModel.rememberImageEnhancements, !is3DMode {
+            let wasFlipped = await ImageEnhancementTracker.shared.isFlipped(url: newImage.fullSizeURL)
+            if wasFlipped {
+                isImageFlipped = true
+            }
+        }
+
+        await restoreAdjustments()
+        await applyPendingViewingMode()
+    }
 
     /// Navigate to next image in gallery
     func nextGalleryImage() async {

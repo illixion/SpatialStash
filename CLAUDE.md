@@ -101,8 +101,8 @@ A slideshow viewer that fetches images from a [RoboFrame](https://github.com/ill
 
 **Architecture:**
 - **RemoteViewerConfig** — Codable config struct with all settings, saved to UserDefaults via AppModel
-- **RemoteViewerModel** — `@MainActor @Observable` slideshow engine. Manages prefetch buffer (3 images ahead), crossfade transitions, Sobel-based Ken Burns focus, dynamic brightness, WS integration, and client-side block filtering
-- **RemoteViewerWindowView** — Main viewer window with image/clock/sensor layers, ornament with auto-hide
+- **RemoteViewerModel** — `@MainActor @Observable` slideshow engine. Manages prefetch buffer (3 images ahead), crossfade transitions, Sobel-based Ken Burns focus, dynamic brightness, WS integration, client-side block filtering, and gallery mode. Also used as the app's slideshow engine (replaces the old PhotoWindowModel slideshow)
+- **RemoteViewerWindowView** — Main viewer window with image/clock/sensor layers, ornament with auto-hide. Supports both remote API and gallery image sources
 - **RemoteAPIClient** — Actor for search/get/save/history HTTP endpoints
 - **RemoteWebSocketClient** — `@Observable` class managing URLSessionWebSocketTask with reconnection
 - **SobelFocusAnalyzer** — Pure functions for Sobel edge detection (Ken Burns focus) and average luminance (dynamic brightness)
@@ -125,8 +125,11 @@ A slideshow viewer that fetches images from a [RoboFrame](https://github.com/ill
 - Blocked posts/tags from WS `getBlocked` are merged into local config and persisted
 - Save button has 1.5s grace period after image transition (saves previous post)
 - Visual adjustments (brightness/contrast/saturation) stack: auto (luminance-based) + per-viewer + global
-- Ornament: [ Grid | Prev | Next | Save | Home | Cycle Tags | Clock | Adjustments | Block ]
+- Ornament: [ Grid | Prev | Next | Save | Home | Cycle Tags | Adjustments | Block ] (Save/Home/Cycle/Block hidden in gallery mode)
 - Adjustments popover has a "Viewer" tab with display toggles (clock, sensors, Ken Burns, background, aspect ratio)
+- Images are downsampled on load using `maxImageResolution` from app settings via `CGImageSourceCreateThumbnailAtIndex`
+- **Gallery mode:** When `apiEndpoint` is empty, the viewer pulls from `appModel.imageSource` instead of the remote API. The photo viewer's slideshow button launches a gallery-mode viewer window. API-only features (WS, save, block, history, tag cycling) are disabled
+- **Background handling:** On background, slideshow pauses and images are held for 30s then unloaded. On return to active: if <30s, resumes with previous image; if ≥30s, advances to next image. WS visibility reporting is immediate and unaffected by the timer
 
 ## Key Patterns
 

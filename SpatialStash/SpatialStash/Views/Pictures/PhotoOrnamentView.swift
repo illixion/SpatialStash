@@ -24,6 +24,7 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
     let context: PhotoViewerContext
     var onGalleryButtonTap: () -> Void
     @ViewBuilder var extraButtons: () -> ExtraButtons
+    @Environment(\.openWindow) private var openWindow
 
     @State private var isUpdatingMediaInfo = false
 
@@ -41,19 +42,15 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
                 .frame(height: 24)
 
             if context != .shared {
-                if windowModel.isSlideshowActive {
-                    slideshowControls
-                } else {
-                    navigationControls
+                navigationControls
 
-                    Divider()
-                        .frame(height: 24)
+                Divider()
+                    .frame(height: 24)
 
-                    slideshowButton
+                slideshowButton
 
-                    Divider()
-                        .frame(height: 24)
-                }
+                Divider()
+                    .frame(height: 24)
             }
 
             threeDButton
@@ -93,48 +90,6 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
             if isOpen { windowModel.cancelAutoHideTimer() }
             else { windowModel.startAutoHideTimer() }
         }
-    }
-
-    // MARK: - Slideshow Controls
-
-    @ViewBuilder
-    private var slideshowControls: some View {
-        Button {
-            windowModel.previousSlideshowImage()
-        } label: {
-            Image(systemName: "backward.fill")
-                .font(.title3)
-        }
-        .buttonStyle(.borderless)
-        .disabled(!windowModel.hasPreviousSlideshowImage || windowModel.isLoadingDetailImage || windowModel.slideshowTransitionDirection != nil)
-
-        HStack(spacing: 6) {
-            Image(systemName: "play.circle.fill")
-            Text("Slideshow")
-        }
-        .font(.title3)
-        .foregroundColor(.secondary)
-
-        Button {
-            windowModel.nextSlideshowImage()
-        } label: {
-            Image(systemName: "forward.fill")
-                .font(.title3)
-        }
-        .buttonStyle(.borderless)
-        .disabled(windowModel.isLoadingDetailImage || windowModel.slideshowTransitionDirection != nil)
-
-        Divider()
-            .frame(height: 24)
-
-        Button {
-            windowModel.stopSlideshow()
-        } label: {
-            Image(systemName: "stop.fill")
-                .font(.title3)
-        }
-        .buttonStyle(.borderless)
-        .help("Stop Slideshow")
     }
 
     // MARK: - Navigation Controls
@@ -178,9 +133,7 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
 
     private var slideshowButton: some View {
         Button {
-            Task {
-                await windowModel.startSlideshow()
-            }
+            launchGallerySlideshow()
         } label: {
             Image(systemName: "play.fill")
                 .font(.title3)
@@ -188,6 +141,22 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
         .buttonStyle(.borderless)
         .disabled(windowModel.isLoadingDetailImage)
         .help("Slideshow")
+    }
+
+    private func launchGallerySlideshow() {
+        let appModel = windowModel.appModel
+        // Reuse or create the gallery slideshow config
+        let config: RemoteViewerConfig
+        if let existing = appModel.gallerySlideshowConfig {
+            config = existing
+        } else {
+            var newConfig = RemoteViewerConfig(name: "Gallery Slideshow")
+            newConfig.apiEndpoint = ""
+            newConfig.delay = appModel.slideshowDelay
+            appModel.gallerySlideshowConfig = newConfig
+            config = newConfig
+        }
+        openWindow(id: "remote-viewer", value: RemoteViewerWindowValue(configId: config.id))
     }
 
     // MARK: - 3D Toggle
