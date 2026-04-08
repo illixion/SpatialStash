@@ -744,6 +744,8 @@ class RemoteViewerModel {
             }
 
         case .currentTagList(let index):
+            // Only accept server list overrides when "Server Decides" is configured
+            guard config.defaultTagListIndex == nil else { return }
             guard index < config.tagLists.count else { return }
             currentTagListIndex = index
             cachedPosts.removeAll()
