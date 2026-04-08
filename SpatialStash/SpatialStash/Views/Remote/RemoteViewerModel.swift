@@ -35,6 +35,7 @@ class RemoteViewerModel {
     var isTransitioning: Bool = false
     var isLoading: Bool = false
     var isPaused: Bool = false
+    var enableDisplaySync: Bool = false
     var showClock: Bool = true
     var showSensors: Bool = true
 
@@ -280,11 +281,14 @@ class RemoteViewerModel {
     func cycleTagList() {
         guard !config.tagLists.isEmpty else { return }
         currentTagListIndex = (currentTagListIndex + 1) % config.tagLists.count
-        // Clear cache and refetch with new tags
+        // Clear all caches so the server is re-queried with the new tags
         cachedPosts.removeAll()
         prefetchedImages.removeAll()
         prefetchTask?.cancel()
         dbCursor = String(Double.random(in: 0..<1))
+        // Show list number and first tag
+        let firstTag = config.tagLists[currentTagListIndex].first ?? ""
+        showToast("List \(currentTagListIndex + 1)/\(config.tagLists.count): \(firstTag)")
         goToNextImage()
     }
 
@@ -430,12 +434,22 @@ class RemoteViewerModel {
 
         // Send display sync (API mode only)
         if !isGalleryMode {
-            wsClient.sendDisplaySync(
-                currentPost: (id: post._id, url: url.absoluteString),
-                nextPost: prefetchedImages.first.map { (id: $0.post._id, url: $0.url.absoluteString) },
-                currentList: currentTagListIndex,
-                dbCursor: dbCursor
-            )
+            if enableDisplaySync {
+                wsClient.sendDisplaySync(
+                    currentPost: (id: post._id, url: url.absoluteString),
+                    nextPost: prefetchedImages.first.map { (id: $0.post._id, url: $0.url.absoluteString) },
+                    currentList: currentTagListIndex,
+                    dbCursor: dbCursor
+                )
+            } else {
+                // Only send current list number when sync is off
+                wsClient.sendDisplaySync(
+                    currentPost: nil,
+                    nextPost: nil,
+                    currentList: currentTagListIndex,
+                    dbCursor: nil
+                )
+            }
         }
     }
 
@@ -647,7 +661,9 @@ class RemoteViewerModel {
             currentTagListIndex = index
             cachedPosts.removeAll()
             prefetchedImages.removeAll()
-            dbCursor = nil
+            dbCursor = String(Double.random(in: 0..<1))
+            let firstTag = config.tagLists[index].first ?? ""
+            showToast("List \(index + 1)/\(config.tagLists.count): \(firstTag)")
             goToNextImage()
 
         case .playVideo(let url):

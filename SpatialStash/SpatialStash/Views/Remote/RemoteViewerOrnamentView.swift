@@ -81,12 +81,29 @@ struct RemoteViewerOrnamentView: View {
                 Button {
                     model.cycleTagList()
                 } label: {
-                    Image(systemName: "arrow.triangle.2.circlepath")
-                        .font(.title3)
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                            .font(.title3)
+                        Text("\(model.currentTagListIndex + 1)/\(model.config.tagLists.count)")
+                            .font(.callout)
+                            .foregroundColor(.secondary)
+                    }
                 }
                 .buttonStyle(.borderless)
                 .disabled(model.config.tagLists.count <= 1)
-                .help("Cycle Tag List (\(model.currentTagListIndex + 1)/\(model.config.tagLists.count))")
+                .help("Cycle Tag List")
+
+                // Display Sync Toggle
+                Button {
+                    model.enableDisplaySync.toggle()
+                } label: {
+                    Image(systemName: model.enableDisplaySync ? "arrow.triangle.swap" : "arrow.triangle.swap")
+                        .font(.title3)
+                        .padding(6)
+                        .background(model.enableDisplaySync ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
+                }
+                .buttonStyle(.borderless)
+                .help(model.enableDisplaySync ? "Display Sync On" : "Display Sync Off")
             }
 
             // Visual Adjustments
