@@ -18,7 +18,13 @@ xcodebuild -quiet -project SpatialStash/SpatialStash.xcodeproj -scheme SpatialSt
 ### App Structure
 - **SpatialStashApp.swift** - App entry point defining scenes: main window, photo-detail pop-out, video-detail, shared-photo viewer, shared-video player, console, GPU memory monitor, remote-viewer, remote-video, remote-alert, and StereoscopicVideoSpace (immersive)
 - **AppModel.swift** - Central `@Observable` state container for gallery data, server config, filter state, video playback state, memory monitoring, and persisted settings (UserDefaults)
-- **PhotoWindowModel.swift** - Per-window `@Observable` model for individual photo viewers. Manages image loading, 2D/3D display mode, gallery navigation, slideshow, and resource cleanup. All three photo viewer windows use this model.
+- **PhotoWindowModel.swift** - Per-window `@Observable` model for individual photo viewers. Contains all stored properties, init/start lifecycle, core image loading pipeline, interaction tracking, shared utilities, and resource cleanup. Split into extension files by concern:
+  - **PhotoWindowModel+VisualAdjustments.swift** - Auto-enhance (3-tier cache), brightness/contrast/saturation adjustments, 3D adjustment preview with debounced reload
+  - **PhotoWindowModel+Spatial3D.swift** - 3D mode activation/deactivation, `ImagePresentationComponent` creation, spatial 3D generation, viewing mode switching, resolution override
+  - **PhotoWindowModel+BackgroundRemoval.swift** - Background removal pipeline: toggle, full-resolution processing, cache loading, resolution reloading, state management
+  - **PhotoWindowModel+MemoryManagement.swift** - Idle downscale (release/thumbnail/restore), scene phase tracking, lightweight display transition
+  - **PhotoWindowModel+GalleryNavigation.swift** - Gallery image switching, prev/next navigation, lazy loading pagination, rating/O-counter updates
+  - **PhotoWindowModel+UIControls.swift** - Share sheet, UI auto-hide timers, image flip
 
 ### Data Flow
 Three media source types configurable in Settings:
@@ -37,7 +43,7 @@ Tabs defined in `Tab.swift`: Pictures, Videos, Local, Filters, Settings, Remote 
 All three photo viewer windows share the same rendering components:
 - **PhotoDisplayView** - Shared image display with four rendering paths (in priority order): animated GIF (HEVC video player), RealityKit 3D (`ImagePresentationComponent`), GPU-backed 2D (`MetalImageView` with `MTLTexture`), and fallback UIImage. Manages window sizing, swipe navigation, and resize-triggered re-downsampling.
 - **PhotoOrnamentView** - Unified ornament bar with `PhotoViewerContext` enum (`.pushedFromGallery`, `.standalone`, `.shared`) controlling which buttons appear.
-- **PhotoWindowModel** - Per-window state. Created with `@State` in each wrapper view. Primary display property is `displayTexture: MTLTexture?` with `displayImage: UIImage?` as fallback. Cached texture variants: `backgroundRemovedTexture`, `originalDisplayTexture`, `autoEnhancedDisplayTexture`, `preAutoEnhanceDisplayTexture`.
+- **PhotoWindowModel** - Per-window state, split across extension files by concern (see App Structure above). Created with `@State` in each wrapper view. Primary display property is `displayTexture: MTLTexture?` with `displayImage: UIImage?` as fallback. Cached texture variants: `backgroundRemovedTexture`, `originalDisplayTexture`, `autoEnhancedDisplayTexture`, `preAutoEnhanceDisplayTexture`.
 
 The three thin wrapper views:
 - **PushedPictureView** - Pushed from gallery grid via `pushWindow`, dismisses back to gallery. Has pop-out button.

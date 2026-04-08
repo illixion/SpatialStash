@@ -121,7 +121,7 @@ A slideshow viewer for displaying images from a [RoboFrame](https://github.com/i
 
 The app follows a SwiftUI architecture with:
 - `AppModel` - Central `@Observable` state container for app-wide state
-- `PhotoWindowModel` - Per-window `@Observable` model for photo viewers, managing image loading, 2D/3D display, navigation, and slideshow
+- `PhotoWindowModel` - Per-window `@Observable` model for photo viewers, split into extensions by concern (visual adjustments, spatial 3D, background removal, memory management, gallery navigation, UI controls)
 - `PhotoDisplayView` + `PhotoOrnamentView` - Shared components used by all three photo viewer windows
 - Protocol-based data sources (`ImageSource`, `VideoSource`) for swappable implementations
 - `StashAPIClient` actor for thread-safe GraphQL communication
