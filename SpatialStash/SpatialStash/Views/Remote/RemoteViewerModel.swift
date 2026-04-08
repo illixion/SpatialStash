@@ -139,7 +139,8 @@ class RemoteViewerModel {
         self.config = config
         self.showClock = config.showClock
         self.showSensors = config.showSensors
-        self.currentTagListIndex = 0
+        // Use configured default list, or 0 if server decides (will be overridden by WS)
+        self.currentTagListIndex = config.defaultTagListIndex ?? 0
 
         // Initialize blocked lists from config
         self.blockedPosts = Set(config.blockedPosts)
@@ -158,6 +159,18 @@ class RemoteViewerModel {
                 dbCursor = String(Double.random(in: 0..<1))
             }
             setupWebSocket()
+
+            // If "Server Decides" is configured and WS is active, wait 1s for the
+            // server to send a currentTagList message before starting the slideshow
+            if config.defaultTagListIndex == nil && !config.wsEndpoint.isEmpty {
+                slideshowTask = Task { [weak self] in
+                    try? await Task.sleep(for: .seconds(1))
+                    guard !Task.isCancelled else { return }
+                    self?.slideshowTask = nil
+                    self?.startSlideshow()
+                }
+                return
+            }
         }
         startSlideshow()
     }
@@ -356,10 +369,8 @@ class RemoteViewerModel {
             return
         }
 
-        // No prefetched images — fall back to fetch-then-display
-        if cachedPosts.isEmpty && !isFetching {
-            await fetchMorePosts()
-        }
+        // Ensure we have posts — wait for any in-flight fetch to finish
+        await ensurePostsAvailable()
 
         guard let post = nextNonBlockedPost() else {
             AppLogger.remoteViewer.warning("No posts available")
@@ -369,6 +380,21 @@ class RemoteViewerModel {
 
         await fetchAndDisplayPost(post)
         triggerPrefetch()
+    }
+
+    /// Wait until cached posts are available, fetching if needed.
+    /// If a fetch is already in flight, polls until it completes.
+    private func ensurePostsAvailable() async {
+        if !cachedPosts.isEmpty { return }
+
+        if !isFetching {
+            await fetchMorePosts()
+        }
+
+        // Wait for an in-flight fetch to finish
+        while isFetching && cachedPosts.isEmpty {
+            try? await Task.sleep(for: .milliseconds(50))
+        }
     }
 
     /// Pop the next non-blocked post from the cached posts queue
@@ -390,13 +416,35 @@ class RemoteViewerModel {
 
         guard let imageURL = resolveImageURL(for: post) else { return }
 
-        do {
-            let (data, _) = try await URLSession.shared.data(from: imageURL)
-            guard let image = imageFromData(data) else { return }
-            await displayImage(image, post: post, url: imageURL)
-        } catch {
-            AppLogger.remoteViewer.error("Failed to load post \(post._id, privacy: .public): \(error.localizedDescription, privacy: .public)")
-        }
+        // Download in a detached task so it isn't cancelled by slideshow task replacement
+        let maxRes = maxImageResolution
+        let imageResult: UIImage? = await Task.detached {
+            do {
+                let (data, _) = try await URLSession.shared.data(from: imageURL)
+                if maxRes > 0 {
+                    let maxDim = CGFloat(maxRes)
+                    let options: [CFString: Any] = [kCGImageSourceShouldCache: false]
+                    if let source = CGImageSourceCreateWithData(data as CFData, options as CFDictionary) {
+                        let downsampleOptions: [CFString: Any] = [
+                            kCGImageSourceCreateThumbnailFromImageAlways: true,
+                            kCGImageSourceThumbnailMaxPixelSize: maxDim,
+                            kCGImageSourceCreateThumbnailWithTransform: true,
+                            kCGImageSourceShouldCacheImmediately: true
+                        ]
+                        if let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, downsampleOptions as CFDictionary) {
+                            return UIImage(cgImage: cgImage)
+                        }
+                    }
+                }
+                return UIImage(data: data)
+            } catch {
+                AppLogger.remoteViewer.error("Failed to load post \(post._id, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                return nil
+            }
+        }.value
+
+        guard let image = imageResult else { return }
+        await displayImage(image, post: post, url: imageURL)
     }
 
     /// Show an already-loaded image with crossfade, Ken Burns analysis, and brightness adjustment

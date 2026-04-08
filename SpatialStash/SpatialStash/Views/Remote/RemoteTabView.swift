@@ -154,6 +154,17 @@ struct RemoteTabView: View {
                         }
                         .disabled(newTag.trimmingCharacters(in: .whitespaces).isEmpty)
                     }
+
+                    Picker("Default List", selection: Binding(
+                        get: { editingConfig.defaultTagListIndex ?? -1 },
+                        set: { editingConfig.defaultTagListIndex = $0 == -1 ? nil : $0 }
+                    )) {
+                        Text("Server Decides").tag(-1)
+                        ForEach(editingConfig.tagLists.indices, id: \.self) { index in
+                            Text("List \(index + 1): \(editingConfig.tagLists[index].first ?? "")").tag(index)
+                        }
+                    }
+                    .pickerStyle(.menu)
                 }
 
                 Section {

@@ -268,6 +268,8 @@ struct RemoteViewerWindowView: View {
     }
 
     private func setupModel() {
+        guard viewerModel == nil else { return }
+
         // Look up config from saved configs or the gallery slideshow config
         let config: RemoteViewerConfig
         if let saved = appModel.savedRemoteConfigs.first(where: { $0.id == windowValue.configId }) {
