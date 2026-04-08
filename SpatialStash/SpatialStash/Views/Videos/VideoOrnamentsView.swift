@@ -10,8 +10,13 @@ struct VideoOrnamentsView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.openWindow) private var openWindow
     let videoCount: Int
-    /// Custom dismiss action (used by pushed windows to call dismissWindow)
-    var onDismiss: (() -> Void)? = nil
+    /// The video this ornament controls (used for button visibility and data display
+    /// independent of `appModel.selectedVideo`, which may be nil during window transitions)
+    let video: GalleryVideo
+    /// Whether this ornament belongs to a pushed (gallery-navigated) window
+    let wasPushed: Bool
+    /// Action to show the main gallery window
+    var onGalleryButtonTap: () -> Void
     /// Custom pop-out action (used by pushed windows to open a new window and dismiss self)
     var onPopOut: (() -> Void)? = nil
     @State private var showMediaInfo = false
@@ -21,19 +26,13 @@ struct VideoOrnamentsView: View {
     var body: some View {
         VStack {
             HStack(spacing: 16) {
-                // Back to Gallery button
-                Button {
-                    if let onDismiss {
-                        onDismiss()
-                    } else {
-                        appModel.dismissVideoDetail()
-                    }
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "chevron.left")
-                        Text("Videos")
-                    }
+                // Gallery button (shows main window, matching photo viewer design)
+                Button(action: onGalleryButtonTap) {
+                    Image(systemName: "square.grid.2x2")
+                        .font(.title3)
                 }
+                .buttonStyle(.borderless)
+                .help(wasPushed ? "Videos" : "Show Gallery")
 
                 Divider()
                     .frame(height: 24)
@@ -63,34 +62,31 @@ struct VideoOrnamentsView: View {
                 .disabled(!appModel.hasNextVideo)
 
                 // View mode toggle (2D/3D for all videos)
-                if let video = appModel.selectedVideo {
-                    Divider()
-                        .frame(height: 24)
+                Divider()
+                    .frame(height: 24)
 
-                    viewModeMenu(for: video)
-                }
+                viewModeMenu(for: video)
 
                 // Star rating / O counter popover button
-                if appModel.selectedVideo != nil {
-                    Divider()
-                        .frame(height: 24)
+                Divider()
+                    .frame(height: 24)
 
-                    Button {
-                        showMediaInfo.toggle()
-                    } label: {
-                        Image(systemName: appModel.selectedVideo?.rating100 != nil ? "star.fill" : "star")
+                Button {
+                    showMediaInfo.toggle()
+                } label: {
+                        Image(systemName: currentVideo.rating100 != nil ? "star.fill" : "star")
                             .font(.title3)
-                            .foregroundColor(appModel.selectedVideo?.rating100 != nil ? .yellow : nil)
+                            .foregroundColor(currentVideo.rating100 != nil ? .yellow : nil)
                     }
                     .buttonStyle(.borderless)
                     .help("Rating & O Count")
                     .popover(isPresented: $showMediaInfo) {
                         MediaInfoPopover(
-                            currentRating100: appModel.selectedVideo?.rating100,
-                            oCounter: appModel.selectedVideo?.oCounter ?? 0,
+                            currentRating100: currentVideo.rating100,
+                            oCounter: currentVideo.oCounter ?? 0,
                             isUpdating: isUpdatingMediaInfo,
                             onRate: { newRating in
-                                guard let stashId = appModel.selectedVideo?.stashId else { return }
+                                let stashId = currentVideo.stashId
                                 isUpdatingMediaInfo = true
                                 Task {
                                     try? await appModel.updateVideoRating(stashId: stashId, rating100: newRating)
@@ -98,7 +94,7 @@ struct VideoOrnamentsView: View {
                                 }
                             },
                             onIncrementO: {
-                                guard let stashId = appModel.selectedVideo?.stashId else { return }
+                                let stashId = currentVideo.stashId
                                 isUpdatingMediaInfo = true
                                 Task {
                                     try? await appModel.incrementVideoOCounter(stashId: stashId)
@@ -106,7 +102,7 @@ struct VideoOrnamentsView: View {
                                 }
                             },
                             onDecrementO: {
-                                guard let stashId = appModel.selectedVideo?.stashId else { return }
+                                let stashId = currentVideo.stashId
                                 isUpdatingMediaInfo = true
                                 Task {
                                     try? await appModel.decrementVideoOCounter(stashId: stashId)
@@ -115,100 +111,97 @@ struct VideoOrnamentsView: View {
                             }
                         )
                     }
-                }
 
                 // Share button
-                if appModel.selectedVideo != nil {
-                    Divider()
-                        .frame(height: 24)
+                Divider()
+                    .frame(height: 24)
 
-                    Button {
-                        Task {
-                            await appModel.shareVideo()
-                        }
-                    } label: {
-                        Group {
-                            if appModel.isPreparingVideoShare {
-                                ProgressView()
-                                    .scaleEffect(0.8)
-                            } else {
-                                Image(systemName: "square.and.arrow.up")
-                            }
-                        }
-                        .font(.title3)
+                Button {
+                    // Ensure selectedVideo is set for share action
+                    if appModel.selectedVideo == nil {
+                        appModel.selectVideoForDetail(video)
                     }
-                    .buttonStyle(.borderless)
-                    .disabled(appModel.isPreparingVideoShare)
-                    .help("Share")
-                    .sheet(isPresented: Binding(
-                        get: { appModel.videoShareFileURL != nil },
-                        set: { if !$0 { appModel.videoShareFileURL = nil } }
-                    )) {
-                        appModel.startAutoHideTimer()
-                    } content: {
-                        if let url = appModel.videoShareFileURL {
-                            ActivityViewController(
-                                activityItems: [url],
-                                isPresented: Binding(
-                                    get: { appModel.videoShareFileURL != nil },
-                                    set: { if !$0 { appModel.videoShareFileURL = nil } }
-                                )
-                            )
+                    Task {
+                        await appModel.shareVideo()
+                    }
+                } label: {
+                    Group {
+                        if appModel.isPreparingVideoShare {
+                            ProgressView()
+                                .scaleEffect(0.8)
+                        } else {
+                            Image(systemName: "square.and.arrow.up")
                         }
                     }
+                    .font(.title3)
                 }
-
-                // Visual adjustments
-                if appModel.selectedVideo != nil {
-                    Divider()
-                        .frame(height: 24)
-
-                    Button {
-                        showAdjustmentsPopover.toggle()
-                    } label: {
-                        Image(systemName: "slider.horizontal.3")
-                            .font(.title3)
-                            .padding(6)
-                            .background(effectiveVideoAdjustments.isModified ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Visual Adjustments")
-                    .popover(isPresented: $showAdjustmentsPopover) {
-                        VisualAdjustmentsPopover(
-                            currentAdjustments: Binding(
-                                get: { appModel.videoVisualAdjustments },
-                                set: { appModel.videoVisualAdjustments = $0 }
-                            ),
-                            globalAdjustments: Binding(
-                                get: { appModel.globalVisualAdjustments },
-                                set: { appModel.globalVisualAdjustments = $0 }
-                            ),
-                            showAutoEnhance: false
+                .buttonStyle(.borderless)
+                .disabled(appModel.isPreparingVideoShare)
+                .help("Share")
+                .sheet(isPresented: Binding(
+                    get: { appModel.videoShareFileURL != nil },
+                    set: { if !$0 { appModel.videoShareFileURL = nil } }
+                )) {
+                    appModel.startAutoHideTimer()
+                } content: {
+                    if let url = appModel.videoShareFileURL {
+                        ActivityViewController(
+                            activityItems: [url],
+                            isPresented: Binding(
+                                get: { appModel.videoShareFileURL != nil },
+                                set: { if !$0 { appModel.videoShareFileURL = nil } }
+                            )
                         )
                     }
                 }
 
-                // Flip video
-                if appModel.selectedVideo != nil {
-                    Divider()
-                        .frame(height: 24)
+                // Visual adjustments
+                Divider()
+                    .frame(height: 24)
 
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.3)) {
-                            appModel.isVideoFlipped.toggle()
-                        }
-                    } label: {
-                        Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right")
-                            .font(.title3)
-                            .padding(6)
-                            .background(appModel.isVideoFlipped ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Flip Video")
+                Button {
+                    showAdjustmentsPopover.toggle()
+                } label: {
+                    Image(systemName: "slider.horizontal.3")
+                        .font(.title3)
+                        .padding(6)
+                        .background(effectiveVideoAdjustments.isModified ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
+                }
+                .buttonStyle(.borderless)
+                .help("Visual Adjustments")
+                .popover(isPresented: $showAdjustmentsPopover) {
+                    VisualAdjustmentsPopover(
+                        currentAdjustments: Binding(
+                            get: { appModel.videoVisualAdjustments },
+                            set: { appModel.videoVisualAdjustments = $0 }
+                        ),
+                        globalAdjustments: Binding(
+                            get: { appModel.globalVisualAdjustments },
+                            set: { appModel.globalVisualAdjustments = $0 }
+                        ),
+                        showAutoEnhance: false
+                    )
                 }
 
-                // Pop out button
-                if appModel.selectedVideo != nil {
+                // Flip video
+                Divider()
+                    .frame(height: 24)
+
+                Button {
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        appModel.isVideoFlipped.toggle()
+                    }
+                } label: {
+                    Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right")
+                        .font(.title3)
+                        .padding(6)
+                        .background(appModel.isVideoFlipped ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
+                }
+                .buttonStyle(.borderless)
+                .help("Flip Video")
+
+                // Pop out button (only for pushed windows, matching photo viewer pattern)
+                if wasPushed {
                     Divider()
                         .frame(height: 24)
 
@@ -227,7 +220,7 @@ struct VideoOrnamentsView: View {
                 }
 
                 // Video title if available
-                if let title = appModel.selectedVideo?.title, !title.isEmpty {
+                if let title = video.title, !title.isEmpty {
                     Divider()
                         .frame(height: 24)
                     Text(title)
@@ -241,15 +234,20 @@ struct VideoOrnamentsView: View {
         .glassBackgroundEffect()
     }
 
+    /// The video to read live data from (rating, o-counter).
+    /// Prefers appModel.selectedVideo for up-to-date values, falls back to the passed video.
+    private var currentVideo: GalleryVideo {
+        appModel.selectedVideo ?? video
+    }
+
     /// Effective adjustments: use per-video session if modified, otherwise global
     private var effectiveVideoAdjustments: VisualAdjustments {
         appModel.videoVisualAdjustments.isModified ? appModel.videoVisualAdjustments : appModel.globalVisualAdjustments
     }
 
     private func popOutVideo() {
-        guard let video = appModel.selectedVideo else { return }
         let windowValue = VideoWindowValue(
-            video: video,
+            video: currentVideo,
             stereoscopicOverride: appModel.videoStereoscopicOverride,
             video3DSettings: appModel.video3DSettings
         )
@@ -332,7 +330,7 @@ struct VideoOrnamentsView: View {
             return true
         }
         // Auto-detect from video tags
-        return appModel.selectedVideo?.isStereoscopic ?? false
+        return currentVideo.isStereoscopic
     }
 
     private func enable3DMode(for video: GalleryVideo) {

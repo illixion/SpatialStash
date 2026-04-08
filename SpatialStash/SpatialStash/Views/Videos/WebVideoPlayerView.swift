@@ -81,13 +81,30 @@ struct WebVideoPlayerView: UIViewRepresentable {
         if coordinator.lastIsRoomActive != isRoomActive {
             coordinator.lastIsRoomActive = isRoomActive
             if isRoomActive {
-                // Room re-entered: re-enable auto-resume and play
-                let js = "window._roomActive = true; document.getElementById('player').play().catch(function() {});"
-                webView.evaluateJavaScript(js)
+                // Cancel any pending src unload
+                coordinator.cancelSrcUnload()
+
+                if coordinator.isSourceUnloaded {
+                    // Restore src and play after it was unloaded
+                    let js = """
+                    (function() {
+                        window._roomActive = true;
+                        var p = document.getElementById('player');
+                        if (p) { p.src = originalSrc; p.load(); p.play().catch(function() {}); }
+                    })();
+                    """
+                    webView.evaluateJavaScript(js)
+                    coordinator.isSourceUnloaded = false
+                } else {
+                    // Room re-entered: re-enable auto-resume and play
+                    let js = "window._roomActive = true; document.getElementById('player').play().catch(function() {});"
+                    webView.evaluateJavaScript(js)
+                }
             } else {
-                // Left room: disable auto-resume and pause
+                // Left room: disable auto-resume, pause, and schedule src unload
                 let js = "window._roomActive = false; document.getElementById('player').pause();"
                 webView.evaluateJavaScript(js)
+                coordinator.scheduleSrcUnload(webView: webView)
             }
         }
     }
@@ -95,6 +112,7 @@ struct WebVideoPlayerView: UIViewRepresentable {
     static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "videoDimensions")
         coordinator.onVideoSizeKnown = nil
+        coordinator.cancelSrcUnload()
         coordinator.cleanupHTMLFile()
     }
 
@@ -125,6 +143,14 @@ struct WebVideoPlayerView: UIViewRepresentable {
         /// Prevents firing the callback more than once per video load
         private var didReportSize: Bool = false
 
+        /// Task that fires after 30s of inactivity to unload the video src
+        var srcUnloadTask: Task<Void, Never>?
+        /// Whether the video src has been unloaded to free memory
+        var isSourceUnloaded: Bool = false
+
+        /// How long the video must remain inactive before unloading its src
+        static let srcUnloadDelay: TimeInterval = 30
+
         func cleanupHTMLFile() {
             guard let url = htmlFileURL else { return }
             try? FileManager.default.removeItem(at: url)
@@ -133,6 +159,29 @@ struct WebVideoPlayerView: UIViewRepresentable {
 
         func resetForNewVideo() {
             didReportSize = false
+            cancelSrcUnload()
+            isSourceUnloaded = false
+        }
+
+        func scheduleSrcUnload(webView: WKWebView) {
+            srcUnloadTask?.cancel()
+            srcUnloadTask = Task { @MainActor [weak self, weak webView] in
+                try? await Task.sleep(for: .seconds(Self.srcUnloadDelay))
+                guard !Task.isCancelled, let self, let webView else { return }
+                let js = """
+                (function() {
+                    var p = document.getElementById('player');
+                    if (p) { p.removeAttribute('src'); p.load(); }
+                })();
+                """
+                try? await webView.evaluateJavaScript(js)
+                self.isSourceUnloaded = true
+            }
+        }
+
+        func cancelSrcUnload() {
+            srcUnloadTask?.cancel()
+            srcUnloadTask = nil
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -187,10 +236,8 @@ struct WebVideoPlayerView: UIViewRepresentable {
                     background: transparent;
                 }
                 video {
-                    max-width: 100%;
-                    max-height: 100%;
-                    width: auto;
-                    height: auto;
+                    width: 100%;
+                    height: 100%;
                     object-fit: contain;
                     background: transparent;
                 }

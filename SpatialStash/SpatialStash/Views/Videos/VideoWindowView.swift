@@ -6,7 +6,7 @@
  - Pushed (wasPushed=true): opened via pushWindow from gallery, dismiss returns to gallery.
    Shows full ornament with navigation, rating, share, adjustments, flip, pop-out.
  - Standalone (wasPushed=false): opened via openWindow as independent pop-out window.
-   Shows minimal ornament with adjustments, flip, gallery button.
+   Shows same ornament as pushed, but without pop-out button (matching photo viewer pattern).
  */
 
 import os
@@ -25,23 +25,13 @@ struct VideoWindowView: View {
     @State private var windowControlsHideTask: Task<Void, Never>?
     @State private var stereoscopicOverride: Bool?
     @State private var video3DSettings: Video3DSettings?
-    @State private var isVideoFlipped: Bool = false
-    @State private var videoAdjustments: VisualAdjustments = VisualAdjustments()
-    @State private var showAdjustmentsPopover: Bool = false
+    /// Prevents onDisappear from clearing selectedVideo when popping out to a standalone window
+    @State private var isPoppingOut: Bool = false
 
     // MARK: - Room Activity / Memory Management
 
     /// Whether this window is in the user's current room
     @State private var isInActiveRoom: Bool = true
-
-    /// Whether the video has been unloaded to free memory (WKWebView removed)
-    @State private var isVideoUnloaded: Bool = false
-
-    /// Task that fires after the inactivity timeout to unload the video
-    @State private var scenePhaseIdleTask: Task<Void, Never>?
-
-    /// How long a video window must remain in an inactive room before unloading
-    private static let scenePhaseIdleTimeout: TimeInterval = 5 * 60 // 5 minutes
 
     /// Extra bottom padding to prevent the ornament from overlapping video content
     private let ornamentBottomPadding: CGFloat = 60
@@ -60,9 +50,6 @@ struct VideoWindowView: View {
             Group {
                 if appModel.allWindowsHidden {
                     Color.clear
-                } else if isVideoUnloaded {
-                    // Video unloaded to save memory while in inactive room
-                    unloadedPlaceholder
                 } else if shouldUseStereoscopicPlayer {
                     StereoscopicVideoView(
                         video: video,
@@ -90,10 +77,10 @@ struct VideoWindowView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .scaleEffect(x: isVideoFlipped ? -1 : 1, y: 1)
-            .brightness(effectivePopOutVideoAdjustments.brightness)
-            .contrast(effectivePopOutVideoAdjustments.contrast)
-            .saturation(effectivePopOutVideoAdjustments.saturation)
+            .scaleEffect(x: appModel.isVideoFlipped ? -1 : 1, y: 1)
+            .brightness(effectiveVideoAdjustments.brightness)
+            .contrast(effectiveVideoAdjustments.contrast)
+            .saturation(effectiveVideoAdjustments.saturation)
             .overlay {
                 // Transparent tap target that only appears when UI is hidden
                 if isUIHidden {
@@ -113,11 +100,7 @@ struct VideoWindowView: View {
             visibility: isUIHidden ? .hidden : .visible,
             attachmentAnchor: .scene(.bottomFront),
             ornament: {
-                if windowValue.wasPushed {
-                    pushedOrnament
-                } else {
-                    standaloneOrnament
-                }
+                videoOrnament
             }
         )
         .sheet(isPresented: Binding(
@@ -143,17 +126,14 @@ struct VideoWindowView: View {
             stereoscopicOverride = windowValue.stereoscopicOverride
             video3DSettings = windowValue.video3DSettings
             startAutoHideTimer()
-            if windowValue.wasPushed {
-                // Set AppModel video state so VideoOrnamentsView works
-                appModel.selectVideoForDetail(video)
-            }
+            // Set AppModel video state so VideoOrnamentsView works for both contexts
+            appModel.selectVideoForDetail(video)
         }
         .onDisappear {
             cancelAutoHideTimer()
-            scenePhaseIdleTask?.cancel()
-            scenePhaseIdleTask = nil
             restoreWindowResizing()
-            if windowValue.wasPushed {
+            // Don't clear selectedVideo when popping out — the standalone window needs it
+            if !isPoppingOut {
                 appModel.dismissVideoDetail()
             }
         }
@@ -162,7 +142,7 @@ struct VideoWindowView: View {
             if windowValue.wasPushed, newVideo != nil {
                 stereoscopicOverride = nil
                 video3DSettings = nil
-                isVideoFlipped = false
+                appModel.isVideoFlipped = false
             }
         }
         .onChange(of: scenePhase) { oldPhase, newPhase in
@@ -172,82 +152,34 @@ struct VideoWindowView: View {
 
     // MARK: - Visual Adjustments
 
-    /// Effective adjustments: use per-window local if modified, otherwise global
-    private var effectivePopOutVideoAdjustments: VisualAdjustments {
-        videoAdjustments.isModified ? videoAdjustments : appModel.globalVisualAdjustments
+    /// Effective adjustments: use per-video session if modified, otherwise global
+    private var effectiveVideoAdjustments: VisualAdjustments {
+        appModel.videoVisualAdjustments.isModified ? appModel.videoVisualAdjustments : appModel.globalVisualAdjustments
     }
 
-    // MARK: - Ornaments
+    // MARK: - Ornament
 
-    /// Full ornament shown when window was pushed from gallery
-    private var pushedOrnament: some View {
+    /// Unified ornament for both pushed and standalone windows.
+    /// Only the pop-out button differs (hidden for standalone), matching photo viewer pattern.
+    private var videoOrnament: some View {
         VideoOrnamentsView(
             videoCount: appModel.galleryVideos.count,
-            onDismiss: {
+            video: video,
+            wasPushed: windowValue.wasPushed,
+            onGalleryButtonTap: {
                 appModel.showMainWindow(openWindow: openWindow)
             },
-            onPopOut: {
+            onPopOut: windowValue.wasPushed ? {
+                isPoppingOut = true
                 let windowValue = VideoWindowValue(
                     video: video,
                     stereoscopicOverride: stereoscopicOverride,
                     video3DSettings: video3DSettings
                 )
                 openWindow(id: "video-detail", value: windowValue)
-                appModel.dismissVideoDetail()
                 dismissWindow()
-            }
+            } : nil
         )
-    }
-
-    /// Minimal ornament shown for standalone pop-out windows
-    private var standaloneOrnament: some View {
-        HStack(spacing: 16) {
-            Button {
-                showAdjustmentsPopover.toggle()
-            } label: {
-                Image(systemName: "slider.horizontal.3")
-                    .font(.title3)
-                    .padding(6)
-                    .background(effectivePopOutVideoAdjustments.isModified ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
-            }
-            .buttonStyle(.borderless)
-            .help("Visual Adjustments")
-            .popover(isPresented: $showAdjustmentsPopover) {
-                VisualAdjustmentsPopover(
-                    currentAdjustments: $videoAdjustments,
-                    globalAdjustments: Binding(
-                        get: { appModel.globalVisualAdjustments },
-                        set: { appModel.globalVisualAdjustments = $0 }
-                    ),
-                    showAutoEnhance: false
-                )
-            }
-
-            Button {
-                withAnimation(.easeInOut(duration: 0.3)) {
-                    isVideoFlipped.toggle()
-                }
-            } label: {
-                Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right")
-                    .font(.title3)
-                    .padding(6)
-                    .background(isVideoFlipped ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
-            }
-            .buttonStyle(.borderless)
-            .help("Flip Video")
-
-            Button {
-                appModel.showMainWindow(openWindow: openWindow)
-            } label: {
-                Image(systemName: "square.grid.2x2")
-                    .font(.title3)
-            }
-            .buttonStyle(.borderless)
-            .help("Show Gallery")
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 12)
-        .glassBackgroundEffect()
     }
 
     // MARK: - Stereoscopic Mode
@@ -340,37 +272,8 @@ struct VideoWindowView: View {
 
         if newPhase == .active {
             isInActiveRoom = true
-
-            // Cancel any pending unload
-            scenePhaseIdleTask?.cancel()
-            scenePhaseIdleTask = nil
-
-            // Reload video if it was unloaded while in another room
-            if isVideoUnloaded {
-                AppLogger.videoWindow.info("[\(videoDisplayName, privacy: .public)] Restoring video after room re-entry")
-                isVideoUnloaded = false
-            }
         } else if oldPhase == .active && (newPhase == .inactive || newPhase == .background) {
             isInActiveRoom = false
-
-            // Schedule video unload after timeout to free memory
-            scheduleVideoUnload()
-        }
-    }
-
-    private func scheduleVideoUnload() {
-        scenePhaseIdleTask?.cancel()
-        scenePhaseIdleTask = Task {
-            do {
-                try await Task.sleep(for: .seconds(Self.scenePhaseIdleTimeout))
-            } catch {
-                return // Cancelled — window became active again
-            }
-
-            guard !Task.isCancelled, !isVideoUnloaded else { return }
-
-            AppLogger.videoWindow.info("[\(videoDisplayName, privacy: .public)] Unloading video after scene-phase timeout")
-            isVideoUnloaded = true
         }
     }
 
@@ -381,17 +284,5 @@ struct VideoWindowView: View {
         case .background: "background"
         @unknown default: "unknown"
         }
-    }
-
-    private var unloadedPlaceholder: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "video.badge.ellipsis")
-                .font(.system(size: 64))
-                .foregroundColor(.secondary)
-            Text("Video paused — not in current room")
-                .font(.title2)
-                .foregroundColor(.secondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
