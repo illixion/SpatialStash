@@ -139,16 +139,23 @@ class RemoteViewerModel {
         self.config = config
         self.showClock = config.showClock
         self.showSensors = config.showSensors
-        // Use configured default list, or 0 if server decides (will be overridden by WS)
-        self.currentTagListIndex = config.defaultTagListIndex ?? 0
+        // Use configured default list, or last active list (persisted for "Server Decides"
+        // recovery on relaunch), falling back to 0
+        self.currentTagListIndex = config.defaultTagListIndex ?? config.lastActiveTagListIndex ?? 0
 
         // Initialize blocked lists from config
         self.blockedPosts = Set(config.blockedPosts)
         self.blockedTags = Set(config.blockedTags)
     }
 
-    /// Callback to persist config changes (blocked lists) back to AppModel
+    /// Callback to persist config changes back to AppModel
     var onConfigChanged: ((RemoteViewerConfig) -> Void)?
+
+    /// Persist the active tag list index so "Server Decides" mode can recover it on relaunch
+    private func persistActiveTagList() {
+        config.lastActiveTagListIndex = currentTagListIndex
+        onConfigChanged?(config)
+    }
 
     // MARK: - Lifecycle
 
@@ -305,6 +312,7 @@ class RemoteViewerModel {
     func switchToTagList(_ index: Int) {
         guard index < config.tagLists.count, index != currentTagListIndex else { return }
         currentTagListIndex = index
+        persistActiveTagList()
         fetchReturnedEmpty = false
         cachedPosts.removeAll()
         prefetchedImages.removeAll()
@@ -318,6 +326,7 @@ class RemoteViewerModel {
     func cycleTagList() {
         guard !config.tagLists.isEmpty else { return }
         currentTagListIndex = (currentTagListIndex + 1) % config.tagLists.count
+        persistActiveTagList()
         // Clear all caches so the server is re-queried with the new tags
         cachedPosts.removeAll()
         prefetchedImages.removeAll()
@@ -773,6 +782,7 @@ class RemoteViewerModel {
             // would nuke caches and restart the slideshow unnecessarily.
             guard index != currentTagListIndex else { return }
             currentTagListIndex = index
+            persistActiveTagList()
             cachedPosts.removeAll()
             prefetchedImages.removeAll()
             dbCursor = String(Double.random(in: 0..<1))
@@ -804,8 +814,10 @@ class RemoteViewerModel {
         case .displaySync(let payload):
             // Handle sync from other devices
             if let listNumber = payload["currentList"] as? Int,
-               listNumber < config.tagLists.count {
+               listNumber < config.tagLists.count,
+               listNumber != currentTagListIndex {
                 currentTagListIndex = listNumber
+                persistActiveTagList()
             }
             if let cursor = payload["dbCursor"] as? String {
                 dbCursor = cursor

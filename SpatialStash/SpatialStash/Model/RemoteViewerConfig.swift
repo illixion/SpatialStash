@@ -29,6 +29,7 @@ struct RemoteViewerConfig: Codable, Identifiable {
     // Content
     var tagLists: [[String]] = [["order:random"]]
     var defaultTagListIndex: Int? = nil  // nil = let server decide via WS
+    var lastActiveTagListIndex: Int?     // persisted for "Server Decides" recovery on relaunch
     var blockedPosts: [Int] = []
     var blockedTags: [String] = []
 
