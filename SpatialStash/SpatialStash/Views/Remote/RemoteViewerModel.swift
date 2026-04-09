@@ -355,8 +355,10 @@ class RemoteViewerModel {
                 guard !Task.isCancelled else { break }
                 await advanceToNextImage()
             }
-            // Clear reference so startSlideshow can restart
-            slideshowTask = nil
+            // Note: do NOT set slideshowTask = nil here. When this task is cancelled,
+            // the caller (goToNextImage, togglePause, handleScenePhaseChange, etc.)
+            // has already set slideshowTask to either a new task or nil. Setting it
+            // here would race with and overwrite the replacement task reference.
         }
     }
 
@@ -364,6 +366,7 @@ class RemoteViewerModel {
         // Use a prefetched image if available for instant transition
         if let prefetched = prefetchedImages.first {
             prefetchedImages.removeFirst()
+            guard !Task.isCancelled else { return }
             await displayImage(prefetched.image, post: prefetched.post, url: prefetched.url)
             triggerPrefetch()
             return
@@ -371,6 +374,7 @@ class RemoteViewerModel {
 
         // Ensure we have posts — wait for any in-flight fetch to finish
         await ensurePostsAvailable()
+        guard !Task.isCancelled else { return }
 
         guard let post = nextNonBlockedPost() else {
             AppLogger.remoteViewer.warning("No posts available")
@@ -383,7 +387,7 @@ class RemoteViewerModel {
     }
 
     /// Wait until cached posts are available, fetching if needed.
-    /// If a fetch is already in flight, polls until it completes.
+    /// If a fetch is already in flight, polls until it completes (with timeout).
     private func ensurePostsAvailable() async {
         if !cachedPosts.isEmpty { return }
 
@@ -391,9 +395,12 @@ class RemoteViewerModel {
             await fetchMorePosts()
         }
 
-        // Wait for an in-flight fetch to finish
-        while isFetching && cachedPosts.isEmpty {
+        // Wait for an in-flight fetch to finish, with a 10-second timeout
+        // to avoid spinning indefinitely if the fetch fails silently
+        var waitIterations = 0
+        while isFetching && cachedPosts.isEmpty && waitIterations < 200 {
             try? await Task.sleep(for: .milliseconds(50))
+            waitIterations += 1
         }
     }
 
@@ -444,6 +451,10 @@ class RemoteViewerModel {
         }.value
 
         guard let image = imageResult else { return }
+        // If the slideshow task was replaced while we were downloading (detached
+        // downloads survive cancellation), bail out to avoid corrupting the new
+        // task's display state.
+        guard !Task.isCancelled else { return }
         await displayImage(image, post: post, url: imageURL)
     }
 
@@ -495,6 +506,11 @@ class RemoteViewerModel {
             }
         }
 
+        // Final cancellation check before committing to the crossfade — once we
+        // start the animation we must finish it to avoid leaving the view in a
+        // half-transitioned state.
+        guard !Task.isCancelled else { return }
+
         // Crossfade transition
         withAnimation(.easeInOut(duration: 1.0)) {
             nextImage = image
@@ -503,10 +519,15 @@ class RemoteViewerModel {
         }
 
         try? await Task.sleep(for: .seconds(1.0))
-        currentImage = nextImage
-        currentPost = nextPost
+        // Use the local image/post parameters — NOT nextImage/nextPost — because
+        // another interleaved displayImage() call may have overwritten those fields.
+        currentImage = image
+        currentPost = post
         nextImage = nil
         isTransitioning = false
+
+        // Skip display sync if cancelled during the crossfade
+        guard !Task.isCancelled else { return }
 
         // Send display sync (API mode only)
         if !isGalleryMode {
@@ -747,6 +768,10 @@ class RemoteViewerModel {
             // Only accept server list overrides when "Server Decides" is configured
             guard config.defaultTagListIndex == nil else { return }
             guard index < config.tagLists.count else { return }
+            // Ignore if already on this list — the server resends the current list
+            // on reconnect (e.g. after background unload), and re-processing it
+            // would nuke caches and restart the slideshow unnecessarily.
+            guard index != currentTagListIndex else { return }
             currentTagListIndex = index
             cachedPosts.removeAll()
             prefetchedImages.removeAll()
