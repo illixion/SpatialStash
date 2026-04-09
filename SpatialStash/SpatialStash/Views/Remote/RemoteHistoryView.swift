@@ -9,6 +9,7 @@ import SwiftUI
 struct RemoteHistoryView: View {
     let history: [RemotePost]
     let imageURLs: [Int: URL]
+    var onPostSelected: ((RemotePost) -> Void)?
 
     var body: some View {
         ScrollView {
@@ -33,6 +34,7 @@ struct RemoteHistoryView: View {
                                 placeholder
                             }
                         }
+                        .onTapGesture { onPostSelected?(post) }
                     } else {
                         placeholder
                     }

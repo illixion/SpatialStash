@@ -98,7 +98,11 @@ struct RemoteViewerWindowView: View {
                 if showHistory, let model = viewerModel {
                     RemoteHistoryView(
                         history: model.postHistory,
-                        imageURLs: model.historyImageURLs
+                        imageURLs: model.historyImageURLs,
+                        onPostSelected: { post in
+                            model.jumpToHistoryPost(post)
+                            showHistory = false
+                        }
                     )
                     .transition(.opacity)
                 }

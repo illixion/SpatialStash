@@ -264,6 +264,20 @@ class RemoteViewerModel {
         }
     }
 
+    func jumpToHistoryPost(_ post: RemotePost) {
+        // Restart the slideshow timer with the selected post displayed immediately
+        slideshowTask?.cancel()
+        slideshowTask = Task { [weak self] in
+            guard let self else { return }
+            await fetchAndDisplayPost(post)
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(config.delay))
+                guard !Task.isCancelled else { break }
+                await advanceToNextImage()
+            }
+        }
+    }
+
     func togglePause() {
         isPaused.toggle()
         if isPaused {
