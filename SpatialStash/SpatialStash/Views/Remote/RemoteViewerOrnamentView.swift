@@ -2,26 +2,39 @@
  Spatial Stash - Remote Viewer Ornament View
 
  Control bar for the Remote API Viewer window.
- [ Grid | Prev | Next | Save | 🏠 | 🔄 | 🕐 | Adjustments | 🛑 ]
+ [ Grid | History | Prev | Next | Save | 🏠 | 🔄 | 🕐 | Adjustments | 🛑 ]
  */
 
 import SwiftUI
 
 struct RemoteViewerOrnamentView: View {
     @Environment(AppModel.self) private var appModel
+    @Environment(\.openWindow) private var openWindow
     @Bindable var model: RemoteViewerModel
     @Binding var showHomeAssistant: Bool
     @Binding var showHistory: Bool
 
     var body: some View {
         HStack(spacing: 16) {
-            // Grid - History
+            // Grid - Open main app window
+            Button {
+                appModel.showMainWindow(openWindow: openWindow)
+            } label: {
+                Image(systemName: "square.grid.2x2")
+                    .font(.title3)
+            }
+            .buttonStyle(.borderless)
+            .help("Open Gallery")
+
+            // History
             Button {
                 withAnimation { showHistory.toggle() }
                 if showHomeAssistant { showHomeAssistant = false }
             } label: {
-                Image(systemName: showHistory ? "square.grid.2x2.fill" : "square.grid.2x2")
+                Image(systemName: showHistory ? "clock.arrow.circlepath" : "clock.arrow.circlepath")
                     .font(.title3)
+                    .padding(6)
+                    .background(showHistory ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
             }
             .buttonStyle(.borderless)
             .help("View History")

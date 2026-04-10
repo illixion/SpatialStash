@@ -292,7 +292,12 @@ struct RemoteViewerWindowView: View {
 
         // Gallery mode: use the app's image source instead of remote API
         if config.apiEndpoint.isEmpty {
-            model.galleryImageSource = appModel.imageSource
+            if appModel.selectedTab == .local {
+                model.galleryImageSource = LocalImageSource()
+            } else {
+                model.galleryImageSource = appModel.imageSource
+                model.galleryFilter = appModel.currentFilter
+            }
         }
 
         // Wire up window callbacks

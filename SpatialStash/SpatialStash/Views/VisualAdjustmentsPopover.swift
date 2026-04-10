@@ -274,6 +274,28 @@ struct VisualAdjustmentsPopover: View {
                     get: { model.config.useAspectRatio },
                     set: { model.config.useAspectRatio = $0 }
                 ))
+
+                Divider()
+
+                VStack(spacing: 4) {
+                    HStack {
+                        Text("Slideshow Interval")
+                            .font(.subheadline)
+                        Spacer()
+                        Text(formatDelay(model.config.delay))
+                            .font(.caption)
+                            .monospacedDigit()
+                            .foregroundColor(.secondary)
+                    }
+                    Slider(
+                        value: Binding(
+                            get: { model.config.delay },
+                            set: { model.config.delay = $0 }
+                        ),
+                        in: 3...120,
+                        step: 1
+                    )
+                }
             }
         }
     }
@@ -380,6 +402,16 @@ struct VisualAdjustmentsPopover: View {
                 }
             }
         )
+    }
+
+    /// Format slideshow delay as human-readable string
+    private func formatDelay(_ seconds: TimeInterval) -> String {
+        if seconds >= 60 {
+            let mins = Int(seconds) / 60
+            let secs = Int(seconds) % 60
+            return secs > 0 ? "\(mins)m \(secs)s" : "\(mins)m"
+        }
+        return "\(Int(seconds))s"
     }
 
     /// Format a slider value for display, showing "+/-" prefix for brightness-style values.

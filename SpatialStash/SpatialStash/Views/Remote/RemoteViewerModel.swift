@@ -24,6 +24,8 @@ class RemoteViewerModel {
     /// Tag lists, blocked posts, WS, and API features are disabled in this mode.
     var galleryImageSource: (any ImageSource)?
     var isGalleryMode: Bool { galleryImageSource != nil }
+    /// Filter criteria to apply when fetching gallery images (respects app's current filter)
+    var galleryFilter: ImageFilterCriteria?
     private var galleryPage: Int = 0
 
     // MARK: - Display State
@@ -125,8 +127,11 @@ class RemoteViewerModel {
     private var slideshowTask: Task<Void, Never>?
     private var prefetchTask: Task<Void, Never>?
     private var backgroundUnloadTask: Task<Void, Never>?
+    private var watchdogTask: Task<Void, Never>?
     private var backgroundedAt: Date?
+    private var lastAdvanceTime: Date?
     private static let backgroundUnloadDelay: TimeInterval = 30
+    private static let watchdogInterval: TimeInterval = 10
     private var windowAspectRatio: Double = 16.0 / 9.0
 
     /// Pre-downloaded images ready for instant display
@@ -176,10 +181,12 @@ class RemoteViewerModel {
                     self?.slideshowTask = nil
                     self?.startSlideshow()
                 }
+                startWatchdog()
                 return
             }
         }
         startSlideshow()
+        startWatchdog()
     }
 
     func stop() {
@@ -189,6 +196,8 @@ class RemoteViewerModel {
         prefetchTask = nil
         backgroundUnloadTask?.cancel()
         backgroundUnloadTask = nil
+        watchdogTask?.cancel()
+        watchdogTask = nil
         wsClient.disconnect()
     }
 
@@ -385,6 +394,39 @@ class RemoteViewerModel {
         }
     }
 
+    /// Periodic watchdog that detects a stuck slideshow and restarts it.
+    /// Checks every 10 seconds whether an advance has happened within the expected
+    /// window (delay + 30s margin for network/processing). Only acts when the
+    /// slideshow should be running (not paused, not backgrounded).
+    private func startWatchdog() {
+        guard watchdogTask == nil else { return }
+        watchdogTask = Task { [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(Self.watchdogInterval))
+                guard !Task.isCancelled else { break }
+
+                // Only intervene when the slideshow should be actively running
+                guard !isPaused, backgroundedAt == nil else { continue }
+
+                let maxExpected = config.delay + 30
+                if let last = lastAdvanceTime {
+                    let elapsed = Date().timeIntervalSince(last)
+                    if elapsed > maxExpected {
+                        AppLogger.remoteViewer.warning("Watchdog: slideshow stuck (\(Int(elapsed))s since last advance, expected ≤\(Int(maxExpected))s). Restarting.")
+                        slideshowTask?.cancel()
+                        slideshowTask = nil
+                        startSlideshow()
+                    }
+                } else if slideshowTask == nil {
+                    // No advance ever happened and no task is running
+                    AppLogger.remoteViewer.warning("Watchdog: no slideshow task running. Starting.")
+                    startSlideshow()
+                }
+            }
+        }
+    }
+
     private func advanceToNextImage() async {
         // Use a prefetched image if available for instant transition
         if let prefetched = prefetchedImages.first {
@@ -548,6 +590,7 @@ class RemoteViewerModel {
         currentPost = post
         nextImage = nil
         isTransitioning = false
+        lastAdvanceTime = Date()
 
         // Skip display sync if cancelled during the crossfade
         guard !Task.isCancelled else { return }
@@ -688,8 +731,11 @@ class RemoteViewerModel {
         defer { isFetching = false }
 
         do {
-            var filter = ImageFilterCriteria()
-            filter.sortField = .random
+            var filter = galleryFilter ?? ImageFilterCriteria()
+            // Override sort to random for slideshow unless user has set a specific sort
+            if galleryFilter == nil {
+                filter.sortField = .random
+            }
             filter.randomSeed = nil
             let result = try await source.fetchImages(page: galleryPage, pageSize: 20, filter: filter)
             galleryPage += 1
@@ -778,10 +824,12 @@ class RemoteViewerModel {
             }
 
         case .displayState(let isOn):
+            // Ignore displayState(off) until the first image has been shown,
+            // otherwise the server can cancel the slideshow before it starts.
             if isOn && isPaused {
                 isPaused = false
                 startSlideshow()
-            } else if !isOn && !isPaused {
+            } else if !isOn && !isPaused && currentImage != nil {
                 isPaused = true
                 slideshowTask?.cancel()
                 slideshowTask = nil
