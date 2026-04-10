@@ -26,8 +26,8 @@ SpatialStash/BuildInfo.xcconfig
 # Local signing overrides (per-developer)
 Configuration/LocalSigning.xcconfig
 
-# Local build & sign script (contains device-specific signing config)
-scripts/build-and-sign.sh
+# Local build & sign config (per-developer signing settings)
+scripts/build-signing.conf
 build/
 
 **/internal_docs/**

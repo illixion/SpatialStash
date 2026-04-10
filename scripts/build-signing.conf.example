@@ -1,0 +1,26 @@
+# Build & sign configuration — copy to build-signing.conf and edit.
+# build-signing.conf is gitignored and will never be committed.
+#
+# This configures signing for the standalone build script (scripts/build-and-sign.sh).
+# BUILD_BUNDLE_ID overrides PRODUCT_BUNDLE_IDENTIFIER from LocalSigning.xcconfig
+# at build time. BUNDLE_ID is then written into Info.plist before signing,
+# allowing a separate app ID tied to the provisioning profile and device UUID.
+
+TEAM_ID="YOUR_TEAM_ID"
+BUILD_BUNDLE_ID="your.build.bundle.identifier"
+BUNDLE_ID="your.signing.bundle.identifier"
+DEVICE_NAME="Apple Vision Pro"
+
+# Signing identities (must be in keychain)
+DEV_IDENTITY="iPhone Developer: Your Name (XXXXXXXXXX)"
+DIST_IDENTITY="iPhone Distribution: Your Name (XXXXXXXXXX)"
+
+# Provisioning profile search paths (bash array)
+PROFILE_SEARCH_PATHS=(
+    "$HOME/Downloads"
+    "$HOME/Library/MobileDevice/Provisioning Profiles"
+)
+
+# Profile names from the provisioning profiles
+DEV_PROFILE_NAME="your_dev_profile_name"
+DIST_PROFILE_NAME="your_dist_profile_name"
