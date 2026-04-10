@@ -155,6 +155,19 @@ struct VideoOrnamentsView: View {
                     }
                 }
 
+                // Slideshow
+                Divider()
+                    .frame(height: 24)
+
+                Button {
+                    launchGallerySlideshow()
+                } label: {
+                    Image(systemName: "play.fill")
+                        .font(.title3)
+                }
+                .buttonStyle(.borderless)
+                .help("Slideshow")
+
                 // Visual adjustments
                 Divider()
                     .frame(height: 24)
@@ -243,6 +256,22 @@ struct VideoOrnamentsView: View {
     /// Effective adjustments: use per-video session if modified, otherwise global
     private var effectiveVideoAdjustments: VisualAdjustments {
         appModel.videoVisualAdjustments.isModified ? appModel.videoVisualAdjustments : appModel.globalVisualAdjustments
+    }
+
+    private func launchGallerySlideshow() {
+        let config: RemoteViewerConfig
+        if let existing = appModel.gallerySlideshowConfig {
+            config = existing
+        } else {
+            var newConfig = RemoteViewerConfig(name: "Gallery Slideshow")
+            newConfig.apiEndpoint = ""
+            newConfig.delay = appModel.slideshowDelay
+            newConfig.showClock = false
+            newConfig.transparentBackground = true
+            appModel.gallerySlideshowConfig = newConfig
+            config = newConfig
+        }
+        openWindow(id: "remote-viewer", value: RemoteViewerWindowValue(configId: config.id))
     }
 
     private func popOutVideo() {

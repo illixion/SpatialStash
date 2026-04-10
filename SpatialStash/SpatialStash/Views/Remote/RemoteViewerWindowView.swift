@@ -188,13 +188,14 @@ struct RemoteViewerWindowView: View {
                 EmptyView()
             }
 
-            // Current image (shown for .image and as background during GIF conversion)
+            // Current image (shown for .image type, or as static first frame while GIF converts)
             if model.currentMediaType == .image, let image = model.currentImage {
+                let useKenBurns = model.config.enableKenBurns && !model.isCurrentPostAnimatedGIF
                 Image(uiImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .scaleEffect(model.config.enableKenBurns ? kenBurnsScale : 1.0)
-                    .offset(model.config.enableKenBurns ? kenBurnsOffset : .zero)
+                    .scaleEffect(useKenBurns ? kenBurnsScale : 1.0)
+                    .offset(useKenBurns ? kenBurnsOffset : .zero)
                     .opacity(model.isTransitioning ? 0 : 1)
                     .clipped()
             }
@@ -210,17 +211,17 @@ struct RemoteViewerWindowView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onChange(of: model.currentPost?.id) { _, _ in
-            // Only animate Ken Burns for static images
-            if model.currentMediaType == .image {
+            // Only animate Ken Burns for static images (not GIFs or videos)
+            if model.currentMediaType == .image && !model.isCurrentPostAnimatedGIF {
                 startKenBurnsAnimation(model: model)
             } else {
-                // Reset Ken Burns for video/GIF
-                var transaction = Transaction(animation: nil)
-                transaction.disablesAnimations = true
-                withTransaction(transaction) {
-                    kenBurnsScale = 1.0
-                    kenBurnsOffset = .zero
-                }
+                resetKenBurns()
+            }
+        }
+        .onChange(of: model.currentMediaType) { _, newType in
+            // When media type changes (e.g. GIF HEVC conversion completes), reset Ken Burns
+            if newType != .image {
+                resetKenBurns()
             }
         }
     }
@@ -362,13 +363,7 @@ struct RemoteViewerWindowView: View {
     private func startKenBurnsAnimation(model: RemoteViewerModel) {
         guard model.config.enableKenBurns else { return }
 
-        // Instantly snap to 1.0 without animating the zoom-out
-        var transaction = Transaction(animation: nil)
-        transaction.disablesAnimations = true
-        withTransaction(transaction) {
-            kenBurnsScale = 1.0
-            kenBurnsOffset = .zero
-        }
+        resetKenBurns()
 
         // Then animate the zoom-in to the focus point
         let focus = model.focusPoint
@@ -379,6 +374,15 @@ struct RemoteViewerWindowView: View {
         withAnimation(.easeInOut(duration: model.config.delay)) {
             kenBurnsScale = targetScale
             kenBurnsOffset = CGSize(width: -offsetX, height: -offsetY)
+        }
+    }
+
+    private func resetKenBurns() {
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            kenBurnsScale = 1.0
+            kenBurnsOffset = .zero
         }
     }
 

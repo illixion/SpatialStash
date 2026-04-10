@@ -39,6 +39,8 @@ class RemoteViewerModel {
 
     /// Current media type (image, video, or animated GIF)
     var currentMediaType: SlideshowMediaType = .image
+    /// True when the current post is an animated GIF (even while showing static first frame during conversion)
+    var isCurrentPostAnimatedGIF: Bool = false
     /// Whether the viewer window is in the user's current room (for video lifecycle)
     var isRoomActive: Bool = true
 
@@ -470,6 +472,7 @@ class RemoteViewerModel {
         if let prefetched = prefetchedImages.first {
             prefetchedImages.removeFirst()
             guard !Task.isCancelled else { return }
+            isCurrentPostAnimatedGIF = false
             await displayImage(prefetched.image, post: prefetched.post, url: prefetched.url)
             triggerPrefetch()
             return
@@ -571,6 +574,7 @@ class RemoteViewerModel {
 
         // Animated GIF: show first frame immediately, convert to HEVC in background
         if ext == "gif" && result.data.isAnimatedGIF {
+            isCurrentPostAnimatedGIF = true
             await displayImage(result.image, post: post, url: imageURL, mediaType: .image)
             // Start HEVC conversion in background — swap to video playback when ready
             let data = result.data
@@ -591,6 +595,7 @@ class RemoteViewerModel {
             return
         }
 
+        isCurrentPostAnimatedGIF = false
         await displayImage(result.image, post: post, url: imageURL)
     }
 
@@ -630,6 +635,7 @@ class RemoteViewerModel {
         gifConversionTask = nil
 
         // Transition: clear image state and switch to video
+        isCurrentPostAnimatedGIF = false
         currentImage = nil
         nextImage = nil
         isTransitioning = false
