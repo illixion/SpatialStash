@@ -15,6 +15,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Select Xcode
         run: |
@@ -76,6 +78,23 @@ jobs:
           cp build/SpatialStash.ipa "$IPA_NAME"
           echo "ipa_file=$IPA_NAME" >> $GITHUB_OUTPUT
 
+      - name: Generate changelog
+        if: github.event_name != 'pull_request'
+        id: changelog
+        run: |
+          PREV_TAG=$(git tag --sort=-creatordate | grep '^v' | head -2 | tail -1)
+          if [ -z "$PREV_TAG" ] || [ "$PREV_TAG" = "${{ steps.version.outputs.tag }}" ]; then
+            RANGE="HEAD"
+          else
+            RANGE="${PREV_TAG}..HEAD"
+          fi
+          CHANGELOG=$(git log "$RANGE" --pretty=format:'- %s' --first-parent)
+          {
+            echo "body<<EOF"
+            echo "$CHANGELOG"
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
+
       - name: Create GitHub Release
         if: github.event_name != 'pull_request'
         id: create_release
@@ -85,6 +104,7 @@ jobs:
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           release_name: ${{ steps.version.outputs.version }}
+          body: ${{ steps.changelog.outputs.body }}
           draft: false
           prerelease: false
 
