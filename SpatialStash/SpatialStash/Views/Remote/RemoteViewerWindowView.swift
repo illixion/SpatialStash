@@ -162,8 +162,34 @@ struct RemoteViewerWindowView: View {
     @ViewBuilder
     private func imageLayer(model: RemoteViewerModel) -> some View {
         ZStack {
-            // Current image
-            if let image = model.currentImage {
+            // Video / animated GIF layer (WebVideoPlayerView)
+            switch model.currentMediaType {
+            case .video(let url):
+                WebVideoPlayerView(
+                    videoURL: url,
+                    apiKey: nil,
+                    showControls: false,
+                    isRoomActive: model.isRoomActive
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            case .animatedGIF(let hevcURL):
+                WebVideoPlayerView(
+                    videoURL: hevcURL,
+                    apiKey: nil,
+                    showControls: false,
+                    isRoomActive: model.isRoomActive
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // Also show the static image underneath during transition
+                .opacity(model.isTransitioning ? 0 : 1)
+
+            case .image:
+                EmptyView()
+            }
+
+            // Current image (shown for .image and as background during GIF conversion)
+            if model.currentMediaType == .image, let image = model.currentImage {
                 Image(uiImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
@@ -184,7 +210,18 @@ struct RemoteViewerWindowView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onChange(of: model.currentPost?.id) { _, _ in
-            startKenBurnsAnimation(model: model)
+            // Only animate Ken Burns for static images
+            if model.currentMediaType == .image {
+                startKenBurnsAnimation(model: model)
+            } else {
+                // Reset Ken Burns for video/GIF
+                var transaction = Transaction(animation: nil)
+                transaction.disablesAnimations = true
+                withTransaction(transaction) {
+                    kenBurnsScale = 1.0
+                    kenBurnsOffset = .zero
+                }
+            }
         }
     }
 

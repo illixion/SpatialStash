@@ -28,6 +28,24 @@ class RemoteViewerModel {
     var galleryFilter: ImageFilterCriteria?
     private var galleryPage: Int = 0
 
+    // MARK: - Media Type
+
+    /// The type of media currently being displayed
+    enum SlideshowMediaType: Equatable {
+        case image
+        case video(URL)      // Video URL to play in WebVideoPlayerView
+        case animatedGIF(URL) // HEVC-converted GIF URL
+    }
+
+    /// Current media type (image, video, or animated GIF)
+    var currentMediaType: SlideshowMediaType = .image
+    /// Whether the viewer window is in the user's current room (for video lifecycle)
+    var isRoomActive: Bool = true
+
+    private static let videoExtensions: Set<String> = [
+        "mp4", "m4v", "mov", "mkv", "webm", "avi", "wmv", "flv", "3gp"
+    ]
+
     // MARK: - Display State
 
     var currentImage: UIImage?
@@ -124,6 +142,7 @@ class RemoteViewerModel {
 
     // MARK: - Private
 
+    private var gifConversionTask: Task<Void, Never>?
     private var slideshowTask: Task<Void, Never>?
     private var prefetchTask: Task<Void, Never>?
     private var backgroundUnloadTask: Task<Void, Never>?
@@ -194,6 +213,8 @@ class RemoteViewerModel {
         slideshowTask = nil
         prefetchTask?.cancel()
         prefetchTask = nil
+        gifConversionTask?.cancel()
+        gifConversionTask = nil
         backgroundUnloadTask?.cancel()
         backgroundUnloadTask = nil
         watchdogTask?.cancel()
@@ -205,6 +226,7 @@ class RemoteViewerModel {
         if newPhase == .active && oldPhase != .active {
             // Returning to active
             wsClient.sendVisibilityChange(visible: true)
+            isRoomActive = true
             backgroundUnloadTask?.cancel()
             backgroundUnloadTask = nil
 
@@ -220,8 +242,9 @@ class RemoteViewerModel {
                 startSlideshow()
             }
         } else if oldPhase == .active && newPhase != .active {
-            // Entering background — pause slideshow, schedule image unload
+            // Entering background — pause slideshow, schedule image/video unload
             wsClient.sendVisibilityChange(visible: false)
+            isRoomActive = false
             slideshowTask?.cancel()
             slideshowTask = nil
             backgroundedAt = Date()
@@ -229,11 +252,14 @@ class RemoteViewerModel {
             backgroundUnloadTask = Task {
                 try? await Task.sleep(for: .seconds(Self.backgroundUnloadDelay))
                 guard !Task.isCancelled else { return }
-                // Unload images to free memory
+                // Unload images and video state to free memory
                 currentImage = nil
                 nextImage = nil
+                currentMediaType = .image
                 prefetchedImages.removeAll()
-                AppLogger.remoteViewer.info("Background unload: released images after 30s")
+                gifConversionTask?.cancel()
+                gifConversionTask = nil
+                AppLogger.remoteViewer.info("Background unload: released images/video after 30s")
             }
         }
     }
@@ -252,7 +278,8 @@ class RemoteViewerModel {
             guard let self else { return }
             await advanceToNextImage()
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(config.delay))
+                let delay = effectiveDelay
+                try? await Task.sleep(for: .seconds(delay))
                 guard !Task.isCancelled else { break }
                 await advanceToNextImage()
             }
@@ -280,7 +307,8 @@ class RemoteViewerModel {
             guard let self else { return }
             await fetchAndDisplayPost(post)
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(config.delay))
+                let delay = effectiveDelay
+                try? await Task.sleep(for: .seconds(delay))
                 guard !Task.isCancelled else { break }
                 await advanceToNextImage()
             }
@@ -378,12 +406,13 @@ class RemoteViewerModel {
             guard let self else { return }
 
             // Initial load
-            if currentImage == nil {
+            if currentImage == nil && currentMediaType == .image {
                 await advanceToNextImage()
             }
 
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(config.delay))
+                let delay = effectiveDelay
+                try? await Task.sleep(for: .seconds(delay))
                 guard !Task.isCancelled else { break }
                 await advanceToNextImage()
             }
@@ -392,6 +421,15 @@ class RemoteViewerModel {
             // has already set slideshowTask to either a new task or nil. Setting it
             // here would race with and overwrite the replacement task reference.
         }
+    }
+
+    /// Effective delay for the current post — uses video duration if available and longer than config delay
+    private var effectiveDelay: TimeInterval {
+        if case .video = currentMediaType,
+           let duration = currentPost?.duration, duration > config.delay {
+            return duration
+        }
+        return config.delay
     }
 
     /// Periodic watchdog that detects a stuck slideshow and restarts it.
@@ -409,7 +447,7 @@ class RemoteViewerModel {
                 // Only intervene when the slideshow should be actively running
                 guard !isPaused, backgroundedAt == nil else { continue }
 
-                let maxExpected = config.delay + 30
+                let maxExpected = effectiveDelay + 30
                 if let last = lastAdvanceTime {
                     let elapsed = Date().timeIntervalSince(last)
                     if elapsed > maxExpected {
@@ -481,16 +519,26 @@ class RemoteViewerModel {
         return nil
     }
 
-    /// Download and display a single post (slow path, no prefetch available)
+    /// Download and display a single post (slow path, no prefetch available).
+    /// Detects video and animated GIF content for appropriate playback.
     private func fetchAndDisplayPost(_ post: RemotePost) async {
         isLoading = true
         defer { isLoading = false }
 
         guard let imageURL = resolveImageURL(for: post) else { return }
 
+        let ext = post.file_ext.lowercased()
+
+        // Video posts: display directly via WebVideoPlayerView without downloading
+        if Self.videoExtensions.contains(ext) {
+            guard !Task.isCancelled else { return }
+            await displayVideo(url: imageURL, post: post)
+            return
+        }
+
         // Download in a detached task so it isn't cancelled by slideshow task replacement
         let maxRes = maxImageResolution
-        let imageResult: UIImage? = await Task.detached {
+        let downloadResult: (image: UIImage, data: Data)? = await Task.detached {
             do {
                 let (data, _) = try await URLSession.shared.data(from: imageURL)
                 if maxRes > 0 {
@@ -504,27 +552,115 @@ class RemoteViewerModel {
                             kCGImageSourceShouldCacheImmediately: true
                         ]
                         if let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, downsampleOptions as CFDictionary) {
-                            return UIImage(cgImage: cgImage)
+                            return (UIImage(cgImage: cgImage), data)
                         }
                     }
                 }
-                return UIImage(data: data)
+                if let image = UIImage(data: data) {
+                    return (image, data)
+                }
+                return nil
             } catch {
                 AppLogger.remoteViewer.error("Failed to load post \(post._id, privacy: .public): \(error.localizedDescription, privacy: .public)")
                 return nil
             }
         }.value
 
-        guard let image = imageResult else { return }
-        // If the slideshow task was replaced while we were downloading (detached
-        // downloads survive cancellation), bail out to avoid corrupting the new
-        // task's display state.
+        guard let result = downloadResult else { return }
         guard !Task.isCancelled else { return }
-        await displayImage(image, post: post, url: imageURL)
+
+        // Animated GIF: show first frame immediately, convert to HEVC in background
+        if ext == "gif" && result.data.isAnimatedGIF {
+            await displayImage(result.image, post: post, url: imageURL, mediaType: .image)
+            // Start HEVC conversion in background — swap to video playback when ready
+            let data = result.data
+            gifConversionTask?.cancel()
+            gifConversionTask = Task { [weak self] in
+                do {
+                    let hevcURL = try await GIFHEVCConverter.shared.convert(gifData: data, sourceURL: imageURL)
+                    guard !Task.isCancelled else { return }
+                    // Only swap if we're still showing this post
+                    if self?.currentPost?._id == post._id {
+                        self?.currentMediaType = .animatedGIF(hevcURL)
+                        AppLogger.remoteViewer.info("GIF HEVC ready for post \(post._id, privacy: .public)")
+                    }
+                } catch {
+                    AppLogger.remoteViewer.warning("GIF HEVC conversion failed for post \(post._id, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                }
+            }
+            return
+        }
+
+        await displayImage(result.image, post: post, url: imageURL)
+    }
+
+    /// Display a video post — sets the media type to video and performs crossfade using a placeholder
+    private func displayVideo(url: URL, post: RemotePost) async {
+        // Keep previous post saveable for 1.5s grace period
+        if let outgoing = currentPost {
+            previousPost = outgoing
+            previousPostGraceTask?.cancel()
+            previousPostGraceTask = Task {
+                try? await Task.sleep(for: .seconds(1.5))
+                guard !Task.isCancelled else { return }
+                previousPost = nil
+            }
+        }
+
+        // Track history
+        postHistory.append(post)
+        historyImageURLs[post._id] = url
+        if postHistory.count > 100 { postHistory.removeFirst() }
+
+        // Add to server history (API mode only)
+        if !isGalleryMode {
+            Task {
+                try? await apiClient.addToHistory(baseURL: config.apiEndpoint, postId: post._id)
+            }
+        }
+
+        // Reset auto-brightness for videos
+        autoBrightnessAdjustment = 0
+        autoContrastAdjustment = 1.0
+
+        guard !Task.isCancelled else { return }
+
+        // Cancel any pending GIF conversion from previous post
+        gifConversionTask?.cancel()
+        gifConversionTask = nil
+
+        // Transition: clear image state and switch to video
+        currentImage = nil
+        nextImage = nil
+        isTransitioning = false
+        currentPost = post
+        currentMediaType = .video(url)
+        lastAdvanceTime = Date()
+
+        AppLogger.remoteViewer.info("Displaying video post \(post._id, privacy: .public)")
+
+        // Send display sync (API mode only)
+        if !isGalleryMode {
+            if enableDisplaySync {
+                wsClient.sendDisplaySync(
+                    currentPost: (id: post._id, url: url.absoluteString),
+                    nextPost: prefetchedImages.first.map { (id: $0.post._id, url: $0.url.absoluteString) },
+                    currentList: currentTagListIndex,
+                    dbCursor: dbCursor
+                )
+            } else {
+                wsClient.sendDisplaySync(
+                    currentPost: nil,
+                    nextPost: nil,
+                    currentList: currentTagListIndex,
+                    dbCursor: nil
+                )
+            }
+        }
     }
 
     /// Show an already-loaded image with crossfade, Ken Burns analysis, and brightness adjustment
-    private func displayImage(_ image: UIImage, post: RemotePost, url: URL) async {
+    private func displayImage(_ image: UIImage, post: RemotePost, url: URL, mediaType: SlideshowMediaType = .image) async {
         // Keep previous post saveable for 1.5s grace period
         if let outgoing = currentPost {
             previousPost = outgoing
@@ -576,6 +712,12 @@ class RemoteViewerModel {
         // half-transitioned state.
         guard !Task.isCancelled else { return }
 
+        // Cancel any pending GIF conversion from previous post
+        if mediaType == .image {
+            gifConversionTask?.cancel()
+            gifConversionTask = nil
+        }
+
         // Crossfade transition
         withAnimation(.easeInOut(duration: 1.0)) {
             nextImage = image
@@ -588,6 +730,7 @@ class RemoteViewerModel {
         // another interleaved displayImage() call may have overwritten those fields.
         currentImage = image
         currentPost = post
+        currentMediaType = mediaType
         nextImage = nil
         isTransitioning = false
         lastAdvanceTime = Date()
@@ -633,6 +776,14 @@ class RemoteViewerModel {
             }
 
             guard let post = nextNonBlockedPost() else { break }
+
+            // Skip video posts for prefetch — they stream directly
+            if Self.videoExtensions.contains(post.file_ext.lowercased()) {
+                // Put it back so advanceToNextImage picks it up via fetchAndDisplayPost
+                cachedPosts.insert(post, at: 0)
+                break
+            }
+
             guard let imageURL = resolveImageURL(for: post) else { continue }
 
             do {
