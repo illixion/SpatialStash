@@ -139,6 +139,14 @@ struct RemoteViewerWindowView: View {
         }
         .onChange(of: scenePhase) { oldPhase, newPhase in
             viewerModel?.handleScenePhaseChange(from: oldPhase, to: newPhase)
+            // Restart Ken Burns animation on return to foreground — the SwiftUI
+            // animation is time-based and continues running while backgrounded,
+            // so the remaining duration would be too short without a restart.
+            if newPhase == .active && oldPhase != .active, let model = viewerModel {
+                if model.currentMediaType == .image && !model.isCurrentPostAnimatedGIF {
+                    startKenBurnsAnimation(model: model)
+                }
+            }
         }
         .onReceive(clockTimer) { time in
             currentTime = time
