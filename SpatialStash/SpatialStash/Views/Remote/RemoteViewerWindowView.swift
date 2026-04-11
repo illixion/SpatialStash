@@ -122,6 +122,7 @@ struct RemoteViewerWindowView: View {
                 if let model = viewerModel {
                     RemoteViewerOrnamentView(
                         model: model,
+                        tagListManager: appModel.tagListManager,
                         showHomeAssistant: $showHomeAssistant,
                         showHistory: $showHistory
                     )
@@ -190,7 +191,7 @@ struct RemoteViewerWindowView: View {
 
             // Current image (shown for .image type, or as static first frame while GIF converts)
             if model.currentMediaType == .image, let image = model.currentImage {
-                let useKenBurns = model.config.enableKenBurns && !model.isCurrentPostAnimatedGIF
+                let useKenBurns = model.enableKenBurns && !model.isCurrentPostAnimatedGIF
                 Image(uiImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
@@ -328,14 +329,25 @@ struct RemoteViewerWindowView: View {
         model.maxImageResolution = appModel.maxImageResolution
         model.updateWindowAspectRatio(windowSize)
 
-        // Gallery mode: use the app's image source instead of remote API
+        // Set up shared tag list manager
+        model.tagListManager = appModel.tagListManager
+
+        // Set up content provider based on mode
         if config.apiEndpoint.isEmpty {
+            // Gallery mode: use the app's image source
+            let source: any ImageSource
+            let filter: ImageFilterCriteria?
             if appModel.selectedTab == .local {
-                model.galleryImageSource = LocalImageSource()
+                source = LocalImageSource()
+                filter = nil
             } else {
-                model.galleryImageSource = appModel.imageSource
-                model.galleryFilter = appModel.currentFilter
+                source = appModel.imageSource
+                filter = appModel.currentFilter
             }
+            model.contentProvider = GalleryContentProvider(imageSource: source, filter: filter)
+        } else {
+            // Remote API mode
+            model.contentProvider = RemoteContentProvider(apiClient: model.apiClient, baseURL: config.apiEndpoint)
         }
 
         // Wire up window callbacks
@@ -361,7 +373,7 @@ struct RemoteViewerWindowView: View {
     }
 
     private func startKenBurnsAnimation(model: RemoteViewerModel) {
-        guard model.config.enableKenBurns else { return }
+        guard model.enableKenBurns else { return }
 
         resetKenBurns()
 
@@ -371,7 +383,7 @@ struct RemoteViewerWindowView: View {
         let offsetX = (focus.x - 0.5) * windowSize.width * 0.15
         let offsetY = (focus.y - 0.5) * windowSize.height * 0.15
 
-        withAnimation(.easeInOut(duration: model.config.delay)) {
+        withAnimation(.easeInOut(duration: model.delay)) {
             kenBurnsScale = targetScale
             kenBurnsOffset = CGSize(width: -offsetX, height: -offsetY)
         }

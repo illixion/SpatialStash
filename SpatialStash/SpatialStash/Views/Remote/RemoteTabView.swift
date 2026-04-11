@@ -2,8 +2,9 @@
  Spatial Stash - Remote Tab View
 
  Configuration interface for Remote API Viewer instances.
- Allows editing settings, managing tag lists, saving/loading
- configurations, and launching viewer windows.
+ Allows editing settings, managing saved configurations,
+ and launching viewer windows. Tag lists are edited via
+ the shared TagListManager.
  */
 
 import SwiftUI
@@ -19,7 +20,6 @@ struct RemoteTabView: View {
     @State private var blockedTagsExpanded = false
     @State private var blockedPostsExpanded = false
     @State private var newBlockedTag = ""
-    @State private var updateAllTagListsConfirming = false
 
     var body: some View {
         @Bindable var appModel = appModel
@@ -35,7 +35,7 @@ struct RemoteTabView: View {
                             HStack {
                                 VStack(alignment: .leading) {
                                     Text(config.name)
-                                    Text("\(config.tagLists.count) tag lists \u{00B7} \(config.savedDate, style: .date)")
+                                    Text(config.savedDate, style: .date)
                                         .font(.caption)
                                         .foregroundColor(.secondary)
                                 }
@@ -46,8 +46,7 @@ struct RemoteTabView: View {
                                 }
                                 .buttonStyle(.borderless)
                                 Button("Copy") {
-                                    var copy = config
-                                    copy = RemoteViewerConfig(name: config.name + " (Copy)")
+                                    var copy = RemoteViewerConfig(name: config.name + " (Copy)")
                                     copy.apiEndpoint = config.apiEndpoint
                                     copy.wsEndpoint = config.wsEndpoint
                                     copy.wsDeviceId = config.wsDeviceId
@@ -58,8 +57,6 @@ struct RemoteTabView: View {
                                     copy.enableKenBurns = config.enableKenBurns
                                     copy.transparentBackground = config.transparentBackground
                                     copy.textSize = config.textSize
-                                    copy.tagLists = config.tagLists
-                                    copy.defaultTagListIndex = config.defaultTagListIndex
                                     copy.blockedPosts = config.blockedPosts
                                     copy.blockedTags = config.blockedTags
                                     copy.homeAssistantURL = config.homeAssistantURL
@@ -124,60 +121,7 @@ struct RemoteTabView: View {
                     }
                 }
 
-                Section("Tag Lists") {
-                    ForEach(editingConfig.tagLists.indices, id: \.self) { index in
-                        HStack {
-                            Text("List \(index + 1)")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .frame(width: 50, alignment: .leading)
-                            TextField(
-                                "Tags (space-separated)",
-                                text: Binding(
-                                    get: { editingConfig.tagLists[index].joined(separator: " ") },
-                                    set: { newValue in
-                                        editingConfig.tagLists[index] = newValue
-                                            .components(separatedBy: " ")
-                                            .filter { !$0.isEmpty }
-                                    }
-                                )
-                            )
-                            .font(.body.monospaced())
-                            .autocorrectionDisabled()
-                            .textInputAutocapitalization(.never)
-                        }
-                    }
-                    .onDelete { indexSet in
-                        editingConfig.tagLists.remove(atOffsets: indexSet)
-                    }
-
-                    HStack {
-                        TextField("Tags (space-separated)", text: $newTag)
-                            .autocorrectionDisabled()
-                            .textInputAutocapitalization(.never)
-                        Button("Add List") {
-                            let tags = newTag.trimmingCharacters(in: .whitespaces)
-                                .components(separatedBy: " ")
-                                .filter { !$0.isEmpty }
-                            if !tags.isEmpty {
-                                editingConfig.tagLists.append(tags)
-                                newTag = ""
-                            }
-                        }
-                        .disabled(newTag.trimmingCharacters(in: .whitespaces).isEmpty)
-                    }
-
-                    Picker("Default List", selection: Binding(
-                        get: { editingConfig.defaultTagListIndex ?? -1 },
-                        set: { editingConfig.defaultTagListIndex = $0 == -1 ? nil : $0 }
-                    )) {
-                        Text("Server Decides").tag(-1)
-                        ForEach(editingConfig.tagLists.indices, id: \.self) { index in
-                            Text("List \(index + 1): \(editingConfig.tagLists[index].first ?? "")").tag(index)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                }
+                tagListsSection
 
                 Section {
                     DisclosureGroup(
@@ -233,20 +177,6 @@ struct RemoteTabView: View {
                         showSaveAlert = true
                     }
 
-                    Button(role: .destructive) {
-                        if updateAllTagListsConfirming {
-                            for index in appModel.savedRemoteConfigs.indices {
-                                appModel.savedRemoteConfigs[index].tagLists = editingConfig.tagLists
-                            }
-                            updateAllTagListsConfirming = false
-                        } else {
-                            updateAllTagListsConfirming = true
-                        }
-                    } label: {
-                        Text(updateAllTagListsConfirming ? "Are You Sure?" : "Update All Tag Lists")
-                    }
-                    .disabled(appModel.savedRemoteConfigs.isEmpty)
-
                     Button {
                         appModel.saveRemoteConfig(editingConfig)
                         launchViewer(config: editingConfig)
@@ -268,6 +198,67 @@ struct RemoteTabView: View {
                 }
                 Button("Cancel", role: .cancel) {}
             }
+        }
+    }
+
+    // MARK: - Tag Lists Section (shared via TagListManager)
+
+    private var tagListsSection: some View {
+        let tlm = appModel.tagListManager
+
+        return Section("Tag Lists (Shared)") {
+            ForEach(tlm.tagLists.indices, id: \.self) { index in
+                HStack {
+                    Text("List \(index + 1)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .frame(width: 50, alignment: .leading)
+                    TextField(
+                        "Tags (space-separated)",
+                        text: Binding(
+                            get: { tlm.tagLists[index].joined(separator: " ") },
+                            set: { newValue in
+                                tlm.tagLists[index] = newValue
+                                    .components(separatedBy: " ")
+                                    .filter { !$0.isEmpty }
+                            }
+                        )
+                    )
+                    .font(.body.monospaced())
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                }
+            }
+            .onDelete { indexSet in
+                tlm.tagLists.remove(atOffsets: indexSet)
+            }
+
+            HStack {
+                TextField("Tags (space-separated)", text: $newTag)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                Button("Add List") {
+                    let tags = newTag.trimmingCharacters(in: .whitespaces)
+                        .components(separatedBy: " ")
+                        .filter { !$0.isEmpty }
+                    if !tags.isEmpty {
+                        tlm.tagLists.append(tags)
+                        newTag = ""
+                    }
+                }
+                .disabled(newTag.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+
+            Picker("Default List", selection: Binding(
+                get: { tlm.defaultIndex ?? -1 },
+                set: { tlm.defaultIndex = $0 == -1 ? nil : $0 }
+            )) {
+                Text("Server Decides").tag(-1)
+                ForEach(tlm.tagLists.indices, id: \.self) { index in
+                    Text("List \(index + 1): \(tlm.tagLists[index].first ?? "")").tag(index)
+                }
+            }
+            .pickerStyle(.menu)
         }
     }
 

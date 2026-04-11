@@ -2,7 +2,7 @@
  Spatial Stash - Remote Viewer Ornament View
 
  Control bar for the Remote API Viewer window.
- [ Grid | History | Prev | Next | Save | 🏠 | 🔄 | 🕐 | Adjustments | 🛑 ]
+ [ Grid | History | Prev | Next | Save | Home | Tag List | Sync | Adjustments | Block ]
  */
 
 import SwiftUI
@@ -11,6 +11,7 @@ struct RemoteViewerOrnamentView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.openWindow) private var openWindow
     @Bindable var model: RemoteViewerModel
+    var tagListManager: TagListManager
     @Binding var showHomeAssistant: Bool
     @Binding var showHistory: Bool
 
@@ -140,13 +141,13 @@ struct RemoteViewerOrnamentView: View {
                     .help("No posts found")
             } else {
                 Menu {
-                    ForEach(model.config.tagLists.indices, id: \.self) { index in
+                    ForEach(tagListManager.tagLists.indices, id: \.self) { index in
                         Button {
-                            model.switchToTagList(index)
+                            tagListManager.switchToTagList(index)
                         } label: {
                             HStack {
                                 Text(tagListLabel(index))
-                                if model.currentTagListIndex == index {
+                                if tagListManager.activeIndex == index {
                                     Image(systemName: "checkmark")
                                 }
                             }
@@ -156,21 +157,21 @@ struct RemoteViewerOrnamentView: View {
                     HStack(spacing: 4) {
                         Image(systemName: "arrow.triangle.2.circlepath")
                             .font(.title3)
-                        Text("\(model.currentTagListIndex + 1)/\(model.config.tagLists.count)")
+                        Text("\(tagListManager.activeIndex + 1)/\(tagListManager.tagLists.count)")
                             .font(.callout)
                             .foregroundColor(.secondary)
                     }
                 }
                 .menuStyle(.button)
                 .buttonStyle(.borderless)
-                .disabled(model.config.tagLists.count <= 1)
+                .disabled(tagListManager.tagLists.count <= 1)
                 .help("Tag List")
             }
         }
     }
 
     private func tagListLabel(_ index: Int) -> String {
-        let tags = model.config.tagLists[index]
+        let tags = tagListManager.tagLists[index]
         let firstTag = tags.first ?? ""
         return "List \(index + 1): \(firstTag)"
     }

@@ -37,6 +37,11 @@ struct SettingsBackup: Codable {
     var savedWindowGroups: [SavedWindowGroup]?
     var savedRemoteConfigs: [RemoteViewerConfig]?
 
+    // Tag lists (shared across all viewer windows)
+    var tagLists: [[String]]?
+    var tagListDefaultIndex: Int?
+    var tagListLastActiveIndex: Int?
+
     // Actor-based tracker data
     var video3DSettings: [String: Video3DSettings]?
     var imageEnhancementConvertedURLs: [String]?

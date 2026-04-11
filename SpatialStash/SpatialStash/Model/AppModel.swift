@@ -391,6 +391,10 @@ class AppModel {
 
     // MARK: - Remote Viewer
 
+    /// Shared tag list manager — owns tag lists and active index,
+    /// synced across all slideshow windows.
+    let tagListManager = TagListManager()
+
     /// Persistent config for the gallery slideshow launched from photo viewer ornament.
     /// Stored separately from savedRemoteConfigs so it doesn't clutter the Remote tab.
     var gallerySlideshowConfig: RemoteViewerConfig?
@@ -609,6 +613,7 @@ class AppModel {
         loadSavedVideoViews()
         loadSavedWindowGroups()
         loadSavedRemoteConfigs()
+        loadTagListManager()
 
         // Apply default views on startup
         applyDefaultViewsOnStartup()
@@ -919,6 +924,20 @@ class AppModel {
         }
     }
 
+    private func loadTagListManager() {
+        // Try loading from TagListManager's own persistence first
+        tagListManager.load()
+
+        // If no tag lists were persisted yet, migrate from the first saved config
+        // that has legacy tag lists (one-time migration from pre-refactor configs)
+        if UserDefaults.standard.object(forKey: TagListManager.tagListsKeyPublic) == nil {
+            if let configWithTags = savedRemoteConfigs.first(where: { !$0.legacyTagLists.isEmpty }) {
+                tagListManager.importFromConfig(configWithTags)
+                AppLogger.remoteViewer.info("Migrated tag lists from config '\(configWithTags.name, privacy: .public)'")
+            }
+        }
+    }
+
     func persistSavedWindowGroups() {
         if let data = try? JSONEncoder().encode(savedWindowGroups) {
             UserDefaults.standard.set(data, forKey: Self.savedWindowGroupsKey)
@@ -1083,6 +1102,9 @@ class AppModel {
             savedVideoViews: savedVideoViews,
             savedWindowGroups: savedWindowGroups,
             savedRemoteConfigs: savedRemoteConfigs,
+            tagLists: tagListManager.tagLists,
+            tagListDefaultIndex: tagListManager.defaultIndex,
+            tagListLastActiveIndex: tagListManager.lastActiveIndex,
             video3DSettings: video3DData,
             imageEnhancementConvertedURLs: imageEnhancementData.convertedURLs,
             imageEnhancementLastViewingModes: imageEnhancementData.lastViewingModes,
@@ -1123,6 +1145,12 @@ class AppModel {
         }
         if let v = backup.savedRemoteConfigs {
             savedRemoteConfigs = v
+        }
+        if let lists = backup.tagLists {
+            tagListManager.tagLists = lists
+            tagListManager.defaultIndex = backup.tagListDefaultIndex
+            tagListManager.initialize()
+            tagListManager.save()
         }
 
         // Actor-based trackers
