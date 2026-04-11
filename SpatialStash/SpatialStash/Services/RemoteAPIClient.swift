@@ -87,6 +87,38 @@ actor RemoteAPIClient {
 
         _ = try await session.data(from: url)
     }
+
+    /// Fetch tag lists from the server's tags.json endpoint.
+    /// Returns an array of tag lists, where each list is an array of tag strings.
+    func fetchTagLists(baseURL: String) async throws -> [[String]] {
+        guard let url = URL(string: "\(baseURL)/tags.json") else {
+            throw RemoteAPIError.invalidURL
+        }
+
+        AppLogger.remoteViewer.debug("Fetching tags.json: \(url.absoluteString, privacy: .private)")
+        let (data, response) = try await session.data(from: url)
+
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+            AppLogger.remoteViewer.info("tags.json HTTP \(statusCode, privacy: .public) — not available")
+            throw RemoteAPIError.serverError
+        }
+
+        // tags.json is an array of arrays: [["tag1 tag2", ...], ["tag3", ...]]
+        // or an array of strings: ["tag1 tag2", "tag3 tag4"]
+        // Try array-of-arrays first, then array-of-strings
+        if let lists = try? JSONDecoder().decode([[String]].self, from: data) {
+            return lists
+        }
+        if let strings = try? JSONDecoder().decode([String].self, from: data) {
+            // Each string is a space-separated tag list
+            return strings.map { $0.components(separatedBy: " ").filter { !$0.isEmpty } }
+        }
+
+        let preview = String(data: data.prefix(200), encoding: .utf8) ?? "<binary>"
+        AppLogger.remoteViewer.error("tags.json decode failed. Response: \(preview, privacy: .private)")
+        throw RemoteAPIError.invalidResponse
+    }
 }
 
 enum RemoteAPIError: LocalizedError {

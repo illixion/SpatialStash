@@ -69,6 +69,9 @@ class RemoteViewerModel: SlideshowEngine {
 
     override func start() {
         if !isGalleryMode {
+            // Fetch tag lists from server in the background (non-blocking)
+            fetchRemoteTagLists()
+
             setupWebSocket()
 
             // If "Server Decides" is configured and WS is active, wait 1s for the
@@ -98,6 +101,32 @@ class RemoteViewerModel: SlideshowEngine {
 
     override func onEnteredBackground() {
         wsClient.sendVisibilityChange(visible: false)
+    }
+
+    // MARK: - Remote Tag List Fetch
+
+    /// Asynchronously fetch tags.json from the API endpoint and update the
+    /// shared TagListManager if the server provides tag lists.
+    private func fetchRemoteTagLists() {
+        let apiClient = self.apiClient
+        let baseURL = config.apiEndpoint
+        Task { [weak self] in
+            do {
+                let serverLists = try await apiClient.fetchTagLists(baseURL: baseURL)
+                guard !serverLists.isEmpty, let self else { return }
+                guard let tlm = self.tagListManager else { return }
+
+                // Only update if the server lists differ from current
+                if tlm.tagLists != serverLists {
+                    tlm.tagLists = serverLists
+                    AppLogger.remoteViewer.info("Updated tag lists from tags.json: \(serverLists.count, privacy: .public) lists")
+                    self.showToast("Loaded \(serverLists.count) tag lists from server")
+                }
+            } catch {
+                // Non-fatal — tags.json is optional
+                AppLogger.remoteViewer.debug("tags.json not available: \(error.localizedDescription, privacy: .public)")
+            }
+        }
     }
 
     // MARK: - Remote Actions
