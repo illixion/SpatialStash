@@ -1,9 +1,11 @@
 /*
  Spatial Stash - Slideshow Engine
 
- Core slideshow engine that handles timer-driven image transitions,
- prefetching, Ken Burns focus analysis, dynamic brightness, navigation,
- toast notifications, watchdog, and background/foreground lifecycle.
+ Core slideshow engine using a state machine for lifecycle management.
+ Handles timer-driven image transitions, prefetching, Ken Burns focus
+ analysis, dynamic brightness, navigation, and background lifecycle.
+
+ States: idle → loading → displaying ⇄ paused / backgrounded → stopped
 
  This is the reusable base class. RemoteViewerModel subclasses it to
  add WebSocket, save/block, sensor display, and display sync features.
@@ -18,13 +20,43 @@ import UIKit
 @MainActor
 @Observable
 class SlideshowEngine {
+    // MARK: - State Machine
+
+    enum SlideshowState: Equatable, CustomStringConvertible {
+        case idle
+        case loading
+        case displaying
+        case transitioning
+        case paused
+        case backgrounded
+        case stopped
+
+        var description: String {
+            switch self {
+            case .idle: "idle"
+            case .loading: "loading"
+            case .displaying: "displaying"
+            case .transitioning: "transitioning"
+            case .paused: "paused"
+            case .backgrounded: "backgrounded"
+            case .stopped: "stopped"
+            }
+        }
+    }
+
+    /// Current slideshow state. All lifecycle transitions go through `transition(to:)`.
+    private(set) var state: SlideshowState = .idle
+
+    /// Signal used to wake the run loop when state changes (e.g. unpause, next).
+    /// The run loop sleeps on this; any transition increments it to break the sleep.
+    private var stateVersion: Int = 0
+
     // MARK: - Media Type
 
-    /// The type of media currently being displayed
     enum SlideshowMediaType: Equatable {
         case image
-        case video(URL)       // Video URL to play in WebVideoPlayerView
-        case animatedGIF(URL) // HEVC-converted GIF URL
+        case video(URL)
+        case animatedGIF(URL)
     }
 
     static let videoExtensions: Set<String> = [
@@ -42,18 +74,19 @@ class SlideshowEngine {
     var isRoomActive: Bool = true
     var isTransitioning: Bool = false
     var isLoading: Bool = false
-    var isPaused: Bool = false
+
+    /// Convenience for views — true when state is .paused
+    var isPaused: Bool { state == .paused }
 
     // Toast notifications
     var toastMessage: String?
     var toastIsError: Bool = false
     private var toastDismissTask: Task<Void, Never>?
 
-    // Save grace period — keeps previous post saveable for 1.5s after transition
+    // Save grace period
     var previousPost: RemotePost?
     private var previousPostGraceTask: Task<Void, Never>?
 
-    /// The post that the save button should act on (current, or previous during grace period)
     var saveablePost: RemotePost? {
         currentPost ?? previousPost
     }
@@ -61,18 +94,15 @@ class SlideshowEngine {
     // Ken Burns
     var focusPoint: CGPoint = CGPoint(x: 0.5, y: 0.5)
 
-    // Dynamic brightness (auto-computed from image luminance)
+    // Dynamic brightness
     var autoBrightnessAdjustment: Double = 0
     var autoContrastAdjustment: Double = 1.0
 
-    // User visual adjustments (per-viewer session)
+    // User visual adjustments
     var currentAdjustments: VisualAdjustments = VisualAdjustments()
     var showAdjustmentsPopover: Bool = false
-
-    /// Reference to global adjustments from AppModel
     var globalAdjustments: VisualAdjustments = VisualAdjustments()
 
-    /// Effective brightness combines auto + user + global adjustments
     var effectiveBrightness: Double {
         autoBrightnessAdjustment + currentAdjustments.brightness + globalAdjustments.brightness
     }
@@ -97,7 +127,7 @@ class SlideshowEngine {
     var isFetching: Bool = false
     var fetchReturnedEmpty: Bool = false
 
-    // MARK: - Blocking (merged from server + local config)
+    // MARK: - Blocking
 
     var blockedPosts: Set<Int> = []
     var blockedTags: Set<String> = []
@@ -113,26 +143,25 @@ class SlideshowEngine {
 
     var contentProvider: SlideshowContentProvider?
     var tagListManager: TagListManager?
-
-    /// Unique ID for this engine instance, used for TagListManager registration
     let engineId = UUID()
 
     // MARK: - Private
 
     var gifConversionTask: Task<Void, Never>?
-    var slideshowTask: Task<Void, Never>?
+    private var runLoopTask: Task<Void, Never>?
     var prefetchTask: Task<Void, Never>?
     private var backgroundUnloadTask: Task<Void, Never>?
-    var watchdogTask: Task<Void, Never>?
-    var backgroundedAt: Date?
-    var lastAdvanceTime: Date?
+    private var backgroundedAt: Date?
+    private var lastAdvanceTime: Date?
     private static let backgroundUnloadDelay: TimeInterval = 30
-    private static let watchdogInterval: TimeInterval = 10
     var windowAspectRatio: Double = 16.0 / 9.0
 
-    /// Pre-downloaded images ready for instant display
     var prefetchedImages: [(post: RemotePost, image: UIImage, url: URL)] = []
     private static let prefetchTarget = 3
+
+    /// When set, the next run loop iteration will display this specific post
+    /// instead of advancing normally. Used by previousImage/jumpToHistoryPost.
+    private var pendingPost: RemotePost?
 
     // MARK: - Init
 
@@ -142,35 +171,62 @@ class SlideshowEngine {
         self.useAspectRatio = useAspectRatio
     }
 
+    // MARK: - State Transitions
+
+    /// Central state transition — all lifecycle changes go through here.
+    /// Logs transitions and wakes the run loop.
+    func transition(to newState: SlideshowState) {
+        let oldState = state
+        guard oldState != newState else { return }
+
+        // Validate transitions
+        switch (oldState, newState) {
+        case (.stopped, _) where newState != .stopped:
+            AppLogger.remoteViewer.warning("Ignoring transition from stopped to \(newState.description, privacy: .public)")
+            return
+        default:
+            break
+        }
+
+        state = newState
+        stateVersion += 1
+
+        AppLogger.remoteViewer.debug("State: \(oldState.description, privacy: .public) → \(newState.description, privacy: .public)")
+    }
+
     // MARK: - Lifecycle
 
     func start() {
+        guard state == .idle else {
+            AppLogger.remoteViewer.warning("start() called in state \(self.state.description, privacy: .public), ignoring")
+            return
+        }
+
         if let tagListManager {
             tagListManager.addChangeHandler(id: engineId) { [weak self] in
                 self?.handleTagListChanged()
             }
         }
-        startSlideshow()
-        startWatchdog()
+
+        transition(to: .loading)
+        startRunLoop()
     }
 
     func stop() {
-        slideshowTask?.cancel()
-        slideshowTask = nil
+        transition(to: .stopped)
+        runLoopTask?.cancel()
+        runLoopTask = nil
         prefetchTask?.cancel()
         prefetchTask = nil
         gifConversionTask?.cancel()
         gifConversionTask = nil
         backgroundUnloadTask?.cancel()
         backgroundUnloadTask = nil
-        watchdogTask?.cancel()
-        watchdogTask = nil
         tagListManager?.removeChangeHandler(id: engineId)
     }
 
     func handleScenePhaseChange(from oldPhase: ScenePhase, to newPhase: ScenePhase) {
         if newPhase == .active && oldPhase != .active {
-            // Returning to active
             onBecameActive()
             isRoomActive = true
             backgroundUnloadTask?.cancel()
@@ -179,19 +235,28 @@ class SlideshowEngine {
             let wasBackgrounded = backgroundedAt
             backgroundedAt = nil
 
-            if !isPaused {
-                if let wasBackgrounded,
-                   Date().timeIntervalSince(wasBackgrounded) >= Self.backgroundUnloadDelay {
-                    goToNextImage()
-                }
-                startSlideshow()
+            guard state == .backgrounded else { return }
+
+            if let wasBackgrounded,
+               Date().timeIntervalSince(wasBackgrounded) >= Self.backgroundUnloadDelay {
+                // Images were unloaded — need to load fresh
+                transition(to: .loading)
+            } else if currentImage != nil || currentMediaType != .image {
+                // Still have content — resume displaying (timer will restart in run loop)
+                transition(to: .displaying)
+            } else {
+                transition(to: .loading)
             }
+
         } else if oldPhase == .active && newPhase != .active {
             onEnteredBackground()
             isRoomActive = false
-            slideshowTask?.cancel()
-            slideshowTask = nil
             backgroundedAt = Date()
+
+            // Only background if we're in an active state
+            if state == .displaying || state == .loading || state == .transitioning {
+                transition(to: .backgrounded)
+            }
 
             backgroundUnloadTask = Task {
                 try? await Task.sleep(for: .seconds(Self.backgroundUnloadDelay))
@@ -207,10 +272,7 @@ class SlideshowEngine {
         }
     }
 
-    /// Subclass hook for becoming active (e.g. WebSocket visibility)
     func onBecameActive() {}
-
-    /// Subclass hook for entering background (e.g. WebSocket visibility)
     func onEnteredBackground() {}
 
     func updateWindowAspectRatio(_ size: CGSize) {
@@ -221,17 +283,8 @@ class SlideshowEngine {
     // MARK: - Navigation
 
     func goToNextImage() {
-        slideshowTask?.cancel()
-        slideshowTask = Task { [weak self] in
-            guard let self else { return }
-            await advanceToNextImage()
-            while !Task.isCancelled {
-                let delay = effectiveDelay
-                try? await Task.sleep(for: .seconds(delay))
-                guard !Task.isCancelled else { break }
-                await advanceToNextImage()
-            }
-        }
+        pendingPost = nil
+        transition(to: .loading)
     }
 
     func previousImage() {
@@ -241,32 +294,27 @@ class SlideshowEngine {
         }
         postHistory.removeLast()
         let previous = postHistory.last!
-        Task {
-            await fetchAndDisplayPost(previous)
-        }
+        pendingPost = previous
+        transition(to: .loading)
     }
 
     func jumpToHistoryPost(_ post: RemotePost) {
-        slideshowTask?.cancel()
-        slideshowTask = Task { [weak self] in
-            guard let self else { return }
-            await fetchAndDisplayPost(post)
-            while !Task.isCancelled {
-                let delay = effectiveDelay
-                try? await Task.sleep(for: .seconds(delay))
-                guard !Task.isCancelled else { break }
-                await advanceToNextImage()
-            }
-        }
+        pendingPost = post
+        transition(to: .loading)
     }
 
     func togglePause() {
-        isPaused.toggle()
-        if isPaused {
-            slideshowTask?.cancel()
-            slideshowTask = nil
-        } else {
-            startSlideshow()
+        switch state {
+        case .displaying, .loading, .transitioning:
+            transition(to: .paused)
+        case .paused:
+            if currentImage != nil || currentMediaType != .image {
+                transition(to: .displaying)
+            } else {
+                transition(to: .loading)
+            }
+        default:
+            break
         }
     }
 
@@ -293,30 +341,124 @@ class SlideshowEngine {
             let firstTag = tlm.tagLists[safe: tlm.activeIndex]?.first ?? ""
             showToast("List \(tlm.activeIndex + 1)/\(tlm.tagLists.count): \(firstTag)")
         }
-        goToNextImage()
+        pendingPost = nil
+        transition(to: .loading)
     }
 
-    // MARK: - Private: Slideshow
+    // MARK: - Run Loop
 
-    func startSlideshow() {
-        guard slideshowTask == nil else { return }
-        slideshowTask = Task { [weak self] in
+    /// The single run loop task that drives the slideshow. Reacts to state
+    /// changes rather than being cancelled and recreated.
+    func startRunLoop() {
+        guard runLoopTask == nil else { return }
+        runLoopTask = Task { [weak self] in
             guard let self else { return }
 
-            if currentImage == nil && currentMediaType == .image {
-                await advanceToNextImage()
+            while !Task.isCancelled && state != .stopped {
+                switch state {
+                case .loading:
+                    await runLoadingPhase()
+
+                case .displaying:
+                    await runDisplayingPhase()
+
+                case .paused, .backgrounded:
+                    // Sleep until state changes
+                    await waitForStateChange()
+
+                case .transitioning:
+                    // Shouldn't reach here — transitioning is handled inside display methods
+                    // but just in case, wait briefly
+                    try? await Task.sleep(for: .milliseconds(100))
+
+                case .idle, .stopped:
+                    break
+                }
             }
 
-            while !Task.isCancelled {
-                let delay = effectiveDelay
-                try? await Task.sleep(for: .seconds(delay))
-                guard !Task.isCancelled else { break }
-                await advanceToNextImage()
-            }
+            AppLogger.remoteViewer.debug("Run loop exited (state: \(self.state.description, privacy: .public))")
         }
     }
 
-    /// Effective delay for the current post — uses video duration if available and longer than config delay
+    /// Wait until stateVersion changes (i.e. a transition happened).
+    private func waitForStateChange() async {
+        let versionAtEntry = stateVersion
+        while stateVersion == versionAtEntry && !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+    }
+
+    /// Loading phase: fetch and display the next image.
+    private func runLoadingPhase() async {
+        isLoading = true
+        defer { isLoading = false }
+
+        // If we have a specific post to display (prev/jump), use it
+        if let post = pendingPost {
+            pendingPost = nil
+            await fetchAndDisplayPost(post)
+            if state == .loading {
+                // fetchAndDisplayPost succeeded — transition to displaying
+                transition(to: .displaying)
+            }
+            triggerPrefetch()
+            return
+        }
+
+        // Try prefetched image first for instant transition
+        if let prefetched = prefetchedImages.first {
+            prefetchedImages.removeFirst()
+            guard state == .loading else { return }
+            isCurrentPostAnimatedGIF = false
+            await displayImage(prefetched.image, post: prefetched.post, url: prefetched.url)
+            if state == .loading {
+                transition(to: .displaying)
+            }
+            triggerPrefetch()
+            return
+        }
+
+        // Fetch posts if needed
+        await ensurePostsAvailable()
+        guard state == .loading else { return }
+
+        guard let post = nextNonBlockedPost() else {
+            AppLogger.remoteViewer.warning("No posts available after fetch")
+            fetchReturnedEmpty = true
+            // Wait and retry rather than getting stuck
+            try? await Task.sleep(for: .seconds(5))
+            return
+        }
+
+        await fetchAndDisplayPost(post)
+        if state == .loading {
+            transition(to: .displaying)
+        }
+        triggerPrefetch()
+    }
+
+    /// Displaying phase: wait for the configured delay, then advance.
+    private func runDisplayingPhase() async {
+        let versionAtEntry = stateVersion
+        lastAdvanceTime = Date()
+
+        // Sleep for the delay duration, but wake early if state changes
+        let sleepEnd = Date().addingTimeInterval(effectiveDelay)
+        while Date() < sleepEnd && state == .displaying && stateVersion == versionAtEntry {
+            // Sleep in small chunks so we can react to state changes promptly
+            let remaining = sleepEnd.timeIntervalSince(Date())
+            let chunk = min(remaining, 0.5)
+            guard chunk > 0 else { break }
+            try? await Task.sleep(for: .seconds(chunk))
+        }
+
+        // Only advance if we're still in displaying state and nothing interrupted us
+        if state == .displaying && stateVersion == versionAtEntry {
+            transition(to: .loading)
+        }
+    }
+
+    /// Effective delay — uses video duration if available and longer than config delay
     var effectiveDelay: TimeInterval {
         if case .video = currentMediaType,
            let duration = currentPost?.duration, duration > delay {
@@ -325,56 +467,7 @@ class SlideshowEngine {
         return delay
     }
 
-    func startWatchdog() {
-        guard watchdogTask == nil else { return }
-        watchdogTask = Task { [weak self] in
-            guard let self else { return }
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(Self.watchdogInterval))
-                guard !Task.isCancelled else { break }
-
-                guard !isPaused, backgroundedAt == nil else { continue }
-
-                let maxExpected = effectiveDelay + 30
-                if let last = lastAdvanceTime {
-                    let elapsed = Date().timeIntervalSince(last)
-                    if elapsed > maxExpected {
-                        AppLogger.remoteViewer.warning("Watchdog: slideshow stuck (\(Int(elapsed))s since last advance, expected ≤\(Int(maxExpected))s). Restarting.")
-                        slideshowTask?.cancel()
-                        slideshowTask = nil
-                        startSlideshow()
-                    }
-                } else if slideshowTask == nil {
-                    AppLogger.remoteViewer.warning("Watchdog: no slideshow task running. Starting.")
-                    startSlideshow()
-                }
-            }
-        }
-    }
-
-    private func advanceToNextImage() async {
-        // Use a prefetched image if available for instant transition
-        if let prefetched = prefetchedImages.first {
-            prefetchedImages.removeFirst()
-            guard !Task.isCancelled else { return }
-            isCurrentPostAnimatedGIF = false
-            await displayImage(prefetched.image, post: prefetched.post, url: prefetched.url)
-            triggerPrefetch()
-            return
-        }
-
-        await ensurePostsAvailable()
-        guard !Task.isCancelled else { return }
-
-        guard let post = nextNonBlockedPost() else {
-            AppLogger.remoteViewer.warning("No posts available")
-            fetchReturnedEmpty = true
-            return
-        }
-
-        await fetchAndDisplayPost(post)
-        triggerPrefetch()
-    }
+    // MARK: - Content Loading
 
     private func ensurePostsAvailable() async {
         if !cachedPosts.isEmpty { return }
@@ -383,14 +476,14 @@ class SlideshowEngine {
             await fetchMorePosts()
         }
 
+        // Wait for in-flight fetch with timeout
         var waitIterations = 0
-        while isFetching && cachedPosts.isEmpty && waitIterations < 200 {
+        while isFetching && cachedPosts.isEmpty && waitIterations < 200 && state == .loading {
             try? await Task.sleep(for: .milliseconds(50))
             waitIterations += 1
         }
     }
 
-    /// Pop the next non-blocked post from the cached posts queue
     func nextNonBlockedPost() -> RemotePost? {
         while !cachedPosts.isEmpty {
             let candidate = cachedPosts.removeFirst()
@@ -402,26 +495,21 @@ class SlideshowEngine {
         return nil
     }
 
-    /// Download and display a single post (slow path, no prefetch available).
     func fetchAndDisplayPost(_ post: RemotePost) async {
-        isLoading = true
-        defer { isLoading = false }
-
         guard let imageURL = contentProvider?.resolveImageURL(for: post) else { return }
 
         let ext = post.file_ext.lowercased()
 
-        // Video posts: display directly via WebVideoPlayerView without downloading
         if Self.videoExtensions.contains(ext) {
-            guard !Task.isCancelled else { return }
+            guard state == .loading else { return }
             await displayVideo(url: imageURL, post: post)
             return
         }
 
         guard let result = await contentProvider?.downloadImage(for: post, maxResolution: maxImageResolution) else { return }
-        guard !Task.isCancelled else { return }
+        guard state == .loading else { return }
 
-        // Animated GIF: show first frame immediately, convert to HEVC in background
+        // Animated GIF
         if ext == "gif" && result.data.isAnimatedGIF {
             isCurrentPostAnimatedGIF = true
             await displayImage(result.image, post: post, url: imageURL, mediaType: .image)
@@ -433,10 +521,9 @@ class SlideshowEngine {
                     guard !Task.isCancelled else { return }
                     if self?.currentPost?._id == post._id {
                         self?.currentMediaType = .animatedGIF(hevcURL)
-                        AppLogger.remoteViewer.info("GIF HEVC ready for post \(post._id, privacy: .public)")
                     }
                 } catch {
-                    AppLogger.remoteViewer.warning("GIF HEVC conversion failed for post \(post._id, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                    AppLogger.remoteViewer.warning("GIF HEVC conversion failed: \(error.localizedDescription, privacy: .public)")
                 }
             }
             return
@@ -446,30 +533,15 @@ class SlideshowEngine {
         await displayImage(result.image, post: post, url: imageURL)
     }
 
-    /// Display a video post
+    // MARK: - Display
+
     func displayVideo(url: URL, post: RemotePost) async {
-        // Keep previous post saveable for 1.5s grace period
-        if let outgoing = currentPost {
-            previousPost = outgoing
-            previousPostGraceTask?.cancel()
-            previousPostGraceTask = Task {
-                try? await Task.sleep(for: .seconds(1.5))
-                guard !Task.isCancelled else { return }
-                previousPost = nil
-            }
-        }
-
-        postHistory.append(post)
-        historyImageURLs[post._id] = url
-        if postHistory.count > 100 { postHistory.removeFirst() }
-
-        // Notify content provider (e.g. for server-side history)
+        trackPreviousPost()
+        trackHistory(post: post, url: url)
         Task { await contentProvider?.onPostDisplayed(post) }
 
         autoBrightnessAdjustment = 0
         autoContrastAdjustment = 1.0
-
-        guard !Task.isCancelled else { return }
 
         gifConversionTask?.cancel()
         gifConversionTask = nil
@@ -483,31 +555,15 @@ class SlideshowEngine {
         lastAdvanceTime = Date()
 
         AppLogger.remoteViewer.info("Displaying video post \(post._id, privacy: .public)")
-
         onPostTransitioned(post: post, url: url)
     }
 
-    /// Show an already-loaded image with crossfade, Ken Burns analysis, and brightness adjustment
     func displayImage(_ image: UIImage, post: RemotePost, url: URL, mediaType: SlideshowMediaType = .image) async {
-        // Keep previous post saveable for 1.5s grace period
-        if let outgoing = currentPost {
-            previousPost = outgoing
-            previousPostGraceTask?.cancel()
-            previousPostGraceTask = Task {
-                try? await Task.sleep(for: .seconds(1.5))
-                guard !Task.isCancelled else { return }
-                previousPost = nil
-            }
-        }
-
-        postHistory.append(post)
-        historyImageURLs[post._id] = url
-        if postHistory.count > 100 { postHistory.removeFirst() }
-
-        // Notify content provider (e.g. for server-side history)
+        trackPreviousPost()
+        trackHistory(post: post, url: url)
         Task { await contentProvider?.onPostDisplayed(post) }
 
-        // Analyze image for Ken Burns and brightness
+        // Analyze for Ken Burns and brightness
         if let cgImage = image.cgImage {
             if enableKenBurns {
                 let focus = await Task.detached {
@@ -530,7 +586,8 @@ class SlideshowEngine {
             }
         }
 
-        guard !Task.isCancelled else { return }
+        // Bail if state changed during analysis
+        guard state == .loading || state == .displaying else { return }
 
         if mediaType == .image {
             gifConversionTask?.cancel()
@@ -538,6 +595,7 @@ class SlideshowEngine {
         }
 
         // Crossfade transition
+        transition(to: .transitioning)
         withAnimation(.easeInOut(duration: 1.0)) {
             nextImage = image
             nextPost = post
@@ -545,6 +603,9 @@ class SlideshowEngine {
         }
 
         try? await Task.sleep(for: .seconds(1.0))
+
+        // Commit the transition using local parameters (not nextImage/nextPost)
+        // to avoid races with interleaved calls
         currentImage = image
         currentPost = post
         currentMediaType = mediaType
@@ -552,16 +613,38 @@ class SlideshowEngine {
         isTransitioning = false
         lastAdvanceTime = Date()
 
-        guard !Task.isCancelled else { return }
+        // If still transitioning (nobody interrupted), move to displaying.
+        // If state was changed (e.g. goToNextImage during crossfade), respect that.
+        if state == .transitioning {
+            transition(to: .displaying)
+        }
 
         onPostTransitioned(post: post, url: url)
     }
 
-    /// Subclass hook called after a post is fully transitioned to.
-    /// Used by RemoteViewerModel for display sync.
     func onPostTransitioned(post: RemotePost, url: URL) {}
 
-    // MARK: - Private: Prefetching
+    // MARK: - History Tracking
+
+    private func trackPreviousPost() {
+        if let outgoing = currentPost {
+            previousPost = outgoing
+            previousPostGraceTask?.cancel()
+            previousPostGraceTask = Task {
+                try? await Task.sleep(for: .seconds(1.5))
+                guard !Task.isCancelled else { return }
+                previousPost = nil
+            }
+        }
+    }
+
+    private func trackHistory(post: RemotePost, url: URL) {
+        postHistory.append(post)
+        historyImageURLs[post._id] = url
+        if postHistory.count > 100 { postHistory.removeFirst() }
+    }
+
+    // MARK: - Prefetching
 
     func triggerPrefetch() {
         prefetchTask?.cancel()
@@ -597,7 +680,7 @@ class SlideshowEngine {
         }
     }
 
-    // MARK: - Private: Fetching
+    // MARK: - Fetching
 
     func fetchMorePosts() async {
         guard let contentProvider, !isFetching else { return }

@@ -10,7 +10,6 @@ import os
 import SwiftUI
 
 @MainActor
-@Observable
 class RemoteViewerModel: SlideshowEngine {
     // MARK: - Configuration
 
@@ -57,7 +56,6 @@ class RemoteViewerModel: SlideshowEngine {
             useAspectRatio: config.useAspectRatio
         )
 
-        // Initialize blocked lists from config
         self.blockedPosts = Set(config.blockedPosts)
         self.blockedTags = Set(config.blockedTags)
     }
@@ -68,22 +66,26 @@ class RemoteViewerModel: SlideshowEngine {
     // MARK: - Lifecycle
 
     override func start() {
-        if !isGalleryMode {
-            // Fetch tag lists from server in the background (non-blocking)
-            fetchRemoteTagLists()
+        guard state == .idle else { return }
 
+        if !isGalleryMode {
+            fetchRemoteTagLists()
             setupWebSocket()
 
             // If "Server Decides" is configured and WS is active, wait 1s for the
             // server to send a currentTagList message before starting the slideshow
             if let tlm = tagListManager, tlm.serverControlEnabled && !config.wsEndpoint.isEmpty {
-                slideshowTask = Task { [weak self] in
-                    try? await Task.sleep(for: .seconds(1))
-                    guard !Task.isCancelled else { return }
-                    self?.slideshowTask = nil
-                    self?.startSlideshow()
+                // Register tag list handler before the delay
+                tagListManager?.addChangeHandler(id: engineId) { [weak self] in
+                    self?.handleTagListChanged()
                 }
-                startWatchdog()
+                Task { [weak self] in
+                    try? await Task.sleep(for: .seconds(1))
+                    guard let self, self.state == .idle else { return }
+                    // Now start the engine (idle → loading)
+                    self.transition(to: .loading)
+                    self.startRunLoop()
+                }
                 return
             }
         }
@@ -105,8 +107,6 @@ class RemoteViewerModel: SlideshowEngine {
 
     // MARK: - Remote Tag List Fetch
 
-    /// Asynchronously fetch tags.json from the API endpoint and update the
-    /// shared TagListManager if the server provides tag lists.
     private func fetchRemoteTagLists() {
         let apiClient = self.apiClient
         let baseURL = config.apiEndpoint
@@ -116,14 +116,12 @@ class RemoteViewerModel: SlideshowEngine {
                 guard !serverLists.isEmpty, let self else { return }
                 guard let tlm = self.tagListManager else { return }
 
-                // Only update if the server lists differ from current
                 if tlm.tagLists != serverLists {
                     tlm.tagLists = serverLists
                     AppLogger.remoteViewer.info("Updated tag lists from tags.json: \(serverLists.count, privacy: .public) lists")
                     self.showToast("Loaded \(serverLists.count) tag lists from server")
                 }
             } catch {
-                // Non-fatal — tags.json is optional
                 AppLogger.remoteViewer.debug("tags.json not available: \(error.localizedDescription, privacy: .public)")
             }
         }
@@ -213,20 +211,19 @@ class RemoteViewerModel: SlideshowEngine {
             }
 
         case .displayState(let isOn):
-            if isOn && isPaused {
-                isPaused = false
-                startSlideshow()
-            } else if !isOn && !isPaused && currentImage != nil {
-                isPaused = true
-                slideshowTask?.cancel()
-                slideshowTask = nil
+            if isOn && state == .paused {
+                if currentImage != nil || currentMediaType != .image {
+                    transition(to: .displaying)
+                } else {
+                    transition(to: .loading)
+                }
+            } else if !isOn && state == .displaying {
+                transition(to: .paused)
             }
 
         case .currentTagList(let index):
-            // Delegate to TagListManager — it handles the "Server Decides" check
             if let tlm = tagListManager {
                 if tlm.handleServerTagListChange(to: index) {
-                    // TagListManager already notified all engines via changeHandlers
                     AppLogger.remoteViewer.info("Server changed tag list to \(index, privacy: .public)")
                 }
             }
@@ -244,7 +241,7 @@ class RemoteViewerModel: SlideshowEngine {
             onDismissAlertWindow?()
 
         case .sensorUpdate:
-            break // Handled by wsClient.sensorData directly
+            break
 
         case .refresh:
             cachedPosts.removeAll()
