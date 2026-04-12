@@ -152,6 +152,8 @@ class SlideshowEngine {
     var prefetchTask: Task<Void, Never>?
     private var backgroundUnloadTask: Task<Void, Never>?
     private var backgroundedAt: Date?
+    /// The state the engine was in before being backgrounded, for proper restoration.
+    private var stateBeforeBackground: SlideshowState?
     private var lastAdvanceTime: Date?
     private static let backgroundUnloadDelay: TimeInterval = 30
     var windowAspectRatio: Double = 16.0 / 9.0
@@ -227,47 +229,60 @@ class SlideshowEngine {
 
     func handleScenePhaseChange(from oldPhase: ScenePhase, to newPhase: ScenePhase) {
         if newPhase == .active && oldPhase != .active {
+            // Returning to active
             onBecameActive()
             isRoomActive = true
             backgroundUnloadTask?.cancel()
             backgroundUnloadTask = nil
-
-            let wasBackgrounded = backgroundedAt
             backgroundedAt = nil
 
             guard state == .backgrounded else { return }
 
-            if let wasBackgrounded,
-               Date().timeIntervalSince(wasBackgrounded) >= Self.backgroundUnloadDelay {
-                // Images were unloaded — need to load fresh
-                transition(to: .loading)
-            } else if currentImage != nil || currentMediaType != .image {
-                // Still have content — resume displaying (timer will restart in run loop)
+            // Restore to the state we were in before backgrounding
+            let restoreState = stateBeforeBackground ?? .displaying
+            stateBeforeBackground = nil
+
+            let hasContent = currentImage != nil || currentMediaType != .image
+
+            if restoreState == .paused {
+                // Preserve paused state across background cycle
+                transition(to: .paused)
+            } else if hasContent {
+                // Still have images — resume the slideshow timer
                 transition(to: .displaying)
             } else {
+                // Images were unloaded or never loaded — fetch fresh
                 transition(to: .loading)
             }
 
         } else if oldPhase == .active && newPhase != .active {
+            // Leaving active — on visionOS this can happen from gaze shifts,
+            // system interruptions, or true backgrounding
             onEnteredBackground()
             isRoomActive = false
             backgroundedAt = Date()
 
-            // Only background if we're in an active state
-            if state == .displaying || state == .loading || state == .transitioning {
+            // Remember current state so we can restore it properly
+            if state != .stopped && state != .idle && state != .backgrounded {
+                stateBeforeBackground = state
                 transition(to: .backgrounded)
             }
 
-            backgroundUnloadTask = Task {
-                try? await Task.sleep(for: .seconds(Self.backgroundUnloadDelay))
-                guard !Task.isCancelled else { return }
-                currentImage = nil
-                nextImage = nil
-                currentMediaType = .image
-                prefetchedImages.removeAll()
-                gifConversionTask?.cancel()
-                gifConversionTask = nil
-                AppLogger.remoteViewer.info("Background unload: released images/video after 30s")
+            // Start the unload timer. If we return to active before it fires,
+            // it gets cancelled above. The timer only starts when we actually
+            // transitioned to .backgrounded.
+            if state == .backgrounded {
+                backgroundUnloadTask = Task {
+                    try? await Task.sleep(for: .seconds(Self.backgroundUnloadDelay))
+                    guard !Task.isCancelled else { return }
+                    currentImage = nil
+                    nextImage = nil
+                    currentMediaType = .image
+                    prefetchedImages.removeAll()
+                    gifConversionTask?.cancel()
+                    gifConversionTask = nil
+                    AppLogger.remoteViewer.info("Background unload: released images/video after 30s")
+                }
             }
         }
     }
