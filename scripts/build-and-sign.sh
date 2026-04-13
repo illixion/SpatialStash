@@ -61,14 +61,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Select identity and profile based on config
-if [[ "$CONFIG" == "Release" ]]; then
-    SIGN_IDENTITY="$DIST_IDENTITY"
-    PROFILE_NAME="$DIST_PROFILE_NAME"
-else
-    SIGN_IDENTITY="$DEV_IDENTITY"
-    PROFILE_NAME="$DEV_PROFILE_NAME"
-fi
+# Sideloading uses dev signing
+SIGN_IDENTITY="$DEV_IDENTITY"
+PROFILE_NAME="$DEV_PROFILE_NAME"
 
 # --- Helper functions ---
 
@@ -197,31 +192,27 @@ if [[ -z "$APP_BUNDLE" ]]; then
     exit 1
 fi
 
-# Step 5: Rewrite bundle identifier to match provisioning profile
-echo "==> Setting bundle identifier to $BUNDLE_ID..."
-/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$APP_BUNDLE/Info.plist"
-
-# Step 6: Embed provisioning profile
+# Step 5: Embed provisioning profile
 echo "==> Embedding provisioning profile..."
 cp "$PROFILE_PATH" "$APP_BUNDLE/embedded.mobileprovision"
 
-# Step 7: Sign
+# Step 6: Sign
 echo "==> Signing app bundle..."
 sign_app "$APP_BUNDLE" "$SIGN_IDENTITY" "$ENTITLEMENTS_PLIST"
 
-# Step 8: Repack as signed IPA
+# Step 7: Repack as signed IPA
 SIGNED_IPA="${IPA_PATH%.ipa}-signed.ipa"
 echo "==> Repacking signed IPA..."
 (cd "$UNPACK_DIR" && rm -f "$SIGNED_IPA" && zip -qr "$SIGNED_IPA" Payload)
 echo ""
 echo "Done! Signed IPA: $SIGNED_IPA"
 
-# Step 9: Verify
+# Step 8: Verify
 echo ""
 echo "==> Verification:"
 codesign -dvvv "$APP_BUNDLE" 2>&1 | grep -E "^(Authority|TeamIdentifier|Identifier|Signature)"
 
-# Step 10: Deploy to device
+# Step 9: Deploy to device
 if [[ "$NO_DEPLOY" == false ]]; then
     echo ""
     echo "==> Deploying to $DEVICE_NAME..."

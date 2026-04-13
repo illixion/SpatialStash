@@ -3,8 +3,8 @@
 #
 # This configures signing for the standalone build script (scripts/build-and-sign.sh).
 # BUILD_BUNDLE_ID overrides PRODUCT_BUNDLE_IDENTIFIER from LocalSigning.xcconfig
-# at build time. BUNDLE_ID is then written into Info.plist before signing,
-# allowing a separate app ID tied to the provisioning profile and device UUID.
+# at build time — this is the app's identity on device.
+# BUNDLE_ID is the provisioning profile's app ID (used for device authorization only).
 
 TEAM_ID="YOUR_TEAM_ID"
 BUILD_BUNDLE_ID="your.build.bundle.identifier"
