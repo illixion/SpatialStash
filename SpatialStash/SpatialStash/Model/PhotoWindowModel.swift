@@ -27,8 +27,10 @@ class PhotoWindowModel {
     var contentEntity: Entity = Entity()
     var spatial3DImageState: Spatial3DImageState = .notGenerated
     var spatial3DImage: ImagePresentationComponent.Spatial3DImage? = nil
-    /// Whether to show the auto-restore 3D overlay with cancel button
-    var showAutoRestoreOverlay: Bool = false
+    /// Whether to show the 3D restore prompt pill at the bottom of the viewer
+    var showAutoRestorePrompt: Bool = false
+    /// Whether the auto-restore target is immersive 3D (vs regular 3D)
+    var autoRestoreImmersive: Bool = false
     var isLoadingDetailImage: Bool = false
     var inputPlaneEntity: Entity = Entity()
 
@@ -490,14 +492,12 @@ class PhotoWindowModel {
             if appModel.rememberImageEnhancements {
                 let lastMode = await ImageEnhancementTracker.shared.lastViewingMode(url: imageURL)
                 let wasConverted = await ImageEnhancementTracker.shared.wasConverted(url: imageURL)
-                let shouldAutoGenerate = appModel.autoRestoreSpatial3D && wasConverted && (lastMode == .spatial3D || lastMode == .spatial3DImmersive)
-                if shouldAutoGenerate {
-                    showAutoRestoreOverlay = true
+                let shouldOfferRestore = appModel.autoRestoreSpatial3D && wasConverted && (lastMode == .spatial3D || lastMode == .spatial3DImmersive)
+                if shouldOfferRestore {
+                    autoRestoreImmersive = lastMode == .spatial3DImmersive
+                    showAutoRestorePrompt = true
                 }
-                if shouldAutoGenerate && lastMode == .spatial3DImmersive {
-                    desiredViewingMode = .spatial3DImmersive
-                }
-                activate3DMode(generateImmediately: shouldAutoGenerate)
+                activate3DMode(generateImmediately: false)
             } else {
                 activate3DMode(generateImmediately: false)
             }
@@ -510,12 +510,9 @@ class PhotoWindowModel {
         let wasConverted = await ImageEnhancementTracker.shared.wasConverted(url: imageURL)
 
         if appModel.autoRestoreSpatial3D && wasConverted && (lastMode == .spatial3D || lastMode == .spatial3DImmersive) {
-            // Auto-activate 3D (skips 2D load entirely)
-            showAutoRestoreOverlay = true
-            if lastMode == .spatial3DImmersive {
-                desiredViewingMode = .spatial3DImmersive
-            }
-            activate3DMode()
+            // Show prompt pill instead of auto-generating — user opts in
+            autoRestoreImmersive = lastMode == .spatial3DImmersive
+            showAutoRestorePrompt = true
         } else if lastMode == .autoEnhanced {
             if let cachedData = await AutoEnhanceCache.shared.loadData(for: imageURL),
                let cachedImage = UIImage(data: cachedData) {

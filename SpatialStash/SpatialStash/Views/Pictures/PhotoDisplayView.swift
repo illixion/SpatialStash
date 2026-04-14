@@ -76,41 +76,46 @@ struct PhotoDisplayView: View {
                 .scaleEffect(x: windowModel.isImageFlipped ? -1 : 1, y: 1)
                 .offset(x: dragOffset)
 
-            // 3D auto-restore overlay with cancel button
-            if windowModel.showAutoRestoreOverlay {
-                VStack(spacing: 16) {
-                    if windowModel.spatial3DImageState == .generating {
-                        ProgressView()
-                            .scaleEffect(1.2)
-                        Text("Generating 3D...")
-                            .font(.title3)
-                            .foregroundColor(.primary)
-                    } else {
+            // 3D restore prompt pill at the bottom
+            if windowModel.showAutoRestorePrompt {
+                VStack {
+                    Spacer()
+                    HStack(spacing: 12) {
                         Image(systemName: "view.3d")
-                            .font(.title)
-                            .foregroundColor(.primary)
-                        Text("3D restored")
-                            .font(.title3)
-                            .foregroundColor(.primary)
-                    }
+                            .font(.body)
+                        Text("This image was previously viewed in 3D")
+                            .font(.callout)
+                            .lineLimit(1)
 
-                    Button {
-                        windowModel.showAutoRestoreOverlay = false
-                        Task {
-                            await windowModel.switchToViewingMode(.mono)
+                        Button {
+                            windowModel.showAutoRestorePrompt = false
+                            Task {
+                                let mode: ImagePresentationComponent.ViewingMode = windowModel.autoRestoreImmersive ? .spatial3DImmersive : .spatial3D
+                                await windowModel.switchToViewingMode(mode)
+                            }
+                        } label: {
+                            Text("Restore")
+                                .font(.callout.weight(.semibold))
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 8)
                         }
-                    } label: {
-                        Text("Cancel")
-                            .font(.title3)
-                            .padding(.horizontal, 24)
-                            .padding(.vertical, 12)
+                        .buttonStyle(.borderedProminent)
+
+                        Button {
+                            windowModel.showAutoRestorePrompt = false
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.callout)
+                        }
+                        .buttonStyle(.borderless)
                     }
-                    .buttonStyle(.bordered)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 12)
+                    .glassBackgroundEffect(in: Capsule())
+                    .padding(.bottom, 80) // clear the ornament
                 }
-                .padding(32)
-                .glassBackgroundEffect()
-                .transition(.opacity)
-                .animation(.easeInOut(duration: 0.3), value: windowModel.showAutoRestoreOverlay)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .animation(.easeInOut(duration: 0.3), value: windowModel.showAutoRestorePrompt)
             }
         }
         .background(

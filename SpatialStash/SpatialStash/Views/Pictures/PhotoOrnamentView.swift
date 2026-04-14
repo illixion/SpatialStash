@@ -191,8 +191,13 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
         .disabled(windowModel.isAnimatedImage)
         .help("3D")
         .popover(isPresented: $show3DPopover) {
-            VStack(spacing: 0) {
-                Button {
+            VStack(spacing: 4) {
+                popoverMenuButton(
+                    title: "3D",
+                    icon: "square.stack.3d.forward.dottedline.fill",
+                    isChecked: windowModel.desiredViewingMode == .spatial3D,
+                    isDisabled: windowModel.isAnimatedImage || (windowModel.spatial3DImageState == .generating && windowModel.desiredViewingMode != .spatial3DImmersive)
+                ) {
                     show3DPopover = false
                     Task {
                         if windowModel.desiredViewingMode == .spatial3D {
@@ -201,27 +206,16 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
                             await windowModel.switchToViewingMode(.spatial3D)
                         }
                     }
-                } label: {
-                    Label {
-                        HStack {
-                            Text("3D")
-                            Spacer()
-                            if windowModel.desiredViewingMode == .spatial3D {
-                                Image(systemName: "checkmark")
-                                    .foregroundColor(.accentColor)
-                            }
-                        }
-                    } icon: {
-                        Image(systemName: "square.stack.3d.forward.dottedline.fill")
-                    }
                 }
-                .buttonStyle(.borderless)
-                .disabled(windowModel.isAnimatedImage || (windowModel.spatial3DImageState == .generating && windowModel.desiredViewingMode != .spatial3DImmersive))
 
                 Divider()
-                    .padding(.vertical, 4)
 
-                Button {
+                popoverMenuButton(
+                    title: "Immersive 3D",
+                    icon: "square.arrowtriangle.4.outward",
+                    isChecked: windowModel.desiredViewingMode == .spatial3DImmersive,
+                    isDisabled: windowModel.isAnimatedImage || (windowModel.spatial3DImageState == .generating && windowModel.desiredViewingMode != .spatial3D)
+                ) {
                     show3DPopover = false
                     Task {
                         if windowModel.desiredViewingMode == .spatial3DImmersive {
@@ -230,39 +224,24 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
                             await windowModel.switchToViewingMode(.spatial3DImmersive)
                         }
                     }
-                } label: {
-                    Label {
-                        HStack {
-                            Text("Immersive 3D")
-                            Spacer()
-                            if windowModel.desiredViewingMode == .spatial3DImmersive {
-                                Image(systemName: "checkmark")
-                                    .foregroundColor(.accentColor)
-                            }
-                        }
-                    } icon: {
-                        Image(systemName: "square.arrowtriangle.4.outward")
-                    }
                 }
-                .buttonStyle(.borderless)
-                .disabled(windowModel.isAnimatedImage || (windowModel.spatial3DImageState == .generating && windowModel.desiredViewingMode != .spatial3D))
 
                 if is3DModeActive {
                     Divider()
-                        .padding(.vertical, 4)
 
-                    Button {
+                    popoverMenuButton(
+                        title: "2D",
+                        icon: "view.2d",
+                        isChecked: false
+                    ) {
                         show3DPopover = false
                         Task {
                             await windowModel.switchToViewingMode(.mono)
                         }
-                    } label: {
-                        Label("2D", systemImage: "view.2d")
                     }
-                    .buttonStyle(.borderless)
                 }
             }
-            .padding(12)
+            .padding(8)
         }
     }
 
@@ -295,43 +274,28 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
         .disabled(windowModel.isLoadingDetailImage)
         .help(windowModel.resolutionOverride != nil ? "Resolution Override: \(resolutionOverrideLabel)" : "Image Resolution")
         .popover(isPresented: $showResolutionPopover) {
-            VStack(spacing: 0) {
-                Button {
+            VStack(spacing: 4) {
+                popoverMenuButton(
+                    title: "Auto",
+                    isChecked: windowModel.resolutionOverride == nil
+                ) {
                     showResolutionPopover = false
                     Task { await windowModel.applyResolutionOverride(nil) }
-                } label: {
-                    HStack {
-                        Text("Auto")
-                        Spacer()
-                        if windowModel.resolutionOverride == nil {
-                            Image(systemName: "checkmark")
-                                .foregroundColor(.accentColor)
-                        }
-                    }
                 }
-                .buttonStyle(.borderless)
 
                 Divider()
-                    .padding(.vertical, 4)
 
                 ForEach(AppModel.maxImageResolutionOptions, id: \.value) { option in
-                    Button {
+                    popoverMenuButton(
+                        title: option.label,
+                        isChecked: windowModel.resolutionOverride == option.value
+                    ) {
                         showResolutionPopover = false
                         Task { await windowModel.applyResolutionOverride(option.value) }
-                    } label: {
-                        HStack {
-                            Text(option.label)
-                            Spacer()
-                            if windowModel.resolutionOverride == option.value {
-                                Image(systemName: "checkmark")
-                                    .foregroundColor(.accentColor)
-                            }
-                        }
                     }
-                    .buttonStyle(.borderless)
                 }
             }
-            .padding(12)
+            .padding(8)
         }
     }
 
@@ -494,5 +458,37 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
                 )
             }
         }
+    }
+
+    // MARK: - Popover Menu Button Helper
+
+    /// Reusable button styled to match native visionOS menu item sizing.
+    private func popoverMenuButton(
+        title: String,
+        icon: String? = nil,
+        isChecked: Bool,
+        isDisabled: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                if let icon {
+                    Image(systemName: icon)
+                        .frame(width: 24)
+                }
+                Text(title)
+                Spacer()
+                if isChecked {
+                    Image(systemName: "checkmark")
+                        .foregroundColor(.accentColor)
+                }
+            }
+            .font(.body)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .disabled(isDisabled)
     }
 }
