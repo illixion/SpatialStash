@@ -4,6 +4,8 @@
  Unified ornament for all picture viewer windows.
  Controls are configured via PhotoViewerContext to show/hide
  navigation, slideshow, rating, and context-specific buttons.
+
+ Layout: [Gallery] | [< N/M >] | [Slideshow] | [3D v] | [Info] | [Share] | [... More v] | [Resolution]
  */
 
 import RealityKit
@@ -19,14 +21,12 @@ enum PhotoViewerContext {
     case shared
 }
 
-struct PhotoOrnamentView<ExtraButtons: View>: View {
+struct PhotoOrnamentView<ExtraMenuItems: View>: View {
     @Bindable var windowModel: PhotoWindowModel
     let context: PhotoViewerContext
     var onGalleryButtonTap: () -> Void
-    @ViewBuilder var extraButtons: () -> ExtraButtons
+    @ViewBuilder var extraMenuItems: () -> ExtraMenuItems
     @Environment(\.openWindow) private var openWindow
-
-    @State private var isUpdatingMediaInfo = false
 
     var body: some View {
         HStack(spacing: 16) {
@@ -53,26 +53,25 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
                     .frame(height: 24)
             }
 
-            threeDButton
-            immersive3DButton
+            threeDMenu
 
-            adjustmentsButton
+            // Info button (rating / metadata — when stashId exists and not shared context)
+            if context != .shared, windowModel.image.stashId != nil {
+                Divider()
+                    .frame(height: 24)
+
+                infoButton
+            }
 
             Divider()
                 .frame(height: 24)
 
             shareButton
 
-            // Rating / O counter (when stashId exists and not shared context)
-            if context != .shared, windowModel.image.stashId != nil {
-                Divider()
-                    .frame(height: 24)
+            Divider()
+                .frame(height: 24)
 
-                ratingButton
-            }
-
-            // Extra buttons (pop-out, save, etc.)
-            extraButtons()
+            moreMenu
 
             // Resolution indicator (only in lightweight 2D mode with a loaded image)
             if !windowModel.isRealityKitDisplay, !windowModel.isAnimatedImage, windowModel.displayTexture != nil || windowModel.displayImage != nil {
@@ -87,6 +86,14 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
             else { windowModel.startAutoHideTimer() }
         }
         .onChange(of: windowModel.showAdjustmentsPopover) { _, isOpen in
+            if isOpen { windowModel.cancelAutoHideTimer() }
+            else { windowModel.startAutoHideTimer() }
+        }
+        .onChange(of: show3DPopover) { _, isOpen in
+            if isOpen { windowModel.cancelAutoHideTimer() }
+            else { windowModel.startAutoHideTimer() }
+        }
+        .onChange(of: showResolutionPopover) { _, isOpen in
             if isOpen { windowModel.cancelAutoHideTimer() }
             else { windowModel.startAutoHideTimer() }
         }
@@ -145,7 +152,6 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
 
     private func launchGallerySlideshow() {
         let appModel = windowModel.appModel
-        // Reuse or create the gallery slideshow config
         let config: RemoteViewerConfig
         if let existing = appModel.gallerySlideshowConfig {
             config = existing
@@ -161,102 +167,172 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
         openWindow(id: "remote-viewer", value: RemoteViewerWindowValue(configId: config.id))
     }
 
-    // MARK: - 3D Toggle
+    // MARK: - 3D Menu
 
-    private var threeDButton: some View {
+    @State private var show3DPopover = false
+
+    private var threeDMenu: some View {
         Button {
-            Task {
-                if windowModel.desiredViewingMode == .spatial3D {
-                    await windowModel.switchToViewingMode(.mono)
-                } else {
-                    await windowModel.switchToViewingMode(.spatial3D)
-                }
-            }
+            show3DPopover.toggle()
         } label: {
             Group {
-                if windowModel.spatial3DImageState == .generating && windowModel.desiredViewingMode != .spatial3DImmersive {
+                if windowModel.spatial3DImageState == .generating {
                     ProgressView()
                         .scaleEffect(0.8)
                 } else {
-                    Image(systemName: "view.3d")
+                    Image(systemName: threeDMenuIcon)
                 }
             }
             .font(.title3)
             .padding(6)
-            .background(windowModel.desiredViewingMode == .spatial3D ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
+            .background(is3DModeActive ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
         }
         .buttonStyle(.borderless)
-        .disabled(windowModel.isAnimatedImage || (windowModel.spatial3DImageState == .generating && windowModel.desiredViewingMode != .spatial3DImmersive))
+        .disabled(windowModel.isAnimatedImage)
         .help("3D")
+        .popover(isPresented: $show3DPopover) {
+            VStack(spacing: 0) {
+                Button {
+                    show3DPopover = false
+                    Task {
+                        if windowModel.desiredViewingMode == .spatial3D {
+                            await windowModel.switchToViewingMode(.mono)
+                        } else {
+                            await windowModel.switchToViewingMode(.spatial3D)
+                        }
+                    }
+                } label: {
+                    Label {
+                        HStack {
+                            Text("3D")
+                            Spacer()
+                            if windowModel.desiredViewingMode == .spatial3D {
+                                Image(systemName: "checkmark")
+                                    .foregroundColor(.accentColor)
+                            }
+                        }
+                    } icon: {
+                        Image(systemName: "square.stack.3d.forward.dottedline.fill")
+                    }
+                }
+                .buttonStyle(.borderless)
+                .disabled(windowModel.isAnimatedImage || (windowModel.spatial3DImageState == .generating && windowModel.desiredViewingMode != .spatial3DImmersive))
+
+                Divider()
+                    .padding(.vertical, 4)
+
+                Button {
+                    show3DPopover = false
+                    Task {
+                        if windowModel.desiredViewingMode == .spatial3DImmersive {
+                            await windowModel.switchToViewingMode(.mono)
+                        } else {
+                            await windowModel.switchToViewingMode(.spatial3DImmersive)
+                        }
+                    }
+                } label: {
+                    Label {
+                        HStack {
+                            Text("Immersive 3D")
+                            Spacer()
+                            if windowModel.desiredViewingMode == .spatial3DImmersive {
+                                Image(systemName: "checkmark")
+                                    .foregroundColor(.accentColor)
+                            }
+                        }
+                    } icon: {
+                        Image(systemName: "square.arrowtriangle.4.outward")
+                    }
+                }
+                .buttonStyle(.borderless)
+                .disabled(windowModel.isAnimatedImage || (windowModel.spatial3DImageState == .generating && windowModel.desiredViewingMode != .spatial3D))
+
+                if is3DModeActive {
+                    Divider()
+                        .padding(.vertical, 4)
+
+                    Button {
+                        show3DPopover = false
+                        Task {
+                            await windowModel.switchToViewingMode(.mono)
+                        }
+                    } label: {
+                        Label("2D", systemImage: "view.2d")
+                    }
+                    .buttonStyle(.borderless)
+                }
+            }
+            .padding(12)
+        }
     }
 
-    private var immersive3DButton: some View {
-        Button {
-            Task {
-                if windowModel.desiredViewingMode == .spatial3DImmersive {
-                    await windowModel.switchToViewingMode(.mono)
-                } else {
-                    await windowModel.switchToViewingMode(.spatial3DImmersive)
-                }
-            }
-        } label: {
-            Group {
-                if windowModel.spatial3DImageState == .generating && windowModel.desiredViewingMode == .spatial3DImmersive {
-                    ProgressView()
-                        .scaleEffect(0.8)
-                } else {
-                    Image(systemName: "square.arrowtriangle.4.outward")
-                }
-            }
-            .font(.title3)
-            .padding(6)
-            .background(windowModel.desiredViewingMode == .spatial3DImmersive ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
+    private var is3DModeActive: Bool {
+        windowModel.desiredViewingMode == .spatial3D || windowModel.desiredViewingMode == .spatial3DImmersive
+    }
+
+    private var threeDMenuIcon: String {
+        switch windowModel.desiredViewingMode {
+        case .spatial3D: return "square.stack.3d.forward.dottedline.fill"
+        case .spatial3DImmersive: return "square.arrowtriangle.4.outward"
+        default: return "view.3d"
         }
-        .buttonStyle(.borderless)
-        .disabled(windowModel.isAnimatedImage || (windowModel.spatial3DImageState == .generating && windowModel.desiredViewingMode != .spatial3D))
-        .help("Immersive 3D")
     }
 
     // MARK: - Resolution Menu
 
+    @State private var showResolutionPopover = false
+
     private var resolutionMenu: some View {
-        Menu {
-            // "Auto" option clears the override, reverting to global setting
-            Button {
-                Task { await windowModel.applyResolutionOverride(nil) }
-            } label: {
-                HStack {
-                    Text("Auto")
-                    if windowModel.resolutionOverride == nil {
-                        Image(systemName: "checkmark")
-                    }
-                }
-            }
-
-            Divider()
-
-            ForEach(AppModel.maxImageResolutionOptions, id: \.value) { option in
-                Button {
-                    Task { await windowModel.applyResolutionOverride(option.value) }
-                } label: {
-                    HStack {
-                        Text(option.label)
-                        if windowModel.resolutionOverride == option.value {
-                            Image(systemName: "checkmark")
-                        }
-                    }
-                }
-            }
+        Button {
+            showResolutionPopover.toggle()
         } label: {
             Text("\(windowModel.currentDisplayResolution)px")
                 .font(.caption)
                 .monospacedDigit()
                 .foregroundColor(windowModel.resolutionOverride != nil ? .accentColor : .secondary)
         }
-        .menuStyle(.button)
         .buttonStyle(.borderless)
         .disabled(windowModel.isLoadingDetailImage)
         .help(windowModel.resolutionOverride != nil ? "Resolution Override: \(resolutionOverrideLabel)" : "Image Resolution")
+        .popover(isPresented: $showResolutionPopover) {
+            VStack(spacing: 0) {
+                Button {
+                    showResolutionPopover = false
+                    Task { await windowModel.applyResolutionOverride(nil) }
+                } label: {
+                    HStack {
+                        Text("Auto")
+                        Spacer()
+                        if windowModel.resolutionOverride == nil {
+                            Image(systemName: "checkmark")
+                                .foregroundColor(.accentColor)
+                        }
+                    }
+                }
+                .buttonStyle(.borderless)
+
+                Divider()
+                    .padding(.vertical, 4)
+
+                ForEach(AppModel.maxImageResolutionOptions, id: \.value) { option in
+                    Button {
+                        showResolutionPopover = false
+                        Task { await windowModel.applyResolutionOverride(option.value) }
+                    } label: {
+                        HStack {
+                            Text(option.label)
+                            Spacer()
+                            if windowModel.resolutionOverride == option.value {
+                                Image(systemName: "checkmark")
+                                    .foregroundColor(.accentColor)
+                            }
+                        }
+                    }
+                    .buttonStyle(.borderless)
+                }
+            }
+            .padding(12)
+        }
     }
 
     /// Label for the current resolution override setting
@@ -265,19 +341,71 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
         return AppModel.maxImageResolutionOptions.first { $0.value == override }?.label ?? "\(override)px"
     }
 
-    // MARK: - Visual Adjustments
+    // MARK: - Info Button (Rating & Metadata)
 
-    private var adjustmentsButton: some View {
+    private var infoButton: some View {
         Button {
-            windowModel.showAdjustmentsPopover.toggle()
+            windowModel.showMediaInfoPopover.toggle()
         } label: {
-            Image(systemName: "slider.horizontal.3")
+            Image(systemName: windowModel.image.rating100 != nil ? "info.circle.fill" : "info.circle")
                 .font(.title3)
-                .padding(6)
-                .background(windowModel.effectiveAdjustments.isModified ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
+                .foregroundColor(windowModel.image.rating100 != nil ? .yellow : nil)
         }
         .buttonStyle(.borderless)
-        .help("Visual Adjustments")
+        .disabled(windowModel.isLoadingDetailImage)
+        .help("Info")
+        .sheet(isPresented: Bindable(windowModel).showMediaInfoPopover) {
+            if let stashId = windowModel.image.stashId {
+                MediaDetailSheet(
+                    mediaType: .image(stashId: stashId),
+                    onDelete: {
+                        // Remove from gallery and navigate away
+                        let appModel = windowModel.appModel
+                        if let idx = appModel.galleryImages.firstIndex(where: { $0.stashId == stashId }) {
+                            appModel.galleryImages.remove(at: idx)
+                        }
+                    }
+                )
+            }
+        }
+    }
+
+    // MARK: - More Menu (Adjustments, Flip, extras)
+
+    private var moreMenu: some View {
+        Menu {
+            // Visual Adjustments (opens popover — use a Button that toggles the popover state)
+            Button {
+                windowModel.showAdjustmentsPopover.toggle()
+            } label: {
+                Label("Adjustments", systemImage: "slider.horizontal.3")
+            }
+
+            // Flip (only in 2D non-animated mode)
+            if !windowModel.isRealityKitDisplay && !windowModel.is3DMode && !windowModel.isAnimatedImage {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        windowModel.toggleFlip()
+                    }
+                } label: {
+                    Label(
+                        windowModel.isImageFlipped ? "Unflip" : "Flip",
+                        systemImage: "arrow.left.and.right.righttriangle.left.righttriangle.right"
+                    )
+                }
+            }
+
+            // Context-specific extra menu items
+            extraMenuItems()
+        } label: {
+            Image(systemName: "ellipsis.circle")
+                .font(.title3)
+                .padding(6)
+                .background(moreMenuHighlighted ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
+        }
+        .menuStyle(.button)
+        .buttonStyle(.borderless)
+        .help("More")
         .popover(isPresented: Bindable(windowModel).showAdjustmentsPopover) {
             VisualAdjustmentsPopover(
                 currentAdjustments: Binding(
@@ -288,7 +416,6 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
                     get: { windowModel.appModel.globalVisualAdjustments },
                     set: {
                         windowModel.appModel.globalVisualAdjustments = $0
-                        // If no per-image adjustments, global changes affect 3D display
                         if !windowModel.currentAdjustments.isModified {
                             windowModel.reloadImagePresentationWithAdjustments()
                         }
@@ -305,7 +432,6 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
                     Task {
                         await windowModel.trackAdjustments()
                     }
-                    // In 3D mode, reload the ImagePresentationComponent with adjusted pixels
                     windowModel.reloadImagePresentationWithAdjustments()
                 },
                 showBackgroundRemoval: !windowModel.isRealityKitDisplay,
@@ -324,6 +450,11 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
                 }
             )
         }
+    }
+
+    /// Whether the More menu button should show a highlight (adjustments modified or image flipped)
+    private var moreMenuHighlighted: Bool {
+        windowModel.effectiveAdjustments.isModified || windowModel.isImageFlipped
     }
 
     // MARK: - Share
@@ -362,52 +493,6 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
                     )
                 )
             }
-        }
-    }
-
-    // MARK: - Rating & O Counter
-
-    private var ratingButton: some View {
-        Button {
-            windowModel.showMediaInfoPopover.toggle()
-        } label: {
-            Image(systemName: windowModel.image.rating100 != nil ? "star.fill" : "star")
-                .font(.title3)
-                .foregroundColor(windowModel.image.rating100 != nil ? .yellow : nil)
-        }
-        .buttonStyle(.borderless)
-        .disabled(windowModel.isLoadingDetailImage)
-        .help("Rating & O Count")
-        .popover(isPresented: Bindable(windowModel).showMediaInfoPopover) {
-            MediaInfoPopover(
-                currentRating100: windowModel.image.rating100,
-                oCounter: windowModel.image.oCounter ?? 0,
-                isUpdating: isUpdatingMediaInfo,
-                onRate: { newRating in
-                    guard let stashId = windowModel.image.stashId else { return }
-                    isUpdatingMediaInfo = true
-                    Task {
-                        try? await windowModel.updateImageRating(stashId: stashId, rating100: newRating)
-                        isUpdatingMediaInfo = false
-                    }
-                },
-                onIncrementO: {
-                    guard let stashId = windowModel.image.stashId else { return }
-                    isUpdatingMediaInfo = true
-                    Task {
-                        try? await windowModel.incrementImageOCounter(stashId: stashId)
-                        isUpdatingMediaInfo = false
-                    }
-                },
-                onDecrementO: {
-                    guard let stashId = windowModel.image.stashId else { return }
-                    isUpdatingMediaInfo = true
-                    Task {
-                        try? await windowModel.decrementImageOCounter(stashId: stashId)
-                        isUpdatingMediaInfo = false
-                    }
-                }
-            )
         }
     }
 }

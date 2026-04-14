@@ -27,6 +27,8 @@ class PhotoWindowModel {
     var contentEntity: Entity = Entity()
     var spatial3DImageState: Spatial3DImageState = .notGenerated
     var spatial3DImage: ImagePresentationComponent.Spatial3DImage? = nil
+    /// Whether to show the auto-restore 3D overlay with cancel button
+    var showAutoRestoreOverlay: Bool = false
     var isLoadingDetailImage: Bool = false
     var inputPlaneEntity: Entity = Entity()
 
@@ -489,6 +491,9 @@ class PhotoWindowModel {
                 let lastMode = await ImageEnhancementTracker.shared.lastViewingMode(url: imageURL)
                 let wasConverted = await ImageEnhancementTracker.shared.wasConverted(url: imageURL)
                 let shouldAutoGenerate = appModel.autoRestoreSpatial3D && wasConverted && (lastMode == .spatial3D || lastMode == .spatial3DImmersive)
+                if shouldAutoGenerate {
+                    showAutoRestoreOverlay = true
+                }
                 if shouldAutoGenerate && lastMode == .spatial3DImmersive {
                     desiredViewingMode = .spatial3DImmersive
                 }
@@ -506,6 +511,7 @@ class PhotoWindowModel {
 
         if appModel.autoRestoreSpatial3D && wasConverted && (lastMode == .spatial3D || lastMode == .spatial3DImmersive) {
             // Auto-activate 3D (skips 2D load entirely)
+            showAutoRestoreOverlay = true
             if lastMode == .spatial3DImmersive {
                 desiredViewingMode = .spatial3DImmersive
             }

@@ -806,6 +806,449 @@ actor StashAPIClient {
         let response: SceneDecrementOResponse = try await self.query(mutation, variables: ["id": sceneId])
         return response.sceneDecrementO
     }
+
+    // MARK: - Image Detail Query
+
+    private struct FindImageResponse: Decodable {
+        let findImage: StashImageDetail?
+    }
+
+    struct StashImageDetail: Decodable {
+        let id: String
+        let title: String?
+        let code: String?
+        let date: String?
+        let details: String?
+        let photographer: String?
+        let rating100: Int?
+        let o_counter: Int?
+        let organized: Bool
+        let urls: [String]?
+        let created_at: String?
+        let updated_at: String?
+        let visual_files: [StashImageDetailFile]?
+        let studio: StashStudioRef?
+        let performers: [StashPerformerRef]?
+        let tags: [StashTagRef]?
+        let galleries: [StashGalleryRef]?
+    }
+
+    struct StashImageDetailFile: Decodable {
+        let typename: String?
+        let id: String?
+        let path: String?
+        let size: Int64?
+        let format: String?
+        let width: Int?
+        let height: Int?
+
+        enum CodingKeys: String, CodingKey {
+            case typename = "__typename"
+            case id, path, size, format, width, height
+        }
+    }
+
+    struct StashStudioRef: Decodable {
+        let id: String
+        let name: String
+    }
+
+    struct StashPerformerRef: Decodable {
+        let id: String
+        let name: String
+    }
+
+    struct StashTagRef: Decodable {
+        let id: String
+        let name: String
+    }
+
+    struct StashGalleryRef: Decodable {
+        let id: String
+        let title: String?
+    }
+
+    struct StashGroupRef: Decodable {
+        let group: StashGroupInfo
+    }
+
+    struct StashGroupInfo: Decodable {
+        let id: String
+        let name: String
+    }
+
+    func fetchImageDetail(id: String) async throws -> ImageDetail {
+        let graphQLQuery = """
+        query FindImage($id: ID!) {
+            findImage(id: $id) {
+                id
+                title
+                code
+                date
+                details
+                photographer
+                rating100
+                o_counter
+                organized
+                urls
+                created_at
+                updated_at
+                visual_files {
+                    __typename
+                    ... on ImageFile {
+                        id
+                        path
+                        size
+                        format
+                        width
+                        height
+                    }
+                    ... on VideoFile {
+                        id
+                        path
+                        size
+                        format
+                        width
+                        height
+                    }
+                }
+                studio {
+                    id
+                    name
+                }
+                performers {
+                    id
+                    name
+                }
+                tags {
+                    id
+                    name
+                }
+                galleries {
+                    id
+                    title
+                }
+            }
+        }
+        """
+
+        let response: FindImageResponse = try await self.query(graphQLQuery, variables: ["id": id])
+        guard let image = response.findImage else {
+            throw StashAPIError.noData
+        }
+
+        let file = image.visual_files?.first
+        return ImageDetail(
+            id: image.id,
+            title: image.title,
+            code: image.code,
+            date: image.date,
+            details: image.details,
+            photographer: image.photographer,
+            rating100: image.rating100,
+            oCounter: image.o_counter,
+            organized: image.organized,
+            urls: image.urls ?? [],
+            filePath: file?.path,
+            fileSize: file?.size,
+            format: file?.format,
+            width: file?.width,
+            height: file?.height,
+            studio: image.studio.map { MediaStudio(id: $0.id, name: $0.name) },
+            performers: image.performers?.map { MediaPerformer(id: $0.id, name: $0.name) } ?? [],
+            tags: image.tags?.map { MediaTag(id: $0.id, name: $0.name) } ?? [],
+            galleries: image.galleries?.map { MediaGalleryRef(id: $0.id, title: $0.title) } ?? [],
+            createdAt: image.created_at,
+            updatedAt: image.updated_at
+        )
+    }
+
+    // MARK: - Scene Detail Query
+
+    private struct FindSceneResponse: Decodable {
+        let findScene: StashSceneDetail?
+    }
+
+    struct StashSceneDetail: Decodable {
+        let id: String
+        let title: String?
+        let code: String?
+        let date: String?
+        let details: String?
+        let director: String?
+        let rating100: Int?
+        let o_counter: Int?
+        let organized: Bool
+        let urls: [String]?
+        let created_at: String?
+        let updated_at: String?
+        let play_count: Int?
+        let play_duration: Double?
+        let files: [StashSceneDetailFile]?
+        let studio: StashStudioRef?
+        let performers: [StashPerformerRef]?
+        let tags: [StashTagRef]?
+        let galleries: [StashGalleryRef]?
+        let groups: [StashGroupRef]?
+    }
+
+    struct StashSceneDetailFile: Decodable {
+        let id: String?
+        let path: String?
+        let size: Int64?
+        let format: String?
+        let width: Int?
+        let height: Int?
+        let duration: Double?
+        let video_codec: String?
+        let audio_codec: String?
+        let frame_rate: Double?
+        let bit_rate: Int?
+    }
+
+    func fetchSceneDetail(id: String) async throws -> SceneDetail {
+        let graphQLQuery = """
+        query FindScene($id: ID!) {
+            findScene(id: $id) {
+                id
+                title
+                code
+                date
+                details
+                director
+                rating100
+                o_counter
+                organized
+                urls
+                created_at
+                updated_at
+                play_count
+                play_duration
+                files {
+                    id
+                    path
+                    size
+                    format
+                    width
+                    height
+                    duration
+                    video_codec
+                    audio_codec
+                    frame_rate
+                    bit_rate
+                }
+                studio {
+                    id
+                    name
+                }
+                performers {
+                    id
+                    name
+                }
+                tags {
+                    id
+                    name
+                }
+                galleries {
+                    id
+                    title
+                }
+                groups {
+                    group {
+                        id
+                        name
+                    }
+                }
+            }
+        }
+        """
+
+        let response: FindSceneResponse = try await self.query(graphQLQuery, variables: ["id": id])
+        guard let scene = response.findScene else {
+            throw StashAPIError.noData
+        }
+
+        let file = scene.files?.first
+        return SceneDetail(
+            id: scene.id,
+            title: scene.title,
+            code: scene.code,
+            date: scene.date,
+            details: scene.details,
+            director: scene.director,
+            rating100: scene.rating100,
+            oCounter: scene.o_counter,
+            organized: scene.organized,
+            urls: scene.urls ?? [],
+            filePath: file?.path,
+            fileSize: file?.size,
+            format: file?.format,
+            width: file?.width,
+            height: file?.height,
+            duration: file?.duration,
+            videoCodec: file?.video_codec,
+            audioCodec: file?.audio_codec,
+            frameRate: file?.frame_rate,
+            bitrate: file?.bit_rate,
+            studio: scene.studio.map { MediaStudio(id: $0.id, name: $0.name) },
+            performers: scene.performers?.map { MediaPerformer(id: $0.id, name: $0.name) } ?? [],
+            tags: scene.tags?.map { MediaTag(id: $0.id, name: $0.name) } ?? [],
+            galleries: scene.galleries?.map { MediaGalleryRef(id: $0.id, title: $0.title) } ?? [],
+            groups: scene.groups?.map { MediaGroupRef(id: $0.group.id, name: $0.group.name) } ?? [],
+            playCount: scene.play_count,
+            playDuration: scene.play_duration,
+            createdAt: scene.created_at,
+            updatedAt: scene.updated_at
+        )
+    }
+
+    // MARK: - Full Image Update
+
+    func updateImage(id: String, title: String? = nil, code: String? = nil, date: String? = nil,
+                     details: String? = nil, photographer: String? = nil, rating100: Int? = nil,
+                     studioId: String? = nil, performerIds: [String]? = nil, tagIds: [String]? = nil,
+                     galleryIds: [String]? = nil, urls: [String]? = nil, organized: Bool? = nil) async throws {
+        let mutation = """
+        mutation ImageUpdate($input: ImageUpdateInput!) {
+            imageUpdate(input: $input) {
+                id
+            }
+        }
+        """
+
+        var input: [String: Any] = ["id": id]
+        if let title { input["title"] = title }
+        if let code { input["code"] = code }
+        if let date { input["date"] = date }
+        if let details { input["details"] = details }
+        if let photographer { input["photographer"] = photographer }
+        if let rating100 { input["rating100"] = rating100 }
+        if let studioId { input["studio_id"] = studioId }
+        if let performerIds { input["performer_ids"] = performerIds }
+        if let tagIds { input["tag_ids"] = tagIds }
+        if let galleryIds { input["gallery_ids"] = galleryIds }
+        if let urls { input["urls"] = urls }
+        if let organized { input["organized"] = organized }
+
+        let _: ImageUpdateResponse = try await self.query(mutation, variables: ["input": input])
+    }
+
+    // MARK: - Full Scene Update
+
+    func updateScene(id: String, title: String? = nil, code: String? = nil, date: String? = nil,
+                     details: String? = nil, director: String? = nil, rating100: Int? = nil,
+                     studioId: String? = nil, performerIds: [String]? = nil, tagIds: [String]? = nil,
+                     galleryIds: [String]? = nil, urls: [String]? = nil, organized: Bool? = nil) async throws {
+        let mutation = """
+        mutation SceneUpdate($input: SceneUpdateInput!) {
+            sceneUpdate(input: $input) {
+                id
+            }
+        }
+        """
+
+        var input: [String: Any] = ["id": id]
+        if let title { input["title"] = title }
+        if let code { input["code"] = code }
+        if let date { input["date"] = date }
+        if let details { input["details"] = details }
+        if let director { input["director"] = director }
+        if let rating100 { input["rating100"] = rating100 }
+        if let studioId { input["studio_id"] = studioId }
+        if let performerIds { input["performer_ids"] = performerIds }
+        if let tagIds { input["tag_ids"] = tagIds }
+        if let galleryIds { input["gallery_ids"] = galleryIds }
+        if let urls { input["urls"] = urls }
+        if let organized { input["organized"] = organized }
+
+        let _: SceneUpdateResponse = try await self.query(mutation, variables: ["input": input])
+    }
+
+    // MARK: - Delete Operations
+
+    private struct DestroyResponse: Decodable {
+        // imageDestroy/sceneDestroy return Boolean
+    }
+
+    private struct ImageDestroyResponse: Decodable {
+        let imageDestroy: Bool
+    }
+
+    private struct SceneDestroyResponse: Decodable {
+        let sceneDestroy: Bool
+    }
+
+    private struct ImagesDestroyResponse: Decodable {
+        let imagesDestroy: Bool
+    }
+
+    private struct ScenesDestroyResponse: Decodable {
+        let scenesDestroy: Bool
+    }
+
+    func destroyImage(id: String, deleteFile: Bool = false, deleteGenerated: Bool = true) async throws {
+        let mutation = """
+        mutation ImageDestroy($input: ImageDestroyInput!) {
+            imageDestroy(input: $input)
+        }
+        """
+
+        let input: [String: Any] = [
+            "id": id,
+            "delete_file": deleteFile,
+            "delete_generated": deleteGenerated
+        ]
+
+        let _: ImageDestroyResponse = try await self.query(mutation, variables: ["input": input])
+    }
+
+    func destroyScene(id: String, deleteFile: Bool = false, deleteGenerated: Bool = true) async throws {
+        let mutation = """
+        mutation SceneDestroy($input: SceneDestroyInput!) {
+            sceneDestroy(input: $input)
+        }
+        """
+
+        let input: [String: Any] = [
+            "id": id,
+            "delete_file": deleteFile,
+            "delete_generated": deleteGenerated
+        ]
+
+        let _: SceneDestroyResponse = try await self.query(mutation, variables: ["input": input])
+    }
+
+    func destroyImages(ids: [String], deleteFile: Bool = false, deleteGenerated: Bool = true) async throws {
+        let mutation = """
+        mutation ImagesDestroy($input: ImagesDestroyInput!) {
+            imagesDestroy(input: $input)
+        }
+        """
+
+        let input: [String: Any] = [
+            "ids": ids,
+            "delete_file": deleteFile,
+            "delete_generated": deleteGenerated
+        ]
+
+        let _: ImagesDestroyResponse = try await self.query(mutation, variables: ["input": input])
+    }
+
+    func destroyScenes(ids: [String], deleteFile: Bool = false, deleteGenerated: Bool = true) async throws {
+        let mutation = """
+        mutation ScenesDestroy($input: ScenesDestroyInput!) {
+            scenesDestroy(input: $input)
+        }
+        """
+
+        let input: [String: Any] = [
+            "ids": ids,
+            "delete_file": deleteFile,
+            "delete_generated": deleteGenerated
+        ]
+
+        let _: ScenesDestroyResponse = try await self.query(mutation, variables: ["input": input])
+    }
 }
 
 /// Errors that can occur when using the Stash API

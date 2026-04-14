@@ -42,13 +42,12 @@ Tabs defined in `Tab.swift`: Pictures, Videos, Local, Filters, Settings, Remote 
 ### Photo Viewer Architecture
 All three photo viewer windows share the same rendering components:
 - **PhotoDisplayView** - Shared image display with four rendering paths (in priority order): animated GIF (HEVC video player), RealityKit 3D (`ImagePresentationComponent`), GPU-backed 2D (`MetalImageView` with `MTLTexture`), and fallback UIImage. Manages window sizing, swipe navigation, and resize-triggered re-downsampling.
-- **PhotoOrnamentView** - Unified ornament bar with `PhotoViewerContext` enum (`.pushedFromGallery`, `.standalone`, `.shared`) controlling which buttons appear.
+- **PhotoOrnamentView** - Unified ornament bar with `PhotoViewerContext` enum (`.pushedFromGallery`, `.standalone`, `.shared`) controlling which buttons appear. Layout: `[Gallery] | [< N/M >] | [Slideshow] | [3D v] | [Info] | [Share] | [... More v] | [Resolution]`. The 3D button is a Menu (3D, Immersive 3D, 2D off). The More menu contains Adjustments, Flip, and context-specific items (Pop Out, Save). The Info button opens `MediaDetailSheet` as a sheet. Accepts `extraMenuItems` closure for context-specific menu items in the More menu.
 - **PhotoWindowModel** - Per-window state, split across extension files by concern (see App Structure above). Created with `@State` in each wrapper view. Primary display property is `displayTexture: MTLTexture?` with `displayImage: UIImage?` as fallback. Cached texture variants: `backgroundRemovedTexture`, `originalDisplayTexture`, `autoEnhancedDisplayTexture`, `preAutoEnhanceDisplayTexture`.
 
-The three thin wrapper views:
-- **PushedPictureView** - Pushed from gallery grid via `pushWindow`, dismisses back to gallery. Has pop-out button.
-- **PhotoWindowView** - Standalone pop-out window, supports multiple instances. Has gallery button.
-- **SharedPhotoWindowView** - Opens for images received via share sheet. Has save button and cache cleanup.
+The two thin wrapper views:
+- **PhotoWindowView** - Handles both pushed and standalone modes via `wasPushed` parameter. Pushed mode: opened via `pushWindow` from gallery, dismisses back to gallery, has pop-out menu item. Standalone mode: opened via `openWindow` as independent pop-out window, has gallery button.
+- **SharedPhotoWindowView** - Opens for images received via share sheet. Has save menu item and cache cleanup.
 
 **Important pattern:** `PhotoWindowModel.init` must be side-effect-free because SwiftUI may re-create the view struct multiple times while `@State` discards duplicate models. All side effects (window count tracking, image loading tasks) are deferred to the `start()` method called from `onAppear`.
 
@@ -56,7 +55,7 @@ The three thin wrapper views:
 - **Default (Dynamic Image Resolution on):** Images open in GPU-backed 2D mode using an `MTLTexture` with `.private` storage (not counted as dirty CPU memory by jetsam). The source is downsampled via `CGImageSource`, uploaded to GPU via `CIContext.render`, and displayed through `MetalImageView` (MTKView wrapper). Re-downsampled on window resize (1-second debounce, 20% threshold). RealityKit is only loaded when the user activates 3D mode.
 - **Dynamic Image Resolution off:** Images load at full native resolution. No re-downsampling on resize.
 - **Deep color preservation:** Images with >8 bits per component (e.g. 16-bit JXL) use `rgba16Float` textures with `extendedLinearDisplayP3` color space. Standard 8-bit images use `bgra8Unorm` with `deviceRGB`.
-- **Auto-3D restoration:** If an image was previously converted to 3D and the user didn't explicitly switch back to 2D, it auto-activates 3D mode on reopen (tracked via `Spatial3DConversionTracker`).
+- **Auto-3D restoration:** If an image was previously converted to 3D and the user didn't explicitly switch back to 2D, it auto-activates 3D mode on reopen (tracked via `ImageEnhancementTracker`). Shows a glass overlay with "Generating 3D..." and a Cancel button (`showAutoRestoreOverlay` on `PhotoWindowModel`), auto-dismissed ~1s after generation completes.
 - **Important:** When swapping `displayTexture` (e.g. toggling background removal or auto-enhance from in-memory cache), `imageAspectRatio` must always be updated from the new texture's dimensions. The Metal renderer stretches the texture to fill its view — aspect ratio is controlled externally by SwiftUI's `.aspectRatio()` modifier driven by `imageAspectRatio`.
 
 ### Spatial 3D Images
@@ -65,7 +64,8 @@ Uses RealityKit's `ImagePresentationComponent` for 2D→3D conversion. States tr
 **visionOS limitation:** `PostProcessEffect` / `PostProcessEffectContext` are unavailable on visionOS. Custom post-processing on `RealityView` content must use SwiftUI-level modifiers (`.mask()`, `.overlay()`) instead.
 
 ### Video Infrastructure
-- **VideoPlayerView** - Standard video playback with ornaments
+- **VideoWindowView** - Video viewer handling both pushed and standalone modes via `wasPushed` parameter (same pattern as `PhotoWindowView`)
+- **VideoOrnamentsView** - Unified ornament bar. Layout: `[Gallery] | [< N/M >] | [ViewMode v] | [Info] | [Share] | [... More v] | [Title]`. The More menu contains Adjustments, Flip, Slideshow, and Pop Out (when pushed). Info button opens `MediaDetailSheet`
 - **StereoscopicVideoPlayer** - Coordinates download → MV-HEVC conversion → immersive playback
 - **MVHEVCConverter** - Converts side-by-side/over-under stereoscopic video to MV-HEVC format
 - **ImmersiveVideoView** - RealityKit-based immersive player in full immersion space
@@ -100,7 +100,24 @@ Uses RealityKit's `ImagePresentationComponent` for 2D→3D conversion. States tr
 - **AppLogger** - Structured os.Logger instances across domains
 
 ### API Client
-`StashAPIClient` is an actor that handles GraphQL communication with Stash server. Supports queries for images, videos (scenes), galleries, and tags. Server config persisted via UserDefaults.
+`StashAPIClient` is an actor that handles GraphQL communication with Stash server. Accessible via `appModel.apiClient` (private(set)). Supports:
+- **List queries:** `findImages`, `findScenes`, `findGalleries`, `findTags`, `findStudios`, `findPerformers` (paginated, with filters)
+- **Detail queries:** `fetchImageDetail(id:)` → `ImageDetail`, `fetchSceneDetail(id:)` → `SceneDetail` (on-demand full metadata)
+- **Mutations:** `updateImage`/`updateScene` (full field update), `updateImageRating`/`updateSceneRating`, `incrementImageOCounter`/`decrementImageOCounter`, `incrementSceneOCounter`/`decrementSceneOCounter`
+- **Delete:** `destroyImage`/`destroyScene` (single), `destroyImages`/`destroyScenes` (bulk), with `deleteFile` and `deleteGenerated` options
+- Server config persisted via UserDefaults
+
+### Media Metadata & Detail Views
+- **MediaMetadata.swift** - Lightweight shared structs: `MediaTag`, `MediaPerformer`, `MediaStudio`, `MediaGalleryRef`, `MediaGroupRef`, plus full detail structs `ImageDetail` and `SceneDetail` (fetched on-demand, not in list queries)
+- **MediaDetailSheet** - Two-tab sheet (Info read-only + Edit) opened from the ornament Info button. Info tab shows file metadata, associations (tags/performers/studio/galleries as chips via `FlowLayout`), and stats. Edit tab has searchable pickers for tags/performers/studio, text fields, rating/O-counter editors, URL list, and organized toggle. Delete section at bottom with confirmation dialog ("Remove from Stash" vs "Delete File from Disk")
+- **MediaInfoPopover** - Legacy lightweight popover (star rating + O counter only), no longer used by ornaments but kept for potential reuse
+
+### Multi-Select
+Gallery grids (`GalleryGridView`, `VideoGalleryView`) support multi-select mode:
+- Toolbar "Select" button toggles `appModel.isSelectingImages`/`isSelectingVideos`
+- Thumbnails show checkbox overlay; tapping toggles selection in `selectedImageIds`/`selectedVideoIds` (Set<String> of stash IDs)
+- Bottom selection toolbar: Select All / Deselect All, count label, Delete button with bulk confirmation dialog
+- Bulk delete via `destroyImages`/`destroyScenes` API calls
 
 ### Remote API Viewer
 A slideshow viewer that fetches images from a [RoboFrame](https://github.com/illixion/RoboFrame) API and displays them with clock/sensor overlays, Ken Burns animation, WebSocket control, and Home Assistant integration. Enabled via Settings → Developer → Enable Remote API Viewer, which adds a "Remote" tab.

@@ -127,7 +127,7 @@ class AppModel {
 
     // MARK: - API Client
 
-    private var apiClient: StashAPIClient
+    private(set) var apiClient: StashAPIClient
 
     // MARK: - Image Source (stored, always Stash server)
 
@@ -1774,6 +1774,43 @@ class AppModel {
     private func presentVideoShareSheet(url: URL) {
         cancelAutoHideTimer()
         videoShareFileURL = url
+    }
+
+    // MARK: - Multi-Select State
+
+    /// Whether the image gallery is in multi-select mode
+    var isSelectingImages = false
+
+    /// Whether the video gallery is in multi-select mode
+    var isSelectingVideos = false
+
+    /// Selected image stash IDs during multi-select
+    var selectedImageIds: Set<String> = []
+
+    /// Selected video stash IDs during multi-select
+    var selectedVideoIds: Set<String> = []
+
+    func exitImageSelection() {
+        isSelectingImages = false
+        selectedImageIds.removeAll()
+    }
+
+    func exitVideoSelection() {
+        isSelectingVideos = false
+        selectedVideoIds.removeAll()
+    }
+
+    func removeDeletedImages(stashIds: Set<String>) {
+        galleryImages.removeAll { image in
+            guard let sid = image.stashId else { return false }
+            return stashIds.contains(sid)
+        }
+        selectedImageIds.subtract(stashIds)
+    }
+
+    func removeDeletedVideos(stashIds: Set<String>) {
+        galleryVideos.removeAll { stashIds.contains($0.stashId) }
+        selectedVideoIds.subtract(stashIds)
     }
 
     // MARK: - Rating & O Counter Mutations

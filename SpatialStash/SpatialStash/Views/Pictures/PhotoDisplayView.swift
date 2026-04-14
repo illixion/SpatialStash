@@ -75,6 +75,43 @@ struct PhotoDisplayView: View {
             imageContent
                 .scaleEffect(x: windowModel.isImageFlipped ? -1 : 1, y: 1)
                 .offset(x: dragOffset)
+
+            // 3D auto-restore overlay with cancel button
+            if windowModel.showAutoRestoreOverlay {
+                VStack(spacing: 16) {
+                    if windowModel.spatial3DImageState == .generating {
+                        ProgressView()
+                            .scaleEffect(1.2)
+                        Text("Generating 3D...")
+                            .font(.title3)
+                            .foregroundColor(.primary)
+                    } else {
+                        Image(systemName: "view.3d")
+                            .font(.title)
+                            .foregroundColor(.primary)
+                        Text("3D restored")
+                            .font(.title3)
+                            .foregroundColor(.primary)
+                    }
+
+                    Button {
+                        windowModel.showAutoRestoreOverlay = false
+                        Task {
+                            await windowModel.switchToViewingMode(.mono)
+                        }
+                    } label: {
+                        Text("Cancel")
+                            .font(.title3)
+                            .padding(.horizontal, 24)
+                            .padding(.vertical, 12)
+                    }
+                    .buttonStyle(.bordered)
+                }
+                .padding(32)
+                .glassBackgroundEffect()
+                .transition(.opacity)
+                .animation(.easeInOut(duration: 0.3), value: windowModel.showAutoRestoreOverlay)
+            }
         }
         .background(
             GeometryReader { geo in

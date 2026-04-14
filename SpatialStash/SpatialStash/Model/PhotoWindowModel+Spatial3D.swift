@@ -285,6 +285,14 @@ extension PhotoWindowModel {
 
                 self.spatial3DImageState = .generated
 
+                // Auto-dismiss the 3D restore overlay after a short delay
+                if self.showAutoRestoreOverlay {
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .seconds(1))
+                        self.showAutoRestoreOverlay = false
+                    }
+                }
+
                 // Determine if immersive mode is desired — either because the user
                 // explicitly pressed the immersive button (desiredViewingMode) or
                 // because auto-restore found a saved immersive preference in the tracker.

@@ -49,14 +49,21 @@ struct PhotoWindowView: View {
                     onGalleryButtonTap: {
                         appModel.showMainWindow(openWindow: openWindow)
                     },
-                    extraButtons: {
+                    extraMenuItems: {
                         if wasPushed {
-                            Group {
-                                Divider()
-                                    .frame(height: 24)
-
-                                popOutButton
+                            Button {
+                                let image = windowModel.image
+                                if appModel.hasOpenPopOutWindow(for: image.fullSizeURL) {
+                                    pendingPopOutImage = image
+                                    showDuplicateWindowAlert = true
+                                } else {
+                                    appModel.enqueuePhotoWindowOpen(image)
+                                    dismissWindow()
+                                }
+                            } label: {
+                                Label("Pop Out", systemImage: "rectangle.portrait.and.arrow.forward")
                             }
+                            .disabled(windowModel.isLoadingDetailImage)
                         }
                     }
                 )
@@ -100,24 +107,4 @@ struct PhotoWindowView: View {
         }
     }
 
-    // MARK: - Pop Out Button
-
-    private var popOutButton: some View {
-        Button {
-            let image = windowModel.image
-            if appModel.hasOpenPopOutWindow(for: image.fullSizeURL) {
-                pendingPopOutImage = image
-                showDuplicateWindowAlert = true
-            } else {
-                appModel.enqueuePhotoWindowOpen(image)
-                dismissWindow()
-            }
-        } label: {
-            Image(systemName: "rectangle.portrait.and.arrow.forward")
-                .font(.title3)
-        }
-        .buttonStyle(.borderless)
-        .disabled(windowModel.isLoadingDetailImage)
-        .help("Pop Out")
-    }
 }

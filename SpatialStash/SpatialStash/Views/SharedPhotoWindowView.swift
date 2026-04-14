@@ -45,13 +45,14 @@ struct SharedPhotoWindowView: View {
                     onGalleryButtonTap: {
                         appModel.showMainWindow(openWindow: openWindow)
                     },
-                    extraButtons: {
-                        Group {
-                            Divider()
-                                .frame(height: 24)
-
-                            saveButton
+                    extraMenuItems: {
+                        Button(action: savePhoto) {
+                            Label(
+                                isSaved ? "Saved" : (saveError != nil ? "Save Failed" : "Save to Files"),
+                                systemImage: isSaved ? "checkmark" : (saveError != nil ? "exclamationmark.triangle" : "square.and.arrow.down")
+                            )
                         }
+                        .disabled(isSaving || isSaved)
                     }
                 )
             }
@@ -66,29 +67,6 @@ struct SharedPhotoWindowView: View {
                 await SharedMediaCache.shared.removeCachedFile(for: item.id)
             }
         }
-    }
-
-    // MARK: - Save Button
-
-    private var saveButton: some View {
-        Button(action: savePhoto) {
-            Group {
-                if isSaving {
-                    ProgressView()
-                        .scaleEffect(0.8)
-                } else if isSaved {
-                    Image(systemName: "checkmark")
-                } else if saveError != nil {
-                    Image(systemName: "exclamationmark.triangle")
-                } else {
-                    Image(systemName: "square.and.arrow.down")
-                }
-            }
-            .font(.title3)
-        }
-        .buttonStyle(.borderless)
-        .disabled(isSaving || isSaved)
-        .help(isSaved ? "Saved" : saveError ?? "Save to Files")
     }
 
     // MARK: - Unavailable Content
