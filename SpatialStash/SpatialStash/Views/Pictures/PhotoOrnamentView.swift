@@ -194,7 +194,7 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
             VStack(spacing: 4) {
                 popoverMenuButton(
                     title: "3D",
-                    icon: "square.stack.3d.forward.dottedline.fill",
+                    icon: "spatial.capture.fill",
                     isChecked: windowModel.desiredViewingMode == .spatial3D,
                     isDisabled: windowModel.isAnimatedImage || (windowModel.spatial3DImageState == .generating && windowModel.desiredViewingMode != .spatial3DImmersive)
                 ) {
@@ -212,7 +212,7 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
 
                 popoverMenuButton(
                     title: "Immersive 3D",
-                    icon: "square.arrowtriangle.4.outward",
+                    icon: "inset.filled.pano",
                     isChecked: windowModel.desiredViewingMode == .spatial3DImmersive,
                     isDisabled: windowModel.isAnimatedImage || (windowModel.spatial3DImageState == .generating && windowModel.desiredViewingMode != .spatial3D)
                 ) {
@@ -251,8 +251,8 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
 
     private var threeDMenuIcon: String {
         switch windowModel.desiredViewingMode {
-        case .spatial3D: return "square.stack.3d.forward.dottedline.fill"
-        case .spatial3DImmersive: return "square.arrowtriangle.4.outward"
+        case .spatial3D: return "spatial.capture.fill"
+        case .spatial3DImmersive: return "inset.filled.pano"
         default: return "view.3d"
         }
     }
