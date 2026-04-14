@@ -27,6 +27,7 @@ struct SettingsBackup: Codable {
     /// Legacy key for backward compatibility when importing old backups
     var openImagesInSeparateWindows: Bool?
     var rememberImageEnhancements: Bool?
+    var autoRestoreSpatial3D: Bool?
     var showDebugConsole: Bool?
     var respectMemoryAlerts: Bool?
     var enableRemoteViewer: Bool?

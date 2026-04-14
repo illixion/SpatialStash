@@ -18,8 +18,10 @@ struct GalleryImage: Identifiable, Equatable, Hashable {
     let source: String
     /// Original filename from server (e.g. from visual_files path), used for sharing
     let fileName: String?
+    /// Stash visual file GraphQL typename (e.g. ImageFile, VideoFile)
+    let visualFileType: String?
 
-    init(id: UUID = UUID(), stashId: String? = nil, thumbnailURL: URL, fullSizeURL: URL, title: String? = nil, rating100: Int? = nil, oCounter: Int? = nil, source: String = "stash", fileName: String? = nil) {
+    init(id: UUID = UUID(), stashId: String? = nil, thumbnailURL: URL, fullSizeURL: URL, title: String? = nil, rating100: Int? = nil, oCounter: Int? = nil, source: String = "stash", fileName: String? = nil, visualFileType: String? = nil) {
         self.id = id
         self.stashId = stashId
         self.thumbnailURL = thumbnailURL
@@ -29,10 +31,11 @@ struct GalleryImage: Identifiable, Equatable, Hashable {
         self.oCounter = oCounter
         self.source = source
         self.fileName = fileName
+        self.visualFileType = visualFileType
     }
 
     /// Convenience initializer when thumbnail and full-size are the same URL
-    init(id: UUID = UUID(), stashId: String? = nil, url: URL, title: String? = nil, rating100: Int? = nil, oCounter: Int? = nil, source: String = "stash", fileName: String? = nil) {
+    init(id: UUID = UUID(), stashId: String? = nil, url: URL, title: String? = nil, rating100: Int? = nil, oCounter: Int? = nil, source: String = "stash", fileName: String? = nil, visualFileType: String? = nil) {
         self.id = id
         self.stashId = stashId
         self.thumbnailURL = url
@@ -42,6 +45,7 @@ struct GalleryImage: Identifiable, Equatable, Hashable {
         self.oCounter = oCounter
         self.source = source
         self.fileName = fileName
+        self.visualFileType = visualFileType
     }
 }
 
@@ -86,7 +90,8 @@ extension GalleryImage {
             rating100: rating100,
             oCounter: oCounter,
             source: source,
-            fileName: fileName
+            fileName: fileName,
+            visualFileType: visualFileType
         )
     }
 }
@@ -104,6 +109,7 @@ extension GalleryImage: Codable {
         case oCounter
         case source
         case fileName
+        case visualFileType
     }
 
     init(from decoder: Decoder) throws {
@@ -120,6 +126,7 @@ extension GalleryImage: Codable {
         // Default to "stash" for backward compatibility with old saved window groups
         source = try container.decodeIfPresent(String.self, forKey: .source) ?? "stash"
         fileName = try container.decodeIfPresent(String.self, forKey: .fileName)
+        visualFileType = try container.decodeIfPresent(String.self, forKey: .visualFileType)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -134,6 +141,7 @@ extension GalleryImage: Codable {
         try container.encodeIfPresent(oCounter, forKey: .oCounter)
         try container.encode(source, forKey: .source)
         try container.encodeIfPresent(fileName, forKey: .fileName)
+        try container.encodeIfPresent(visualFileType, forKey: .visualFileType)
     }
 }
 

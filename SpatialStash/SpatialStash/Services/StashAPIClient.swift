@@ -157,7 +157,13 @@ actor StashAPIClient {
     }
 
     struct StashVisualFile: Decodable {
+        let typename: String?
         let path: String?
+
+        enum CodingKeys: String, CodingKey {
+            case typename = "__typename"
+            case path
+        }
     }
 
     func findImages(page: Int, perPage: Int, query: String? = nil) async throws -> FindImagesResult {
@@ -183,7 +189,11 @@ actor StashAPIClient {
                         height
                     }
                     visual_files {
+                        __typename
                         ... on ImageFile {
+                            path
+                        }
+                        ... on VideoFile {
                             path
                         }
                     }

@@ -58,6 +58,10 @@ struct SettingsTabView: View {
                         }
                     ))
 
+                    if appModel.rememberImageEnhancements {
+                        Toggle("Auto-Restore 3D", isOn: $appModel.autoRestoreSpatial3D)
+                    }
+
                     Picker("Max Image Resolution", selection: $appModel.maxImageResolution) {
                         ForEach(AppModel.maxImageResolutionOptions, id: \.value) { option in
                             Text(option.label).tag(option.value)

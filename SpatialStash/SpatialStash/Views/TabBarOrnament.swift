@@ -10,14 +10,16 @@ struct TabBarOrnament: View {
     @Environment(AppModel.self) private var appModel
 
     private var visibleTabs: [Tab] {
-        Tab.allCases.filter { tab in
-            if tab == .console {
-                return appModel.showDebugConsole
-            }
-            if tab == .remote {
+        let orderedTabs: [Tab] = [.pictures, .videos, .local, .remote, .filters, .settings, .console]
+        return orderedTabs.filter { tab in
+            switch tab {
+            case .remote:
                 return appModel.enableRemoteViewer
+            case .console:
+                return appModel.showDebugConsole
+            default:
+                return true
             }
-            return true
         }
     }
 

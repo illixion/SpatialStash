@@ -118,7 +118,7 @@ extension PhotoWindowModel {
         backgroundRemovedTexture = nil
         autoEnhancedBackgroundRemovedTexture = nil
 
-        // For GIFs, release HEVC converted data too
+        // For animated content, release converted GIF video too.
         if isAnimatedGIF {
             gifHEVCURL = nil
         }
@@ -131,8 +131,8 @@ extension PhotoWindowModel {
     /// memory from all targeted windows first.
     func applyIdleDownscaleThumbnail() async {
         guard isIdleDownscaled else { return }
-        // GIFs and windows with no display don't need a thumbnail
-        guard !isAnimatedGIF else { return }
+        // Animated images and windows with no display don't need a thumbnail
+        guard !isAnimatedImage else { return }
 
         let thumbnailDim = Self.idleDownscaleDimension
 
@@ -209,7 +209,7 @@ extension PhotoWindowModel {
             currentAdjustments.isAutoEnhanced = false
             await loadDisplayImage(for: windowSize)
             await toggleAutoEnhance()
-        } else if !isAnimatedGIF {
+        } else if !isAnimatedImage {
             // Standard 2D image — just reload at correct resolution
             await loadDisplayImage(for: windowSize)
         }
@@ -230,7 +230,7 @@ extension PhotoWindowModel {
     /// Transition from RealityKit to lightweight SwiftUI display.
     /// Called when memory warning triggers lightweight mode.
     func switchToLightweightDisplay() async {
-        guard !isAnimatedGIF else { return }
+        guard !isAnimatedImage else { return }
 
         // If 3D generation is in progress, wait for it to finish before
         // removing the component (RealityKit crashes otherwise)

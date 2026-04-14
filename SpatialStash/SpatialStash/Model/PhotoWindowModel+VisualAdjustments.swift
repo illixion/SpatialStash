@@ -37,7 +37,7 @@ extension PhotoWindowModel {
             // Restore the non-enhanced display image
             autoEnhancedDisplayTexture = nil
             currentDisplayMaxDimension = 0
-            if !is3DMode, !isAnimatedGIF, let windowSize = lastWindowSize {
+            if !is3DMode, !isAnimatedImage, let windowSize = lastWindowSize {
                 Task { await loadDisplayImage(for: windowSize) }
             }
         }
@@ -134,7 +134,7 @@ extension PhotoWindowModel {
 
         autoEnhancedDisplayTexture = texture
         preAutoEnhanceDisplayTexture = displayTexture
-        if !is3DMode, !isAnimatedGIF, let texture {
+        if !is3DMode, !isAnimatedImage, let texture {
             displayTexture = texture
             let w = CGFloat(texture.width)
             let h = CGFloat(texture.height)
@@ -220,7 +220,7 @@ extension PhotoWindowModel {
 
         autoEnhancedDisplayTexture = texture
         preAutoEnhanceDisplayTexture = displayTexture
-        if !is3DMode, !isAnimatedGIF, let texture {
+        if !is3DMode, !isAnimatedImage, let texture {
             displayTexture = texture
             let w = CGFloat(texture.width)
             let h = CGFloat(texture.height)

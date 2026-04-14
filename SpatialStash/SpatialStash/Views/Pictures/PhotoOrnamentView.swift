@@ -75,7 +75,7 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
             extraButtons()
 
             // Resolution indicator (only in lightweight 2D mode with a loaded image)
-            if !windowModel.isRealityKitDisplay, !windowModel.isAnimatedGIF, windowModel.displayTexture != nil || windowModel.displayImage != nil {
+            if !windowModel.isRealityKitDisplay, !windowModel.isAnimatedImage, windowModel.displayTexture != nil || windowModel.displayImage != nil {
                 resolutionMenu
             }
         }
@@ -186,7 +186,7 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
             .background(windowModel.desiredViewingMode == .spatial3D ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
         }
         .buttonStyle(.borderless)
-        .disabled(windowModel.isAnimatedGIF || (windowModel.spatial3DImageState == .generating && windowModel.desiredViewingMode != .spatial3DImmersive))
+        .disabled(windowModel.isAnimatedImage || (windowModel.spatial3DImageState == .generating && windowModel.desiredViewingMode != .spatial3DImmersive))
         .help("3D")
     }
 
@@ -213,7 +213,7 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
             .background(windowModel.desiredViewingMode == .spatial3DImmersive ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
         }
         .buttonStyle(.borderless)
-        .disabled(windowModel.isAnimatedGIF || (windowModel.spatial3DImageState == .generating && windowModel.desiredViewingMode != .spatial3D))
+        .disabled(windowModel.isAnimatedImage || (windowModel.spatial3DImageState == .generating && windowModel.desiredViewingMode != .spatial3D))
         .help("Immersive 3D")
     }
 
@@ -294,7 +294,7 @@ struct PhotoOrnamentView<ExtraButtons: View>: View {
                         }
                     }
                 ),
-                showAutoEnhance: !windowModel.isAnimatedGIF,
+                showAutoEnhance: !windowModel.isAnimatedImage,
                 isProcessingAutoEnhance: windowModel.isProcessingAutoEnhance,
                 onToggleAutoEnhance: {
                     Task {

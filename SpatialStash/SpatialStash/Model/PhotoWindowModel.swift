@@ -251,7 +251,11 @@ class PhotoWindowModel {
     // MARK: - GIF Support
 
     var isAnimatedGIF: Bool = false
+    var isAnimatedWebP: Bool = false
+    var isAnimatedWebVisual: Bool = false
+    var isAnimatedImage: Bool { isAnimatedGIF || isAnimatedWebP || isAnimatedWebVisual }
     var currentImageData: Data? = nil
+    var animatedImageSourceURL: URL? = nil
     var gifHEVCURL: URL? = nil
 
     // MARK: - UI Visibility State
@@ -372,49 +376,63 @@ class PhotoWindowModel {
         // Sequential load: resolution restore → window size restore → data → enhancement check → 2D fallback → flip restore
         Task {
             // Restore per-image settings before any image loading
-            if appModel.rememberImageEnhancements {
-                let savedOverride = await ImageEnhancementTracker.shared.resolutionOverride(url: imageURL)
+            if self.appModel.rememberImageEnhancements {
+                let savedOverride = await ImageEnhancementTracker.shared.resolutionOverride(url: self.imageURL)
                 if savedOverride != nil {
-                    resolutionOverride = savedOverride
+                    self.resolutionOverride = savedOverride
                 }
-                let savedSize = await ImageEnhancementTracker.shared.windowSize(url: imageURL)
+                let savedSize = await ImageEnhancementTracker.shared.windowSize(url: self.imageURL)
                 if let savedSize {
-                    savedWindowSize = savedSize
-                    lastWindowSize = savedSize
+                    self.savedWindowSize = savedSize
+                    self.lastWindowSize = savedSize
                 }
             }
-            await loadImageDataForDetail(url: imageURL)
+            await self.loadImageDataForDetail(url: self.imageURL)
             // Restore slider values (brightness/contrast/saturation).
             // Auto-enhance restoration is handled by autoRestorePreviousEnhancement()
             // inside loadImageDataForDetail, so the display image is already set if active.
-            await restoreAdjustments()
+            await self.restoreAdjustments()
             // If no enhancement was applied and it's not a GIF, load 2D display image
-            if !isAnimatedGIF && !is3DMode && backgroundRemovalState == .original && !currentAdjustments.isAutoEnhanced {
-                let windowSize = lastWindowSize ?? appModel.mainWindowSize
-                await loadDisplayImage(for: windowSize)
+            if !self.isAnimatedImage && !self.is3DMode && self.backgroundRemovalState == .original && !self.currentAdjustments.isAutoEnhanced {
+                let windowSize = self.lastWindowSize ?? self.appModel.mainWindowSize
+                await self.loadDisplayImage(for: windowSize)
             }
             // Restore flip state (independent of other enhancements, but not for 3D/RealityKit)
-            if appModel.rememberImageEnhancements, !is3DMode {
-                let wasFlipped = await ImageEnhancementTracker.shared.isFlipped(url: imageURL)
+            if self.appModel.rememberImageEnhancements, !self.is3DMode {
+                let wasFlipped = await ImageEnhancementTracker.shared.isFlipped(url: self.imageURL)
                 if wasFlipped {
-                    isImageFlipped = true
+                    self.isImageFlipped = true
                 }
             }
-            isInitialLoadInProgress = false
-            await applyPendingViewingMode()
+            self.isInitialLoadInProgress = false
+            await self.applyPendingViewingMode()
         }
     }
 
     // MARK: - Image Loading
 
-    /// Load image data for the detail view and detect if it's an animated GIF.
+    /// Load image data for the detail view and detect if it's an animated image.
     /// Pass autoRestore: false when calling from loadDisplayImage — that path only
     /// needs the raw data and must not trigger a second concurrent auto-restoration.
     func loadImageDataForDetail(url: URL, autoRestore: Bool = true) async {
         do {
             if let data = try await ImageLoader.shared.loadRawData(from: url) {
                 currentImageData = data
+                animatedImageSourceURL = await resolveSourceFileURL() ?? url
                 isAnimatedGIF = data.isAnimatedGIF
+                let fileNameExtension = (image.fileName as NSString?)?.pathExtension.lowercased() ?? ""
+                let visualFileType = image.visualFileType ?? ""
+                let lowerURL = url.absoluteString.lowercased()
+                let isWebPByURL = url.pathExtension.lowercased() == "webp" || lowerURL.contains("webp")
+                let isWebPByFileName = fileNameExtension == "webp"
+                let isWebPByBytes = data.isWebP
+                let isAnimatedWebPByBytes = data.isAnimatedWebP
+                isAnimatedWebVisual = visualFileType == "VideoFile"
+                // Stash image endpoints often hide the real file extension in the URL.
+                // Use the original filename from GraphQL as the format hint, then hand
+                // the asset to the browser-based renderer which can display both static
+                // and animated WebP correctly.
+                isAnimatedWebP = isWebPByFileName || isAnimatedWebPByBytes || isWebPByBytes || isWebPByURL
 
                 if isAnimatedGIF {
                     // For GIFs, calculate aspect ratio from the image data
@@ -432,6 +450,11 @@ class PhotoWindowModel {
                         AppLogger.gifConverter.warning("GIF HEVC conversion failed, falling back to base64: \(error.localizedDescription, privacy: .public)")
                         gifHEVCURL = nil
                     }
+                } else if isAnimatedWebP || isAnimatedWebVisual {
+                    if let image = UIImage(data: data) {
+                        imageAspectRatio = image.size.width / image.size.height
+                    }
+                    isLoadingDetailImage = false
                 } else if autoRestore {
                     // Check if the image was previously enhanced and auto-restore
                     await autoRestorePreviousEnhancement()
@@ -457,7 +480,7 @@ class PhotoWindowModel {
     /// Auto-restore the last enhancement (3D or background removal) if applicable.
     /// When useRealityKitDisplay is set, always activates RealityKit in mono mode.
     func autoRestorePreviousEnhancement() async {
-        guard !isAnimatedGIF, !is3DMode else { return }
+        guard !isAnimatedImage, !is3DMode else { return }
         guard backgroundRemovalState == .original else { return }
 
         if useRealityKitDisplay {
@@ -465,7 +488,7 @@ class PhotoWindowModel {
             if appModel.rememberImageEnhancements {
                 let lastMode = await ImageEnhancementTracker.shared.lastViewingMode(url: imageURL)
                 let wasConverted = await ImageEnhancementTracker.shared.wasConverted(url: imageURL)
-                let shouldAutoGenerate = wasConverted && (lastMode == .spatial3D || lastMode == .spatial3DImmersive)
+                let shouldAutoGenerate = appModel.autoRestoreSpatial3D && wasConverted && (lastMode == .spatial3D || lastMode == .spatial3DImmersive)
                 if shouldAutoGenerate && lastMode == .spatial3DImmersive {
                     desiredViewingMode = .spatial3DImmersive
                 }
@@ -481,7 +504,7 @@ class PhotoWindowModel {
         let lastMode = await ImageEnhancementTracker.shared.lastViewingMode(url: imageURL)
         let wasConverted = await ImageEnhancementTracker.shared.wasConverted(url: imageURL)
 
-        if wasConverted && (lastMode == .spatial3D || lastMode == .spatial3DImmersive) {
+        if appModel.autoRestoreSpatial3D && wasConverted && (lastMode == .spatial3D || lastMode == .spatial3DImmersive) {
             // Auto-activate 3D (skips 2D load entirely)
             if lastMode == .spatial3DImmersive {
                 desiredViewingMode = .spatial3DImmersive
@@ -517,7 +540,7 @@ class PhotoWindowModel {
     /// Uses CGImageSource for memory-efficient downsampling without loading
     /// the full image into memory. No temp files are written to disk.
     func loadDisplayImage(for windowSize: CGSize) async {
-        guard !isAnimatedGIF else { return }
+        guard !isAnimatedImage else { return }
         guard !is3DMode else { return }
         guard !isLoadingDisplayImage else { return }
         guard backgroundRemovalState == .original else { return }
@@ -533,7 +556,7 @@ class PhotoWindowModel {
         if currentImageData == nil {
             await loadImageDataForDetail(url: imageURL, autoRestore: false)
         }
-        guard !isAnimatedGIF else { return }
+        guard !isAnimatedImage else { return }
         // autoRestorePreviousEnhancement may have run inside loadImageDataForDetail —
         // abort the 2D load if an enhancement is now active
         guard backgroundRemovalState == .original, !is3DMode else { return }
@@ -639,7 +662,7 @@ class PhotoWindowModel {
 
             // Re-downsample display image if dynamic resolution is active
             guard self.effectiveMaxResolution > 0 else { return }
-            guard !self.is3DMode, !self.isAnimatedGIF else { return }
+            guard !self.is3DMode, !self.isAnimatedImage else { return }
             guard !self.isLoadingDetailImage, !self.isLoadingDisplayImage else { return }
             guard !self.isInitialLoadInProgress else { return }
             guard self.displayTexture != nil || self.displayImage != nil else { return }
@@ -785,6 +808,7 @@ class PhotoWindowModel {
 
         // Release image data
         currentImageData = nil
+        animatedImageSourceURL = nil
         gifHEVCURL = nil
         displayTexture = nil
         displayImage = nil

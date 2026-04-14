@@ -37,7 +37,10 @@ extension PhotoWindowModel {
         spatial3DImageState = .notGenerated
         spatial3DImage = nil
         isAnimatedGIF = false
+        isAnimatedWebP = false
+        isAnimatedWebVisual = false
         currentImageData = nil
+        animatedImageSourceURL = nil
         gifHEVCURL = nil
         displayTexture = nil
         displayImage = nil
@@ -72,7 +75,7 @@ extension PhotoWindowModel {
 
         await loadImageDataForDetail(url: newImage.fullSizeURL)
 
-        if !isAnimatedGIF && !useRealityKitDisplay, let windowSize = lastWindowSize {
+        if !isAnimatedImage && !useRealityKitDisplay, let windowSize = lastWindowSize {
             await loadDisplayImage(for: windowSize)
         }
 

@@ -368,6 +368,16 @@ class AppModel {
         }
     }
 
+    /// When true, previously converted images auto-restore into spatial 3D mode.
+    /// This only applies when rememberImageEnhancements is enabled.
+    var autoRestoreSpatial3D: Bool {
+        didSet {
+            if autoRestoreSpatial3D != oldValue {
+                UserDefaults.standard.set(autoRestoreSpatial3D, forKey: "autoRestoreSpatial3D")
+            }
+        }
+    }
+
     /// Clears all remembered image enhancement data.
     func clearImageEnhancementData() async {
         await ImageEnhancementTracker.shared.clearAll()
@@ -541,6 +551,11 @@ class AppModel {
             ? UserDefaults.standard.bool(forKey: "rememberImageEnhancements")
             : true
 
+        // Load 3D auto-restore (default: true)
+        let loadedAutoRestoreSpatial3D = UserDefaults.standard.object(forKey: "autoRestoreSpatial3D") != nil
+            ? UserDefaults.standard.bool(forKey: "autoRestoreSpatial3D")
+            : true
+
         // Load remote viewer (default: false)
         let loadedEnableRemoteViewer = UserDefaults.standard.bool(forKey: "enableRemoteViewer")
 
@@ -575,6 +590,7 @@ class AppModel {
         self.roundedCorners = loadedRoundedCorners
         self.openMediaInNewWindows = loadedOpenMediaInNewWindows
         self.rememberImageEnhancements = loadedRememberImageEnhancements
+        self.autoRestoreSpatial3D = loadedAutoRestoreSpatial3D
         self.enableRemoteViewer = loadedEnableRemoteViewer
         self.showDebugConsole = loadedShowDebugConsole
         self.respectMemoryAlerts = loadedRespectMemoryAlerts
@@ -1095,6 +1111,7 @@ class AppModel {
             roundedCorners: roundedCorners,
             openMediaInNewWindows: openMediaInNewWindows,
             rememberImageEnhancements: rememberImageEnhancements,
+            autoRestoreSpatial3D: autoRestoreSpatial3D,
             showDebugConsole: showDebugConsole,
             respectMemoryAlerts: respectMemoryAlerts,
             enableRemoteViewer: enableRemoteViewer,
@@ -1126,6 +1143,7 @@ class AppModel {
         if let v = backup.roundedCorners { roundedCorners = v }
         if let v = backup.openMediaInNewWindows ?? backup.openImagesInSeparateWindows { openMediaInNewWindows = v }
         if let v = backup.rememberImageEnhancements { rememberImageEnhancements = v }
+        if let v = backup.autoRestoreSpatial3D { autoRestoreSpatial3D = v }
         if let v = backup.showDebugConsole { showDebugConsole = v }
         if let v = backup.respectMemoryAlerts { respectMemoryAlerts = v }
         if let v = backup.enableRemoteViewer { enableRemoteViewer = v }

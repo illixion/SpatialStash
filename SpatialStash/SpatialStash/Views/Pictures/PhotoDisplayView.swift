@@ -57,6 +57,19 @@ struct PhotoDisplayView: View {
         viewerWindowSize ?? windowModel.savedWindowSize ?? appModel.mainWindowSize
     }
 
+    private var animatedImageAuth: (apiKey: String?, token: String?) {
+        let raw = appModel.stashAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return (nil, nil) }
+
+        let lower = raw.lowercased()
+        if lower.hasPrefix("bearer ") {
+            let token = String(raw.dropFirst(7)).trimmingCharacters(in: .whitespacesAndNewlines)
+            return token.isEmpty ? (nil, nil) : (nil, token)
+        }
+
+        return (raw, nil)
+    }
+
     var body: some View {
         ZStack {
             imageContent
@@ -70,7 +83,7 @@ struct PhotoDisplayView: View {
                         viewerWindowSize = geo.size
                         containerWidth = geo.size.width
                         // If image is already loaded but window may be mis-sized (restoration case)
-                        if windowModel.displayTexture != nil || windowModel.displayImage != nil || windowModel.isAnimatedGIF || windowModel.is3DMode {
+                        if windowModel.displayTexture != nil || windowModel.displayImage != nil || windowModel.isAnimatedImage || windowModel.is3DMode {
                             scheduleWindowSizeVerification()
                         }
                     }
@@ -149,6 +162,43 @@ struct PhotoDisplayView: View {
                     scheduleWindowSizeVerification()
                 }
             }
+        } else if windowModel.isAnimatedWebP || windowModel.isAnimatedWebVisual {
+            AnimatedImageWebView(
+                imageURL: windowModel.animatedImageSourceURL ?? windowModel.imageURL,
+                elementType: windowModel.isAnimatedWebVisual ? .video : .image,
+                apiKey: animatedImageAuth.apiKey,
+                authorizationToken: animatedImageAuth.token
+            )
+                .brightness(windowModel.effectiveAdjustments.brightness)
+                .contrast(windowModel.effectiveAdjustments.contrast)
+                .saturation(windowModel.effectiveAdjustments.saturation)
+                .opacity(windowModel.effectiveAdjustments.opacity)
+                .aspectRatio(windowModel.imageAspectRatio, contentMode: .fit)
+                .clipShape(RoundedRectangle(cornerRadius: appModel.roundedCorners ? 50 : 0, style: .continuous))
+                .overlay {
+                    if windowModel.isUIHidden {
+                        Color.clear
+                            .contentShape(.rect)
+                            .onTapGesture {
+                                windowModel.toggleUIVisibility()
+                            }
+                    }
+                }
+                .modifier(SwipeGestureModifier(enabled: isSwipeEnabled, onEnded: handleDragEnded))
+                .onAppear {
+                    let initialBounds = windowModel.savedWindowSize ?? appModel.mainWindowSize
+                    resizeGIFWindowToFit(windowModel.imageAspectRatio, within: initialBounds)
+                }
+                .onChange(of: windowModel.imageAspectRatio) { _, newAspectRatio in
+                    guard !suppressWindowResize else { return }
+                    resizeGIFWindowToFit(newAspectRatio, within: currentBounds)
+                }
+                .onChange(of: windowModel.isLoadingDetailImage) { wasLoading, isLoading in
+                    if wasLoading && !isLoading {
+                        resizeGIFWindowToFit(windowModel.imageAspectRatio, within: currentBounds)
+                        scheduleWindowSizeVerification()
+                    }
+                }
         } else if windowModel.isAnimatedGIF {
             // GIF detected but HEVC conversion still in progress — show loading indicator
             ZStack {
@@ -400,7 +450,7 @@ struct PhotoDisplayView: View {
             // Phase 4: Clear transition state and resize window
             isSwipeTransitioning = false
             suppressWindowResize = false
-            if windowModel.isAnimatedGIF {
+            if windowModel.isAnimatedImage {
                 resizeGIFWindowToFit(windowModel.imageAspectRatio, within: currentBounds)
             } else {
                 resizeWindowToFit(windowModel.imageAspectRatio, within: currentBounds)
@@ -492,7 +542,7 @@ struct PhotoDisplayView: View {
         guard widthRatio < 0.95 || widthRatio > 1.05 || heightRatio < 0.95 || heightRatio > 1.05 else { return }
 
         AppLogger.views.info("Window size mismatch detected (current: \(currentSize.width, privacy: .public)x\(currentSize.height, privacy: .public), expected: \(expectedSize.width, privacy: .public)x\(expectedSize.height, privacy: .public)). Resizing.")
-        if windowModel.isAnimatedGIF {
+        if windowModel.isAnimatedImage {
             resizeGIFWindowToFit(windowModel.imageAspectRatio, within: targetBounds)
         } else {
             resizeWindowToFit(windowModel.imageAspectRatio, within: targetBounds)

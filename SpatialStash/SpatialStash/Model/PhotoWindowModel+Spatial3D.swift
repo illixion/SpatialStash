@@ -21,7 +21,7 @@ extension PhotoWindowModel {
     ///   right after creating the component (used when the user explicitly taps "Generate 3D").
     func activate3DMode(generateImmediately: Bool = false) {
         recordInteraction()
-        guard !isAnimatedGIF, !is3DMode else { return }
+        guard !isAnimatedImage, !is3DMode else { return }
         clearBackgroundRemovalState()
         if isImageFlipped {
             isImageFlipped = false
@@ -110,7 +110,7 @@ extension PhotoWindowModel {
         contentEntity.components.remove(ImagePresentationComponent.self)
         inputPlaneEntity = Entity()
 
-        guard !isAnimatedGIF else {
+        guard !isAnimatedImage else {
             isLoadingDetailImage = false
             return
         }
@@ -347,7 +347,7 @@ extension PhotoWindowModel {
         recordInteraction()
         resolutionOverride = resolution
         await trackResolutionOverride()
-        guard !isAnimatedGIF, !is3DMode else { return }
+        guard !isAnimatedImage, !is3DMode else { return }
 
         if backgroundRemovalState == .removed {
             // Re-downscale the background-removed image at the new resolution
@@ -416,14 +416,14 @@ extension PhotoWindowModel {
     func applyPendingViewingMode() async {
         guard let mode = pendingViewingMode else { return }
         pendingViewingMode = nil
-        guard !isAnimatedGIF else { return }
+        guard !isAnimatedImage else { return }
         await switchToViewingMode(mode)
     }
 
     /// Check if the current image was previously converted and auto-generate if so
     func autoGenerateSpatial3DIfPreviouslyConverted() async {
-        guard appModel.rememberImageEnhancements else { return }
-        guard !isAnimatedGIF,
+                guard appModel.rememberImageEnhancements, appModel.autoRestoreSpatial3D else { return }
+                guard !isAnimatedImage,
               spatial3DImageState == .notGenerated else {
             return
         }
