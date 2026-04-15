@@ -162,8 +162,12 @@ struct RemoteViewerWindowView: View {
             }
         }
         .onTapGesture {
-            controlsVisible = true
-            resetAutoHideTimer()
+            controlsVisible.toggle()
+            if controlsVisible {
+                resetAutoHideTimer()
+            } else {
+                autoHideTimer?.cancel()
+            }
         }
         .persistentSystemOverlays(controlsVisible ? .automatic : .hidden)
     }
