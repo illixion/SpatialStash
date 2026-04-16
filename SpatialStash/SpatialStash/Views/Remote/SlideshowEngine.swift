@@ -150,12 +150,9 @@ class SlideshowEngine {
     var gifConversionTask: Task<Void, Never>?
     private var runLoopTask: Task<Void, Never>?
     var prefetchTask: Task<Void, Never>?
-    private var backgroundUnloadTask: Task<Void, Never>?
-    private var backgroundedAt: Date?
     /// The state the engine was in before being backgrounded, for proper restoration.
     private var stateBeforeBackground: SlideshowState?
     private var lastAdvanceTime: Date?
-    private static let backgroundUnloadDelay: TimeInterval = 30
     var windowAspectRatio: Double = 16.0 / 9.0
 
     var prefetchedImages: [(post: RemotePost, image: UIImage, url: URL)] = []
@@ -222,8 +219,6 @@ class SlideshowEngine {
         prefetchTask = nil
         gifConversionTask?.cancel()
         gifConversionTask = nil
-        backgroundUnloadTask?.cancel()
-        backgroundUnloadTask = nil
         tagListManager?.removeChangeHandler(id: engineId)
     }
 
@@ -232,26 +227,24 @@ class SlideshowEngine {
             // Returning to active
             onBecameActive()
             isRoomActive = true
-            backgroundUnloadTask?.cancel()
-            backgroundUnloadTask = nil
-            backgroundedAt = nil
 
             guard state == .backgrounded else { return }
 
-            // Restore to the state we were in before backgrounding
+            // Restore to the state we were in before backgrounding.
+            // Content is always preserved — the slideshow manages its own
+            // memory by cycling images as it advances, so there is no
+            // background unload timer.
             let restoreState = stateBeforeBackground ?? .displaying
             stateBeforeBackground = nil
-
-            let hasContent = currentImage != nil || currentMediaType != .image
 
             if restoreState == .paused {
                 // Preserve paused state across background cycle
                 transition(to: .paused)
-            } else if hasContent {
-                // Still have images — resume the slideshow timer
+            } else if currentImage != nil || currentMediaType != .image {
+                // Resume the slideshow timer
                 transition(to: .displaying)
             } else {
-                // Images were unloaded or never loaded — fetch fresh
+                // Content was never loaded (backgrounded before first fetch) — fetch fresh
                 transition(to: .loading)
             }
 
@@ -260,29 +253,11 @@ class SlideshowEngine {
             // system interruptions, or true backgrounding
             onEnteredBackground()
             isRoomActive = false
-            backgroundedAt = Date()
 
             // Remember current state so we can restore it properly
             if state != .stopped && state != .idle && state != .backgrounded {
                 stateBeforeBackground = state
                 transition(to: .backgrounded)
-            }
-
-            // Start the unload timer. If we return to active before it fires,
-            // it gets cancelled above. The timer only starts when we actually
-            // transitioned to .backgrounded.
-            if state == .backgrounded {
-                backgroundUnloadTask = Task {
-                    try? await Task.sleep(for: .seconds(Self.backgroundUnloadDelay))
-                    guard !Task.isCancelled else { return }
-                    currentImage = nil
-                    nextImage = nil
-                    currentMediaType = .image
-                    prefetchedImages.removeAll()
-                    gifConversionTask?.cancel()
-                    gifConversionTask = nil
-                    AppLogger.remoteViewer.info("Background unload: released images/video after 30s")
-                }
             }
         }
     }
