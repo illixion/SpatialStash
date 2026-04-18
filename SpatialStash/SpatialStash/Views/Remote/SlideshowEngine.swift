@@ -162,6 +162,10 @@ class SlideshowEngine {
     /// instead of advancing normally. Used by previousImage/jumpToHistoryPost.
     private var pendingPost: RemotePost?
 
+    /// True while a prev/jump navigation is in flight — subclasses can use
+    /// this to avoid interrupting an intentional navigation.
+    var hasPendingNavigation: Bool { pendingPost != nil }
+
     // MARK: - Init
 
     init(delay: TimeInterval = 15, enableKenBurns: Bool = true, useAspectRatio: Bool = true) {

@@ -51,7 +51,9 @@ class RemoteWebSocketClient {
     private var webSocketTask: URLSessionWebSocketTask?
     private var session: URLSession?
     private var wsURL: URL?
-    private var deviceId: String = ""
+    /// Device ID used for the initial getDisplayState on (re)connect.
+    /// Additional subscribers send their own device IDs via `sendVisibilityChange(deviceId:)`.
+    private var initialDeviceId: String = ""
     private var reconnectTask: Task<Void, Never>?
     private var receiveTask: Task<Void, Never>?
     private var retryCount: Int = 0
@@ -63,7 +65,7 @@ class RemoteWebSocketClient {
         guard !wsEndpoint.isEmpty, let url = URL(string: wsEndpoint) else { return }
 
         self.wsURL = url
-        self.deviceId = deviceId
+        self.initialDeviceId = deviceId
         self.session = URLSession(configuration: .default)
 
         doConnect()
@@ -80,7 +82,7 @@ class RemoteWebSocketClient {
         retryCount = 0
     }
 
-    func sendVisibilityChange(visible: Bool) {
+    func sendVisibilityChange(deviceId: String, visible: Bool) {
         sendJSON([
             "action": "getDisplayState",
             "payload": ["target": deviceId]
@@ -126,8 +128,8 @@ class RemoteWebSocketClient {
 
         // Request initial data
         sendGetBlocked()
-        if !deviceId.isEmpty {
-            sendJSON(["action": "getDisplayState", "payload": ["target": deviceId]])
+        if !initialDeviceId.isEmpty {
+            sendJSON(["action": "getDisplayState", "payload": ["target": initialDeviceId]])
         }
 
         receiveTask = Task { [weak self] in

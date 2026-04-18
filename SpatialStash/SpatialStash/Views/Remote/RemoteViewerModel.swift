@@ -28,7 +28,7 @@ class RemoteViewerModel: SlideshowEngine {
     // MARK: - Sensor Display
 
     var sortedSensors: [HASensorReading] {
-        wsClient.sensorData.values.sorted { $0.friendlyName < $1.friendlyName }
+        wsClient?.sensorData.values.sorted { $0.friendlyName < $1.friendlyName } ?? []
     }
 
     // MARK: - Window Callbacks
@@ -41,7 +41,14 @@ class RemoteViewerModel: SlideshowEngine {
     // MARK: - Services
 
     let apiClient = RemoteAPIClient()
-    let wsClient = RemoteWebSocketClient()
+    /// Shared WebSocket client, acquired from SlideshowSyncHub when WS is configured.
+    /// Multiple RemoteViewerModels with the same wsEndpoint share a single client.
+    private(set) var wsClient: RemoteWebSocketClient?
+    private var wsToken: SlideshowSyncHub.WSSubscriptionToken?
+
+    /// When true, `onPostTransitioned` skips broadcasting local sync to avoid
+    /// feedback loops while this model is applying an incoming sync.
+    private var isApplyingIncomingSync: Bool = false
 
     // MARK: - Init
 
@@ -67,6 +74,8 @@ class RemoteViewerModel: SlideshowEngine {
 
     override func start() {
         guard state == .idle else { return }
+
+        SlideshowSyncHub.shared.registerForLocalSync(self)
 
         if !isGalleryMode {
             fetchRemoteTagLists()
@@ -94,15 +103,18 @@ class RemoteViewerModel: SlideshowEngine {
 
     override func stop() {
         super.stop()
-        wsClient.disconnect()
+        SlideshowSyncHub.shared.unregisterForLocalSync(self)
+        SlideshowSyncHub.shared.unsubscribeWS(wsToken)
+        wsToken = nil
+        wsClient = nil
     }
 
     override func onBecameActive() {
-        wsClient.sendVisibilityChange(visible: true)
+        wsClient?.sendVisibilityChange(deviceId: config.wsDeviceId, visible: true)
     }
 
     override func onEnteredBackground() {
-        wsClient.sendVisibilityChange(visible: false)
+        wsClient?.sendVisibilityChange(deviceId: config.wsDeviceId, visible: false)
     }
 
     // MARK: - Remote Tag List Fetch
@@ -147,7 +159,7 @@ class RemoteViewerModel: SlideshowEngine {
         guard let post = currentPost else { return }
         blockedPosts.insert(post._id)
         config.blockedPosts = Array(blockedPosts)
-        wsClient.sendBlock(postId: post._id)
+        wsClient?.sendBlock(postId: post._id)
         onConfigChanged?(config)
         showToast("Blocked post #\(post._id)")
         goToNextImage()
@@ -164,22 +176,100 @@ class RemoteViewerModel: SlideshowEngine {
     // MARK: - Display Sync (subclass hook)
 
     override func onPostTransitioned(post: RemotePost, url: URL) {
-        guard !isGalleryMode else { return }
+        // WebSocket message — still sent for RoboFrame server coordination
+        // even in gallery mode (harmless if wsClient is nil).
+        if !isGalleryMode {
+            if enableDisplaySync {
+                wsClient?.sendDisplaySync(
+                    currentPost: (id: post._id, url: url.absoluteString),
+                    nextPost: prefetchedImages.first.map { (id: $0.post._id, url: $0.url.absoluteString) },
+                    currentList: tagListManager?.activeIndex ?? 0,
+                    dbCursor: (contentProvider as? RemoteContentProvider)?.cursor
+                )
+            } else {
+                wsClient?.sendDisplaySync(
+                    currentPost: nil,
+                    nextPost: nil,
+                    currentList: tagListManager?.activeIndex ?? 0,
+                    dbCursor: nil
+                )
+            }
+        }
 
-        if enableDisplaySync {
-            wsClient.sendDisplaySync(
-                currentPost: (id: post._id, url: url.absoluteString),
-                nextPost: prefetchedImages.first.map { (id: $0.post._id, url: $0.url.absoluteString) },
-                currentList: tagListManager?.activeIndex ?? 0,
-                dbCursor: (contentProvider as? RemoteContentProvider)?.cursor
-            )
-        } else {
-            wsClient.sendDisplaySync(
-                currentPost: nil,
-                nextPost: nil,
-                currentList: tagListManager?.activeIndex ?? 0,
-                dbCursor: nil
-            )
+        // Local broadcast — only when sync is enabled and we aren't
+        // currently applying an incoming sync (avoid feedback loops).
+        guard enableDisplaySync, !isApplyingIncomingSync else { return }
+
+        let payload = LocalDisplaySyncPayload(
+            currentPost: post,
+            currentImage: currentImage,
+            currentImageURL: url,
+            currentMediaType: currentMediaType,
+            isCurrentPostAnimatedGIF: isCurrentPostAnimatedGIF,
+            prefetched: prefetchedImages,
+            cachedPosts: cachedPosts,
+            cursor: (contentProvider as? RemoteContentProvider)?.cursor,
+            delay: delay
+        )
+        SlideshowSyncHub.shared.broadcastLocalSync(from: self, payload: payload)
+    }
+
+    // MARK: - Local Display Sync (receiver)
+
+    /// Adopt a display-sync snapshot from another local slideshow instance.
+    /// Images/data are reference-typed so no bitmap copies occur. Only
+    /// mirrors cheap live state — pause/play and visibility are not synced.
+    func applyLocalDisplaySync(_ payload: LocalDisplaySyncPayload) {
+        // Display Sync OFF → this instance is independent; skip incoming syncs
+        guard enableDisplaySync else { return }
+        // Engine must be running — don't apply while idle/stopped
+        guard state != .idle, state != .stopped else { return }
+
+        isApplyingIncomingSync = true
+        defer { isApplyingIncomingSync = false }
+
+        // Mirror the slideshow interval
+        if delay != payload.delay {
+            delay = payload.delay
+        }
+
+        // Mirror pagination cursor for future fetches
+        if let cursor = payload.cursor {
+            (contentProvider as? RemoteContentProvider)?.cursor = cursor
+        }
+
+        // Mirror the cached post queue (future query results)
+        cachedPosts = payload.cachedPosts
+
+        // Mirror prefetched images by reference (no copy)
+        prefetchedImages = payload.prefetched
+
+        // Mirror the currently-displayed post if it differs.
+        // Use displayImage so the crossfade is consistent.
+        guard let newPost = payload.currentPost,
+              let newImage = payload.currentImage,
+              let newURL = payload.currentImageURL,
+              newPost._id != currentPost?._id else { return }
+
+        // Don't interrupt a navigation in progress (previousImage/jump)
+        if hasPendingNavigation { return }
+
+        // If currently in transitioning state, wait — our own displayImage
+        // would overlap. Swap directly instead.
+        if state == .transitioning {
+            currentImage = newImage
+            currentPost = newPost
+            currentMediaType = payload.currentMediaType
+            isCurrentPostAnimatedGIF = payload.isCurrentPostAnimatedGIF
+            return
+        }
+
+        isCurrentPostAnimatedGIF = payload.isCurrentPostAnimatedGIF
+        Task { [weak self] in
+            guard let self else { return }
+            self.isApplyingIncomingSync = true
+            await self.displayImage(newImage, post: newPost, url: newURL, mediaType: payload.currentMediaType)
+            self.isApplyingIncomingSync = false
         }
     }
 
@@ -188,13 +278,17 @@ class RemoteViewerModel: SlideshowEngine {
     private func setupWebSocket() {
         guard !config.wsEndpoint.isEmpty else { return }
 
-        wsClient.onMessage = { [weak self] message in
-            Task { @MainActor [weak self] in
-                self?.handleWSMessage(message)
+        guard let result = SlideshowSyncHub.shared.subscribeWS(
+            endpoint: config.wsEndpoint,
+            deviceId: config.wsDeviceId,
+            onMessage: { [weak self] message in
+                guard let self else { return }
+                self.handleWSMessage(message)
             }
-        }
+        ) else { return }
 
-        wsClient.connect(wsEndpoint: config.wsEndpoint, deviceId: config.wsDeviceId)
+        wsToken = result.token
+        wsClient = result.client
     }
 
     private func handleWSMessage(_ message: RemoteWSMessage) {
