@@ -88,7 +88,7 @@ struct PhotoDisplayView: View {
                             .lineLimit(1)
 
                         Button {
-                            windowModel.showAutoRestorePrompt = false
+                            windowModel.dismissAutoRestorePrompt()
                             Task {
                                 let mode: ImagePresentationComponent.ViewingMode = windowModel.autoRestoreImmersive ? .spatial3DImmersive : .spatial3D
                                 await windowModel.switchToViewingMode(mode)
@@ -102,7 +102,7 @@ struct PhotoDisplayView: View {
                         .buttonStyle(.borderedProminent)
 
                         Button {
-                            windowModel.showAutoRestorePrompt = false
+                            windowModel.dismissAutoRestorePrompt()
                         } label: {
                             Image(systemName: "xmark")
                                 .font(.callout)

@@ -13,6 +13,30 @@ import SwiftUI
 
 extension PhotoWindowModel {
 
+    // MARK: - 3D Auto-Restore Prompt
+
+    /// Show the 3D restore prompt pill and schedule auto-dismissal after a timeout.
+    /// Cancels any in-flight dismiss timer.
+    func presentAutoRestorePrompt(immersive: Bool) {
+        autoRestoreImmersive = immersive
+        showAutoRestorePrompt = true
+
+        autoRestorePromptDismissTask?.cancel()
+        autoRestorePromptDismissTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(Self.autoRestorePromptTimeout))
+            guard !Task.isCancelled else { return }
+            self?.showAutoRestorePrompt = false
+            self?.autoRestorePromptDismissTask = nil
+        }
+    }
+
+    /// Dismiss the 3D restore prompt immediately and cancel the auto-dismiss timer.
+    func dismissAutoRestorePrompt() {
+        autoRestorePromptDismissTask?.cancel()
+        autoRestorePromptDismissTask = nil
+        showAutoRestorePrompt = false
+    }
+
     // MARK: - 3D Mode Activation
 
     /// Activate RealityKit 3D mode. Loads the full-resolution ImagePresentationComponent

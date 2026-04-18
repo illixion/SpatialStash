@@ -268,6 +268,9 @@ class PhotoWindowModel {
     var isWindowControlsHidden: Bool = false
     var autoHideTask: Task<Void, Never>?
     var windowControlsHideTask: Task<Void, Never>?
+    /// Auto-dismiss timer for the 3D restore prompt pill
+    var autoRestorePromptDismissTask: Task<Void, Never>?
+    static let autoRestorePromptTimeout: TimeInterval = 10
 
     // MARK: - Gallery Navigation State
 
@@ -494,8 +497,7 @@ class PhotoWindowModel {
                 let wasConverted = await ImageEnhancementTracker.shared.wasConverted(url: imageURL)
                 let shouldOfferRestore = appModel.autoRestoreSpatial3D && wasConverted && (lastMode == .spatial3D || lastMode == .spatial3DImmersive)
                 if shouldOfferRestore {
-                    autoRestoreImmersive = lastMode == .spatial3DImmersive
-                    showAutoRestorePrompt = true
+                    presentAutoRestorePrompt(immersive: lastMode == .spatial3DImmersive)
                 }
                 activate3DMode(generateImmediately: false)
             } else {
@@ -511,8 +513,7 @@ class PhotoWindowModel {
 
         if appModel.autoRestoreSpatial3D && wasConverted && (lastMode == .spatial3D || lastMode == .spatial3DImmersive) {
             // Show prompt pill instead of auto-generating — user opts in
-            autoRestoreImmersive = lastMode == .spatial3DImmersive
-            showAutoRestorePrompt = true
+            presentAutoRestorePrompt(immersive: lastMode == .spatial3DImmersive)
         } else if lastMode == .autoEnhanced {
             if let cachedData = await AutoEnhanceCache.shared.loadData(for: imageURL),
                let cachedImage = UIImage(data: cachedData) {

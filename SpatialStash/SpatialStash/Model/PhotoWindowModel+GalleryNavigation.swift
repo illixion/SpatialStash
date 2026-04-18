@@ -58,6 +58,10 @@ extension PhotoWindowModel {
         currentAdjustments = VisualAdjustments()
         isShowingAdjustmentPreview = false
         adjustments3DReloadTask?.cancel()
+        // Dismiss any lingering 3D restore prompt from the previous image.
+        // If the new image also has a cached 3D state, autoRestorePreviousEnhancement
+        // will re-present the prompt with a fresh timer.
+        dismissAutoRestorePrompt()
 
         if appModel.rememberImageEnhancements {
             let savedOverride = await ImageEnhancementTracker.shared.resolutionOverride(url: newImage.fullSizeURL)
