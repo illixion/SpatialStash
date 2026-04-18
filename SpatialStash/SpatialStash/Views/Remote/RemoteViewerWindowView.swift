@@ -281,12 +281,12 @@ struct RemoteViewerWindowView: View {
                             if sensor.isUnavailable {
                                 Text("\u{2757}")
                             }
-                            Text(sensor.displayEmoji)
                             Text(sensor.friendlyName + ":")
                             Text(sensor.isUnavailable ? (sensor.lastKnownState ?? "N/A") : sensor.state)
                             if !sensor.unitOfMeasurement.isEmpty {
                                 Text(sensor.unitOfMeasurement)
                             }
+                            Text(sensor.displayEmoji)
                         }
                         .font(.system(size: 16 * scale))
                     }
