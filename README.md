@@ -81,7 +81,7 @@ Browse your image gallery in a grid view. Tap any image to open it in the viewer
 - Tap the **play** button to launch a slideshow viewer with Ken Burns animation, clock overlay, and visual adjustment controls
 - Tap the **star** button to view/edit rating and O-count (Stash server only)
 - Tap the **pop-out** button to open the image in its own window
-- Images that were previously viewed in 3D will automatically restore to 3D mode
+- Images previously viewed in 3D show a "Restore 3D" prompt pill that opts you back in with one tap (auto-dismisses after 10s)
 - The window automatically adjusts to match image aspect ratios
 
 ### Videos Tab

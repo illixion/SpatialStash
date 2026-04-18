@@ -55,7 +55,7 @@ The two thin wrapper views:
 - **Default (Dynamic Image Resolution on):** Images open in GPU-backed 2D mode using an `MTLTexture` with `.private` storage (not counted as dirty CPU memory by jetsam). The source is downsampled via `CGImageSource`, uploaded to GPU via `CIContext.render`, and displayed through `MetalImageView` (MTKView wrapper). Re-downsampled on window resize (1-second debounce, 20% threshold). RealityKit is only loaded when the user activates 3D mode.
 - **Dynamic Image Resolution off:** Images load at full native resolution. No re-downsampling on resize.
 - **Deep color preservation:** Images with >8 bits per component (e.g. 16-bit JXL) use `rgba16Float` textures with `extendedLinearDisplayP3` color space. Standard 8-bit images use `bgra8Unorm` with `deviceRGB`.
-- **Auto-3D restoration:** If an image was previously converted to 3D and the user didn't explicitly switch back to 2D, it auto-activates 3D mode on reopen (tracked via `ImageEnhancementTracker`). Shows a glass overlay with "Generating 3D..." and a Cancel button (`showAutoRestoreOverlay` on `PhotoWindowModel`), auto-dismissed ~1s after generation completes.
+- **Auto-3D restore prompt:** If an image was previously viewed in 3D (tracked via `ImageEnhancementTracker`), a capsule prompt pill appears at the bottom of the viewer offering "Restore" or dismiss. Image always opens in 2D — restoration is opt-in. Controlled by `showAutoRestorePrompt` + `autoRestoreImmersive` on `PhotoWindowModel`. Dismisses automatically after 10s (`autoRestorePromptDismissTask`) and when the user navigates to a different image via `switchToImage`. Use `presentAutoRestorePrompt(immersive:)` / `dismissAutoRestorePrompt()` helpers rather than toggling the flag directly so the timer stays in sync.
 - **Important:** When swapping `displayTexture` (e.g. toggling background removal or auto-enhance from in-memory cache), `imageAspectRatio` must always be updated from the new texture's dimensions. The Metal renderer stretches the texture to fill its view — aspect ratio is controlled externally by SwiftUI's `.aspectRatio()` modifier driven by `imageAspectRatio`.
 
 ### Spatial 3D Images
@@ -110,7 +110,6 @@ Uses RealityKit's `ImagePresentationComponent` for 2D→3D conversion. States tr
 ### Media Metadata & Detail Views
 - **MediaMetadata.swift** - Lightweight shared structs: `MediaTag`, `MediaPerformer`, `MediaStudio`, `MediaGalleryRef`, `MediaGroupRef`, plus full detail structs `ImageDetail` and `SceneDetail` (fetched on-demand, not in list queries)
 - **MediaDetailSheet** - Two-tab sheet (Info read-only + Edit) opened from the ornament Info button. Info tab shows file metadata, associations (tags/performers/studio/galleries as chips via `FlowLayout`), and stats. Edit tab has searchable pickers for tags/performers/studio, text fields, rating/O-counter editors, URL list, and organized toggle. Delete section at bottom with confirmation dialog ("Remove from Stash" vs "Delete File from Disk")
-- **MediaInfoPopover** - Legacy lightweight popover (star rating + O counter only), no longer used by ornaments but kept for potential reuse
 
 ### Multi-Select
 Gallery grids (`GalleryGridView`, `VideoGalleryView`) support multi-select mode:
@@ -124,10 +123,13 @@ A slideshow viewer that fetches images from a [RoboFrame](https://github.com/ill
 
 **Architecture:**
 - **RemoteViewerConfig** — Codable config struct with all settings, saved to UserDefaults via AppModel
-- **RemoteViewerModel** — `@MainActor @Observable` slideshow engine. Manages prefetch buffer (3 images ahead), crossfade transitions, Sobel-based Ken Burns focus, dynamic brightness, WS integration, client-side block filtering, and gallery mode. Also used as the app's slideshow engine (replaces the old PhotoWindowModel slideshow)
+- **SlideshowEngine** — `@MainActor @Observable` reusable base class running a state machine (idle → loading → displaying ⇄ paused / backgrounded → stopped). Owns prefetch buffer (3 images ahead), crossfade transitions, Sobel-based Ken Burns focus, dynamic brightness, scene-phase handling, and navigation. Content is preserved across background cycles — the engine has no aggressive unload timer and relies on normal image cycling to bound memory.
+- **RemoteViewerModel** — `SlideshowEngine` subclass adding WS integration, save/block, sensor display, Display Sync, and config persistence. Also used as the app's slideshow engine (replaces the old PhotoWindowModel slideshow; gallery mode uses `GalleryContentProvider` as the content source)
+- **SlideshowContentProvider** / **RemoteContentProvider** / **GalleryContentProvider** — protocol + implementations that abstract post fetching and image downloading so the engine is agnostic to the source
 - **RemoteViewerWindowView** — Main viewer window with image/clock/sensor layers, ornament with auto-hide. Supports both remote API and gallery image sources
 - **RemoteAPIClient** — Actor for search/get/save/history HTTP endpoints
-- **RemoteWebSocketClient** — `@Observable` class managing URLSessionWebSocketTask with reconnection
+- **RemoteWebSocketClient** — `@Observable` class managing a single `URLSessionWebSocketTask` with auto-reconnect. Not owned by a single viewer — acquired from `SlideshowSyncHub`.
+- **SlideshowSyncHub** — `@MainActor` singleton providing (1) WS connection pooling keyed by endpoint URL so multiple viewer windows share one connection (RoboFrame server messages broadcast to every subscriber), and (2) local Display Sync broadcast between in-process `RemoteViewerModel` instances (current/next image, prefetched queue, cached posts, cursor, delay — `UIImage` is reference-typed so no bitmap copies)
 - **SobelFocusAnalyzer** — Pure functions for Sobel edge detection (Ken Burns focus) and average luminance (dynamic brightness)
 
 **RoboFrame Proxy API:**
@@ -148,11 +150,13 @@ A slideshow viewer that fetches images from a [RoboFrame](https://github.com/ill
 - Blocked posts/tags from WS `getBlocked` are merged into local config and persisted
 - Save button has 1.5s grace period after image transition (saves previous post)
 - Visual adjustments (brightness/contrast/saturation) stack: auto (luminance-based) + per-viewer + global
-- Ornament: [ Grid | Prev | Next | Save | Home | Cycle Tags | Adjustments | Block ] (Save/Home/Cycle/Block hidden in gallery mode)
+- Ornament: [ Grid | Prev | Next | Save | Home | Cycle Tags | Display Sync | Adjustments | Block ] (Save/Home/Cycle/Display Sync/Block hidden in gallery mode)
 - Adjustments popover has a "Viewer" tab with display toggles (clock, sensors, Ken Burns, background, aspect ratio)
 - Images are downsampled on load using `maxImageResolution` from app settings via `CGImageSourceCreateThumbnailAtIndex`
 - **Gallery mode:** When `apiEndpoint` is empty, the viewer pulls from `appModel.imageSource` instead of the remote API. The photo viewer's slideshow button launches a gallery-mode viewer window. API-only features (WS, save, block, history, tag cycling) are disabled
-- **Background handling:** On background, slideshow pauses and images are held for 30s then unloaded. On return to active: if <30s, resumes with previous image; if ≥30s, advances to next image. WS visibility reporting is immediate and unaffected by the timer
+- **Background handling:** On background the engine transitions to `.backgrounded` (pausing the run loop) and remembers `stateBeforeBackground`. Content (current/next image, prefetch queue, cached posts) is preserved — on return to active the engine resumes with the same image. WS visibility reporting is immediate. Previously the engine had a 30s unload timer but it was removed — the recovery path from nil content was fragile and the normal cycle already bounds memory.
+- **Display Sync:** When the toggle is on, `onPostTransitioned` both sends the WS `displaySync` message (RoboFrame server coordination) and calls `SlideshowSyncHub.broadcastLocalSync` to mirror current/next image, prefetched queue, cached posts, cursor, and delay to every other registered local instance via `RemoteViewerModel.applyLocalDisplaySync`. An `isApplyingIncomingSync` flag suppresses rebroadcast during the crossfade await to prevent feedback loops. Pause/play state is intentionally not mirrored. Shared `TagListManager` already propagates tag list switches across windows so those don't need to ride the sync payload.
+- **Shared WS:** All `RemoteViewerModel`s with the same `wsEndpoint` share a single `RemoteWebSocketClient` obtained via `SlideshowSyncHub.subscribeWS`. Each subscriber passes its own `deviceId` to `sendVisibilityChange(deviceId:visible:)`. Server messages (RoboFrame broadcasts for all device IDs by design) fan out to every subscriber; the connection closes when the last subscriber leaves.
 
 ## Key Patterns
 
