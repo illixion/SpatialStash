@@ -445,17 +445,6 @@ class AppModel {
         }
     }
 
-    // MARK: - Debug Console
-
-    /// When true, the Console tab appears in the tab bar ornament
-    var showDebugConsole: Bool {
-        didSet {
-            if showDebugConsole != oldValue {
-                UserDefaults.standard.set(showDebugConsole, forKey: "showDebugConsole")
-            }
-        }
-    }
-
     /// When true, the app responds to system memory pressure by downscaling
     /// images and clearing caches. When false, memory pressure events are
     /// logged but not acted upon.
@@ -559,9 +548,6 @@ class AppModel {
         // Load remote viewer (default: false)
         let loadedEnableRemoteViewer = UserDefaults.standard.bool(forKey: "enableRemoteViewer")
 
-        // Load debug console visibility (default: false)
-        let loadedShowDebugConsole = UserDefaults.standard.bool(forKey: "showDebugConsole")
-
         // Load respect memory alerts (default: true)
         let loadedRespectMemoryAlerts = UserDefaults.standard.object(forKey: "respectMemoryAlerts") != nil
             ? UserDefaults.standard.bool(forKey: "respectMemoryAlerts")
@@ -592,7 +578,6 @@ class AppModel {
         self.rememberImageEnhancements = loadedRememberImageEnhancements
         self.autoRestoreSpatial3D = loadedAutoRestoreSpatial3D
         self.enableRemoteViewer = loadedEnableRemoteViewer
-        self.showDebugConsole = loadedShowDebugConsole
         self.respectMemoryAlerts = loadedRespectMemoryAlerts
         self.useLossyTextureCompression = loadedUseLossyTextureCompression
         self.globalVisualAdjustments = loadedGlobalVisualAdjustments
@@ -633,11 +618,6 @@ class AppModel {
 
         // Apply default views on startup
         applyDefaultViewsOnStartup()
-
-        // Start log capture if the debug console was previously enabled
-        if loadedShowDebugConsole {
-            LogStore.shared.startPolling()
-        }
 
         // Monitor memory pressure and downscale windows that have been
         // backgrounded (not in active room) for at least 2 minutes.
@@ -1112,7 +1092,6 @@ class AppModel {
             openMediaInNewWindows: openMediaInNewWindows,
             rememberImageEnhancements: rememberImageEnhancements,
             autoRestoreSpatial3D: autoRestoreSpatial3D,
-            showDebugConsole: showDebugConsole,
             respectMemoryAlerts: respectMemoryAlerts,
             enableRemoteViewer: enableRemoteViewer,
             savedViews: savedViews,
@@ -1144,7 +1123,6 @@ class AppModel {
         if let v = backup.openMediaInNewWindows ?? backup.openImagesInSeparateWindows { openMediaInNewWindows = v }
         if let v = backup.rememberImageEnhancements { rememberImageEnhancements = v }
         if let v = backup.autoRestoreSpatial3D { autoRestoreSpatial3D = v }
-        if let v = backup.showDebugConsole { showDebugConsole = v }
         if let v = backup.respectMemoryAlerts { respectMemoryAlerts = v }
         if let v = backup.enableRemoteViewer { enableRemoteViewer = v }
 

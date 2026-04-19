@@ -343,29 +343,6 @@ struct SettingsTabView: View {
                         }
                     ))
 
-                    Toggle("Show Debug Console", isOn: Binding(
-                        get: { appModel.showDebugConsole },
-                        set: { newValue in
-                            appModel.showDebugConsole = newValue
-                            Task {
-                                try? await Task.sleep(for: .milliseconds(50))
-                                if newValue {
-                                    LogStore.shared.startPolling()
-                                } else {
-                                    if appModel.selectedTab == .console {
-                                        appModel.selectedTab = .settings
-                                    }
-                                    LogStore.shared.stopAndClear()
-                                }
-                            }
-                        }
-                    ))
-                    if appModel.showDebugConsole {
-                        Text("The Console tab shows app log messages in real time. Useful when Xcode is not connected.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-
                     Toggle("Respect System Memory Alerts", isOn: $appModel.respectMemoryAlerts)
                     Text("When disabled, the app will not unload images or downscale windows in response to system memory pressure.")
                         .font(.caption)

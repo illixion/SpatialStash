@@ -69,11 +69,36 @@ final class LogStore {
     private var pollTask: Task<Void, Never>?
     private let subsystem = Bundle.main.bundleIdentifier ?? "com.illixion.spatial-stash"
 
+    /// Number of open console views/windows currently observing logs.
+    /// Polling runs iff this is > 0 so the tab can stay visible in the
+    /// ornament without paying the OSLogStore poll cost when nobody is
+    /// looking.
+    private var viewerCount: Int = 0
+
     private init() {}
 
-    /// Start polling for new log entries.
-    /// Called when the debug console setting is enabled.
-    func startPolling() {
+    /// Register a console view/window as active. Starts polling on first
+    /// subscriber.
+    func addViewer() {
+        viewerCount += 1
+        if viewerCount == 1 {
+            startPolling()
+        }
+    }
+
+    /// Unregister a console view/window. Stops polling and releases
+    /// captured entries once the last subscriber leaves.
+    func removeViewer() {
+        guard viewerCount > 0 else { return }
+        viewerCount -= 1
+        if viewerCount == 0 {
+            stopPolling()
+            entries.removeAll()
+            lastPollDate = nil
+        }
+    }
+
+    private func startPolling() {
         guard !isPolling else { return }
         isPolling = true
 
@@ -91,7 +116,6 @@ final class LogStore {
         }
     }
 
-    /// Stop polling immediately.
     private func stopPolling() {
         isPolling = false
         pollTask?.cancel()
@@ -102,14 +126,6 @@ final class LogStore {
     func clear() {
         entries.removeAll()
         lastPollDate = Date()
-    }
-
-    /// Stop polling and release all stored entries to free memory.
-    /// Called when the debug console is disabled in settings.
-    func stopAndClear() {
-        stopPolling()
-        entries.removeAll()
-        lastPollDate = nil
     }
 
     /// Fetch entries from OSLogStore, optionally filtering to entries after a date

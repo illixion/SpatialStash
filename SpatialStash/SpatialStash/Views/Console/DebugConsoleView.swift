@@ -27,8 +27,8 @@ struct DebugConsoleView: View {
             }
             .navigationTitle("Console")
         }
-        // Polling lifecycle is managed by AppModel.showDebugConsole, not by
-        // view appearance, so logs are captured while using other tabs.
+        .onAppear { logStore.addViewer() }
+        .onDisappear { logStore.removeViewer() }
     }
 
     // MARK: - Filter Bar

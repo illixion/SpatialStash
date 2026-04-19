@@ -15,8 +15,6 @@ struct TabBarOrnament: View {
             switch tab {
             case .remote:
                 return appModel.enableRemoteViewer
-            case .console:
-                return appModel.showDebugConsole
             default:
                 return true
             }
