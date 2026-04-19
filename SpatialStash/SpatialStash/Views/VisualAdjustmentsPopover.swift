@@ -265,6 +265,11 @@ struct VisualAdjustmentsPopover: View {
                     set: { model.config.enableKenBurns = $0 }
                 ))
 
+                Toggle("Dynamic Brightness", isOn: Binding(
+                    get: { model.config.enableDynamicBrightness },
+                    set: { model.config.enableDynamicBrightness = $0 }
+                ))
+
                 Toggle("Transparent Background", isOn: Binding(
                     get: { model.config.transparentBackground },
                     set: { model.config.transparentBackground = $0 }

@@ -150,6 +150,7 @@ class SlideshowEngine {
     var delay: TimeInterval
     var enableKenBurns: Bool
     var useAspectRatio: Bool
+    var enableDynamicBrightness: Bool
     var maxImageResolution: Int = 0
 
     // MARK: - Content Provider & Tag List Manager
@@ -206,10 +207,11 @@ class SlideshowEngine {
 
     // MARK: - Init
 
-    init(delay: TimeInterval = 15, enableKenBurns: Bool = true, useAspectRatio: Bool = true) {
+    init(delay: TimeInterval = 15, enableKenBurns: Bool = true, useAspectRatio: Bool = true, enableDynamicBrightness: Bool = true) {
         self.delay = delay
         self.enableKenBurns = enableKenBurns
         self.useAspectRatio = useAspectRatio
+        self.enableDynamicBrightness = enableDynamicBrightness
     }
 
     // MARK: - State Transitions
@@ -775,14 +777,19 @@ class SlideshowEngine {
                 focusPoint = focus
             }
 
-            let luminance = await Task.detached {
-                SobelFocusAnalyzer.averageLuminance(from: cgImage)
-            }.value
+            if enableDynamicBrightness {
+                let luminance = await Task.detached {
+                    SobelFocusAnalyzer.averageLuminance(from: cgImage)
+                }.value
 
-            if luminance < 0.3 {
-                let boost = Double(0.3 - luminance) * 0.5
-                autoBrightnessAdjustment = boost
-                autoContrastAdjustment = 1.0 + boost * 0.5
+                if luminance < 0.3 {
+                    let boost = Double(0.3 - luminance) * 0.5
+                    autoBrightnessAdjustment = boost
+                    autoContrastAdjustment = 1.0 + boost * 0.5
+                } else {
+                    autoBrightnessAdjustment = 0
+                    autoContrastAdjustment = 1.0
+                }
             } else {
                 autoBrightnessAdjustment = 0
                 autoContrastAdjustment = 1.0

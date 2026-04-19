@@ -60,7 +60,8 @@ class RemoteViewerModel: SlideshowEngine {
         super.init(
             delay: config.delay,
             enableKenBurns: config.enableKenBurns,
-            useAspectRatio: config.useAspectRatio
+            useAspectRatio: config.useAspectRatio,
+            enableDynamicBrightness: config.enableDynamicBrightness
         )
 
         self.blockedPosts = Set(config.blockedPosts)

@@ -26,6 +26,7 @@ struct RemoteViewerConfig: Codable, Identifiable {
     var showSensors: Bool = true
     var useAspectRatio: Bool = true
     var enableKenBurns: Bool = true
+    var enableDynamicBrightness: Bool = true
     var transparentBackground: Bool = false
     var textSize: Double = 1.0
 
@@ -65,6 +66,7 @@ struct RemoteViewerConfig: Codable, Identifiable {
         case id, name, savedDate
         case apiEndpoint, wsEndpoint, wsDeviceId
         case delay, showClock, showSensors, useAspectRatio, enableKenBurns
+        case enableDynamicBrightness
         case transparentBackground, textSize
         case blockedPosts, blockedTags
         case homeAssistantURL
@@ -87,6 +89,7 @@ struct RemoteViewerConfig: Codable, Identifiable {
         showSensors = try container.decodeIfPresent(Bool.self, forKey: .showSensors) ?? true
         useAspectRatio = try container.decodeIfPresent(Bool.self, forKey: .useAspectRatio) ?? true
         enableKenBurns = try container.decodeIfPresent(Bool.self, forKey: .enableKenBurns) ?? true
+        enableDynamicBrightness = try container.decodeIfPresent(Bool.self, forKey: .enableDynamicBrightness) ?? true
         transparentBackground = try container.decodeIfPresent(Bool.self, forKey: .transparentBackground) ?? false
         textSize = try container.decodeIfPresent(Double.self, forKey: .textSize) ?? 1.0
 
@@ -116,6 +119,7 @@ struct RemoteViewerConfig: Codable, Identifiable {
         try container.encode(showSensors, forKey: .showSensors)
         try container.encode(useAspectRatio, forKey: .useAspectRatio)
         try container.encode(enableKenBurns, forKey: .enableKenBurns)
+        try container.encode(enableDynamicBrightness, forKey: .enableDynamicBrightness)
         try container.encode(transparentBackground, forKey: .transparentBackground)
         try container.encode(textSize, forKey: .textSize)
 
