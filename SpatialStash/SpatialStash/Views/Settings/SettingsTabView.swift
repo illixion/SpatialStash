@@ -343,6 +343,19 @@ struct SettingsTabView: View {
                         }
                     ))
 
+                    Toggle("Show Debug Console", isOn: Binding(
+                        get: { appModel.showDebugConsole },
+                        set: { newValue in
+                            appModel.showDebugConsole = newValue
+                            if !newValue && appModel.selectedTab == .console {
+                                appModel.selectedTab = .settings
+                            }
+                        }
+                    ))
+                    Text("Adds a Console tab showing app log messages in real time. Log capture only runs while a console view is open.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
                     Toggle("Respect System Memory Alerts", isOn: $appModel.respectMemoryAlerts)
                     Text("When disabled, the app will not unload images or downscale windows in response to system memory pressure.")
                         .font(.caption)
