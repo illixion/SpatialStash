@@ -153,6 +153,17 @@ class SlideshowEngine {
     /// The state the engine was in before being backgrounded, for proper restoration.
     private var stateBeforeBackground: SlideshowState?
     private var lastAdvanceTime: Date?
+
+    /// Wall-clock deadline at which the current image should advance.
+    /// Persists across background/foreground cycles so the timer keeps ticking
+    /// while backgrounded. Reset only when a new image is displayed.
+    private var displayDeadline: Date?
+
+    /// When the engine entered an effectively-paused state (either `.paused`
+    /// directly, or `.backgrounded` with a paused prior state). Used to extend
+    /// `displayDeadline` by the pause duration on resume so pausing truly
+    /// freezes the timer.
+    private var pauseStartedAt: Date?
     var windowAspectRatio: Double = 16.0 / 9.0
 
     var prefetchedImages: [(post: RemotePost, image: UIImage, url: URL)] = []
@@ -189,6 +200,30 @@ class SlideshowEngine {
             return
         default:
             break
+        }
+
+        // Track "effective pause" duration so the display deadline can be
+        // extended on resume. `.paused` is always paused; `.backgrounded`
+        // inherits paused state from `stateBeforeBackground`.
+        let wasEffectivelyPaused: Bool
+        switch oldState {
+        case .paused: wasEffectivelyPaused = true
+        case .backgrounded: wasEffectivelyPaused = (stateBeforeBackground == .paused)
+        default: wasEffectivelyPaused = false
+        }
+        let willBeEffectivelyPaused: Bool
+        switch newState {
+        case .paused: willBeEffectivelyPaused = true
+        case .backgrounded: willBeEffectivelyPaused = (oldState == .paused)
+        default: willBeEffectivelyPaused = false
+        }
+        if !wasEffectivelyPaused && willBeEffectivelyPaused {
+            pauseStartedAt = Date()
+        } else if wasEffectivelyPaused && !willBeEffectivelyPaused {
+            if let start = pauseStartedAt, let deadline = displayDeadline {
+                displayDeadline = deadline.addingTimeInterval(Date().timeIntervalSince(start))
+            }
+            pauseStartedAt = nil
         }
 
         state = newState
@@ -431,18 +466,25 @@ class SlideshowEngine {
         triggerPrefetch()
     }
 
-    /// Displaying phase: wait for the configured delay, then advance.
+    /// Displaying phase: wait for the stored deadline, then advance.
+    /// The deadline is a wall-clock target that keeps ticking across
+    /// background/foreground cycles, so returning to active does not reset
+    /// the timer. If the deadline has already passed (e.g. returning after
+    /// a long background) the loop exits immediately and advances once.
     private func runDisplayingPhase() async {
         let versionAtEntry = stateVersion
-        lastAdvanceTime = Date()
 
-        // Sleep for the delay duration, but wake early if state changes
-        let sleepEnd = Date().addingTimeInterval(effectiveDelay)
-        while Date() < sleepEnd && state == .displaying && stateVersion == versionAtEntry {
-            // Sleep in small chunks so we can react to state changes promptly
-            let remaining = sleepEnd.timeIntervalSince(Date())
+        // Defensive: if no deadline was set (shouldn't normally happen since
+        // displayImage/displayVideo set it), establish one now.
+        if displayDeadline == nil {
+            displayDeadline = Date().addingTimeInterval(effectiveDelay)
+        }
+
+        while state == .displaying && stateVersion == versionAtEntry {
+            guard let deadline = displayDeadline else { break }
+            let remaining = deadline.timeIntervalSince(Date())
+            if remaining <= 0 { break }
             let chunk = min(remaining, 0.5)
-            guard chunk > 0 else { break }
             try? await Task.sleep(for: .seconds(chunk))
         }
 
@@ -459,6 +501,30 @@ class SlideshowEngine {
             return duration
         }
         return delay
+    }
+
+    /// Set `displayDeadline` for the image/video that was just committed.
+    ///
+    /// If the previous image's deadline had already passed (natural advance
+    /// or return from background), we extend the schedule by one interval
+    /// so the new image's deadline is `previous + delay` — that's what gives
+    /// the "5s later" behavior when the user returns mid-interval. If that
+    /// continued deadline is also in the past (return after many intervals),
+    /// we fall back to a fresh `now + delay` so we never cycle more than once.
+    ///
+    /// If the previous deadline is still in the future (manual prev/next, or
+    /// the first image at startup), the new image gets a fresh `now + delay`.
+    private func advanceDisplayDeadline() {
+        let now = Date()
+        let delay = effectiveDelay
+        if let previous = displayDeadline, now >= previous {
+            let continued = previous.addingTimeInterval(delay)
+            displayDeadline = continued > now ? continued : now.addingTimeInterval(delay)
+        } else {
+            displayDeadline = now.addingTimeInterval(delay)
+        }
+        // Starting a fresh image invalidates any pending pause-start marker.
+        pauseStartedAt = nil
     }
 
     // MARK: - Content Loading
@@ -547,6 +613,7 @@ class SlideshowEngine {
         currentPost = post
         currentMediaType = .video(url)
         lastAdvanceTime = Date()
+        advanceDisplayDeadline()
 
         AppLogger.remoteViewer.info("Displaying video post \(post._id, privacy: .public)")
         onPostTransitioned(post: post, url: url)
@@ -606,6 +673,7 @@ class SlideshowEngine {
         nextImage = nil
         isTransitioning = false
         lastAdvanceTime = Date()
+        advanceDisplayDeadline()
 
         // If still transitioning (nobody interrupted), move to displaying.
         // If state was changed (e.g. goToNextImage during crossfade), respect that.
