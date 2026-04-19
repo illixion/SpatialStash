@@ -174,6 +174,89 @@ class RemoteViewerModel: SlideshowEngine {
         showSensors.toggle()
     }
 
+    // MARK: - Bindable Display Toggles
+    //
+    // Bridging properties for the Viewer tab of VisualAdjustmentsPopover.
+    // Several display flags live on both the engine (runtime source of truth)
+    // and `config` (persistence). Writing through these setters keeps the
+    // two in sync and triggers `onConfigChanged` so the change is saved.
+
+    var displayShowClock: Bool {
+        get { showClock }
+        set {
+            showClock = newValue
+            if config.showClock != newValue {
+                config.showClock = newValue
+                onConfigChanged?(config)
+            }
+        }
+    }
+
+    var displayShowSensors: Bool {
+        get { showSensors }
+        set {
+            showSensors = newValue
+            if config.showSensors != newValue {
+                config.showSensors = newValue
+                onConfigChanged?(config)
+            }
+        }
+    }
+
+    var displayEnableKenBurns: Bool {
+        get { enableKenBurns }
+        set {
+            enableKenBurns = newValue
+            if config.enableKenBurns != newValue {
+                config.enableKenBurns = newValue
+                onConfigChanged?(config)
+            }
+        }
+    }
+
+    var displayEnableDynamicBrightness: Bool {
+        get { enableDynamicBrightness }
+        set {
+            enableDynamicBrightness = newValue
+            if config.enableDynamicBrightness != newValue {
+                config.enableDynamicBrightness = newValue
+                onConfigChanged?(config)
+            }
+        }
+    }
+
+    var displayTransparentBackground: Bool {
+        get { config.transparentBackground }
+        set {
+            if config.transparentBackground != newValue {
+                config.transparentBackground = newValue
+                onConfigChanged?(config)
+            }
+        }
+    }
+
+    var displayUseAspectRatio: Bool {
+        get { useAspectRatio }
+        set {
+            useAspectRatio = newValue
+            if config.useAspectRatio != newValue {
+                config.useAspectRatio = newValue
+                onConfigChanged?(config)
+            }
+        }
+    }
+
+    var displayDelay: TimeInterval {
+        get { delay }
+        set {
+            delay = newValue
+            if config.delay != newValue {
+                config.delay = newValue
+                onConfigChanged?(config)
+            }
+        }
+    }
+
     // MARK: - Display Sync (subclass hook)
 
     override func onPostTransitioned(post: RemotePost, url: URL) {

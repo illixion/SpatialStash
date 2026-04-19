@@ -244,41 +244,24 @@ struct VisualAdjustmentsPopover: View {
     @ViewBuilder
     private var viewerTabContent: some View {
         if let model = remoteViewerModel {
+            @Bindable var model = model
             VStack(spacing: 14) {
                 Text("Display toggles for this viewer session.")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                Toggle("Show Clock", isOn: Binding(
-                    get: { model.showClock },
-                    set: { model.showClock = $0 }
-                ))
+                Toggle("Show Clock", isOn: $model.displayShowClock)
 
-                Toggle("Show Sensors", isOn: Binding(
-                    get: { model.showSensors },
-                    set: { model.showSensors = $0 }
-                ))
+                Toggle("Show Sensors", isOn: $model.displayShowSensors)
 
-                Toggle("Ken Burns Effect", isOn: Binding(
-                    get: { model.config.enableKenBurns },
-                    set: { model.config.enableKenBurns = $0 }
-                ))
+                Toggle("Ken Burns Effect", isOn: $model.displayEnableKenBurns)
 
-                Toggle("Dynamic Brightness", isOn: Binding(
-                    get: { model.config.enableDynamicBrightness },
-                    set: { model.config.enableDynamicBrightness = $0 }
-                ))
+                Toggle("Dynamic Brightness", isOn: $model.displayEnableDynamicBrightness)
 
-                Toggle("Transparent Background", isOn: Binding(
-                    get: { model.config.transparentBackground },
-                    set: { model.config.transparentBackground = $0 }
-                ))
+                Toggle("Transparent Background", isOn: $model.displayTransparentBackground)
 
-                Toggle("Fit to Aspect Ratio", isOn: Binding(
-                    get: { model.config.useAspectRatio },
-                    set: { model.config.useAspectRatio = $0 }
-                ))
+                Toggle("Fit to Aspect Ratio", isOn: $model.displayUseAspectRatio)
 
                 Divider()
 
@@ -287,16 +270,13 @@ struct VisualAdjustmentsPopover: View {
                         Text("Slideshow Interval")
                             .font(.subheadline)
                         Spacer()
-                        Text(formatDelay(model.config.delay))
+                        Text(formatDelay(model.displayDelay))
                             .font(.caption)
                             .monospacedDigit()
                             .foregroundColor(.secondary)
                     }
                     Slider(
-                        value: Binding(
-                            get: { model.config.delay },
-                            set: { model.config.delay = $0 }
-                        ),
+                        value: $model.displayDelay,
                         in: 3...120,
                         step: 1
                     )
