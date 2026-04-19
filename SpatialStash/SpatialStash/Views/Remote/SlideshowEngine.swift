@@ -74,6 +74,19 @@ class SlideshowEngine {
     var isRoomActive: Bool = true
     var isTransitioning: Bool = false
     var isLoading: Bool = false
+    /// True when the auto-advance couldn't produce an image (prefetch empty or
+    /// download failed). The UI shows a warning icon placeholder. Cleared when
+    /// a real image is displayed.
+    var showFailurePlaceholder: Bool = false
+
+    /// True once the slideshow has shown a real image at least once. Used to
+    /// distinguish the cold-start case (allow a bounded wait for the first
+    /// image, show spinner) from steady state (show placeholder immediately on
+    /// missing prefetch).
+    private var hasDisplayedFirstMedia: Bool = false
+    /// How long runLoadingPhase will wait for the first prefetch to populate
+    /// on cold start before falling through to the placeholder.
+    private static let firstLoadTimeout: TimeInterval = 20
 
     /// Convenience for views — true when state is .paused
     var isPaused: Bool { state == .paused }
@@ -164,6 +177,20 @@ class SlideshowEngine {
     /// `displayDeadline` by the pause duration on resume so pausing truly
     /// freezes the timer.
     private var pauseStartedAt: Date?
+
+    // MARK: - Watchdog
+    /// Periodic health check that forces progress when the engine appears
+    /// stuck while the user is actively viewing the window.
+    private var watchdogTask: Task<Void, Never>?
+    private var watchdogLastVersion: Int = 0
+    private var watchdogLastChangeAt: Date = Date()
+    private static let watchdogInterval: TimeInterval = 5
+    /// How long past `displayDeadline` the engine can sit in `.displaying`
+    /// before the watchdog kicks it to `.loading`.
+    private static let watchdogAdvanceGrace: TimeInterval = 5
+    /// How long the engine can sit in `.loading` or `.transitioning` with no
+    /// state change before the watchdog restarts the run loop.
+    private static let watchdogStuckThreshold: TimeInterval = 60
     var windowAspectRatio: Double = 16.0 / 9.0
 
     var prefetchedImages: [(post: RemotePost, image: UIImage, url: URL)] = []
@@ -258,7 +285,77 @@ class SlideshowEngine {
         prefetchTask = nil
         gifConversionTask?.cancel()
         gifConversionTask = nil
+        watchdogTask?.cancel()
+        watchdogTask = nil
         tagListManager?.removeChangeHandler(id: engineId)
+    }
+
+    // MARK: - Watchdog
+
+    private func startWatchdog() {
+        watchdogTask?.cancel()
+        watchdogLastVersion = stateVersion
+        watchdogLastChangeAt = Date()
+        watchdogTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(Self.watchdogInterval))
+                guard !Task.isCancelled else { return }
+                self?.checkWatchdog()
+            }
+        }
+    }
+
+    /// Health check fired every few seconds. Two distinct failure modes:
+    ///
+    /// 1. **Stuck in `.displaying` past deadline** — normal path should have
+    ///    exited the displaying loop and transitioned to `.loading`. Force it.
+    /// 2. **Stuck in `.loading`/`.transitioning` with no state progress** —
+    ///    the run loop is likely blocked in an await on a network call that
+    ///    never returned. Cancel and restart the run loop so the slideshow
+    ///    resumes instead of freezing indefinitely on the last image.
+    ///
+    /// Only acts while `isRoomActive` so legitimate paused/backgrounded
+    /// sleeps don't trigger intervention.
+    private func checkWatchdog() {
+        if stateVersion != watchdogLastVersion {
+            watchdogLastVersion = stateVersion
+            watchdogLastChangeAt = Date()
+        }
+
+        guard isRoomActive else { return }
+
+        // Case 1: overdue in .displaying — force the advance the run loop missed
+        if state == .displaying, let deadline = displayDeadline {
+            let overdue = Date().timeIntervalSince(deadline)
+            if overdue > Self.watchdogAdvanceGrace {
+                AppLogger.remoteViewer.warning("Watchdog: stuck in .displaying \(Int(overdue), privacy: .public)s past deadline — forcing advance")
+                transition(to: .loading)
+                return
+            }
+        }
+
+        // Case 2: no state change for too long while in a "should be active" state
+        let stuckFor = Date().timeIntervalSince(watchdogLastChangeAt)
+        if (state == .loading || state == .transitioning), stuckFor > Self.watchdogStuckThreshold {
+            AppLogger.remoteViewer.warning("Watchdog: stuck in \(self.state.description, privacy: .public) for \(Int(stuckFor), privacy: .public)s — restarting run loop")
+            isFetching = false
+            // Clear any pending manual nav target — if we're stuck on it,
+            // trying the same post again would likely hang again. The fresh
+            // run loop falls through to the auto-advance path (prefetch or
+            // placeholder).
+            pendingPost = nil
+            prefetchTask?.cancel()
+            prefetchTask = nil
+            runLoopTask?.cancel()
+            runLoopTask = nil
+            // Route through .loading so the fresh run loop re-enters cleanly.
+            if state != .loading {
+                transition(to: .loading)
+            }
+            watchdogLastChangeAt = Date()
+            watchdogLastVersion = stateVersion
+            startRunLoop()
+        }
     }
 
     func handleScenePhaseChange(from oldPhase: ScenePhase, to newPhase: ScenePhase) {
@@ -364,6 +461,10 @@ class SlideshowEngine {
         fetchReturnedEmpty = false
         cachedPosts.removeAll()
         prefetchedImages.removeAll()
+        // Cache was just invalidated; allow the cold-start wait so the current
+        // image stays on screen while the new list's first image loads,
+        // instead of immediately flashing the placeholder.
+        hasDisplayedFirstMedia = false
         prefetchTask?.cancel()
         contentProvider?.resetPagination()
         if let tlm = tagListManager {
@@ -380,6 +481,7 @@ class SlideshowEngine {
     /// changes rather than being cancelled and recreated.
     func startRunLoop() {
         guard runLoopTask == nil else { return }
+        startWatchdog()
         runLoopTask = Task { [weak self] in
             guard let self else { return }
 
@@ -417,24 +519,30 @@ class SlideshowEngine {
         }
     }
 
-    /// Loading phase: fetch and display the next image.
+    /// Loading phase: hand off to the next image. Auto-advances MUST NOT block
+    /// on network — if no prefetched image is ready, show a placeholder and let
+    /// the timer keep cycling. Manual navigation (pendingPost) is allowed to
+    /// await the download since it's user-initiated.
     private func runLoadingPhase() async {
         isLoading = true
         defer { isLoading = false }
 
-        // If we have a specific post to display (prev/jump), use it
+        // Manual navigation: specific post requested (prev/jump).
+        // Awaits download; shows placeholder on failure.
         if let post = pendingPost {
             pendingPost = nil
-            await fetchAndDisplayPost(post)
+            let displayed = await fetchAndDisplayPost(post)
+            if !displayed {
+                displayFailurePlaceholder(toast: "Image failed to load")
+            }
             if state == .loading {
-                // fetchAndDisplayPost succeeded — transition to displaying
                 transition(to: .displaying)
             }
             triggerPrefetch()
             return
         }
 
-        // Try prefetched image first for instant transition
+        // Fast path: use a prefetched image (in-memory, no network await).
         if let prefetched = prefetchedImages.first {
             prefetchedImages.removeFirst()
             guard state == .loading else { return }
@@ -447,23 +555,65 @@ class SlideshowEngine {
             return
         }
 
-        // Fetch posts if needed
-        await ensurePostsAvailable()
-        guard state == .loading else { return }
-
-        guard let post = nextNonBlockedPost() else {
-            AppLogger.remoteViewer.warning("No posts available after fetch")
-            fetchReturnedEmpty = true
-            // Wait and retry rather than getting stuck
-            try? await Task.sleep(for: .seconds(5))
-            return
+        // Cold start: no prefetch yet because nothing has been fetched. Kick
+        // prefetch and wait up to `firstLoadTimeout` seconds for it to
+        // populate before falling through to the placeholder. `isLoading`
+        // stays true, so the view shows the progress spinner during the wait.
+        if !hasDisplayedFirstMedia {
+            triggerPrefetch()
+            let waitUntil = Date().addingTimeInterval(Self.firstLoadTimeout)
+            while prefetchedImages.isEmpty && Date() < waitUntil && state == .loading {
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+            if let prefetched = prefetchedImages.first {
+                prefetchedImages.removeFirst()
+                guard state == .loading else { return }
+                isCurrentPostAnimatedGIF = false
+                await displayImage(prefetched.image, post: prefetched.post, url: prefetched.url)
+                if state == .loading {
+                    transition(to: .displaying)
+                }
+                triggerPrefetch()
+                return
+            }
+            // Timed out waiting for first image — fall through to placeholder
         }
 
-        await fetchAndDisplayPost(post)
+        // Steady-state miss: never block the timer on network — show the
+        // placeholder so the interval is honored, kick prefetch to populate
+        // for the next cycle, and return.
+        let toast = cachedPosts.isEmpty ? "No images cached" : "Next image not ready"
+        displayFailurePlaceholder(toast: toast)
+        triggerPrefetch()
         if state == .loading {
             transition(to: .displaying)
         }
-        triggerPrefetch()
+    }
+
+    /// Switch the display to a warning-icon placeholder. Advances the deadline
+    /// so the slideshow continues cycling on schedule. Used when the automatic
+    /// path can't produce an image (prefetch empty or download failed).
+    /// The toast is only shown on the first failure in a streak so it doesn't
+    /// re-appear every tick while the slideshow is waiting on prefetch.
+    private func displayFailurePlaceholder(toast: String?) {
+        let wasAlreadyPlaceholder = showFailurePlaceholder
+        trackPreviousPost()
+        gifConversionTask?.cancel()
+        gifConversionTask = nil
+        currentImage = nil
+        nextImage = nil
+        currentPost = nil
+        currentMediaType = .image
+        isCurrentPostAnimatedGIF = false
+        isTransitioning = false
+        showFailurePlaceholder = true
+        autoBrightnessAdjustment = 0
+        autoContrastAdjustment = 1.0
+        lastAdvanceTime = Date()
+        advanceDisplayDeadline()
+        if !wasAlreadyPlaceholder, let toast {
+            showToast(toast, isError: true)
+        }
     }
 
     /// Displaying phase: wait for the stored deadline, then advance.
@@ -529,21 +679,6 @@ class SlideshowEngine {
 
     // MARK: - Content Loading
 
-    private func ensurePostsAvailable() async {
-        if !cachedPosts.isEmpty { return }
-
-        if !isFetching {
-            await fetchMorePosts()
-        }
-
-        // Wait for in-flight fetch with timeout
-        var waitIterations = 0
-        while isFetching && cachedPosts.isEmpty && waitIterations < 200 && state == .loading {
-            try? await Task.sleep(for: .milliseconds(50))
-            waitIterations += 1
-        }
-    }
-
     func nextNonBlockedPost() -> RemotePost? {
         while !cachedPosts.isEmpty {
             let candidate = cachedPosts.removeFirst()
@@ -555,19 +690,23 @@ class SlideshowEngine {
         return nil
     }
 
-    func fetchAndDisplayPost(_ post: RemotePost) async {
-        guard let imageURL = contentProvider?.resolveImageURL(for: post) else { return }
+    /// Download and display the given post. Returns true on success, false on
+    /// failure (caller can show a placeholder). State-change bailouts return
+    /// true since the work was implicitly superseded, not failed.
+    @discardableResult
+    func fetchAndDisplayPost(_ post: RemotePost) async -> Bool {
+        guard let imageURL = contentProvider?.resolveImageURL(for: post) else { return false }
 
         let ext = post.file_ext.lowercased()
 
         if Self.videoExtensions.contains(ext) {
-            guard state == .loading else { return }
+            guard state == .loading else { return true }
             await displayVideo(url: imageURL, post: post)
-            return
+            return true
         }
 
-        guard let result = await contentProvider?.downloadImage(for: post, maxResolution: maxImageResolution) else { return }
-        guard state == .loading else { return }
+        guard let result = await contentProvider?.downloadImage(for: post, maxResolution: maxImageResolution) else { return false }
+        guard state == .loading else { return true }
 
         // Animated GIF
         if ext == "gif" && result.data.isAnimatedGIF {
@@ -586,11 +725,12 @@ class SlideshowEngine {
                     AppLogger.remoteViewer.warning("GIF HEVC conversion failed: \(error.localizedDescription, privacy: .public)")
                 }
             }
-            return
+            return true
         }
 
         isCurrentPostAnimatedGIF = false
         await displayImage(result.image, post: post, url: imageURL)
+        return true
     }
 
     // MARK: - Display
@@ -607,6 +747,8 @@ class SlideshowEngine {
         gifConversionTask = nil
 
         isCurrentPostAnimatedGIF = false
+        showFailurePlaceholder = false
+        hasDisplayedFirstMedia = true
         currentImage = nil
         nextImage = nil
         isTransitioning = false
@@ -672,6 +814,8 @@ class SlideshowEngine {
         currentMediaType = mediaType
         nextImage = nil
         isTransitioning = false
+        showFailurePlaceholder = false
+        hasDisplayedFirstMedia = true
         lastAdvanceTime = Date()
         advanceDisplayDeadline()
 
