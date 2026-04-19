@@ -113,9 +113,7 @@ struct DebugConsoleView: View {
             }
             .onChange(of: logStore.entries.count) { _, _ in
                 if autoScroll, let lastId = filteredEntries.last?.id {
-                    withAnimation(.easeOut(duration: 0.15)) {
-                        proxy.scrollTo(lastId, anchor: .bottom)
-                    }
+                    proxy.scrollTo(lastId, anchor: .bottom)
                 }
             }
         }
@@ -124,8 +122,7 @@ struct DebugConsoleView: View {
     // MARK: - Filtering
 
     private var categories: [String] {
-        let allCategories = Set(logStore.entries.map(\.category))
-        return allCategories.sorted()
+        logStore.categories
     }
 
     private var filteredEntries: [LogEntry] {

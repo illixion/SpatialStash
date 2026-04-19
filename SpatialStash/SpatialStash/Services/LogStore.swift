@@ -62,11 +62,16 @@ final class LogStore {
     static let shared = LogStore()
 
     private(set) var entries: [LogEntry] = []
+    /// Sorted, deduplicated category names seen so far. Maintained
+    /// incrementally so the console's category picker doesn't have to
+    /// rebuild a Set from `entries` on every render.
+    private(set) var categories: [String] = []
     private(set) var isPolling = false
 
     private let maxEntries = 2000
     private var lastPollDate: Date?
     private var pollTask: Task<Void, Never>?
+    private var categoriesSet: Set<String> = []
     private let subsystem = Bundle.main.bundleIdentifier ?? "com.illixion.spatial-stash"
 
     /// Number of open console views/windows currently observing logs.
@@ -94,6 +99,8 @@ final class LogStore {
         if viewerCount == 0 {
             stopPolling()
             entries.removeAll()
+            categoriesSet.removeAll()
+            categories.removeAll()
             lastPollDate = nil
         }
     }
@@ -102,16 +109,15 @@ final class LogStore {
         guard !isPolling else { return }
         isPolling = true
 
-        // Fetch historical entries on first start
-        if entries.isEmpty {
-            fetchEntries(since: nil)
-        }
-
         pollTask = Task { [weak self] in
+            // First poll produces the initial 60s of history. Running it
+            // through the same detached path keeps the main thread free
+            // during the cold open.
+            await self?.performFetch()
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
                 guard !Task.isCancelled else { break }
-                self?.fetchEntries(since: self?.lastPollDate)
+                await self?.performFetch()
             }
         }
     }
@@ -125,43 +131,54 @@ final class LogStore {
     /// Clear all entries and reset the poll date
     func clear() {
         entries.removeAll()
+        categoriesSet.removeAll()
+        categories.removeAll()
         lastPollDate = Date()
     }
 
-    /// Fetch entries from OSLogStore, optionally filtering to entries after a date
-    private func fetchEntries(since date: Date?) {
+    /// Run one fetch cycle. The OSLogStore read is the expensive part and
+    /// runs on a detached utility task so it doesn't block the main actor
+    /// while the console is being rendered.
+    private func performFetch() async {
+        let since = lastPollDate
+        let subsystem = self.subsystem
+        let result = await Task.detached(priority: .utility) {
+            Self.readEntries(since: since, subsystem: subsystem)
+        }.value
+        apply(result)
+    }
+
+    /// Pull new entries from the unified log store. Pure/nonisolated so
+    /// it can execute off the main thread.
+    nonisolated private static func readEntries(
+        since date: Date?,
+        subsystem: String
+    ) -> (newEntries: [LogEntry], latestDate: Date?) {
         do {
             let store = try OSLogStore(scope: .currentProcessIdentifier)
 
-            let position: OSLogPosition?
+            let position: OSLogPosition
             if let date {
                 position = store.position(date: date)
             } else {
-                // Fetch last 60 seconds of history on initial load
                 position = store.position(date: Date().addingTimeInterval(-60))
             }
 
             let predicate = NSPredicate(format: "subsystem == %@", subsystem)
-
             let logEntries = try store.getEntries(at: position, matching: predicate)
+
             var newEntries: [LogEntry] = []
             var latestDate = date
 
             for entry in logEntries {
                 guard let logEntry = entry as? OSLogEntryLog else { continue }
-
-                // Skip entries we've already seen (date-based dedup)
-                if let date, logEntry.date <= date {
-                    continue
-                }
-
-                let level = LogLevel(osLogLevel: logEntry.level)
+                if let date, logEntry.date <= date { continue }
 
                 newEntries.append(LogEntry(
                     id: UUID(),
                     timestamp: logEntry.date,
                     category: logEntry.category,
-                    level: level,
+                    level: LogLevel(osLogLevel: logEntry.level),
                     message: logEntry.composedMessage
                 ))
 
@@ -170,20 +187,32 @@ final class LogStore {
                 }
             }
 
-            if !newEntries.isEmpty {
-                entries.append(contentsOf: newEntries)
+            return (newEntries, latestDate)
+        } catch {
+            return ([], date)
+        }
+    }
 
-                // Prune oldest entries if over limit
-                if entries.count > maxEntries {
-                    entries.removeFirst(entries.count - maxEntries)
+    private func apply(_ result: (newEntries: [LogEntry], latestDate: Date?)) {
+        if !result.newEntries.isEmpty {
+            entries.append(contentsOf: result.newEntries)
+            if entries.count > maxEntries {
+                entries.removeFirst(entries.count - maxEntries)
+            }
+
+            var addedCategory = false
+            for entry in result.newEntries {
+                if categoriesSet.insert(entry.category).inserted {
+                    addedCategory = true
                 }
             }
-
-            if let latestDate {
-                lastPollDate = latestDate
+            if addedCategory {
+                categories = categoriesSet.sorted()
             }
-        } catch {
-            // OSLogStore can fail in some environments — silently ignore
+        }
+
+        if let latestDate = result.latestDate {
+            lastPollDate = latestDate
         }
     }
 }
