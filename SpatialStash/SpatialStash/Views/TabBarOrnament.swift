@@ -10,7 +10,7 @@ struct TabBarOrnament: View {
     @Environment(AppModel.self) private var appModel
 
     private var visibleTabs: [Tab] {
-        let orderedTabs: [Tab] = [.pictures, .videos, .local, .remote, .filters, .settings, .console]
+        let orderedTabs: [Tab] = [.pictures, .videos, .local, .remote, .filters, .console, .settings]
         return orderedTabs.filter { tab in
             switch tab {
             case .remote:
