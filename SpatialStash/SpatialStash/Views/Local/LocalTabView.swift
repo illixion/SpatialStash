@@ -233,7 +233,8 @@ struct LocalMediaListView: View {
                                             let image = GalleryImage(
                                                 id: file.id,
                                                 url: file.url,
-                                                title: file.name
+                                                title: file.name,
+                                                source: "local"
                                             )
                                             if appModel.openMediaInNewWindows {
                                                 appModel.enqueuePhotoWindowOpen(image)

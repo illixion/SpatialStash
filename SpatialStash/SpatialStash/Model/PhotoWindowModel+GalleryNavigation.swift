@@ -138,6 +138,34 @@ extension PhotoWindowModel {
 
     // MARK: - Viewer Lazy Loading
 
+    /// Populate galleryImages with the local source's flat scan so prev/next
+    /// can navigate across local files. Relocates `currentGalleryIndex` to
+    /// the current image's position within the fetched list.
+    func loadInitialLocalGallery() async {
+        do {
+            let result = try await imageSource.fetchImages(page: 0, pageSize: pageSize, filter: nil)
+            let startingURL = imageURL
+
+            if let idx = result.images.firstIndex(where: { $0.fullSizeURL == startingURL }) {
+                galleryImages = result.images
+                currentGalleryIndex = idx
+            } else {
+                // Current image wasn't on the first page (e.g. first page
+                // doesn't include it due to sort order). Keep it pinned at
+                // the front so the UI still has a valid selection and let
+                // `checkAndLoadMoreIfNeeded` pull more pages on demand.
+                var images = result.images
+                images.insert(image, at: 0)
+                galleryImages = images
+                currentGalleryIndex = 0
+            }
+            hasMorePages = result.hasMore
+            currentPage = 1
+        } catch {
+            AppLogger.photoWindow.error("Failed to load local gallery: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
     /// Load more images using the snapshotted filter
     func loadMoreImages() async {
         guard !isLoadingMoreImages && hasMorePages else { return }

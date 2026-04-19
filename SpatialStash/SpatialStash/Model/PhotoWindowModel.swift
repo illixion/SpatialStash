@@ -348,16 +348,26 @@ class PhotoWindowModel {
         self.useRealityKitDisplay = useRealityKitDisplay
         self.isLoadingDetailImage = true
 
-        // Capture pagination state for lazy loading (must be before galleryImages access)
-        self.imageSource = appModel.imageSource
-        self.snapshotFilter = appModel.currentFilter
-        self.currentPage = appModel.currentPage
-        self.hasMorePages = appModel.hasMorePages
-        self.pageSize = appModel.pageSize
-
-        // Capture snapshot of gallery images for navigation
-        self.galleryImages = appModel.galleryImages
-        self.currentGalleryIndex = galleryImages.firstIndex(of: image) ?? 0
+        // Capture pagination state for lazy loading. Local images navigate
+        // over LocalImageSource's flat scan of the Documents folder, not the
+        // Stash gallery the app happens to have loaded.
+        if image.source == "local" {
+            self.imageSource = LocalImageSource()
+            self.snapshotFilter = nil
+            self.currentPage = 0
+            self.hasMorePages = true
+            self.pageSize = appModel.pageSize
+            self.galleryImages = [image]
+            self.currentGalleryIndex = 0
+        } else {
+            self.imageSource = appModel.imageSource
+            self.snapshotFilter = appModel.currentFilter
+            self.currentPage = appModel.currentPage
+            self.hasMorePages = appModel.hasMorePages
+            self.pageSize = appModel.pageSize
+            self.galleryImages = appModel.galleryImages
+            self.currentGalleryIndex = galleryImages.firstIndex(of: image) ?? 0
+        }
 
         // NOTE: Side effects (openPhotoWindowCount, image loading Task) are
         // deferred to start() which is called from onAppear.  Putting them here
@@ -378,6 +388,14 @@ class PhotoWindowModel {
         // Register pop-out window for duplicate detection
         if let windowValue = popOutWindowValue {
             appModel.registerPopOutWindow(imageURL: imageURL, windowValue: windowValue)
+        }
+
+        // Local images don't have a preloaded gallery on AppModel — fetch the
+        // first page of LocalImageSource and relocate the current image's
+        // index so prev/next navigate within local files instead of falling
+        // back to position 0 of the Stash gallery.
+        if image.source == "local" {
+            Task { await self.loadInitialLocalGallery() }
         }
 
         // Sequential load: resolution restore → window size restore → data → enhancement check → 2D fallback → flip restore
