@@ -1,23 +1,24 @@
 #!/bin/bash
 set -euo pipefail
 
-# Build and sign SpatialStash for visionOS device deployment.
+# Build and sign an app for device deployment.
 #
-# Prerequisites:
-#   - Copy scripts/build-signing.conf.example to scripts/build-signing.conf and fill in your values
-#   - Signing certs installed in keychain (matching identities in build-signing.conf)
-#   - Provisioning profiles in the search paths defined in build-signing.conf
+# All signing material (certs, profiles, passwords) is read from
+# build-signing.conf — nothing needs to be in the login keychain, so this
+# works over SSH.
 #
 # Usage:
-#   ./scripts/build-and-sign.sh                  # Release build + deploy (default)
+#   ./scripts/build-and-sign.sh                  # Release build + deploy (dev-signed)
 #   ./scripts/build-and-sign.sh --debug          # Debug build + deploy
-#   ./scripts/build-and-sign.sh --sign-only      # Sign existing build/SpatialStash.ipa
-#   ./scripts/build-and-sign.sh --ipa path.ipa   # Sign a specific IPA
+#   ./scripts/build-and-sign.sh --distribution   # Sign with the distribution cert/profile
+#   ./scripts/build-and-sign.sh --no-deploy      # Sign but don't install to device
+#   ./scripts/build-and-sign.sh --sign-only      # Skip build, sign existing IPA
+#   ./scripts/build-and-sign.sh --ipa path.ipa   # Sign a specific IPA (implies --sign-only)
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# --- Configuration (loaded from build-signing.conf) ---
+# --- Load configuration ---
 CONF_FILE="$SCRIPT_DIR/build-signing.conf"
 if [[ ! -f "$CONF_FILE" ]]; then
     echo "ERROR: Configuration file not found: $CONF_FILE" >&2
@@ -27,8 +28,20 @@ fi
 # shellcheck source=build-signing.conf
 source "$CONF_FILE"
 
-# Validate required variables
-for var in TEAM_ID BUILD_BUNDLE_ID BUNDLE_ID DEVICE_NAME DEV_IDENTITY DIST_IDENTITY DEV_PROFILE_NAME DIST_PROFILE_NAME; do
+# Defaults for optional config values
+PLATFORM="${PLATFORM:-visionOS}"
+TARGET_NAME="${TARGET_NAME:-$SCHEME_NAME}"
+P12_PASSWORD="${P12_PASSWORD:-}"
+DEV_P12_PASSWORD="${DEV_P12_PASSWORD:-$P12_PASSWORD}"
+DIST_P12_PASSWORD="${DIST_P12_PASSWORD:-$P12_PASSWORD}"
+PRE_BUILD_HOOK="${PRE_BUILD_HOOK:-}"
+
+required_vars=(
+    PROJECT_PATH SCHEME_NAME TARGET_NAME PLATFORM
+    TEAM_ID BUILD_BUNDLE_ID BUNDLE_ID DEVICE_NAME
+    DEV_P12_PATH DEV_PROFILE_PATH
+)
+for var in "${required_vars[@]}"; do
     if [[ -z "${!var:-}" ]]; then
         echo "ERROR: Required variable $var is not set in $CONF_FILE" >&2
         exit 1
@@ -39,62 +52,98 @@ done
 CONFIG="Release"
 SIGN_ONLY=false
 NO_DEPLOY=false
+USE_DIST=false
 INPUT_IPA=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --debug)      CONFIG="Debug"; shift ;;
-        --sign-only)  SIGN_ONLY=true; shift ;;
-        --no-deploy)  NO_DEPLOY=true; shift ;;
-        --ipa)        INPUT_IPA="$2"; SIGN_ONLY=true; shift 2 ;;
+        --debug)         CONFIG="Debug"; shift ;;
+        --distribution)  USE_DIST=true; shift ;;
+        --sign-only)     SIGN_ONLY=true; shift ;;
+        --no-deploy)     NO_DEPLOY=true; shift ;;
+        --ipa)           INPUT_IPA="$2"; SIGN_ONLY=true; shift 2 ;;
         -h|--help)
-            echo "Usage: $0 [--debug] [--sign-only] [--no-deploy] [--ipa path.ipa]"
-            echo ""
-            echo "Options:"
-            echo "  --debug       Build with Debug configuration instead of Release"
-            echo "  --sign-only   Skip build, sign existing IPA at build/SpatialStash.ipa"
-            echo "  --no-deploy   Sign but don't install to device"
-            echo "  --ipa PATH    Sign a specific IPA file"
+            sed -n '3,17p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
 
-# Sideloading uses dev signing
-SIGN_IDENTITY="$DEV_IDENTITY"
-PROFILE_NAME="$DEV_PROFILE_NAME"
+if [[ "$USE_DIST" == true ]]; then
+    P12_PATH="$DIST_P12_PATH"
+    P12_PW="$DIST_P12_PASSWORD"
+    PROFILE_PATH="$DIST_PROFILE_PATH"
+    [[ -n "$P12_PATH" && -n "$PROFILE_PATH" ]] || {
+        echo "ERROR: --distribution requires DIST_P12_PATH and DIST_PROFILE_PATH in $CONF_FILE" >&2
+        exit 1
+    }
+else
+    P12_PATH="$DEV_P12_PATH"
+    P12_PW="$DEV_P12_PASSWORD"
+    PROFILE_PATH="$DEV_PROFILE_PATH"
+fi
 
-# --- Helper functions ---
+for f in "$P12_PATH" "$PROFILE_PATH"; do
+    [[ -f "$f" ]] || { echo "ERROR: File not found: $f" >&2; exit 1; }
+done
 
-find_profile() {
-    local profile_name="$1"
-    local profile_file=""
+# --- Work dir + cleanup ---
+WORK_DIR=$(mktemp -d)
+KEYCHAIN_PATH=""
+ORIGINAL_KEYCHAINS=""
 
-    for search_path in "${PROFILE_SEARCH_PATHS[@]}"; do
-        for f in "$search_path"/*.mobileprovision; do
-            [[ -f "$f" ]] || continue
-            local name
-            name=$(security cms -D -i "$f" 2>/dev/null | plutil -extract Name raw -o - -- -)
-            if [[ "$name" == "$profile_name" ]]; then
-                profile_file="$f"
-                break 2
-            fi
-        done
-    done
+cleanup() {
+    if [[ -n "$KEYCHAIN_PATH" && -f "$KEYCHAIN_PATH" ]]; then
+        if [[ -n "$ORIGINAL_KEYCHAINS" ]]; then
+            # shellcheck disable=SC2086
+            security list-keychains -d user -s $ORIGINAL_KEYCHAINS >/dev/null 2>&1 || true
+        fi
+        security delete-keychain "$KEYCHAIN_PATH" >/dev/null 2>&1 || true
+    fi
+    [[ -n "${WORK_DIR:-}" ]] && rm -rf "$WORK_DIR"
+}
+trap cleanup EXIT
 
-    if [[ -z "$profile_file" ]]; then
-        echo "ERROR: Could not find provisioning profile named '$profile_name'" >&2
-        echo "Searched: ${PROFILE_SEARCH_PATHS[*]}" >&2
+# --- Helpers ---
+
+# Create a temporary keychain and import the given .p12 into it.
+# Echoes the SHA1 of the imported signing identity.
+setup_signing_keychain() {
+    local p12="$1"
+    local p12_password="$2"
+
+    KEYCHAIN_PATH="$WORK_DIR/signing.keychain-db"
+    local keychain_pass
+    keychain_pass="$(openssl rand -hex 16)"
+
+    security create-keychain -p "$keychain_pass" "$KEYCHAIN_PATH" >/dev/null
+    security set-keychain-settings -lut 3600 "$KEYCHAIN_PATH" >/dev/null
+    security unlock-keychain -p "$keychain_pass" "$KEYCHAIN_PATH" >/dev/null
+
+    # Prepend our keychain to the user search list so codesign can find it.
+    ORIGINAL_KEYCHAINS=$(security list-keychains -d user | sed -E 's/^[[:space:]]*"?//; s/"?[[:space:]]*$//' | tr '\n' ' ')
+    # shellcheck disable=SC2086
+    security list-keychains -d user -s "$KEYCHAIN_PATH" $ORIGINAL_KEYCHAINS >/dev/null
+
+    security import "$p12" -k "$KEYCHAIN_PATH" -P "$p12_password" \
+        -T /usr/bin/codesign -T /usr/bin/security >/dev/null
+    security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_pass" "$KEYCHAIN_PATH" >/dev/null 2>&1 || true
+
+    local sha1
+    sha1=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" \
+        | awk '/^[[:space:]]*[0-9]+\)/ {print $2; exit}')
+    if [[ -z "$sha1" ]]; then
+        echo "ERROR: No code-signing identity found in $p12" >&2
+        echo "       (is the password correct?)" >&2
         exit 1
     fi
-    echo "$profile_file"
+    echo "$sha1"
 }
 
 extract_entitlements() {
     local profile_path="$1"
     local entitlements_plist="$2"
-
     security cms -D -i "$profile_path" 2>/dev/null \
         | plutil -extract Entitlements xml1 -o "$entitlements_plist" -- -
 }
@@ -103,18 +152,20 @@ sign_app() {
     local app_path="$1"
     local identity="$2"
     local entitlements="$3"
+    local keychain="$4"
 
     echo "Signing with identity: $identity"
 
     # Sign all embedded dylibs and frameworks first (deepest items first)
-    find "$app_path" -name "*.dylib" -o -name "*.framework" | while read -r item; do
+    find "$app_path" \( -name "*.dylib" -o -name "*.framework" \) | while read -r item; do
         echo "  Signing: $(basename "$item")"
-        codesign --force --sign "$identity" --timestamp=none "$item"
+        codesign --force --sign "$identity" --keychain "$keychain" --timestamp=none "$item"
     done
 
     # Sign the main app bundle with entitlements
     echo "  Signing: $(basename "$app_path") (with entitlements)"
-    codesign --force --sign "$identity" --entitlements "$entitlements" --timestamp=none "$app_path"
+    codesign --force --sign "$identity" --keychain "$keychain" \
+        --entitlements "$entitlements" --timestamp=none "$app_path"
 }
 
 # --- Main ---
@@ -122,19 +173,29 @@ sign_app() {
 cd "$PROJECT_ROOT"
 
 BUILD_DIR="$PROJECT_ROOT/build"
-IPA_PATH="$BUILD_DIR/SpatialStash.ipa"
+IPA_PATH="$BUILD_DIR/${TARGET_NAME}.ipa"
+
+# Figure out whether PROJECT_PATH is a project or a workspace
+case "$PROJECT_PATH" in
+    *.xcworkspace) PROJECT_FLAG="-workspace" ;;
+    *.xcodeproj)   PROJECT_FLAG="-project" ;;
+    *) echo "ERROR: PROJECT_PATH must end in .xcodeproj or .xcworkspace" >&2; exit 1 ;;
+esac
 
 # Step 1: Build (unless --sign-only)
 if [[ "$SIGN_ONLY" == false ]]; then
-    echo "==> Setting build info..."
-    ./scripts/set-build-info.sh
+    if [[ -n "$PRE_BUILD_HOOK" ]]; then
+        echo "==> Running pre-build hook: $PRE_BUILD_HOOK"
+        # shellcheck disable=SC2086
+        ( cd "$PROJECT_ROOT" && eval $PRE_BUILD_HOOK )
+    fi
 
-    echo "==> Building for visionOS ($CONFIG)..."
+    echo "==> Building for $PLATFORM ($CONFIG)..."
     xcodebuild -quiet \
-        -project SpatialStash/SpatialStash.xcodeproj \
-        -scheme SpatialStash \
+        "$PROJECT_FLAG" "$PROJECT_PATH" \
+        -scheme "$SCHEME_NAME" \
         -configuration "$CONFIG" \
-        -destination 'generic/platform=visionOS' \
+        -destination "generic/platform=$PLATFORM" \
         -derivedDataPath "$BUILD_DIR/DerivedData" \
         CODE_SIGN_IDENTITY="-" \
         CODE_SIGNING_REQUIRED=NO \
@@ -153,7 +214,7 @@ if [[ "$SIGN_ONLY" == false ]]; then
     rm -rf "$BUILD_DIR/Payload"
     mkdir -p "$BUILD_DIR/Payload"
     cp -R "$APP_PATH" "$BUILD_DIR/Payload/"
-    (cd "$BUILD_DIR" && rm -f SpatialStash.ipa && zip -qr SpatialStash.ipa Payload)
+    ( cd "$BUILD_DIR" && rm -f "${TARGET_NAME}.ipa" && zip -qr "${TARGET_NAME}.ipa" Payload )
     echo "  Built: $IPA_PATH"
 fi
 
@@ -167,18 +228,15 @@ if [[ ! -f "$IPA_PATH" ]]; then
     exit 1
 fi
 
-# Step 2: Find provisioning profile
-echo "==> Locating provisioning profile ($PROFILE_NAME)..."
-PROFILE_PATH=$(find_profile "$PROFILE_NAME")
-echo "  Found: $PROFILE_PATH"
+# Step 2: Import signing cert into a temporary keychain
+echo "==> Importing signing certificate from $(basename "$P12_PATH")..."
+SIGN_IDENTITY=$(setup_signing_keychain "$P12_PATH" "$P12_PW")
+echo "  Identity: $SIGN_IDENTITY"
 
-# Step 3: Extract entitlements
-WORK_DIR=$(mktemp -d)
-trap "rm -rf '$WORK_DIR'" EXIT
-
+# Step 3: Extract entitlements from the provisioning profile
 ENTITLEMENTS_PLIST="$WORK_DIR/entitlements.plist"
 extract_entitlements "$PROFILE_PATH" "$ENTITLEMENTS_PLIST"
-echo "==> Extracted entitlements from profile"
+echo "==> Using profile: $PROFILE_PATH"
 
 # Step 4: Unpack IPA
 echo "==> Unpacking IPA..."
@@ -198,12 +256,12 @@ cp "$PROFILE_PATH" "$APP_BUNDLE/embedded.mobileprovision"
 
 # Step 6: Sign
 echo "==> Signing app bundle..."
-sign_app "$APP_BUNDLE" "$SIGN_IDENTITY" "$ENTITLEMENTS_PLIST"
+sign_app "$APP_BUNDLE" "$SIGN_IDENTITY" "$ENTITLEMENTS_PLIST" "$KEYCHAIN_PATH"
 
 # Step 7: Repack as signed IPA
 SIGNED_IPA="${IPA_PATH%.ipa}-signed.ipa"
 echo "==> Repacking signed IPA..."
-(cd "$UNPACK_DIR" && rm -f "$SIGNED_IPA" && zip -qr "$SIGNED_IPA" Payload)
+( cd "$UNPACK_DIR" && rm -f "$SIGNED_IPA" && zip -qr "$SIGNED_IPA" Payload )
 echo ""
 echo "Done! Signed IPA: $SIGNED_IPA"
 

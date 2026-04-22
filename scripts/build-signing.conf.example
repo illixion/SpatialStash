@@ -1,26 +1,43 @@
 # Build & sign configuration — copy to build-signing.conf and edit.
 # build-signing.conf is gitignored and will never be committed.
 #
-# This configures signing for the standalone build script (scripts/build-and-sign.sh).
-# BUILD_BUNDLE_ID overrides PRODUCT_BUNDLE_IDENTIFIER from LocalSigning.xcconfig
-# at build time — this is the app's identity on device.
-# BUNDLE_ID is the provisioning profile's app ID (used for device authorization only).
+# This configures signing for scripts/build-and-sign.sh. The script imports
+# the .p12 certs into a temporary keychain, so signing works over SSH without
+# any login-keychain setup. Nothing needs to be pre-installed on the machine.
+#
+# BUILD_BUNDLE_ID overrides PRODUCT_BUNDLE_IDENTIFIER at build time — this
+# is the app's identity on device. BUNDLE_ID is the provisioning profile's
+# app ID (used for device authorization only).
 
+# --- Project ---
+# Path to .xcodeproj or .xcworkspace, relative to repo root (or absolute).
+PROJECT_PATH="YourApp/YourApp.xcodeproj"
+SCHEME_NAME="YourApp"
+TARGET_NAME="YourApp"        # used for IPA/Payload naming
+PLATFORM="visionOS"          # passed as generic/platform=$PLATFORM (e.g. iOS, visionOS)
+
+# --- Identity ---
 TEAM_ID="YOUR_TEAM_ID"
 BUILD_BUNDLE_ID="your.build.bundle.identifier"
 BUNDLE_ID="your.signing.bundle.identifier"
+
+# --- Signing certificates (.p12 files) ---
+DEV_P12_PATH="$HOME/Downloads/Development.p12"
+DIST_P12_PATH="$HOME/Downloads/Distribution.p12"
+
+# Password used to open the .p12 files. Leave empty if the .p12 has no password.
+# Per-cert overrides (DEV_P12_PASSWORD / DIST_P12_PASSWORD) take precedence if set.
+P12_PASSWORD=""
+# DEV_P12_PASSWORD=""
+# DIST_P12_PASSWORD=""
+
+# --- Provisioning profiles (absolute paths to .mobileprovision files) ---
+DEV_PROFILE_PATH="$HOME/Downloads/Development.mobileprovision"
+DIST_PROFILE_PATH="$HOME/Downloads/Distribution.mobileprovision"
+
+# --- Deployment ---
 DEVICE_NAME="Apple Vision Pro"
 
-# Signing identities (must be in keychain)
-DEV_IDENTITY="iPhone Developer: Your Name (XXXXXXXXXX)"
-DIST_IDENTITY="iPhone Distribution: Your Name (XXXXXXXXXX)"
-
-# Provisioning profile search paths (bash array)
-PROFILE_SEARCH_PATHS=(
-    "$HOME/Downloads"
-    "$HOME/Library/MobileDevice/Provisioning Profiles"
-)
-
-# Profile names from the provisioning profiles
-DEV_PROFILE_NAME="your_dev_profile_name"
-DIST_PROFILE_NAME="your_dist_profile_name"
+# --- Optional pre-build hook ---
+# Script executed before xcodebuild (relative to repo root). Leave empty to skip.
+PRE_BUILD_HOOK=""
