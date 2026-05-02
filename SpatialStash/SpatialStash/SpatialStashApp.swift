@@ -23,7 +23,6 @@ struct SpatialStashApp: App {
         .defaultSize(width: 1200, height: 800)
         .windowResizability(.contentMinSize)
         .windowStyle(.plain)
-        .restorationBehavior(.disabled)
         .defaultLaunchBehavior(.presented)
 
         // Individual photo window - supports multiple pop-out instances
@@ -31,6 +30,7 @@ struct SpatialStashApp: App {
             if let windowValue = windowValue {
                 PhotoWindowView(windowValue: windowValue, appModel: appModel)
                     .environment(appModel)
+                    .captureOpenWindowAction()
             }
         }
         .windowStyle(.plain)
@@ -42,6 +42,7 @@ struct SpatialStashApp: App {
             if let windowValue = windowValue {
                 VideoWindowView(windowValue: windowValue)
                     .environment(appModel)
+                    .captureOpenWindowAction()
             }
         }
         .windowStyle(.plain)
@@ -53,6 +54,7 @@ struct SpatialStashApp: App {
             if let item = item {
                 SharedPhotoWindowView(item: item, appModel: appModel)
                     .environment(appModel)
+                    .captureOpenWindowAction()
             }
         }
         .windowStyle(.plain)
@@ -64,6 +66,7 @@ struct SpatialStashApp: App {
             if let item = item {
                 SharedVideoWindowView(item: item)
                     .environment(appModel)
+                    .captureOpenWindowAction()
             }
         }
         .windowStyle(.plain)
@@ -74,6 +77,7 @@ struct SpatialStashApp: App {
         Window("Console", id: "console") {
             ConsoleWindowView()
                 .environment(appModel)
+                .captureOpenWindowAction()
         }
         .defaultSize(width: 900, height: 600)
         .windowResizability(.contentMinSize)
@@ -83,6 +87,7 @@ struct SpatialStashApp: App {
         Window("GPU Memory", id: "gpu-memory") {
             GPUMemoryMonitorView()
                 .environment(appModel)
+                .captureOpenWindowAction()
         }
         .defaultSize(width: 500, height: 350)
         .windowResizability(.contentMinSize)
@@ -93,6 +98,7 @@ struct SpatialStashApp: App {
             if let windowValue = windowValue {
                 RemoteViewerWindowView(windowValue: windowValue)
                     .environment(appModel)
+                    .captureOpenWindowAction()
             }
         }
         .windowStyle(.plain)
@@ -103,6 +109,7 @@ struct SpatialStashApp: App {
         WindowGroup(id: "remote-video", for: RemoteVideoWindowValue.self) { $windowValue in
             if let windowValue = windowValue {
                 RemoteVideoWindowView(windowValue: windowValue)
+                    .captureOpenWindowAction()
             }
         }
         .windowStyle(.plain)
@@ -113,6 +120,7 @@ struct SpatialStashApp: App {
         WindowGroup(id: "remote-alert", for: RemoteAlertWindowValue.self) { $windowValue in
             if let windowValue = windowValue {
                 RemoteAlertWindowView(windowValue: windowValue)
+                    .captureOpenWindowAction()
             }
         }
         .windowStyle(.plain)
@@ -137,6 +145,13 @@ private struct MainWindowView: View {
         ContentView()
             .environment(appModel)
             .frame(minWidth: 320, maxWidth: 3000, minHeight: 320, maxHeight: 3000)
+            .onAppear {
+                WindowSessionRegistry.shared.registerMainWindow()
+                WindowSessionRegistry.shared.openWindow = openWindow
+            }
+            .onDisappear {
+                WindowSessionRegistry.shared.unregisterMainWindow()
+            }
             .onOpenURL { url in
                 Task { @MainActor in
                     await handleIncomingURL(url)

@@ -10,7 +10,7 @@ import SwiftUI
 
 @Observable class SceneDelegate: NSObject, UIWindowSceneDelegate {
     weak var windowScene: UIWindowScene?
-    
+
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
         guard let windowScene = scene as? UIWindowScene else {
             AppLogger.views.warning("Unable to get the window scene in the Scene Delegate")

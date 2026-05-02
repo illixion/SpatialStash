@@ -388,17 +388,6 @@ class RemoteViewerModel: SlideshowEngine {
                 onConfigChanged?(config)
             }
 
-        case .displayState(let isOn):
-            if isOn && state == .paused {
-                if currentImage != nil || currentMediaType != .image {
-                    transition(to: .displaying)
-                } else {
-                    transition(to: .loading)
-                }
-            } else if !isOn && state == .displaying {
-                transition(to: .paused)
-            }
-
         case .currentTagList(let index):
             if let tlm = tagListManager {
                 if tlm.handleServerTagListChange(to: index) {

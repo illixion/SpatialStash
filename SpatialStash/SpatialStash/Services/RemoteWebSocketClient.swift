@@ -30,7 +30,6 @@ struct HASensorReading: Identifiable {
 
 enum RemoteWSMessage {
     case blocked(posts: [Int], tags: [String])
-    case displayState(isOn: Bool)
     case currentTagList(index: Int)
     case playVideo(url: URL)
     case stopVideo
@@ -45,13 +44,12 @@ enum RemoteWSMessage {
 @Observable
 class RemoteWebSocketClient {
     var sensorData: [String: HASensorReading] = [:]
-    var isDisplayOn: Bool = true
     var isConnected: Bool = false
 
     private var webSocketTask: URLSessionWebSocketTask?
     private var session: URLSession?
     private var wsURL: URL?
-    /// Device ID used for the initial getDisplayState on (re)connect.
+    /// Device ID used for the initial visibility ping on (re)connect.
     /// Additional subscribers send their own device IDs via `sendVisibilityChange(deviceId:)`.
     private var initialDeviceId: String = ""
     private var reconnectTask: Task<Void, Never>?
@@ -82,10 +80,12 @@ class RemoteWebSocketClient {
         retryCount = 0
     }
 
+    /// Notify the server about a device's active/background state
+    /// (used by the RoboFrame server for in-home location tracking).
     func sendVisibilityChange(deviceId: String, visible: Bool) {
         sendJSON([
-            "action": "getDisplayState",
-            "payload": ["target": deviceId]
+            "action": "visibility",
+            "payload": ["deviceId": deviceId, "visible": visible]
         ])
     }
 
@@ -129,7 +129,7 @@ class RemoteWebSocketClient {
         // Request initial data
         sendGetBlocked()
         if !initialDeviceId.isEmpty {
-            sendJSON(["action": "getDisplayState", "payload": ["target": initialDeviceId]])
+            sendVisibilityChange(deviceId: initialDeviceId, visible: true)
         }
 
         receiveTask = Task { [weak self] in
@@ -177,21 +177,6 @@ class RemoteWebSocketClient {
                 let posts = (dict["blockedPosts"] as? [Int]) ?? []
                 let tags = (dict["blockedTags"] as? [String]) ?? []
                 onMessage?(.blocked(posts: posts, tags: tags))
-            }
-
-        case "displayState":
-            if let dict = payload as? [String: Any],
-               let state = dict["state"] {
-                let isOn: Bool
-                if let boolState = state as? Bool {
-                    isOn = boolState
-                } else if let strState = state as? String {
-                    isOn = strState == "on"
-                } else {
-                    isOn = true
-                }
-                isDisplayOn = isOn
-                onMessage?(.displayState(isOn: isOn))
             }
 
         case "currentTagList":

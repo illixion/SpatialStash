@@ -84,7 +84,11 @@ final class MetalImageRenderer: Sendable {
     /// Create a GPU-private texture from a CGImage.
     /// Uses CIContext to render into a Metal texture, correctly handling all
     /// source pixel formats, color spaces, and bit depths.
+    /// Auto-crops fully transparent margins from the source so PNG / HEIC /
+    /// JXL / WebP images with empty alpha borders display at their visible
+    /// extents rather than at the raw image extents.
     func createTexture(from cgImage: CGImage, useLossyCompression: Bool = false) -> MTLTexture? {
+        let cgImage = TransparentEdgeCropper.crop(cgImage)
         let width = cgImage.width
         let height = cgImage.height
         guard width > 0, height > 0 else { return nil }
