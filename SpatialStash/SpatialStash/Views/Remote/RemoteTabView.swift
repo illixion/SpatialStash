@@ -47,7 +47,6 @@ struct RemoteTabView: View {
                                 Button("Copy") {
                                     var copy = RemoteViewerConfig(name: config.name + " (Copy)")
                                     copy.apiEndpoint = config.apiEndpoint
-                                    copy.wsEndpoint = config.wsEndpoint
                                     copy.wsDeviceId = config.wsDeviceId
                                     copy.delay = config.delay
                                     copy.showClock = config.showClock
@@ -81,14 +80,6 @@ struct RemoteTabView: View {
                         .textContentType(.URL)
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
-
-                    TextField("WebSocket Endpoint (optional)", text: $editingConfig.wsEndpoint)
-                        .textContentType(.URL)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-                    Text("Leave empty to derive from API Endpoint (single-port deployment).")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
 
                     TextField("WebSocket Device ID", text: $editingConfig.wsDeviceId)
                         .autocorrectionDisabled()

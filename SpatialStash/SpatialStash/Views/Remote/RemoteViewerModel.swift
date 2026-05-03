@@ -69,7 +69,7 @@ class RemoteViewerModel: SlideshowEngine {
 
     let apiClient = RemoteAPIClient()
     /// Shared WebSocket client, acquired from SlideshowSyncHub when WS is configured.
-    /// Multiple RemoteViewerModels with the same wsEndpoint share a single client.
+    /// Multiple RemoteViewerModels pointing at the same RoboFrame instance share a single client.
     private(set) var wsClient: RemoteWebSocketClient?
     private var wsToken: SlideshowSyncHub.WSSubscriptionToken?
 
@@ -463,6 +463,11 @@ class RemoteViewerModel: SlideshowEngine {
         let current = postFromPlaybackEntry(payload["current"])
         let next = postFromPlaybackEntry(payload["next"])
 
+        let curStr = current.map { "\($0._id).\($0.file_ext)" } ?? "nil"
+        let nxtStr = next.map { "\($0._id).\($0.file_ext)" } ?? "nil"
+        let stateStr = "\(state)"
+        AppLogger.remoteViewer.info("playback: current=\(curStr, privacy: .public) next=\(nxtStr, privacy: .public) primary=\(self.serverPrimaryDeviceId ?? "nil", privacy: .public) myDevice=\(self.config.wsDeviceId, privacy: .public) engineState=\(stateStr, privacy: .public)")
+
         if let cur = current {
             if cur._id != currentPost?._id {
                 // Server's current differs from what we're showing. Queue
@@ -472,6 +477,7 @@ class RemoteViewerModel: SlideshowEngine {
                 provider?.enqueueFromPlayback([cur] + (next.map { [$0] } ?? []))
                 cachedPosts.removeAll()
                 prefetchedImages.removeAll()
+                AppLogger.remoteViewer.info("playback: advancing to new current \(cur._id, privacy: .public) (was \(self.currentPost?._id ?? -1, privacy: .public))")
                 goToNextImage()
             } else if let n = next {
                 // Already on the right current; keep `next` queued for the

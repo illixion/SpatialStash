@@ -211,10 +211,12 @@ class RemoteWebSocketClient {
         guard let data = text.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let action = json["action"] as? String else {
+            AppLogger.remoteViewer.debug("WS rx (unparseable): \(text.prefix(200), privacy: .public)")
             return
         }
 
         let payload = json["payload"]
+        AppLogger.remoteViewer.debug("WS rx action=\(action, privacy: .public)")
 
         switch action {
         case "tagLists":

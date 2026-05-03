@@ -17,7 +17,6 @@ struct RemoteViewerConfig: Codable, Identifiable {
 
     // API
     var apiEndpoint: String = "https://example.com/api"
-    var wsEndpoint: String = ""
     var wsDeviceId: String = ""
 
     // Display
@@ -43,15 +42,11 @@ struct RemoteViewerConfig: Codable, Identifiable {
         self.savedDate = Date()
     }
 
-    /// Resolved WebSocket URL. If `wsEndpoint` is set explicitly, that wins.
-    /// Otherwise we derive it from `apiEndpoint` by swapping the scheme
-    /// (http→ws, https→wss) and appending `/rpc/ws` — matching the kiosk
+    /// Resolved WebSocket URL — derived from `apiEndpoint` by swapping the
+    /// scheme (http→ws, https→wss) and appending `/rpc/ws`. Matches the kiosk
     /// frontend's behaviour, so a single API URL is enough to talk to a
     /// single-port RoboFrame deployment (root or sub-path).
     var effectiveWsEndpoint: String {
-        let trimmedWS = wsEndpoint.trimmingCharacters(in: .whitespaces)
-        if !trimmedWS.isEmpty { return trimmedWS }
-
         var base = apiEndpoint.trimmingCharacters(in: .whitespaces)
         guard !base.isEmpty else { return "" }
         if base.hasSuffix("/") { base.removeLast() }
@@ -88,13 +83,15 @@ struct RemoteViewerConfig: Codable, Identifiable {
 
     private enum CodingKeys: String, CodingKey {
         case id, name, savedDate
-        case apiEndpoint, wsEndpoint, wsDeviceId
+        case apiEndpoint, wsDeviceId
         case delay, showClock, showSensors, useAspectRatio, enableKenBurns
         case enableDynamicBrightness
         case transparentBackground, textSize
         case blockedPosts, blockedTags
         case homeAssistantURL
-        // Legacy keys — decoded but no longer encoded
+        // Stored but ignored — older saved configs may carry these.
+        // Decoded silently by `init(from:)` and never re-encoded.
+        case wsEndpoint
         case tagLists, defaultTagListIndex, lastActiveTagListIndex
     }
 
@@ -105,7 +102,9 @@ struct RemoteViewerConfig: Codable, Identifiable {
         savedDate = try container.decode(Date.self, forKey: .savedDate)
 
         apiEndpoint = try container.decodeIfPresent(String.self, forKey: .apiEndpoint) ?? "https://example.com/api"
-        wsEndpoint = try container.decodeIfPresent(String.self, forKey: .wsEndpoint) ?? ""
+        // Old configs may carry `wsEndpoint` from before the field was
+        // dropped — swallow it without storing so the decode succeeds.
+        _ = try container.decodeIfPresent(String.self, forKey: .wsEndpoint)
         wsDeviceId = try container.decodeIfPresent(String.self, forKey: .wsDeviceId) ?? ""
 
         delay = try container.decodeIfPresent(TimeInterval.self, forKey: .delay) ?? 15
@@ -135,7 +134,6 @@ struct RemoteViewerConfig: Codable, Identifiable {
         try container.encode(savedDate, forKey: .savedDate)
 
         try container.encode(apiEndpoint, forKey: .apiEndpoint)
-        try container.encode(wsEndpoint, forKey: .wsEndpoint)
         try container.encode(wsDeviceId, forKey: .wsDeviceId)
 
         try container.encode(delay, forKey: .delay)
