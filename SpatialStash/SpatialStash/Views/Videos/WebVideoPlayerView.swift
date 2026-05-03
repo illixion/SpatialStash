@@ -19,6 +19,9 @@ struct WebVideoPlayerView: UIViewRepresentable {
     var onVideoSizeKnown: ((CGSize) -> Void)? = nil
     /// Optional visual adjustments to apply as CSS filters on the video element
     var visualAdjustments: VisualAdjustments? = nil
+    /// Optional A-B loop controller. When provided, the player exposes JS hooks
+    /// for querying current time and setting loop bounds; the controller drives them.
+    var loopController: VideoLoopController? = nil
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -45,6 +48,28 @@ struct WebVideoPlayerView: UIViewRepresentable {
     func updateUIView(_ webView: WKWebView, context: Context) {
         let coordinator = context.coordinator
         coordinator.onVideoSizeKnown = onVideoSizeKnown
+
+        // Wire up A-B loop controller (re-bound each update; closures hold a weak webView)
+        if let loopController {
+            loopController.queryCurrentTime = { [weak webView] in
+                guard let webView else { return nil }
+                do {
+                    let result = try await webView.evaluateJavaScript("document.getElementById('player') ? document.getElementById('player').currentTime : null")
+                    if let n = result as? NSNumber { return n.doubleValue }
+                } catch {}
+                return nil
+            }
+            loopController.setLoopBounds = { [weak webView] a, b in
+                guard let webView else { return }
+                let js: String
+                if let a, let b {
+                    js = "if (window.__startABLoop) window.__startABLoop(\(a), \(b));"
+                } else {
+                    js = "if (window.__stopABLoop) window.__stopABLoop();"
+                }
+                webView.evaluateJavaScript(js)
+            }
+        }
 
         // Only reload the page when the video URL changes
         if coordinator.loadedURL != videoURL {
@@ -315,6 +340,51 @@ struct WebVideoPlayerView: UIViewRepresentable {
                 video.addEventListener('playing', function() {
                     retryCount = 0;
                 });
+
+                // ----- A-B Loop -----
+                // Frame-accurate seek-back at point B using requestVideoFrameCallback
+                // (falls back to requestAnimationFrame). Native `loop` is disabled while
+                // an A-B loop is active so it doesn't compete with our seeks.
+                window.__abLoop = { a: null, b: null, active: false, monitorTok: 0 };
+
+                window.__startABLoop = function(a, b) {
+                    var L = window.__abLoop;
+                    L.a = a;
+                    L.b = b;
+                    L.active = true;
+                    L.monitorTok++;
+                    var tok = L.monitorTok;
+                    video.removeAttribute('loop');
+                    var epsilon = 1 / 60; // one frame at 60fps
+                    var step = function() {
+                        if (!L.active || tok !== L.monitorTok) return;
+                        if (L.a !== null && L.b !== null) {
+                            if (video.currentTime >= L.b - epsilon) {
+                                // Use fastSeek when available for smoother loops
+                                if (typeof video.fastSeek === 'function') {
+                                    video.fastSeek(L.a);
+                                } else {
+                                    video.currentTime = L.a;
+                                }
+                            }
+                        }
+                        if (typeof video.requestVideoFrameCallback === 'function') {
+                            video.requestVideoFrameCallback(step);
+                        } else {
+                            requestAnimationFrame(step);
+                        }
+                    };
+                    step();
+                };
+
+                window.__stopABLoop = function() {
+                    var L = window.__abLoop;
+                    L.active = false;
+                    L.a = null;
+                    L.b = null;
+                    L.monitorTok++;
+                    video.loop = true;
+                };
 
                 // Resume playback if the video randomly pauses (e.g. after space restoration).
                 // Scoped to a brief window after a scene-phase transition so that user-initiated

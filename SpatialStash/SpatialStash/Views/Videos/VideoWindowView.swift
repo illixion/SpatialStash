@@ -28,6 +28,9 @@ struct VideoWindowView: View {
     /// Prevents onDisappear from clearing selectedVideo when popping out to a standalone window
     @State private var isPoppingOut: Bool = false
 
+    /// Drives the A-B loop feature for the 2D web player. Owns its own toast state.
+    @State private var loopController = VideoLoopController()
+
     // MARK: - Room Activity / Memory Management
 
     /// Whether this window is in the user's current room
@@ -46,55 +49,82 @@ struct VideoWindowView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            Group {
-                if appModel.allWindowsHidden {
-                    Color.clear
-                } else if shouldUseStereoscopicPlayer {
-                    StereoscopicVideoView(
-                        video: video,
-                        initialSettings: video3DSettings,
-                        onRevertTo2D: {
-                            stereoscopicOverride = false
-                        },
-                        onSettingsChanged: { newSettings in
-                            video3DSettings = newSettings
-                        }
-                    )
-                    .id("\(video.id)_3d")
-                } else {
-                    WebVideoPlayerView(
-                        videoURL: video.streamURL,
-                        apiKey: appModel.stashAPIKey.isEmpty ? nil : appModel.stashAPIKey,
-                        showControls: !isUIHidden,
-                        isRoomActive: isInActiveRoom,
-                        onVideoSizeKnown: { size in
-                            lockWindowToVideoAspectRatio(videoSize: size)
-                        }
-                    )
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .id("\(video.id)_2d")
+        ZStack {
+            VStack(spacing: 0) {
+                Group {
+                    if appModel.allWindowsHidden {
+                        Color.clear
+                    } else if shouldUseStereoscopicPlayer {
+                        StereoscopicVideoView(
+                            video: video,
+                            initialSettings: video3DSettings,
+                            onRevertTo2D: {
+                                stereoscopicOverride = false
+                            },
+                            onSettingsChanged: { newSettings in
+                                video3DSettings = newSettings
+                            }
+                        )
+                        .id("\(video.id)_3d")
+                    } else {
+                        WebVideoPlayerView(
+                            videoURL: video.streamURL,
+                            apiKey: appModel.stashAPIKey.isEmpty ? nil : appModel.stashAPIKey,
+                            showControls: !isUIHidden,
+                            isRoomActive: isInActiveRoom,
+                            onVideoSizeKnown: { size in
+                                lockWindowToVideoAspectRatio(videoSize: size)
+                            },
+                            loopController: loopController
+                        )
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .id("\(video.id)_2d")
+                    }
                 }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .scaleEffect(x: appModel.isVideoFlipped ? -1 : 1, y: 1)
-            .brightness(effectiveVideoAdjustments.brightness)
-            .contrast(effectiveVideoAdjustments.contrast)
-            .saturation(effectiveVideoAdjustments.saturation)
-            .opacity(effectiveVideoAdjustments.opacity)
-            .overlay {
-                // Transparent tap target that only appears when UI is hidden
-                if isUIHidden {
-                    Color.clear
-                        .contentShape(.rect)
-                        .onTapGesture {
-                            toggleUIVisibility()
-                        }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .scaleEffect(x: appModel.isVideoFlipped ? -1 : 1, y: 1)
+                .brightness(effectiveVideoAdjustments.brightness)
+                .contrast(effectiveVideoAdjustments.contrast)
+                .saturation(effectiveVideoAdjustments.saturation)
+                .opacity(effectiveVideoAdjustments.opacity)
+                .overlay {
+                    // Transparent tap target that only appears when UI is hidden
+                    if isUIHidden {
+                        Color.clear
+                            .contentShape(.rect)
+                            .onTapGesture {
+                                toggleUIVisibility()
+                            }
+                    }
                 }
+
+                Spacer()
+                    .frame(height: ornamentBottomPadding)
             }
 
-            Spacer()
-                .frame(height: ornamentBottomPadding)
+            // Toast notification (A-B loop feedback)
+            if let toast = loopController.toastMessage {
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        Text(toast)
+                            .font(.system(size: 16))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(loopController.toastIsError ? Color.red.opacity(0.85) : Color.black.opacity(0.7))
+                            )
+                        Spacer()
+                    }
+                    .padding(.bottom, ornamentBottomPadding + 24)
+                }
+                .allowsHitTesting(false)
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+                .animation(.easeInOut, value: loopController.toastMessage)
+            }
         }
         .persistentSystemOverlays(isWindowControlsHidden ? .hidden : .visible)
         .ornament(
@@ -144,6 +174,7 @@ struct VideoWindowView: View {
                 stereoscopicOverride = nil
                 video3DSettings = nil
                 appModel.isVideoFlipped = false
+                loopController.reset()
             }
         }
         .onChange(of: scenePhase) { oldPhase, newPhase in
@@ -167,6 +198,8 @@ struct VideoWindowView: View {
             videoCount: appModel.galleryVideos.count,
             video: video,
             wasPushed: windowValue.wasPushed,
+            loopController: loopController,
+            isStereoscopicMode: shouldUseStereoscopicPlayer,
             onGalleryButtonTap: {
                 appModel.showMainWindow(openWindow: openWindow)
             },

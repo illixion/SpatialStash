@@ -65,7 +65,8 @@ Uses RealityKit's `ImagePresentationComponent` for 2D→3D conversion. States tr
 
 ### Video Infrastructure
 - **VideoWindowView** - Video viewer handling both pushed and standalone modes via `wasPushed` parameter (same pattern as `PhotoWindowView`)
-- **VideoOrnamentsView** - Unified ornament bar. Layout: `[Gallery] | [< N/M >] | [ViewMode v] | [Info] | [Share] | [... More v] | [Title]`. The More menu contains Adjustments, Flip, Slideshow, and Pop Out (when pushed). Info button opens `MediaDetailSheet`
+- **VideoOrnamentsView** - Unified ornament bar. Layout: `[Gallery] | [< N/M >] | [ViewMode v] | [A-B Loop] | [Info] | [Share] | [... More v] | [Title]`. The A-B Loop button is hidden in stereoscopic 3D mode. The More menu contains Adjustments, Flip, Slideshow, and Pop Out (when pushed). Info button opens `MediaDetailSheet`
+- **VideoLoopController** - `@Observable @MainActor` per-window model for the A-B loop on the 2D web player. Cycles through `idle → aSet → bSet → active → idle` on each button press; the loop only engages on the 3rd press (`bSet → active`). Owns its own toast state (mirroring the remote viewer pattern). Wires `queryCurrentTime`/`setLoopBounds` closures bound by `WebVideoPlayerView` to the JS rVFC monitor (`window.__startABLoop` / `window.__stopABLoop`)
 - **StereoscopicVideoPlayer** - Coordinates download → MV-HEVC conversion → immersive playback
 - **MVHEVCConverter** - Converts side-by-side/over-under stereoscopic video to MV-HEVC format
 - **ImmersiveVideoView** - RealityKit-based immersive player in full immersion space

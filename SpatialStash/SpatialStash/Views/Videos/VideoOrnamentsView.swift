@@ -3,7 +3,8 @@
 
  Controls for the video player including navigation, format toggle, and back button.
 
- Layout: [Gallery] | [< N/M >] | [ViewMode v] | [Info] | [Share] | [... More v] | [Title]
+ Layout: [Gallery] | [< N/M >] | [ViewMode v] | [A-B Loop] | [Info] | [Share] | [... More v] | [Title]
+ The [A-B Loop] button is only shown when the 2D web player is active.
  */
 
 import SwiftUI
@@ -17,6 +18,10 @@ struct VideoOrnamentsView: View {
     let video: GalleryVideo
     /// Whether this ornament belongs to a pushed (gallery-navigated) window
     let wasPushed: Bool
+    /// Per-window A-B loop controller. The button is only shown for the 2D web player.
+    let loopController: VideoLoopController
+    /// Whether the host is currently rendering in stereoscopic mode (hides the A-B loop button).
+    let isStereoscopicMode: Bool
     /// Action to show the main gallery window
     var onGalleryButtonTap: () -> Void
     /// Custom pop-out action (used by pushed windows to open a new window and dismiss self)
@@ -68,6 +73,13 @@ struct VideoOrnamentsView: View {
 
                 viewModeMenu(for: video)
 
+                // A-B Loop button (only available in 2D web player mode)
+                if !isStereoscopicMode {
+                    Divider()
+                        .frame(height: 24)
+                    abLoopButton
+                }
+
                 // Info button (rating & metadata)
                 Divider()
                     .frame(height: 24)
@@ -118,6 +130,20 @@ struct VideoOrnamentsView: View {
     /// Effective adjustments: use per-video session if modified, otherwise global
     private var effectiveVideoAdjustments: VisualAdjustments {
         appModel.videoVisualAdjustments.isModified ? appModel.videoVisualAdjustments : appModel.globalVisualAdjustments
+    }
+
+    // MARK: - A-B Loop Button
+
+    private var abLoopButton: some View {
+        Button {
+            Task { await loopController.handleButtonTap() }
+        } label: {
+            Image(systemName: loopController.iconName)
+                .font(.title3)
+                .foregroundColor(loopController.isEngaged ? .accentColor : nil)
+        }
+        .buttonStyle(.borderless)
+        .help(loopController.helpText)
     }
 
     // MARK: - Info Button
