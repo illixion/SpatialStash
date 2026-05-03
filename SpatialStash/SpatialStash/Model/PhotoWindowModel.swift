@@ -31,6 +31,11 @@ class PhotoWindowModel {
     var showAutoRestorePrompt: Bool = false
     /// Whether the auto-restore target is immersive 3D (vs regular 3D)
     var autoRestoreImmersive: Bool = false
+    /// Whether the window is currently snapped to a surface (mirrored from
+    /// `surfaceSnappingInfo`). Used to suppress the 3D restore prompt, which
+    /// is irrelevant on a snapped wall view and can pop up unexpectedly on
+    /// device reboot since restored windows start in a snapped state.
+    var isWindowSnapped: Bool = false
     var isLoadingDetailImage: Bool = false
     var inputPlaneEntity: Entity = Entity()
 

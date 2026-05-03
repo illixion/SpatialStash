@@ -16,8 +16,13 @@ extension PhotoWindowModel {
     // MARK: - 3D Auto-Restore Prompt
 
     /// Show the 3D restore prompt pill and schedule auto-dismissal after a timeout.
-    /// Cancels any in-flight dismiss timer.
+    /// Cancels any in-flight dismiss timer. No-op if the window is currently
+    /// snapped to a surface — the pill is irrelevant for a wall-mounted view
+    /// and would otherwise appear unexpectedly on device reboot, since
+    /// restored windows start with `isSnapped == true`.
     func presentAutoRestorePrompt(immersive: Bool) {
+        guard !isWindowSnapped else { return }
+
         autoRestoreImmersive = immersive
         showAutoRestorePrompt = true
 

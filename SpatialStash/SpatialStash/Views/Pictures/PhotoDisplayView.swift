@@ -140,6 +140,13 @@ struct PhotoDisplayView: View {
             // Schedule post-restoration size verification (initial 2D load is
             // handled sequentially by PhotoWindowModel.start())
             scheduleWindowSizeVerification()
+            windowModel.isWindowSnapped = snappingInfo.isSnapped
+        }
+        .onChange(of: snappingInfo.isSnapped) { _, isSnapped in
+            windowModel.isWindowSnapped = isSnapped
+            if isSnapped {
+                windowModel.dismissAutoRestorePrompt()
+            }
         }
         .onChange(of: windowModel.isLoadingDetailImage) { wasLoading, isLoading in
             if wasLoading && !isLoading && !isSwipeTransitioning {
