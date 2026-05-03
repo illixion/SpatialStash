@@ -175,12 +175,36 @@ class RemoteWebSocketClient {
                     break
                 }
             } catch {
-                AppLogger.remoteViewer.warning("WebSocket receive error: \(error.localizedDescription, privacy: .public)")
+                logWebSocketFailure(error, task: task)
                 isConnected = false
                 scheduleReconnect()
                 break
             }
         }
+    }
+
+    /// Dump enough detail when a receive fails (handshake rejection, server
+    /// closed mid-stream, etc.) that we can tell whether nginx returned a
+    /// 4xx/5xx, sent a non-Upgrade response, or the TLS layer was unhappy.
+    private func logWebSocketFailure(_ error: Error, task: URLSessionWebSocketTask) {
+        let nsError = error as NSError
+        var detail = "domain=\(nsError.domain) code=\(nsError.code) desc=\(error.localizedDescription)"
+        if let urlError = error as? URLError {
+            detail += " urlErrorCode=\(urlError.code.rawValue)"
+            if let response = urlError.userInfo[NSURLErrorFailingURLPeerTrustErrorKey] {
+                detail += " peerTrust=\(response)"
+            }
+            if let failing = urlError.failureURLString {
+                detail += " url=\(failing)"
+            }
+        }
+        if task.closeCode != .invalid {
+            detail += " closeCode=\(task.closeCode.rawValue)"
+        }
+        if let reason = task.closeReason, let reasonStr = String(data: reason, encoding: .utf8), !reasonStr.isEmpty {
+            detail += " closeReason=\(reasonStr)"
+        }
+        AppLogger.remoteViewer.warning("WebSocket receive error: \(detail, privacy: .public)")
     }
 
     private func handleMessage(_ text: String) {
