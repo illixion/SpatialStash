@@ -17,6 +17,14 @@ actor RemoteAPIClient {
         self.session = URLSession(configuration: config)
     }
 
+    /// Strip a trailing slash so callers can safely concatenate `/search` etc.
+    /// without producing `//search`. This makes both `https://host` and
+    /// `https://host/` (and `https://host/subpath` / `https://host/subpath/`)
+    /// behave the same.
+    private nonisolated func normalize(_ baseURL: String) -> String {
+        baseURL.hasSuffix("/") ? String(baseURL.dropLast()) : baseURL
+    }
+
     /// Search for posts matching tags with optional aspect ratio filtering.
     /// - Parameters:
     ///   - baseURL: The API endpoint base URL
@@ -35,7 +43,7 @@ actor RemoteAPIClient {
         // inside values (e.g. "score:>=30" becomes "score:%3E%3D30" instead of
         // "score:%3E=30"), which the server doesn't understand.
         let encodedQuery = query.addingPercentEncoding(withAllowedCharacters: .urlQueryValueAllowed) ?? query
-        var urlString = "\(baseURL)/search?q=\(encodedQuery)"
+        var urlString = "\(normalize(baseURL))/search?q=\(encodedQuery)"
         if let cursor {
             urlString += "&cursor=\(cursor)"
         }
@@ -66,12 +74,12 @@ actor RemoteAPIClient {
     /// The /get endpoint serves the image directly (or redirects to it),
     /// so we construct the URL and use it as the image source.
     nonisolated func getImageURL(baseURL: String, postId: Int) -> URL? {
-        URL(string: "\(baseURL)/get?id=\(postId)")
+        URL(string: "\(normalize(baseURL))/get?id=\(postId)")
     }
 
     /// Save the current post on the server.
     func save(baseURL: String, postId: Int) async throws -> String {
-        guard let url = URL(string: "\(baseURL)/save?id=\(postId)") else {
+        guard let url = URL(string: "\(normalize(baseURL))/save?id=\(postId)") else {
             throw RemoteAPIError.invalidURL
         }
 
@@ -81,7 +89,7 @@ actor RemoteAPIClient {
 
     /// Add a post to the viewing history on the server.
     func addToHistory(baseURL: String, postId: Int) async throws {
-        guard let url = URL(string: "\(baseURL)/addtohistory?id=\(postId)") else {
+        guard let url = URL(string: "\(normalize(baseURL))/addtohistory?id=\(postId)") else {
             throw RemoteAPIError.invalidURL
         }
 

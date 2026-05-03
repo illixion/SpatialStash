@@ -43,6 +43,30 @@ struct RemoteViewerConfig: Codable, Identifiable {
         self.savedDate = Date()
     }
 
+    /// Resolved WebSocket URL. If `wsEndpoint` is set explicitly, that wins.
+    /// Otherwise we derive it from `apiEndpoint` by swapping the scheme
+    /// (http→ws, https→wss) and appending `/rpc/ws` — matching the kiosk
+    /// frontend's behaviour, so a single API URL is enough to talk to a
+    /// single-port RoboFrame deployment (root or sub-path).
+    var effectiveWsEndpoint: String {
+        let trimmedWS = wsEndpoint.trimmingCharacters(in: .whitespaces)
+        if !trimmedWS.isEmpty { return trimmedWS }
+
+        var base = apiEndpoint.trimmingCharacters(in: .whitespaces)
+        guard !base.isEmpty else { return "" }
+        if base.hasSuffix("/") { base.removeLast() }
+
+        if base.hasPrefix("https://") {
+            base = "wss://" + base.dropFirst("https://".count)
+        } else if base.hasPrefix("http://") {
+            base = "ws://" + base.dropFirst("http://".count)
+        } else {
+            // Bare scheme-less URL — prepend ws:// as a best-effort default.
+            base = "ws://" + base
+        }
+        return base + "/rpc/ws"
+    }
+
     // MARK: - Legacy Migration
 
     /// Legacy tag list fields preserved for decoding old configs.

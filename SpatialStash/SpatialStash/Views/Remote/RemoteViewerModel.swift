@@ -87,7 +87,7 @@ class RemoteViewerModel: SlideshowEngine {
 
             // If "Server Decides" is configured and WS is active, wait 1s for the
             // server to send a currentTagList message before starting the slideshow
-            if let tlm = tagListManager, tlm.serverControlEnabled && !config.wsEndpoint.isEmpty {
+            if let tlm = tagListManager, tlm.serverControlEnabled && !config.effectiveWsEndpoint.isEmpty {
                 // Register tag list handler before the delay
                 tagListManager?.addChangeHandler(id: engineId) { [weak self] in
                     self?.handleTagListChanged()
@@ -341,10 +341,11 @@ class RemoteViewerModel: SlideshowEngine {
     // MARK: - Private: WebSocket
 
     private func setupWebSocket() {
-        guard !config.wsEndpoint.isEmpty else { return }
+        let wsURL = config.effectiveWsEndpoint
+        guard !wsURL.isEmpty else { return }
 
         guard let result = SlideshowSyncHub.shared.subscribeWS(
-            endpoint: config.wsEndpoint,
+            endpoint: wsURL,
             deviceId: config.wsDeviceId,
             onMessage: { [weak self] message in
                 guard let self else { return }

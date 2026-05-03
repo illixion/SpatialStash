@@ -82,10 +82,13 @@ struct RemoteTabView: View {
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
 
-                    TextField("WebSocket Endpoint", text: $editingConfig.wsEndpoint)
+                    TextField("WebSocket Endpoint (optional)", text: $editingConfig.wsEndpoint)
                         .textContentType(.URL)
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
+                    Text("Leave empty to derive from API Endpoint (single-port deployment).")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
 
                     TextField("WebSocket Device ID", text: $editingConfig.wsDeviceId)
                         .autocorrectionDisabled()
