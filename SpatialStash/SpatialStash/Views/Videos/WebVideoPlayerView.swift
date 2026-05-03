@@ -89,6 +89,7 @@ struct WebVideoPlayerView: UIViewRepresentable {
                     let js = """
                     (function() {
                         window._roomActive = true;
+                        window._autoResumeUntil = Date.now() + 3000;
                         var p = document.getElementById('player');
                         if (p) { p.src = originalSrc; p.load(); p.play().catch(function() {}); }
                     })();
@@ -96,8 +97,9 @@ struct WebVideoPlayerView: UIViewRepresentable {
                     webView.evaluateJavaScript(js)
                     coordinator.isSourceUnloaded = false
                 } else {
-                    // Room re-entered: re-enable auto-resume and play
-                    let js = "window._roomActive = true; document.getElementById('player').play().catch(function() {});"
+                    // Room re-entered: open the auto-resume window briefly, then play.
+                    // Outside this window, user-initiated pauses (and audio interruptions) are respected.
+                    let js = "window._roomActive = true; window._autoResumeUntil = Date.now() + 3000; document.getElementById('player').play().catch(function() {});"
                     webView.evaluateJavaScript(js)
                 }
             } else {
@@ -266,6 +268,12 @@ struct WebVideoPlayerView: UIViewRepresentable {
                 // When false, auto-resume and error recovery are suppressed.
                 window._roomActive = true;
 
+                // Auto-resume on pause is only allowed within a brief window after
+                // a scene-phase transition (window restoration), to recover from
+                // spurious system pauses. Outside this window, user-initiated
+                // pauses and audio-session interruptions are respected.
+                window._autoResumeUntil = Date.now() + 3000;
+
                 // Reload the video source after an error with exponential backoff
                 function reloadVideo() {
                     if (!window._roomActive) return;
@@ -308,13 +316,16 @@ struct WebVideoPlayerView: UIViewRepresentable {
                     retryCount = 0;
                 });
 
-                // Resume playback if the video randomly pauses (e.g. after space restoration)
+                // Resume playback if the video randomly pauses (e.g. after space restoration).
+                // Scoped to a brief window after a scene-phase transition so that user-initiated
+                // pauses and audio-session interruptions outside that window are respected.
                 video.addEventListener('pause', function() {
-                    // Only auto-resume when room is active
                     if (!window._roomActive) return;
+                    if (Date.now() > (window._autoResumeUntil || 0)) return;
                     if (!video.ended && video.readyState >= 2) {
                         setTimeout(function() {
                             if (!window._roomActive) return;
+                            if (Date.now() > (window._autoResumeUntil || 0)) return;
                             if (video.paused && !video.ended) {
                                 video.play().catch(function() {});
                             }
