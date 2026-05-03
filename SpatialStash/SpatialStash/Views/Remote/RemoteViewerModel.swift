@@ -80,7 +80,9 @@ class RemoteViewerModel: SlideshowEngine {
         SlideshowSyncHub.shared.registerForLocalSync(self)
 
         if !isGalleryMode {
-            fetchRemoteTagLists()
+            // Tag lists used to be HTTP-fetched here from `/tags.json`. The RoboFrame
+            // rpcserver now pushes them on WebSocket connect (action: tagLists), so we
+            // just open the socket and let the server announce.
             setupWebSocket()
 
             // If "Server Decides" is configured and WS is active, wait 1s for the
@@ -117,28 +119,6 @@ class RemoteViewerModel: SlideshowEngine {
 
     override func onEnteredBackground() {
         wsClient?.sendVisibilityChange(deviceId: config.wsDeviceId, visible: false)
-    }
-
-    // MARK: - Remote Tag List Fetch
-
-    private func fetchRemoteTagLists() {
-        let apiClient = self.apiClient
-        let baseURL = config.apiEndpoint
-        Task { [weak self] in
-            do {
-                let serverLists = try await apiClient.fetchTagLists(baseURL: baseURL)
-                guard !serverLists.isEmpty, let self else { return }
-                guard let tlm = self.tagListManager else { return }
-
-                if tlm.tagLists != serverLists {
-                    tlm.tagLists = serverLists
-                    AppLogger.remoteViewer.info("Updated tag lists from tags.json: \(serverLists.count, privacy: .public) lists")
-                    self.showToast("Loaded \(serverLists.count) tag lists from server")
-                }
-            } catch {
-                AppLogger.remoteViewer.debug("tags.json not available: \(error.localizedDescription, privacy: .public)")
-            }
-        }
     }
 
     // MARK: - Remote Actions
@@ -378,6 +358,14 @@ class RemoteViewerModel: SlideshowEngine {
 
     private func handleWSMessage(_ message: RemoteWSMessage) {
         switch message {
+        case .tagLists(let lists):
+            guard let tlm = tagListManager else { break }
+            if !lists.isEmpty && tlm.tagLists != lists {
+                tlm.tagLists = lists
+                AppLogger.remoteViewer.info("Server pushed tagLists: \(lists.count, privacy: .public) lists")
+                showToast("Loaded \(lists.count) tag lists from server")
+            }
+
         case .blocked(let posts, let tags):
             let newPosts = Set(posts).subtracting(blockedPosts)
             let newTags = Set(tags).subtracting(blockedTags)

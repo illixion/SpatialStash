@@ -29,6 +29,7 @@ struct HASensorReading: Identifiable {
 }
 
 enum RemoteWSMessage {
+    case tagLists(lists: [[String]])
     case blocked(posts: [Int], tags: [String])
     case currentTagList(index: Int)
     case playVideo(url: URL)
@@ -93,10 +94,6 @@ class RemoteWebSocketClient {
         sendJSON(["action": "block", "payload": postId])
     }
 
-    func sendGetBlocked() {
-        sendJSON(["action": "getBlocked"])
-    }
-
     func sendDisplaySync(currentPost: (id: Int, url: String)?, nextPost: (id: Int, url: String)?, currentList: Int?, dbCursor: String?) {
         var payload: [String: Any] = [:]
         if let currentPost {
@@ -126,8 +123,8 @@ class RemoteWebSocketClient {
 
         AppLogger.remoteViewer.info("WebSocket connecting to \(url.absoluteString, privacy: .private)")
 
-        // Request initial data
-        sendGetBlocked()
+        // RoboFrame's rpcserver pushes `tagLists`, `blocked`, and `currentTagList`
+        // automatically on connect — no need to request them. We just announce visibility.
         if !initialDeviceId.isEmpty {
             sendVisibilityChange(deviceId: initialDeviceId, visible: true)
         }
@@ -172,6 +169,16 @@ class RemoteWebSocketClient {
         let payload = json["payload"]
 
         switch action {
+        case "tagLists":
+            // Server-pushed canonical tag list catalog. Accepts either
+            // [[String]] (canonical) or [String] (legacy: space-separated).
+            if let nested = payload as? [[String]] {
+                onMessage?(.tagLists(lists: nested))
+            } else if let flat = payload as? [String] {
+                let split = flat.map { $0.split(whereSeparator: { $0.isWhitespace }).map(String.init) }
+                onMessage?(.tagLists(lists: split))
+            }
+
         case "blocked":
             if let dict = payload as? [String: Any] {
                 let posts = (dict["blockedPosts"] as? [Int]) ?? []
