@@ -120,9 +120,14 @@ class RemoteViewerModel: SlideshowEngine {
                 }
                 Task { [weak self] in
                     try? await Task.sleep(for: .seconds(1))
-                    guard let self, self.state == .idle else { return }
-                    // Now start the engine (idle → loading)
-                    self.transition(to: .loading)
+                    guard let self else { return }
+                    guard self.state != .stopped else { return }
+                    // Playback can arrive before this delay expires and
+                    // transition the engine to .loading. In that case we still
+                    // need to start the run loop; only force idle -> loading.
+                    if self.state == .idle {
+                        self.transition(to: .loading)
+                    }
                     self.startRunLoop()
                 }
                 return
