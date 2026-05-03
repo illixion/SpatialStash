@@ -38,7 +38,13 @@ enum RemoteWSMessage {
     case dismissText
     case sensorUpdate(entityId: String, state: String, friendlyName: String, unit: String)
     case refresh
-    case displaySync(payload: [String: Any])
+    /// Server → client playback channel state. The orchestrator pushes this
+    /// on every channel change (advance, primary claim, tag list change,
+    /// mod-tag change). Payload shape:
+    ///   { primary: String?, enabled: Bool, interval: Int (ms),
+    ///     currentList: Int, modTags: [String],
+    ///     current: { id: Int, ext: String }?, next: { id: Int, ext: String }? }
+    case playback(payload: [String: Any])
 }
 
 @MainActor
@@ -91,24 +97,42 @@ class RemoteWebSocketClient {
     }
 
     func sendBlock(postId: Int) {
-        sendJSON(["action": "block", "payload": postId])
+        sendJSON(["action": "block", "payload": ["id": postId]])
     }
 
-    func sendDisplaySync(currentPost: (id: Int, url: String)?, nextPost: (id: Int, url: String)?, currentList: Int?, dbCursor: String?) {
-        var payload: [String: Any] = [:]
-        if let currentPost {
-            payload["currentPost"] = ["id": currentPost.id, "url": currentPost.url]
-        }
-        if let nextPost {
-            payload["nextPost"] = ["id": nextPost.id, "url": nextPost.url]
-        }
-        if let currentList {
-            payload["currentList"] = currentList
-        }
-        if let dbCursor {
-            payload["dbCursor"] = dbCursor
-        }
-        sendJSON(["action": "displaySync", "payload": payload])
+    /// displaySync is a primary-claim toggle. `enabled: true` says "I'm
+    /// primary; advance the channel for everyone using my interval and mod
+    /// tags". `enabled: false` releases the role. Server broadcasts a new
+    /// `playback` frame in response.
+    func sendDisplaySync(enabled: Bool) {
+        sendJSON(["action": "displaySync", "payload": ["enabled": enabled]])
+    }
+
+    /// Required after WS open: register this session with the orchestrator.
+    /// Server may auto-promote us to primary if no other session holds it.
+    func sendSlideshowConfig(deviceId: String, interval: Int, width: Int, height: Int, bright: Bool, convert: Bool, ratio: String? = nil) {
+        var payload: [String: Any] = [
+            "deviceId": deviceId,
+            "interval": interval,
+            "width": width,
+            "height": height,
+            "bright": bright,
+            "convert": convert,
+        ]
+        if let ratio { payload["ratio"] = ratio }
+        sendJSON(["action": "slideshowConfig", "payload": payload])
+    }
+
+    /// Client-supplied modifier tags. The orchestrator includes them in its
+    /// DuckDB query when this client is the channel primary.
+    func sendSetModTags(tags: [String]) {
+        sendJSON(["action": "setModTags", "payload": ["tags": tags]])
+    }
+
+    /// Ask the server to advance the channel. The orchestrator only honors
+    /// this from the primary; other clients' calls are dropped.
+    func sendRequestNext() {
+        sendJSON(["action": "requestNext"])
     }
 
     // MARK: - Private
@@ -241,9 +265,9 @@ class RemoteWebSocketClient {
         case "refresh":
             onMessage?(.refresh)
 
-        case "displaySync":
+        case "playback":
             if let dict = payload as? [String: Any] {
-                onMessage?(.displaySync(payload: dict))
+                onMessage?(.playback(payload: dict))
             }
 
         default:

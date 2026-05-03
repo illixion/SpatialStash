@@ -29,7 +29,6 @@ struct LocalDisplaySyncPayload {
     let isCurrentPostAnimatedGIF: Bool
     let prefetched: [(post: RemotePost, image: UIImage, url: URL)]
     let cachedPosts: [RemotePost]
-    let cursor: String?
     let delay: TimeInterval
 }
 

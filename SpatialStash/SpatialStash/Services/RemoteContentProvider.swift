@@ -1,8 +1,12 @@
 /*
  Spatial Stash - Remote Content Provider
 
- SlideshowContentProvider implementation that fetches content from
- the RoboFrame API via RemoteAPIClient.
+ SlideshowContentProvider implementation that consumes posts pushed by
+ the RoboFrame server's `playback` channel. The server is the single
+ DuckDB reader and broadcasts `playback { current, next }` frames over
+ the WebSocket. RemoteViewerModel feeds those posts into the buffer below
+ via `enqueueFromPlayback`, and the engine's prefetch loop pulls them out
+ through `fetchMoreContent`.
  */
 
 import CoreGraphics
@@ -14,12 +18,21 @@ class RemoteContentProvider: SlideshowContentProvider {
     let apiClient: RemoteAPIClient
     let baseURL: String
 
-    /// Pagination cursor managed internally. Randomized on init and on wraparound.
-    var cursor: String? = String(Double.random(in: 0..<1))
+    /// Posts the server has nominated via `playback`. Drained by the
+    /// engine's prefetch loop on each `fetchMoreContent` call.
+    private var pending: [RemotePost] = []
 
     init(apiClient: RemoteAPIClient, baseURL: String) {
         self.apiClient = apiClient
         self.baseURL = baseURL
+    }
+
+    /// Called by RemoteViewerModel when a `playback` frame arrives. The posts
+    /// here are the server's `current` / `next` reconstructed from the playback
+    /// payload (just id + ext; other fields are nil — the engine only uses
+    /// `_id`, `file_ext`, and `tags` for routing).
+    func enqueueFromPlayback(_ posts: [RemotePost]) {
+        pending.append(contentsOf: posts)
     }
 
     func fetchMoreContent(
@@ -28,47 +41,19 @@ class RemoteContentProvider: SlideshowContentProvider {
         blockedPosts: Set<Int>,
         blockedTags: Set<String>
     ) async -> [RemotePost] {
-        // Run the network request in a detached task so it isn't cancelled
-        // when the slideshow task is replaced (e.g. by goToNextImage or scene phase changes)
-        let apiClient = self.apiClient
-        let baseURL = self.baseURL
-        let cursor = self.cursor
-        let result: RemoteSearchResponse? = await Task.detached {
-            do {
-                return try await apiClient.search(
-                    baseURL: baseURL,
-                    tags: tagQuery,
-                    ratioRange: ratioRange,
-                    cursor: cursor
-                )
-            } catch {
-                AppLogger.remoteViewer.error("Fetch failed: \(error.localizedDescription, privacy: .public)")
-                return nil
-            }
-        }.value
-
-        guard let response = result else { return [] }
-
-        // Filter blocked posts client-side
-        let filtered = response.results.filter { post in
-            !blockedPosts.contains(post._id) &&
-            !post.tags.contains(where: { blockedTags.contains($0) })
-        }
-
-        // Update cursor from server response. If server returns 0,
-        // it means we've wrapped around — re-randomize to avoid
-        // fetching the same set repeatedly.
-        if let next = response.nextCursor {
-            let cursorStr = next.stringValue
-            if cursorStr == "0" {
-                self.cursor = String(Double.random(in: 0..<1))
-            } else {
-                self.cursor = cursorStr
+        if !pending.isEmpty {
+            let drained = pending
+            pending.removeAll()
+            return drained.filter { post in
+                !blockedPosts.contains(post._id) &&
+                !post.tags.contains(where: { blockedTags.contains($0) })
             }
         }
-
-        AppLogger.remoteViewer.info("Fetched \(response.results.count, privacy: .public) posts, \(filtered.count, privacy: .public) after filtering")
-        return filtered
+        // Yield a beat so the engine's prefetch loop doesn't tight-spin
+        // between server pushes when the channel is paused or briefly
+        // empty between ticks.
+        try? await Task.sleep(for: .milliseconds(500))
+        return []
     }
 
     func downloadImage(for post: RemotePost, maxResolution: Int) async -> (image: UIImage, data: Data)? {
@@ -113,6 +98,8 @@ class RemoteContentProvider: SlideshowContentProvider {
     }
 
     func resetPagination() {
-        cursor = String(Double.random(in: 0..<1))
+        // The orchestrator manages pagination; locally we just drop any
+        // server-pushed posts that haven't been consumed yet.
+        pending.removeAll()
     }
 }

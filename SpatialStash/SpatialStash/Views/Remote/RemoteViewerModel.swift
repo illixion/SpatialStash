@@ -22,7 +22,33 @@ class RemoteViewerModel: SlideshowEngine {
 
     // MARK: - Display State (remote-specific)
 
-    var enableDisplaySync: Bool = false
+    /// User-facing toggle that claims/releases primary on the server.
+    /// Writing this property emits `displaySync { enabled }`. On `true` the
+    /// orchestrator promotes us to primary (driving channel timing for
+    /// everyone); on `false` we go back to following.
+    var enableDisplaySync: Bool = false {
+        didSet {
+            if oldValue != enableDisplaySync {
+                wsClient?.sendDisplaySync(enabled: enableDisplaySync)
+            }
+        }
+    }
+
+    /// Last `playback.primary` value the server pushed. Used by the UI to
+    /// reflect "you are primary" state independently of the local toggle.
+    private(set) var serverPrimaryDeviceId: String?
+
+    /// Local set of mod tags. Sent to the server via `setModTags` whenever
+    /// it changes; the orchestrator includes them in its DuckDB query when
+    /// this client is primary.
+    var modTags: [String] = [] {
+        didSet {
+            if oldValue != modTags {
+                wsClient?.sendSetModTags(tags: modTags)
+            }
+        }
+    }
+
     var showClock: Bool = true
     var showSensors: Bool = true
 
@@ -241,28 +267,15 @@ class RemoteViewerModel: SlideshowEngine {
     // MARK: - Display Sync (subclass hook)
 
     override func onPostTransitioned(post: RemotePost, url: URL) {
-        // WebSocket message — still sent for RoboFrame server coordination
-        // even in gallery mode (harmless if wsClient is nil).
-        if !isGalleryMode {
-            if enableDisplaySync {
-                wsClient?.sendDisplaySync(
-                    currentPost: (id: post._id, url: url.absoluteString),
-                    nextPost: prefetchedImages.first.map { (id: $0.post._id, url: $0.url.absoluteString) },
-                    currentList: tagListManager?.activeIndex ?? 0,
-                    dbCursor: (contentProvider as? RemoteContentProvider)?.cursor
-                )
-            } else {
-                wsClient?.sendDisplaySync(
-                    currentPost: nil,
-                    nextPost: nil,
-                    currentList: tagListManager?.activeIndex ?? 0,
-                    dbCursor: nil
-                )
-            }
-        }
+        // The server is authoritative on what's playing — no need to echo
+        // the post/cursor over the WebSocket. The displaySync action is a
+        // primary-claim toggle (handled in `enableDisplaySync.didSet`).
 
-        // Local broadcast — only when sync is enabled and we aren't
-        // currently applying an incoming sync (avoid feedback loops).
+        // Local broadcast — keeps multiple visionOS windows on the same
+        // host in lockstep. (When they all share one WS connection, they
+        // all receive the same `playback` frames anyway, so this is mostly
+        // redundant once primary mode is on; still needed for gallery mode
+        // where there's no WS.)
         guard enableDisplaySync, !isApplyingIncomingSync else { return }
 
         let payload = LocalDisplaySyncPayload(
@@ -273,7 +286,6 @@ class RemoteViewerModel: SlideshowEngine {
             isCurrentPostAnimatedGIF: isCurrentPostAnimatedGIF,
             prefetched: prefetchedImages,
             cachedPosts: cachedPosts,
-            cursor: (contentProvider as? RemoteContentProvider)?.cursor,
             delay: delay
         )
         SlideshowSyncHub.shared.broadcastLocalSync(from: self, payload: payload)
@@ -298,10 +310,7 @@ class RemoteViewerModel: SlideshowEngine {
             delay = payload.delay
         }
 
-        // Mirror pagination cursor for future fetches
-        if let cursor = payload.cursor {
-            (contentProvider as? RemoteContentProvider)?.cursor = cursor
-        }
+        // (No cursor mirroring — the server owns pagination.)
 
         // Mirror the cached post queue (future query results)
         cachedPosts = payload.cachedPosts
@@ -355,6 +364,24 @@ class RemoteViewerModel: SlideshowEngine {
 
         wsToken = result.token
         wsClient = result.client
+
+        // Register this session with the orchestrator. The server
+        // auto-promotes the first registered session to primary, then
+        // broadcasts a `playback` frame which our handler picks up below.
+        // Width/height are nominal — spatialstash doesn't pass them to /get.
+        let intervalMs = max(2000, Int(config.delay * 1000))
+        wsClient?.sendSlideshowConfig(
+            deviceId: config.wsDeviceId,
+            interval: intervalMs,
+            width: 1920,
+            height: 1080,
+            bright: false,
+            convert: false,
+            ratio: nil
+        )
+        if !modTags.isEmpty {
+            wsClient?.sendSetModTags(tags: modTags)
+        }
     }
 
     private func handleWSMessage(_ message: RemoteWSMessage) {
@@ -406,16 +433,65 @@ class RemoteViewerModel: SlideshowEngine {
             contentProvider?.resetPagination()
             goToNextImage()
 
-        case .displaySync(let payload):
-            if let listNumber = payload["currentList"] as? Int,
-               let tlm = tagListManager,
-               listNumber < tlm.tagLists.count,
-               listNumber != tlm.activeIndex {
-                tlm.switchToTagList(listNumber)
-            }
-            if let cursor = payload["dbCursor"] as? String {
-                (contentProvider as? RemoteContentProvider)?.cursor = cursor
-            }
+        case .playback(let payload):
+            handlePlaybackFrame(payload)
         }
+    }
+
+    /// A `playback` frame from the orchestrator. Updates interval, tag
+    /// list, primary status, and feeds the engine's queue with the server's
+    /// `current` / `next` posts.
+    private func handlePlaybackFrame(_ payload: [String: Any]) {
+        // Interval — the channel timer source of truth. Convert ms → seconds.
+        if let intervalMs = payload["interval"] as? Int, intervalMs > 0 {
+            let newDelay = TimeInterval(intervalMs) / 1000.0
+            if delay != newDelay { delay = newDelay }
+        }
+
+        // Tag list — server-authoritative.
+        if let listNumber = payload["currentList"] as? Int,
+           let tlm = tagListManager,
+           listNumber >= 0, listNumber < tlm.tagLists.count,
+           listNumber != tlm.activeIndex {
+            _ = tlm.handleServerTagListChange(to: listNumber)
+        }
+
+        // Primary status — server tells us who currently drives the channel.
+        serverPrimaryDeviceId = payload["primary"] as? String
+
+        let provider = contentProvider as? RemoteContentProvider
+        let current = postFromPlaybackEntry(payload["current"])
+        let next = postFromPlaybackEntry(payload["next"])
+
+        if let cur = current {
+            if cur._id != currentPost?._id {
+                // Server's current differs from what we're showing. Queue
+                // both posts and trigger an advance — the engine's prefetch
+                // loop fetches the binary via /get and the displaying phase
+                // crossfades to it.
+                provider?.enqueueFromPlayback([cur] + (next.map { [$0] } ?? []))
+                cachedPosts.removeAll()
+                prefetchedImages.removeAll()
+                goToNextImage()
+            } else if let n = next {
+                // Already on the right current; keep `next` queued for the
+                // engine's lookahead.
+                provider?.enqueueFromPlayback([n])
+            }
+        } else if let n = next {
+            provider?.enqueueFromPlayback([n])
+        }
+    }
+
+    private func postFromPlaybackEntry(_ raw: Any?) -> RemotePost? {
+        guard let dict = raw as? [String: Any],
+              let id = dict["id"] as? Int else { return nil }
+        let ext = dict["ext"] as? String ?? ""
+        return RemotePost(
+            _id: id, file_ext: ext, tags: [],
+            rating: nil, image_width: nil, image_height: nil,
+            fav_count: nil, md5: nil, parent_id: nil, score: nil,
+            ratio: nil, path: nil, duration: nil
+        )
     }
 }

@@ -25,50 +25,9 @@ actor RemoteAPIClient {
         baseURL.hasSuffix("/") ? String(baseURL.dropLast()) : baseURL
     }
 
-    /// Search for posts matching tags with optional aspect ratio filtering.
-    /// - Parameters:
-    ///   - baseURL: The API endpoint base URL
-    ///   - tags: Space-separated tag query
-    ///   - ratioRange: Optional "min-max" ratio range string
-    ///   - cursor: Pagination cursor from previous search
-    /// - Returns: Search response with results and next cursor
-    func search(baseURL: String, tags: String, ratioRange: String? = nil, cursor: String? = nil) async throws -> RemoteSearchResponse {
-        var query = tags
-        if let ratioRange {
-            query += " ratio:\(ratioRange)"
-        }
-        query += " limit:20"
-
-        // Build URL manually — URLQueryItem over-encodes characters like "="
-        // inside values (e.g. "score:>=30" becomes "score:%3E%3D30" instead of
-        // "score:%3E=30"), which the server doesn't understand.
-        let encodedQuery = query.addingPercentEncoding(withAllowedCharacters: .urlQueryValueAllowed) ?? query
-        var urlString = "\(normalize(baseURL))/search?q=\(encodedQuery)"
-        if let cursor {
-            urlString += "&cursor=\(cursor)"
-        }
-
-        guard let url = URL(string: urlString) else {
-            throw RemoteAPIError.invalidURL
-        }
-
-        AppLogger.remoteViewer.debug("Search: \(url.absoluteString, privacy: .private)")
-        let (data, response) = try await session.data(from: url)
-
-        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
-            AppLogger.remoteViewer.error("Search HTTP \(statusCode, privacy: .public)")
-            throw RemoteAPIError.serverError
-        }
-
-        do {
-            return try JSONDecoder().decode(RemoteSearchResponse.self, from: data)
-        } catch {
-            let preview = String(data: data.prefix(500), encoding: .utf8) ?? "<binary>"
-            AppLogger.remoteViewer.error("Search decode failed: \(error, privacy: .public)\nResponse: \(preview, privacy: .private)")
-            throw error
-        }
-    }
+    // RoboFrame is the single DuckDB reader; clients receive posts over the
+    // WebSocket via `playback` frames. This client just resolves /get URLs
+    // and handles save/history.
 
     /// Build the direct image URL for a specific post.
     /// The /get endpoint serves the image directly (or redirects to it),
@@ -114,13 +73,3 @@ enum RemoteAPIError: LocalizedError {
     }
 }
 
-private extension CharacterSet {
-    /// Characters safe in a URL query value. Keeps `=`, `:`, `>`, `<`, `/`
-    /// unencoded since the RoboFrame server expects them literal — unlike
-    /// URLQueryItem which over-encodes `=` inside values.
-    static let urlQueryValueAllowed: CharacterSet = {
-        var cs = CharacterSet.urlQueryAllowed
-        cs.remove(charactersIn: "&+")
-        return cs
-    }()
-}

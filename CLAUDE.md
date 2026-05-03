@@ -134,21 +134,20 @@ A slideshow viewer that fetches images from a [RoboFrame](https://github.com/ill
 - **SobelFocusAnalyzer** — Pure functions for Sobel edge detection (Ken Burns focus) and average luminance (dynamic brightness)
 
 **RoboFrame Proxy API:**
-- `GET {baseURL}/search?q={tags}&cursor={cursor}` → `{ results: [RemotePost], nextCursor: number }`
 - `GET {baseURL}/get?id={postId}` → serves image directly (used as img src)
 - `GET {baseURL}/save?id={postId}` → saves post, returns status text
 - `GET {baseURL}/addtohistory?id={postId}` → adds to viewing history
-- URL is built manually (not via URLQueryItem) to avoid over-encoding `>=` in tag queries
+- There is no `/search` endpoint — the RoboFrame server is the single DuckDB reader. Posts arrive via the WebSocket `playback` channel.
 
 **WebSocket Protocol (JSON, `{ action, payload }`):**
-- **Outgoing:** `getBlocked`, `getDisplayState`, `block {postId}`, `displaySync {currentPost, nextPost, currentList, dbCursor}`
-- **Incoming:** `blocked {blockedPosts, blockedTags}`, `displayState {state}`, `currentTagList {listNumber}`, `playVideo {url}`, `stopVideo`, `showText {text, bgColorHex, imageUrl}`, `dismissText`, `update {entity, state, attributes}` (HA sensors), `refresh`, `displaySync`
+- **Outgoing:** `slideshowConfig {deviceId, interval, width, height, bright, convert, ratio?}` (sent on connect), `visibility {deviceId, visible}`, `block {id}`, `displaySync {enabled}` (claim/release primary), `setModTags {tags}`, `requestNext`, `setTagList {listNumber}`
+- **Incoming:** `tagLists [[String]]` (server-pushed catalog), `blocked {blockedPosts, blockedTags}`, `currentTagList {listNumber}`, `playback {primary, enabled, interval, currentList, modTags, current: {id, ext}, next: {id, ext}}`, `playVideo {url}`, `stopVideo`, `showText {text, bgColorHex, imageUrl}`, `dismissText`, `update {entity, state, attributes}` (HA sensors), `refresh`
 - `playVideo`/`showText` open new windows via `openWindow()`; `stopVideo`/`dismissText` dismiss them
 
 **Key implementation details:**
-- Cursor is randomized on initial load (`Double.random(in: 0..<1)`) and re-randomized when server returns `nextCursor: 0` (wrap-around)
+- The server is authoritative on tag list, mod tags, current/next post, and channel timing. Clients render whatever `playback` says and preload the announced `next` via `/get`.
 - Ratio filter uses `..` separator (e.g. `ratio:1.32..1.79`), matching server expectations
-- Blocked posts/tags from WS `getBlocked` are merged into local config and persisted
+- Blocked posts/tags from WS `blocked` are merged into local config and persisted
 - Save button has 1.5s grace period after image transition (saves previous post)
 - Visual adjustments (brightness/contrast/saturation) stack: auto (luminance-based) + per-viewer + global
 - Ornament: [ Grid | Prev | Next | Save | Home | Cycle Tags | Display Sync | Adjustments | Block ] (Save/Home/Cycle/Display Sync/Block hidden in gallery mode)
