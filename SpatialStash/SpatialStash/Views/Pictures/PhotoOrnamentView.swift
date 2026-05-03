@@ -164,7 +164,7 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
             appModel.gallerySlideshowConfig = newConfig
             config = newConfig
         }
-        openWindow(id: "remote-viewer", value: RemoteViewerWindowValue(configId: config.id))
+        appModel.enqueueRemoteViewerOpen(configId: config.id)
     }
 
     // MARK: - 3D Menu

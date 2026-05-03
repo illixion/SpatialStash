@@ -53,10 +53,15 @@ struct PhotoWindowView: View {
                         if wasPushed {
                             Button {
                                 let image = windowModel.image
-                                if appModel.hasOpenPopOutWindow(for: image.fullSizeURL) {
+                                let state = appModel.existingWindowState(for: image.fullSizeURL)
+                                switch state {
+                                case .backgroundedInOtherRoom(let existingValue):
+                                    openWindow(id: "photo-detail", value: existingValue)
+                                    dismissWindow()
+                                case .activeInCurrentRoom:
                                     pendingPopOutImage = image
                                     showDuplicateWindowAlert = true
-                                } else {
+                                case .none:
                                     appModel.enqueuePhotoWindowOpen(image)
                                     dismissWindow()
                                 }
@@ -84,15 +89,14 @@ struct PhotoWindowView: View {
             Button("Summon") {
                 if let image = pendingPopOutImage {
                     let existingValues = appModel.popOutWindowValues(for: image.fullSizeURL)
-                    for value in existingValues {
-                        dismissWindow(id: "photo-detail", value: value)
+                    if let existingValue = existingValues.first {
+                        openWindow(id: "photo-detail", value: existingValue)
                     }
-                    appModel.enqueuePhotoWindowOpen(image, bypassDuplicatePrompt: true)
                     pendingPopOutImage = nil
                     dismissWindow()
                 }
             }
-            Button("Open New") {
+            Button("Open Copy") {
                 if let image = pendingPopOutImage {
                     appModel.enqueuePhotoWindowOpen(image, bypassDuplicatePrompt: true)
                     pendingPopOutImage = nil
@@ -103,7 +107,7 @@ struct PhotoWindowView: View {
                 pendingPopOutImage = nil
             }
         } message: {
-            Text("A window for this image is already open. You can summon it to your current position or open a new window.")
+            Text("A window for this image is already open. You can summon it or open a copy.")
         }
     }
 

@@ -187,12 +187,24 @@ class AppModel {
         }
     }
 
+    /// Returns true when the duplicate-window dialog should be shown.
+    /// Active (same room) windows show the dialog so the user can choose
+    /// summon vs duplicate. Backgrounded (other room) windows are auto-summoned
+    /// silently by handlePhotoWindowOpenIfNeeded.
     func shouldConfirmDuplicateOpen(for request: PhotoWindowOpenRequest) -> Bool {
         if request.bypassDuplicatePrompt || allowDuplicateOpen {
             return false
         }
 
-        return hasOpenPopOutWindow(for: request.image.fullSizeURL)
+        switch existingWindowState(for: request.image.fullSizeURL) {
+        case .none:
+            return false
+        case .activeInCurrentRoom:
+            return true
+        case .backgroundedInOtherRoom:
+            // Auto-summoned by handlePhotoWindowOpenIfNeeded — no dialog needed
+            return false
+        }
     }
 
     func confirmDuplicateOpen() {
@@ -251,6 +263,37 @@ class AppModel {
         return openPopOutWindows[key] ?? []
     }
 
+    // MARK: - Window Summon (Same-Room Detection)
+
+    enum ExistingWindowState {
+        case none
+        case activeInCurrentRoom(PhotoWindowValue)
+        case backgroundedInOtherRoom(PhotoWindowValue)
+    }
+
+    func existingWindowState(for imageURL: URL) -> ExistingWindowState {
+        let values = popOutWindowValues(for: imageURL)
+        guard !values.isEmpty else { return .none }
+
+        for model in activePhotoWindowModels.values {
+            if model.imageURL == imageURL, model.isInActiveRoom,
+               let windowValue = model.popOutWindowValue {
+                return .activeInCurrentRoom(windowValue)
+            }
+        }
+
+        // Window exists but is backgrounded — find its PhotoWindowValue
+        // for auto-summon via openWindow value matching
+        if let backgroundedModel = activePhotoWindowModels.values.first(where: {
+            $0.imageURL == imageURL && !$0.isInActiveRoom
+        }), let windowValue = backgroundedModel.popOutWindowValue {
+            return .backgroundedInOtherRoom(windowValue)
+        }
+
+        // Fallback: use the first tracked pop-out value
+        return .backgroundedInOtherRoom(values[0])
+    }
+
     /// Whether pop-out windows should use lightweight SwiftUI Image display
     /// instead of RealityKit. Activated on memory warning to free GPU resources.
     var useLightweightDisplay: Bool = false
@@ -274,6 +317,134 @@ class AppModel {
     /// Unregister a photo window model (called from PhotoWindowModel.cleanup())
     func unregisterWindowModel(_ model: PhotoWindowModel) {
         activePhotoWindowModels.removeValue(forKey: ObjectIdentifier(model))
+    }
+
+    // MARK: - Remote Viewer Window Open Queue
+
+    struct RemoteViewerOpenRequest: Identifiable {
+        let id = UUID()
+        let configId: UUID
+        let bypassDuplicatePrompt: Bool
+    }
+
+    var activeRemoteViewerOpenRequest: RemoteViewerOpenRequest?
+    private var queuedRemoteViewerOpenRequests: [RemoteViewerOpenRequest] = []
+    private var allowDuplicateRemoteViewerOpen: Bool = false
+
+    func enqueueRemoteViewerOpen(
+        configId: UUID,
+        bypassDuplicatePrompt: Bool = false
+    ) {
+        let request = RemoteViewerOpenRequest(
+            configId: configId,
+            bypassDuplicatePrompt: bypassDuplicatePrompt
+        )
+        queuedRemoteViewerOpenRequests.append(request)
+
+        if activeRemoteViewerOpenRequest == nil {
+            activeRemoteViewerOpenRequest = queuedRemoteViewerOpenRequests.removeFirst()
+        }
+    }
+
+    func shouldConfirmDuplicateRemoteViewerOpen(for request: RemoteViewerOpenRequest) -> Bool {
+        if request.bypassDuplicatePrompt || allowDuplicateRemoteViewerOpen {
+            return false
+        }
+
+        switch existingRemoteViewerWindowState(for: request.configId) {
+        case .none:
+            return false
+        case .activeInCurrentRoom:
+            return true
+        case .backgroundedInOtherRoom:
+            return false
+        }
+    }
+
+    func confirmDuplicateRemoteViewerOpen() {
+        allowDuplicateRemoteViewerOpen = true
+    }
+
+    func advanceRemoteViewerOpenQueue() {
+        if queuedRemoteViewerOpenRequests.isEmpty {
+            activeRemoteViewerOpenRequest = nil
+            allowDuplicateRemoteViewerOpen = false
+        } else {
+            activeRemoteViewerOpenRequest = queuedRemoteViewerOpenRequests.removeFirst()
+            allowDuplicateRemoteViewerOpen = false
+        }
+    }
+
+    func cancelPendingRemoteViewerOpens() {
+        queuedRemoteViewerOpenRequests.removeAll()
+        activeRemoteViewerOpenRequest = nil
+        allowDuplicateRemoteViewerOpen = false
+    }
+
+    // MARK: - Remote Viewer Window Tracking
+
+    /// Tracks open remote viewer windows by configId string.
+    /// Maps configId string → array of RemoteViewerWindowValue instances.
+    private var openRemoteViewerWindows: [String: [RemoteViewerWindowValue]] = [:]
+
+    func registerRemoteViewerWindow(configId: UUID, windowValue: RemoteViewerWindowValue) {
+        let key = configId.uuidString
+        var values = openRemoteViewerWindows[key] ?? []
+        values.append(windowValue)
+        openRemoteViewerWindows[key] = values
+    }
+
+    func unregisterRemoteViewerWindow(configId: UUID, windowValueId: UUID) {
+        let key = configId.uuidString
+        openRemoteViewerWindows[key]?.removeAll { $0.id == windowValueId }
+        if openRemoteViewerWindows[key]?.isEmpty == true {
+            openRemoteViewerWindows.removeValue(forKey: key)
+        }
+    }
+
+    func remoteViewerWindowValues(for configId: UUID) -> [RemoteViewerWindowValue] {
+        let key = configId.uuidString
+        return openRemoteViewerWindows[key] ?? []
+    }
+
+    // MARK: - Remote Viewer Model Registry
+
+    private var activeRemoteViewerModels: [ObjectIdentifier: RemoteViewerModel] = [:]
+
+    func registerRemoteViewerModel(_ model: RemoteViewerModel) {
+        activeRemoteViewerModels[ObjectIdentifier(model)] = model
+    }
+
+    func unregisterRemoteViewerModel(_ model: RemoteViewerModel) {
+        activeRemoteViewerModels.removeValue(forKey: ObjectIdentifier(model))
+    }
+
+    // MARK: - Remote Viewer Window Summon
+
+    enum ExistingRemoteViewerWindowState {
+        case none
+        case activeInCurrentRoom(RemoteViewerWindowValue)
+        case backgroundedInOtherRoom(RemoteViewerWindowValue)
+    }
+
+    func existingRemoteViewerWindowState(for configId: UUID) -> ExistingRemoteViewerWindowState {
+        let values = remoteViewerWindowValues(for: configId)
+        guard !values.isEmpty else { return .none }
+
+        for model in activeRemoteViewerModels.values {
+            if model.config.id == configId, model.isRoomActive,
+               let windowValue = model.windowValue {
+                return .activeInCurrentRoom(windowValue)
+            }
+        }
+
+        if let backgroundedModel = activeRemoteViewerModels.values.first(where: {
+            $0.config.id == configId && !$0.isRoomActive
+        }), let windowValue = backgroundedModel.windowValue {
+            return .backgroundedInOtherRoom(windowValue)
+        }
+
+        return .backgroundedInOtherRoom(values[0])
     }
 
     // MARK: - UI Visibility State (for immersive image viewing)

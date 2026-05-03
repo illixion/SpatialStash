@@ -134,6 +134,10 @@ struct RemoteViewerWindowView: View {
             resetAutoHideTimer()
         }
         .onDisappear {
+            if let model = viewerModel {
+                appModel.unregisterRemoteViewerModel(model)
+                appModel.unregisterRemoteViewerWindow(configId: windowValue.configId, windowValueId: windowValue.id)
+            }
             viewerModel?.stop()
             autoHideTimer?.cancel()
         }
@@ -390,7 +394,10 @@ struct RemoteViewerWindowView: View {
             appModel.saveRemoteConfig(updatedConfig)
         }
 
+        model.windowValue = windowValue
         self.viewerModel = model
+        appModel.registerRemoteViewerWindow(configId: config.id, windowValue: windowValue)
+        appModel.registerRemoteViewerModel(model)
         model.start()
     }
 

@@ -11,7 +11,6 @@ import SwiftUI
 
 struct RemoteTabView: View {
     @Environment(AppModel.self) private var appModel
-    @Environment(\.openWindow) private var openWindow
     @State private var editingConfig = RemoteViewerConfig(name: "New Configuration")
     @State private var showSaveAlert = false
     @State private var saveName = ""
@@ -263,8 +262,7 @@ struct RemoteTabView: View {
     }
 
     private func launchViewer(config: RemoteViewerConfig) {
-        let windowValue = RemoteViewerWindowValue(configId: config.id)
-        openWindow(id: "remote-viewer", value: windowValue)
+        appModel.enqueueRemoteViewerOpen(configId: config.id)
     }
 
     private func formatDelay(_ seconds: TimeInterval) -> String {

@@ -106,6 +106,12 @@ extension PhotoWindowModel {
         // Clear background removal caches
         clearBackgroundRemovalState()
 
+        // Release shared texture cache reference
+        if let cacheKey = displayTextureCacheKey {
+            SharedTextureCache.shared.release(key: cacheKey)
+            displayTextureCacheKey = nil
+        }
+
         // Release raw image data (can be reloaded from disk cache)
         currentImageData = nil
 

@@ -33,6 +33,12 @@ extension PhotoWindowModel {
             generateTask = nil
         }
 
+        // Release shared texture cache reference for the old image
+        if let cacheKey = displayTextureCacheKey {
+            SharedTextureCache.shared.release(key: cacheKey)
+            displayTextureCacheKey = nil
+        }
+
         // Release all previous image resources
         spatial3DImageState = .notGenerated
         spatial3DImage = nil

@@ -275,7 +275,7 @@ struct VideoOrnamentsView: View {
             appModel.gallerySlideshowConfig = newConfig
             config = newConfig
         }
-        openWindow(id: "remote-viewer", value: RemoteViewerWindowValue(configId: config.id))
+        appModel.enqueueRemoteViewerOpen(configId: config.id)
     }
 
     private func popOutVideo() {

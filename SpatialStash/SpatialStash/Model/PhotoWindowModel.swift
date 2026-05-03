@@ -224,6 +224,10 @@ class PhotoWindowModel {
     /// Max dimension used for idle-downscaled thumbnail display
     static let idleDownscaleDimension: CGFloat = 256
 
+    /// Current key into SharedTextureCache for the base display texture.
+    /// Tracked so we can release our reference on cleanup, resize, or image switch.
+    var displayTextureCacheKey: SharedTextureCache.TextureKey?
+
     // MARK: - Scene Phase Idle Downscale
 
     /// Task that fires after the inactivity timeout to downscale the window
@@ -626,6 +630,27 @@ class PhotoWindowModel {
             }
         }
 
+        let newCacheKey = SharedTextureCache.TextureKey(
+            imageURL: imageURL.absoluteString,
+            maxDimension: Int(targetDimension)
+        )
+
+        // Release previous cache entry if switching to a different resolution
+        if let oldKey = displayTextureCacheKey, oldKey != newCacheKey {
+            SharedTextureCache.shared.release(key: oldKey)
+            displayTextureCacheKey = nil
+        }
+
+        // Try shared texture cache first — another window may already have this texture
+        if let cached = SharedTextureCache.shared.acquire(key: newCacheKey) {
+            displayTexture = cached.texture
+            imageAspectRatio = cached.aspectRatio
+            currentDisplayMaxDimension = targetDimension
+            displayTextureCacheKey = newCacheKey
+            isLoadingDetailImage = false
+            return
+        }
+
         // Downsample and upload to GPU texture off main thread.
         // When effective resolution is off (0), force full-quality decode to bypass
         // CGImageSource thumbnail API which can introduce interpolation artifacts.
@@ -652,6 +677,9 @@ class PhotoWindowModel {
         displayTexture = texture
         imageAspectRatio = CGFloat(texture.width) / CGFloat(texture.height)
         currentDisplayMaxDimension = targetDimension
+
+        SharedTextureCache.shared.store(key: newCacheKey, texture: texture, aspectRatio: imageAspectRatio)
+        displayTextureCacheKey = newCacheKey
         isLoadingDetailImage = false
     }
 
@@ -827,6 +855,12 @@ class PhotoWindowModel {
         // Release Spatial3DImage GPU texture
         spatial3DImage = nil
         spatial3DImageState = .notGenerated
+
+        // Release shared texture cache reference
+        if let cacheKey = displayTextureCacheKey {
+            SharedTextureCache.shared.release(key: cacheKey)
+            displayTextureCacheKey = nil
+        }
 
         // Release image data
         currentImageData = nil

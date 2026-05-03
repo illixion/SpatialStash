@@ -14,6 +14,7 @@ class RemoteViewerModel: SlideshowEngine {
     // MARK: - Configuration
 
     var config: RemoteViewerConfig
+    var windowValue: RemoteViewerWindowValue?
 
     // MARK: - Gallery Mode
 
