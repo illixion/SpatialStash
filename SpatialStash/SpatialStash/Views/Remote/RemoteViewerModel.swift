@@ -475,24 +475,31 @@ class RemoteViewerModel: SlideshowEngine {
         AppLogger.remoteViewer.info("playback: current=\(curStr, privacy: .public) next=\(nxtStr, privacy: .public) primary=\(self.serverPrimaryDeviceId ?? "nil", privacy: .public) myDevice=\(self.config.wsDeviceId, privacy: .public) engineState=\(stateStr, privacy: .public)")
 
         if let cur = current {
-            if cur._id != currentPost?._id {
-                // Server's current differs from what we're showing. Queue
-                // both posts and trigger an advance — the engine's prefetch
-                // loop fetches the binary via /get and the displaying phase
-                // crossfades to it.
+            // The server's tick usually arrives a few ms before the
+            // engine's local 15-second deadline fires (network-induced
+            // skew). In that window the engine has the new current
+            // sitting at the head of prefetchedImages, fully downloaded
+            // and ready to display. Force-flushing here would throw all
+            // that work away and drop the next loading phase straight
+            // into the failure placeholder. So if the engine's next-up
+            // prefetched image is already this `cur`, we trust it and
+            // just keep the lookahead queue warm.
+            let engineNextMatches = prefetchedImages.first?.post._id == cur._id
+
+            if cur._id == currentPost?._id || engineNextMatches {
+                if let n = next,
+                   !prefetchedImages.contains(where: { $0.post._id == n._id }) {
+                    provider?.enqueueFromPlayback([n])
+                    triggerPrefetch()
+                }
+            } else {
+                // Real desync — engine doesn't have this post anywhere.
+                // Force the advance and let the prefetch path catch up.
                 provider?.enqueueFromPlayback([cur] + (next.map { [$0] } ?? []))
                 cachedPosts.removeAll()
                 prefetchedImages.removeAll()
-                AppLogger.remoteViewer.info("playback: advancing to new current \(cur._id, privacy: .public) (was \(self.currentPost?._id ?? -1, privacy: .public))")
+                AppLogger.remoteViewer.info("playback: force-advancing to \(cur._id, privacy: .public) (was \(self.currentPost?._id ?? -1, privacy: .public))")
                 goToNextImage()
-            } else if let n = next {
-                // Already on the right current; keep `next` queued for the
-                // engine's lookahead and wake the prefetch task so it
-                // actually drains the new entry — without this kick the
-                // engine's prefetch loop has already ended and the next
-                // tick falls through to the failure placeholder.
-                provider?.enqueueFromPlayback([n])
-                triggerPrefetch()
             }
         } else if let n = next {
             provider?.enqueueFromPlayback([n])
