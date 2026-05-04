@@ -459,6 +459,24 @@ class SlideshowEngine {
 
     // MARK: - Tag List Change
 
+    /// Reset prefetch state and re-arm the cold-start wait so the next
+    /// loading phase blocks on the new prefetch instead of dropping
+    /// straight to the failure placeholder. Used by the remote viewer
+    /// when the server jumps ahead of what the engine has cached so the
+    /// transition reads as "image takes a moment to load" rather than
+    /// "warning icon then a fresh image" — which is what users were
+    /// seeing every cycle when the server's tick beat the engine's local
+    /// deadline.
+    func prepareForRemoteJump() {
+        fetchReturnedEmpty = false
+        cachedPosts.removeAll()
+        prefetchedImages.removeAll()
+        hasDisplayedFirstMedia = false
+        prefetchTask?.cancel()
+        pendingPost = nil
+        transition(to: .loading)
+    }
+
     func handleTagListChanged() {
         fetchReturnedEmpty = false
         cachedPosts.removeAll()

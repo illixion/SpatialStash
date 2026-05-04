@@ -492,14 +492,22 @@ class RemoteViewerModel: SlideshowEngine {
                     provider?.enqueueFromPlayback([n])
                     triggerPrefetch()
                 }
-            } else {
-                // Real desync — engine doesn't have this post anywhere.
-                // Force the advance and let the prefetch path catch up.
+            } else if state == .displaying || state == .idle {
+                // Engine doesn't have this post and is in a state where
+                // jumping makes sense. prepareForRemoteJump re-arms the
+                // cold-start wait so the next loading phase blocks on
+                // the fresh prefetch instead of flashing the failure
+                // placeholder.
                 provider?.enqueueFromPlayback([cur] + (next.map { [$0] } ?? []))
-                cachedPosts.removeAll()
-                prefetchedImages.removeAll()
                 AppLogger.remoteViewer.info("playback: force-advancing to \(cur._id, privacy: .public) (was \(self.currentPost?._id ?? -1, privacy: .public))")
-                goToNextImage()
+                prepareForRemoteJump()
+            } else {
+                // Engine is loading / transitioning / paused / backgrounded
+                // / stopped. Don't disrupt — when it returns to a stable
+                // state and ticks naturally, the latest playback push will
+                // bring it forward. Just keep the queue warm.
+                provider?.enqueueFromPlayback([cur] + (next.map { [$0] } ?? []))
+                triggerPrefetch()
             }
         } else if let n = next {
             provider?.enqueueFromPlayback([n])
