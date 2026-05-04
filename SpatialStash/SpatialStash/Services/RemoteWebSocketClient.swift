@@ -36,6 +36,8 @@ enum RemoteWSMessage {
     case stopVideo
     case showText(text: String, bgColorHex: String, imageUrl: String?)
     case dismissText
+    case playAudio(url: URL)
+    case stopAudio
     case sensorUpdate(entityId: String, state: String, friendlyName: String, unit: String)
     case refresh
     /// Server → client playback channel state. The orchestrator pushes this
@@ -262,6 +264,16 @@ class RemoteWebSocketClient {
 
         case "dismissText":
             onMessage?(.dismissText)
+
+        case "playAudio":
+            if let dict = payload as? [String: Any],
+               let urlStr = dict["url"] as? String,
+               let url = URL(string: urlStr) {
+                onMessage?(.playAudio(url: url))
+            }
+
+        case "stopAudio":
+            onMessage?(.stopAudio)
 
         case "update":
             if let dict = payload as? [String: Any],

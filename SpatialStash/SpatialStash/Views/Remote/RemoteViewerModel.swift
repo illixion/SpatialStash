@@ -429,6 +429,17 @@ class RemoteViewerModel: SlideshowEngine {
         case .dismissText:
             onDismissAlertWindow?()
 
+        case .playAudio(let url):
+            // Window-independent: AudioServicesPlayAlertSound runs at the
+            // app level so the chime fires regardless of which spatialstash
+            // window (if any) is in the user's current room.
+            RemoteNotificationSound.shared.play(remoteURL: url)
+
+        case .stopAudio:
+            // No client-side knob today — alert sounds are short and
+            // self-terminating. Kept here so the switch stays exhaustive.
+            break
+
         case .sensorUpdate:
             break
 
