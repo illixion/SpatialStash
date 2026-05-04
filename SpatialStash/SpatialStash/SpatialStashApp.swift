@@ -105,17 +105,6 @@ struct SpatialStashApp: App {
         .defaultSize(width: 1400, height: 900)
         .defaultLaunchBehavior(.suppressed)
 
-        // Remote video - WebSocket-triggered video playback
-        WindowGroup(id: "remote-video", for: RemoteVideoWindowValue.self) { $windowValue in
-            if let windowValue = windowValue {
-                RemoteVideoWindowView(windowValue: windowValue)
-                    .captureOpenWindowAction()
-            }
-        }
-        .windowStyle(.plain)
-        .defaultSize(width: 1200, height: 700)
-        .defaultLaunchBehavior(.suppressed)
-
         // Remote alert - WebSocket-triggered text alerts
         WindowGroup(id: "remote-alert", for: RemoteAlertWindowValue.self) { $windowValue in
             if let windowValue = windowValue {

@@ -377,12 +377,6 @@ struct RemoteViewerWindowView: View {
         }
 
         // Wire up window callbacks
-        model.onOpenVideoWindow = { [openWindow] url in
-            openWindow(id: "remote-video", value: RemoteVideoWindowValue(videoURL: url))
-        }
-        model.onDismissVideoWindow = { [dismissWindow] in
-            dismissWindow(id: "remote-video")
-        }
         model.onOpenAlertWindow = { [openWindow] text, bgColor, imageUrl in
             openWindow(id: "remote-alert", value: RemoteAlertWindowValue(text: text, bgColorHex: bgColor, imageUrl: imageUrl))
         }

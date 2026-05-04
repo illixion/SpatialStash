@@ -32,8 +32,6 @@ enum RemoteWSMessage {
     case tagLists(lists: [[String]])
     case blocked(posts: [Int], tags: [String])
     case currentTagList(index: Int)
-    case playVideo(url: URL)
-    case stopVideo
     case showText(text: String, bgColorHex: String, imageUrl: String?)
     case dismissText
     case playAudio(url: URL)
@@ -244,15 +242,10 @@ class RemoteWebSocketClient {
                 onMessage?(.currentTagList(index: listNumber))
             }
 
-        case "playVideo":
-            if let dict = payload as? [String: Any],
-               let urlStr = dict["url"] as? String,
-               let url = URL(string: urlStr) {
-                onMessage?(.playVideo(url: url))
-            }
-
-        case "stopVideo":
-            onMessage?(.stopVideo)
+        case "playVideo", "stopVideo":
+            // Video RPC commands are intentionally ignored — they're meant
+            // for physical kiosk displays, not visionOS windows.
+            break
 
         case "showText":
             if let dict = payload as? [String: Any],

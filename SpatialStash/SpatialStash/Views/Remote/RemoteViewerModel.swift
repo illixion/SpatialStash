@@ -60,8 +60,6 @@ class RemoteViewerModel: SlideshowEngine {
 
     // MARK: - Window Callbacks
 
-    var onOpenVideoWindow: ((URL) -> Void)?
-    var onDismissVideoWindow: (() -> Void)?
     var onOpenAlertWindow: ((String, String, String?) -> Void)?
     var onDismissAlertWindow: (() -> Void)?
 
@@ -416,12 +414,6 @@ class RemoteViewerModel: SlideshowEngine {
                     AppLogger.remoteViewer.info("Server changed tag list to \(index, privacy: .public)")
                 }
             }
-
-        case .playVideo(let url):
-            onOpenVideoWindow?(url)
-
-        case .stopVideo:
-            onDismissVideoWindow?()
 
         case .showText(let text, let bgColor, let imageUrl):
             onOpenAlertWindow?(text, bgColor, imageUrl)
