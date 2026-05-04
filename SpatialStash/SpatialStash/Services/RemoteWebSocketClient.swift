@@ -110,7 +110,11 @@ class RemoteWebSocketClient {
 
     /// Required after WS open: register this session with the orchestrator.
     /// Server may auto-promote us to primary if no other session holds it.
-    func sendSlideshowConfig(deviceId: String, interval: Int, width: Int, height: Int, bright: Bool, convert: Bool, ratio: String? = nil) {
+    /// Mod tags ride along so the orchestrator's first refill query already
+    /// includes them — without that, the auto-claim runs an unfiltered
+    /// query first and discards it when a separate setModTags arrives a
+    /// few ms later.
+    func sendSlideshowConfig(deviceId: String, interval: Int, width: Int, height: Int, bright: Bool, convert: Bool, ratio: String? = nil, modTags: [String] = []) {
         var payload: [String: Any] = [
             "deviceId": deviceId,
             "interval": interval,
@@ -118,6 +122,7 @@ class RemoteWebSocketClient {
             "height": height,
             "bright": bright,
             "convert": convert,
+            "modTags": modTags,
         ]
         if let ratio { payload["ratio"] = ratio }
         sendJSON(["action": "slideshowConfig", "payload": payload])

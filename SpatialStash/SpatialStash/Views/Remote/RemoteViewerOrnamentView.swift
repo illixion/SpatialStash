@@ -2,7 +2,7 @@
  Spatial Stash - Remote Viewer Ornament View
 
  Control bar for the Remote API Viewer window.
- [ Grid | History | Prev | Next | Save | Home | Tag List | Sync | Adjustments | Block ]
+ [ Grid | History | Prev | Next | Save | Home | Tag List | Mod Tags | Sync | Adjustments | Block ]
  */
 
 import SwiftUI
@@ -12,6 +12,7 @@ struct RemoteViewerOrnamentView: View {
     @Environment(\.openWindow) private var openWindow
     @Bindable var model: RemoteViewerModel
     var tagListManager: TagListManager
+    var modTagManager: ModTagManager
     @Binding var showHomeAssistant: Bool
     @Binding var showHistory: Bool
 
@@ -94,6 +95,9 @@ struct RemoteViewerOrnamentView: View {
                 // Tag List Selector (spinner while loading, warning if empty)
                 tagListMenu
 
+                // Mod Tag Preset Selector
+                modTagMenu
+
                 // Display Sync Toggle
                 Button {
                     model.enableDisplaySync.toggle()
@@ -174,6 +178,57 @@ struct RemoteViewerOrnamentView: View {
         let tags = tagListManager.tagLists[index]
         let firstTag = tags.first ?? ""
         return "List \(index + 1): \(firstTag)"
+    }
+
+    private var modTagMenu: some View {
+        Menu {
+            // "None" sentinel for clearing any active preset.
+            Button {
+                modTagManager.clearActive()
+            } label: {
+                HStack {
+                    Text("None")
+                    if modTagManager.activeIndex == nil {
+                        Image(systemName: "checkmark")
+                    }
+                }
+            }
+            ForEach(modTagManager.modTagLists.indices, id: \.self) { index in
+                Button {
+                    modTagManager.switchToPreset(index)
+                } label: {
+                    HStack {
+                        Text(modTagLabel(index))
+                        if modTagManager.activeIndex == index {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "tag")
+                    .font(.title3)
+                Text(modTagBadge)
+                    .font(.callout)
+                    .foregroundColor(.secondary)
+            }
+        }
+        .menuStyle(.button)
+        .buttonStyle(.borderless)
+        .disabled(modTagManager.modTagLists.isEmpty)
+        .help("Mod Tags")
+    }
+
+    private func modTagLabel(_ index: Int) -> String {
+        let tags = modTagManager.modTagLists[index]
+        let firstTag = tags.first ?? ""
+        return "Preset \(index + 1): \(firstTag)"
+    }
+
+    private var modTagBadge: String {
+        guard let idx = modTagManager.activeIndex else { return "—" }
+        return "\(idx + 1)/\(modTagManager.modTagLists.count)"
     }
 
     private var adjustmentsButton: some View {

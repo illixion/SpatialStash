@@ -38,16 +38,9 @@ class RemoteViewerModel: SlideshowEngine {
     /// reflect "you are primary" state independently of the local toggle.
     private(set) var serverPrimaryDeviceId: String?
 
-    /// Local set of mod tags. Sent to the server via `setModTags` whenever
-    /// it changes; the orchestrator includes them in its DuckDB query when
-    /// this client is primary.
-    var modTags: [String] = [] {
-        didSet {
-            if oldValue != modTags {
-                wsClient?.sendSetModTags(tags: modTags)
-            }
-        }
-    }
+    /// Shared mod-tag preset catalog. Injected by RemoteViewerWindowView,
+    /// same pattern as `tagListManager` on the engine superclass.
+    var modTagManager: ModTagManager?
 
     var showClock: Bool = true
     var showSensors: Bool = true
@@ -138,6 +131,7 @@ class RemoteViewerModel: SlideshowEngine {
         super.stop()
         SlideshowSyncHub.shared.unregisterForLocalSync(self)
         SlideshowSyncHub.shared.unsubscribeWS(wsToken)
+        modTagManager?.removeSendHandler(id: engineId)
         wsToken = nil
         wsClient = nil
     }
@@ -373,6 +367,9 @@ class RemoteViewerModel: SlideshowEngine {
         // auto-promotes the first registered session to primary, then
         // broadcasts a `playback` frame which our handler picks up below.
         // Width/height are nominal — spatialstash doesn't pass them to /get.
+        // Mod tags ride along on the same frame so the orchestrator's
+        // first refill query already includes them — no immediate-after
+        // refill round-trip from a separate setModTags.
         let intervalMs = max(2000, Int(config.delay * 1000))
         wsClient?.sendSlideshowConfig(
             deviceId: config.wsDeviceId,
@@ -381,10 +378,14 @@ class RemoteViewerModel: SlideshowEngine {
             height: 1080,
             bright: false,
             convert: false,
-            ratio: nil
+            ratio: nil,
+            modTags: modTagManager?.activeTags ?? []
         )
-        if !modTags.isEmpty {
-            wsClient?.sendSetModTags(tags: modTags)
+
+        // Push later switches from the shared ModTagManager out to this
+        // viewer's WS so any window's preset change reaches the server.
+        modTagManager?.addSendHandler(id: engineId) { [weak self] tags in
+            self?.wsClient?.sendSetModTags(tags: tags)
         }
     }
 

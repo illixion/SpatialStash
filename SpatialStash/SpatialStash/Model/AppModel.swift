@@ -575,6 +575,7 @@ class AppModel {
     /// Shared tag list manager — owns tag lists and active index,
     /// synced across all slideshow windows.
     let tagListManager = TagListManager()
+    let modTagManager = ModTagManager()
 
     /// Persistent config for the gallery slideshow launched from photo viewer ornament.
     /// Stored separately from savedRemoteConfigs so it doesn't clutter the Remote tab.
@@ -803,6 +804,7 @@ class AppModel {
         loadSavedWindowGroups()
         loadSavedRemoteConfigs()
         loadTagListManager()
+        modTagManager.load()
 
         // Apply default views on startup
         applyDefaultViewsOnStartup()

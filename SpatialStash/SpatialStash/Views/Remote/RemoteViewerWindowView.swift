@@ -123,6 +123,7 @@ struct RemoteViewerWindowView: View {
                     RemoteViewerOrnamentView(
                         model: model,
                         tagListManager: appModel.tagListManager,
+                        modTagManager: appModel.modTagManager,
                         showHomeAssistant: $showHomeAssistant,
                         showHistory: $showHistory
                     )
@@ -355,8 +356,9 @@ struct RemoteViewerWindowView: View {
         model.maxImageResolution = appModel.maxImageResolution
         model.updateWindowAspectRatio(windowSize)
 
-        // Set up shared tag list manager
+        // Set up shared tag list manager + mod tag manager
         model.tagListManager = appModel.tagListManager
+        model.modTagManager = appModel.modTagManager
 
         // Set up content provider based on mode
         if config.apiEndpoint.isEmpty {

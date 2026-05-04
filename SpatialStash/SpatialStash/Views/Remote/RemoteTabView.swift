@@ -15,6 +15,7 @@ struct RemoteTabView: View {
     @State private var showSaveAlert = false
     @State private var saveName = ""
     @State private var selectedConfigId: UUID?
+    @State private var newModTagPreset = ""
 
     var body: some View {
         @Bindable var appModel = appModel
@@ -110,6 +111,8 @@ struct RemoteTabView: View {
 
                 defaultListSection
 
+                modTagPresetsSection
+
                 Section("Home Assistant") {
                     TextField("Home Assistant URL", text: $editingConfig.homeAssistantURL)
                         .textContentType(.URL)
@@ -144,6 +147,78 @@ struct RemoteTabView: View {
                 }
                 Button("Cancel", role: .cancel) {}
             }
+        }
+    }
+
+    // MARK: - Mod tag presets (local)
+
+    /// Mod tags don't persist on the server — they modify the active query
+    /// for whichever channel this device is on. The catalog of presets
+    /// lives entirely on this device; switching presets in the ornament
+    /// pushes the active set to the server (and clears its query cache).
+    @ViewBuilder
+    private var modTagPresetsSection: some View {
+        let mtm = appModel.modTagManager
+        let bindable = Binding(
+            get: { mtm.modTagLists },
+            set: { mtm.modTagLists = $0 }
+        )
+
+        Section("Mod Tag Presets") {
+            ForEach(mtm.modTagLists.indices, id: \.self) { index in
+                HStack {
+                    Text("Preset \(index + 1)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .frame(width: 70, alignment: .leading)
+                    TextField(
+                        "Tags (space-separated)",
+                        text: Binding(
+                            get: { mtm.modTagLists[index].joined(separator: " ") },
+                            set: { newValue in
+                                bindable.wrappedValue[index] = newValue
+                                    .components(separatedBy: " ")
+                                    .filter { !$0.isEmpty }
+                            }
+                        )
+                    )
+                    .font(.body.monospaced())
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                }
+            }
+            .onDelete { indexSet in
+                bindable.wrappedValue.remove(atOffsets: indexSet)
+            }
+
+            HStack {
+                TextField("Tags (space-separated)", text: $newModTagPreset)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                Button("Add Preset") {
+                    let tags = newModTagPreset.trimmingCharacters(in: .whitespaces)
+                        .components(separatedBy: " ")
+                        .filter { !$0.isEmpty }
+                    if !tags.isEmpty {
+                        var lists = mtm.modTagLists
+                        lists.append(tags)
+                        mtm.modTagLists = lists
+                        newModTagPreset = ""
+                    }
+                }
+                .disabled(newModTagPreset.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+
+            Picker("Default Preset", selection: Binding(
+                get: { mtm.defaultIndex ?? -1 },
+                set: { mtm.defaultIndex = $0 == -1 ? nil : $0 }
+            )) {
+                Text("None").tag(-1)
+                ForEach(mtm.modTagLists.indices, id: \.self) { index in
+                    Text("Preset \(index + 1): \(mtm.modTagLists[index].first ?? "")").tag(index)
+                }
+            }
+            .pickerStyle(.menu)
         }
     }
 
