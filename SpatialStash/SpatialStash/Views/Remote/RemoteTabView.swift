@@ -45,6 +45,7 @@ struct RemoteTabView: View {
                                     var copy = RemoteViewerConfig(name: config.name + " (Copy)")
                                     copy.apiEndpoint = config.apiEndpoint
                                     copy.wsDeviceId = config.wsDeviceId
+                                    copy.accessToken = config.accessToken
                                     copy.delay = config.delay
                                     copy.showClock = config.showClock
                                     copy.showSensors = config.showSensors
@@ -77,6 +78,10 @@ struct RemoteTabView: View {
                         .textInputAutocapitalization(.never)
 
                     TextField("WebSocket Device ID", text: $editingConfig.wsDeviceId)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+
+                    SecureField("Access Token", text: $editingConfig.accessToken)
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
                 }

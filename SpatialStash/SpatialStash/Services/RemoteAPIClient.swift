@@ -29,16 +29,26 @@ actor RemoteAPIClient {
     // WebSocket via `playback` frames. This client just resolves /get URLs
     // and handles save/history.
 
+    /// Append the access token as a `token` query param. The server's
+    /// /get, /save, /addtohistory, /history routes all require it.
+    private nonisolated func withToken(_ url: String, token: String) -> String {
+        let trimmed = token.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return url }
+        let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? trimmed
+        let sep = url.contains("?") ? "&" : "?"
+        return "\(url)\(sep)token=\(encoded)"
+    }
+
     /// Build the direct image URL for a specific post.
     /// The /get endpoint serves the image directly (or redirects to it),
     /// so we construct the URL and use it as the image source.
-    nonisolated func getImageURL(baseURL: String, postId: Int) -> URL? {
-        URL(string: "\(normalize(baseURL))/get?id=\(postId)")
+    nonisolated func getImageURL(baseURL: String, postId: Int, accessToken: String) -> URL? {
+        URL(string: withToken("\(normalize(baseURL))/get?id=\(postId)", token: accessToken))
     }
 
     /// Save the current post on the server.
-    func save(baseURL: String, postId: Int) async throws -> String {
-        guard let url = URL(string: "\(normalize(baseURL))/save?id=\(postId)") else {
+    func save(baseURL: String, postId: Int, accessToken: String) async throws -> String {
+        guard let url = URL(string: withToken("\(normalize(baseURL))/save?id=\(postId)", token: accessToken)) else {
             throw RemoteAPIError.invalidURL
         }
 
@@ -47,8 +57,8 @@ actor RemoteAPIClient {
     }
 
     /// Add a post to the viewing history on the server.
-    func addToHistory(baseURL: String, postId: Int) async throws {
-        guard let url = URL(string: "\(normalize(baseURL))/addtohistory?id=\(postId)") else {
+    func addToHistory(baseURL: String, postId: Int, accessToken: String) async throws {
+        guard let url = URL(string: withToken("\(normalize(baseURL))/addtohistory?id=\(postId)", token: accessToken)) else {
             throw RemoteAPIError.invalidURL
         }
 

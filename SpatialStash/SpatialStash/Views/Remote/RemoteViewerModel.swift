@@ -150,7 +150,7 @@ class RemoteViewerModel: SlideshowEngine {
         guard let post = saveablePost else { return }
         Task {
             do {
-                let result = try await apiClient.save(baseURL: config.apiEndpoint, postId: post._id)
+                let result = try await apiClient.save(baseURL: config.apiEndpoint, postId: post._id, accessToken: config.accessToken)
                 AppLogger.remoteViewer.info("Saved post \(post._id, privacy: .public): \(result, privacy: .public)")
                 showToast(result)
             } catch {

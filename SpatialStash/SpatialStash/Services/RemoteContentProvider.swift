@@ -17,14 +17,16 @@ import UIKit
 class RemoteContentProvider: SlideshowContentProvider {
     let apiClient: RemoteAPIClient
     let baseURL: String
+    let accessToken: String
 
     /// Posts the server has nominated via `playback`. Drained by the
     /// engine's prefetch loop on each `fetchMoreContent` call.
     private var pending: [RemotePost] = []
 
-    init(apiClient: RemoteAPIClient, baseURL: String) {
+    init(apiClient: RemoteAPIClient, baseURL: String, accessToken: String) {
         self.apiClient = apiClient
         self.baseURL = baseURL
+        self.accessToken = accessToken
     }
 
     /// Called by RemoteViewerModel when a `playback` frame arrives. The posts
@@ -90,11 +92,11 @@ class RemoteContentProvider: SlideshowContentProvider {
     }
 
     func resolveImageURL(for post: RemotePost) -> URL? {
-        apiClient.getImageURL(baseURL: baseURL, postId: post._id)
+        apiClient.getImageURL(baseURL: baseURL, postId: post._id, accessToken: accessToken)
     }
 
     func onPostDisplayed(_ post: RemotePost) async {
-        try? await apiClient.addToHistory(baseURL: baseURL, postId: post._id)
+        try? await apiClient.addToHistory(baseURL: baseURL, postId: post._id, accessToken: accessToken)
     }
 
     func resetPagination() {

@@ -375,7 +375,7 @@ struct RemoteViewerWindowView: View {
             model.contentProvider = GalleryContentProvider(imageSource: source, filter: filter)
         } else {
             // Remote API mode
-            model.contentProvider = RemoteContentProvider(apiClient: model.apiClient, baseURL: config.apiEndpoint)
+            model.contentProvider = RemoteContentProvider(apiClient: model.apiClient, baseURL: config.apiEndpoint, accessToken: config.accessToken)
         }
 
         // Wire up window callbacks

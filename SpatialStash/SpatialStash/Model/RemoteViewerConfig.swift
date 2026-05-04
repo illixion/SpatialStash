@@ -19,6 +19,7 @@ struct RemoteViewerConfig: Codable, Identifiable {
     // API
     var apiEndpoint: String = "https://example.com/api"
     var wsDeviceId: String = ""
+    var accessToken: String = ""
 
     // Display
     var delay: TimeInterval = 15
@@ -56,12 +57,18 @@ struct RemoteViewerConfig: Codable, Identifiable {
             // Bare scheme-less URL — prepend ws:// as a best-effort default.
             base = "ws://" + base
         }
-        return base + "/rpc/ws"
+        var url = base + "/rpc/ws"
+        let token = accessToken.trimmingCharacters(in: .whitespaces)
+        if !token.isEmpty {
+            let encoded = token.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? token
+            url += "?token=" + encoded
+        }
+        return url
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, name, savedDate
-        case apiEndpoint, wsDeviceId
+        case apiEndpoint, wsDeviceId, accessToken
         case delay, showClock, showSensors, useAspectRatio, enableKenBurns
         case enableDynamicBrightness
         case transparentBackground, textSize
@@ -80,6 +87,7 @@ struct RemoteViewerConfig: Codable, Identifiable {
 
         apiEndpoint = try container.decodeIfPresent(String.self, forKey: .apiEndpoint) ?? "https://example.com/api"
         wsDeviceId = try container.decodeIfPresent(String.self, forKey: .wsDeviceId) ?? ""
+        accessToken = try container.decodeIfPresent(String.self, forKey: .accessToken) ?? ""
 
         delay = try container.decodeIfPresent(TimeInterval.self, forKey: .delay) ?? 15
         showClock = try container.decodeIfPresent(Bool.self, forKey: .showClock) ?? true
@@ -112,6 +120,7 @@ struct RemoteViewerConfig: Codable, Identifiable {
 
         try container.encode(apiEndpoint, forKey: .apiEndpoint)
         try container.encode(wsDeviceId, forKey: .wsDeviceId)
+        try container.encode(accessToken, forKey: .accessToken)
 
         try container.encode(delay, forKey: .delay)
         try container.encode(showClock, forKey: .showClock)
