@@ -89,8 +89,8 @@ class RemoteViewerModel: SlideshowEngine {
             enableDynamicBrightness: config.enableDynamicBrightness
         )
 
-        self.blockedPosts = Set(config.blockedPosts)
-        self.blockedTags = Set(config.blockedTags)
+        // blockedPosts / blockedTags hydrate from the server's `blocked`
+        // frame on connect — the server is authoritative.
     }
 
     /// Callback to persist config changes back to AppModel
@@ -168,10 +168,11 @@ class RemoteViewerModel: SlideshowEngine {
 
     func blockCurrentPost() {
         guard let post = currentPost else { return }
+        // Optimistic local insert so the next post is filtered immediately;
+        // the server's `blocked` echo arrives shortly after and replaces
+        // the set with the authoritative copy.
         blockedPosts.insert(post._id)
-        config.blockedPosts = Array(blockedPosts)
         wsClient?.sendBlock(postId: post._id)
-        onConfigChanged?(config)
         showToast("Blocked post #\(post._id)")
         goToNextImage()
     }
@@ -398,15 +399,11 @@ class RemoteViewerModel: SlideshowEngine {
             }
 
         case .blocked(let posts, let tags):
-            let newPosts = Set(posts).subtracting(blockedPosts)
-            let newTags = Set(tags).subtracting(blockedTags)
-            blockedPosts.formUnion(posts)
-            blockedTags.formUnion(tags)
-            if !newPosts.isEmpty || !newTags.isEmpty {
-                config.blockedPosts = Array(blockedPosts)
-                config.blockedTags = Array(blockedTags)
-                onConfigChanged?(config)
-            }
+            // Server is authoritative — replace, don't union. The previous
+            // `formUnion` left removed entries stuck locally because the
+            // local set could only grow.
+            blockedPosts = Set(posts)
+            blockedTags = Set(tags)
 
         case .currentTagList(let index):
             if let tlm = tagListManager {

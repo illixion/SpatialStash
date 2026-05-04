@@ -1,11 +1,12 @@
 /*
  Spatial Stash - Remote Viewer Configuration
 
- Stores settings for a Remote API Viewer instance.
- Saved configurations are persisted to UserDefaults.
+ Stores per-viewer settings (display, API endpoint, etc.). Saved
+ configurations are persisted to UserDefaults.
 
- Tag lists are now managed separately by TagListManager and
- shared across all viewer windows.
+ Tag lists, blocked posts, and blocked tags are owned by the RoboFrame
+ server and pushed over the WebSocket on connect — they are not stored
+ here.
  */
 
 import Foundation
@@ -28,10 +29,6 @@ struct RemoteViewerConfig: Codable, Identifiable {
     var enableDynamicBrightness: Bool = true
     var transparentBackground: Bool = false
     var textSize: Double = 1.0
-
-    // Content (blocking only — tag lists moved to TagListManager)
-    var blockedPosts: [Int] = []
-    var blockedTags: [String] = []
 
     // Home Assistant
     var homeAssistantURL: String = ""
@@ -62,36 +59,16 @@ struct RemoteViewerConfig: Codable, Identifiable {
         return base + "/rpc/ws"
     }
 
-    // MARK: - Legacy Migration
-
-    /// Legacy tag list fields preserved for decoding old configs.
-    /// Used by TagListManager.importFromConfig() during migration.
-    var legacyTagLists: [[String]] {
-        _legacyTagLists ?? []
-    }
-    var legacyDefaultTagListIndex: Int? {
-        _legacyDefaultTagListIndex
-    }
-    var legacyLastActiveTagListIndex: Int? {
-        _legacyLastActiveTagListIndex
-    }
-
-    // Private storage for legacy fields (only populated when decoding old configs)
-    private var _legacyTagLists: [[String]]?
-    private var _legacyDefaultTagListIndex: Int?
-    private var _legacyLastActiveTagListIndex: Int?
-
     private enum CodingKeys: String, CodingKey {
         case id, name, savedDate
         case apiEndpoint, wsDeviceId
         case delay, showClock, showSensors, useAspectRatio, enableKenBurns
         case enableDynamicBrightness
         case transparentBackground, textSize
-        case blockedPosts, blockedTags
         case homeAssistantURL
-        // Stored but ignored — older saved configs may carry these.
-        // Decoded silently by `init(from:)` and never re-encoded.
+        // Decoded silently from older saved configs and never re-encoded.
         case wsEndpoint
+        case blockedPosts, blockedTags
         case tagLists, defaultTagListIndex, lastActiveTagListIndex
     }
 
@@ -102,9 +79,6 @@ struct RemoteViewerConfig: Codable, Identifiable {
         savedDate = try container.decode(Date.self, forKey: .savedDate)
 
         apiEndpoint = try container.decodeIfPresent(String.self, forKey: .apiEndpoint) ?? "https://example.com/api"
-        // Old configs may carry `wsEndpoint` from before the field was
-        // dropped — swallow it without storing so the decode succeeds.
-        _ = try container.decodeIfPresent(String.self, forKey: .wsEndpoint)
         wsDeviceId = try container.decodeIfPresent(String.self, forKey: .wsDeviceId) ?? ""
 
         delay = try container.decodeIfPresent(TimeInterval.self, forKey: .delay) ?? 15
@@ -116,15 +90,18 @@ struct RemoteViewerConfig: Codable, Identifiable {
         transparentBackground = try container.decodeIfPresent(Bool.self, forKey: .transparentBackground) ?? false
         textSize = try container.decodeIfPresent(Double.self, forKey: .textSize) ?? 1.0
 
-        blockedPosts = try container.decodeIfPresent([Int].self, forKey: .blockedPosts) ?? []
-        blockedTags = try container.decodeIfPresent([String].self, forKey: .blockedTags) ?? []
-
         homeAssistantURL = try container.decodeIfPresent(String.self, forKey: .homeAssistantURL) ?? ""
 
-        // Decode legacy tag list fields for migration
-        _legacyTagLists = try container.decodeIfPresent([[String]].self, forKey: .tagLists)
-        _legacyDefaultTagListIndex = try container.decodeIfPresent(Int.self, forKey: .defaultTagListIndex)
-        _legacyLastActiveTagListIndex = try container.decodeIfPresent(Int.self, forKey: .lastActiveTagListIndex)
+        // Older saved configs may carry these fields. Swallow them so the
+        // decode succeeds and they're dropped on next save — the server
+        // is now authoritative on tag and blocked lists, and the WS URL
+        // is always derived from `apiEndpoint`.
+        _ = try container.decodeIfPresent(String.self, forKey: .wsEndpoint)
+        _ = try container.decodeIfPresent([Int].self, forKey: .blockedPosts)
+        _ = try container.decodeIfPresent([String].self, forKey: .blockedTags)
+        _ = try container.decodeIfPresent([[String]].self, forKey: .tagLists)
+        _ = try container.decodeIfPresent(Int.self, forKey: .defaultTagListIndex)
+        _ = try container.decodeIfPresent(Int.self, forKey: .lastActiveTagListIndex)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -145,10 +122,6 @@ struct RemoteViewerConfig: Codable, Identifiable {
         try container.encode(transparentBackground, forKey: .transparentBackground)
         try container.encode(textSize, forKey: .textSize)
 
-        try container.encode(blockedPosts, forKey: .blockedPosts)
-        try container.encode(blockedTags, forKey: .blockedTags)
-
         try container.encode(homeAssistantURL, forKey: .homeAssistantURL)
-        // Legacy tag list fields are intentionally NOT encoded
     }
 }

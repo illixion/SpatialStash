@@ -1,10 +1,10 @@
 /*
  Spatial Stash - Remote Tab View
 
- Configuration interface for Remote API Viewer instances.
- Allows editing settings, managing saved configurations,
- and launching viewer windows. Tag lists are edited via
- the shared TagListManager.
+ Configuration interface for Remote API Viewer instances. Tag lists,
+ blocked posts, and blocked tags are owned by the RoboFrame server and
+ synced over the WebSocket; this view edits per-viewer display settings
+ and the local "Default List" preference.
  */
 
 import SwiftUI
@@ -14,11 +14,7 @@ struct RemoteTabView: View {
     @State private var editingConfig = RemoteViewerConfig(name: "New Configuration")
     @State private var showSaveAlert = false
     @State private var saveName = ""
-    @State private var newTag = ""
     @State private var selectedConfigId: UUID?
-    @State private var blockedTagsExpanded = false
-    @State private var blockedPostsExpanded = false
-    @State private var newBlockedTag = ""
 
     var body: some View {
         @Bindable var appModel = appModel
@@ -55,8 +51,6 @@ struct RemoteTabView: View {
                                     copy.enableKenBurns = config.enableKenBurns
                                     copy.transparentBackground = config.transparentBackground
                                     copy.textSize = config.textSize
-                                    copy.blockedPosts = config.blockedPosts
-                                    copy.blockedTags = config.blockedTags
                                     copy.homeAssistantURL = config.homeAssistantURL
                                     appModel.saveRemoteConfig(copy)
                                 }
@@ -114,48 +108,7 @@ struct RemoteTabView: View {
                     }
                 }
 
-                tagListsSection
-
-                Section {
-                    DisclosureGroup(
-                        "Blocked Tags (\(editingConfig.blockedTags.count))",
-                        isExpanded: $blockedTagsExpanded
-                    ) {
-                        ForEach(editingConfig.blockedTags, id: \.self) { tag in
-                            Text(tag)
-                                .font(.body.monospaced())
-                        }
-                        .onDelete { indexSet in
-                            editingConfig.blockedTags.remove(atOffsets: indexSet)
-                        }
-
-                        HStack {
-                            TextField("Tag to block", text: $newBlockedTag)
-                                .autocorrectionDisabled()
-                                .textInputAutocapitalization(.never)
-                            Button("Block") {
-                                let tag = newBlockedTag.trimmingCharacters(in: .whitespaces)
-                                if !tag.isEmpty {
-                                    editingConfig.blockedTags.append(tag)
-                                    newBlockedTag = ""
-                                }
-                            }
-                        }
-                    }
-
-                    DisclosureGroup(
-                        "Blocked Posts (\(editingConfig.blockedPosts.count))",
-                        isExpanded: $blockedPostsExpanded
-                    ) {
-                        ForEach(editingConfig.blockedPosts, id: \.self) { postId in
-                            Text("#\(postId)")
-                                .font(.body.monospaced())
-                        }
-                        .onDelete { indexSet in
-                            editingConfig.blockedPosts.remove(atOffsets: indexSet)
-                        }
-                    }
-                }
+                defaultListSection
 
                 Section("Home Assistant") {
                     TextField("Home Assistant URL", text: $editingConfig.homeAssistantURL)
@@ -194,64 +147,31 @@ struct RemoteTabView: View {
         }
     }
 
-    // MARK: - Tag Lists Section (shared via TagListManager)
+    // MARK: - Default List preference (local)
 
-    private var tagListsSection: some View {
+    /// The tag list catalog itself comes from the RoboFrame server and isn't
+    /// editable here. The user's "Default List" preference is the only knob:
+    /// pin to a specific list across reconnects, or let the server decide.
+    private var defaultListSection: some View {
         let tlm = appModel.tagListManager
 
-        return Section("Tag Lists (Shared)") {
-            ForEach(tlm.tagLists.indices, id: \.self) { index in
-                HStack {
-                    Text("List \(index + 1)")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .frame(width: 50, alignment: .leading)
-                    TextField(
-                        "Tags (space-separated)",
-                        text: Binding(
-                            get: { tlm.tagLists[index].joined(separator: " ") },
-                            set: { newValue in
-                                tlm.tagLists[index] = newValue
-                                    .components(separatedBy: " ")
-                                    .filter { !$0.isEmpty }
-                            }
-                        )
-                    )
-                    .font(.body.monospaced())
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-                }
-            }
-            .onDelete { indexSet in
-                tlm.tagLists.remove(atOffsets: indexSet)
-            }
-
-            HStack {
-                TextField("Tags (space-separated)", text: $newTag)
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-                Button("Add List") {
-                    let tags = newTag.trimmingCharacters(in: .whitespaces)
-                        .components(separatedBy: " ")
-                        .filter { !$0.isEmpty }
-                    if !tags.isEmpty {
-                        tlm.tagLists.append(tags)
-                        newTag = ""
+        return Section("Tag Lists") {
+            if tlm.tagLists.isEmpty {
+                Text("No tag lists from server yet.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            } else {
+                Picker("Default List", selection: Binding(
+                    get: { tlm.defaultIndex ?? -1 },
+                    set: { tlm.defaultIndex = $0 == -1 ? nil : $0 }
+                )) {
+                    Text("Server Decides").tag(-1)
+                    ForEach(tlm.tagLists.indices, id: \.self) { index in
+                        Text("List \(index + 1): \(tlm.tagLists[index].first ?? "")").tag(index)
                     }
                 }
-                .disabled(newTag.trimmingCharacters(in: .whitespaces).isEmpty)
+                .pickerStyle(.menu)
             }
-
-            Picker("Default List", selection: Binding(
-                get: { tlm.defaultIndex ?? -1 },
-                set: { tlm.defaultIndex = $0 == -1 ? nil : $0 }
-            )) {
-                Text("Server Decides").tag(-1)
-                ForEach(tlm.tagLists.indices, id: \.self) { index in
-                    Text("List \(index + 1): \(tlm.tagLists[index].first ?? "")").tag(index)
-                }
-            }
-            .pickerStyle(.menu)
         }
     }
 

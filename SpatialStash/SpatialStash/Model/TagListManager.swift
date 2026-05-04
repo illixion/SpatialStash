@@ -1,10 +1,11 @@
 /*
  Spatial Stash - Tag List Manager
 
- Shared observable that owns tag lists and the active tag list index.
- All slideshow windows share a single TagListManager so tag list
- switches are synchronized across windows. Persisted to UserDefaults
- independently from saved remote viewer configurations.
+ Shared observable that mirrors the RoboFrame server's tag list catalog
+ plus the local user preference for which list to default to. The
+ catalog itself is server-pushed (never persisted on this side); only
+ the user's "Default List" choice and last-active recovery hint live in
+ UserDefaults.
  */
 
 import Foundation
@@ -15,10 +16,9 @@ import os
 class TagListManager {
     // MARK: - Tag Lists
 
-    /// The array of tag lists. Each list is an array of tag strings.
-    var tagLists: [[String]] = [["order:random"]] {
-        didSet { save() }
-    }
+    /// Mirror of the server's tag list catalog. Reset on every `tagLists`
+    /// frame; never persisted locally.
+    var tagLists: [[String]] = []
 
     /// The currently active tag list index.
     private(set) var activeIndex: Int = 0
@@ -47,9 +47,10 @@ class TagListManager {
 
     // MARK: - Computed
 
-    /// The tag query string for the currently active list.
+    /// The tag query string for the currently active list. Empty when the
+    /// server hasn't pushed a catalog yet.
     var activeTagQuery: String {
-        guard !tagLists.isEmpty, activeIndex < tagLists.count else { return "order:random" }
+        guard !tagLists.isEmpty, activeIndex < tagLists.count else { return "" }
         return tagLists[activeIndex].joined(separator: " ")
     }
 
@@ -110,16 +111,19 @@ class TagListManager {
     }
 
     // MARK: - Persistence
+    //
+    // Only the user's local preferences are persisted — the server is
+    // authoritative on the catalog itself.
+    //   - defaultIndex: the user's "Default List" choice (nil = let the
+    //     server decide which list is active).
+    //   - lastActiveIndex: recovery hint so a relaunch in "Server Decides"
+    //     mode lands on the same list it was on previously, before the
+    //     server has had a chance to push currentTagList.
 
-    static let tagListsKeyPublic = "tagListManager.tagLists"
-    private static let tagListsKey = tagListsKeyPublic
     private static let defaultIndexKey = "tagListManager.defaultIndex"
     private static let lastActiveIndexKey = "tagListManager.lastActiveIndex"
 
     func save() {
-        if let data = try? JSONEncoder().encode(tagLists) {
-            UserDefaults.standard.set(data, forKey: Self.tagListsKey)
-        }
         if let idx = defaultIndex {
             UserDefaults.standard.set(idx, forKey: Self.defaultIndexKey)
         } else {
@@ -133,11 +137,6 @@ class TagListManager {
     }
 
     func load() {
-        if let data = UserDefaults.standard.data(forKey: Self.tagListsKey),
-           let lists = try? JSONDecoder().decode([[String]].self, from: data),
-           !lists.isEmpty {
-            tagLists = lists
-        }
         if UserDefaults.standard.object(forKey: Self.defaultIndexKey) != nil {
             defaultIndex = UserDefaults.standard.integer(forKey: Self.defaultIndexKey)
         } else {
@@ -149,18 +148,7 @@ class TagListManager {
             lastActiveIndex = nil
         }
         initialize()
-        AppLogger.remoteViewer.info("TagListManager loaded: \(self.tagLists.count, privacy: .public) lists, active=\(self.activeIndex, privacy: .public)")
-    }
-
-    /// Import tag lists from a legacy RemoteViewerConfig (migration).
-    func importFromConfig(_ config: RemoteViewerConfig) {
-        if !config.legacyTagLists.isEmpty {
-            tagLists = config.legacyTagLists
-        }
-        defaultIndex = config.legacyDefaultTagListIndex
-        lastActiveIndex = config.legacyLastActiveTagListIndex
-        initialize()
-        save()
+        AppLogger.remoteViewer.info("TagListManager loaded: defaultIndex=\(self.defaultIndex.map(String.init) ?? "nil", privacy: .public) lastActive=\(self.lastActiveIndex.map(String.init) ?? "nil", privacy: .public)")
     }
 
     // MARK: - Private

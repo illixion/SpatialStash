@@ -1109,17 +1109,7 @@ class AppModel {
     }
 
     private func loadTagListManager() {
-        // Try loading from TagListManager's own persistence first
         tagListManager.load()
-
-        // If no tag lists were persisted yet, migrate from the first saved config
-        // that has legacy tag lists (one-time migration from pre-refactor configs)
-        if UserDefaults.standard.object(forKey: TagListManager.tagListsKeyPublic) == nil {
-            if let configWithTags = savedRemoteConfigs.first(where: { !$0.legacyTagLists.isEmpty }) {
-                tagListManager.importFromConfig(configWithTags)
-                AppLogger.remoteViewer.info("Migrated tag lists from config '\(configWithTags.name, privacy: .public)'")
-            }
-        }
     }
 
     func persistSavedWindowGroups() {
@@ -1332,11 +1322,10 @@ class AppModel {
         if let v = backup.savedRemoteConfigs {
             savedRemoteConfigs = v
         }
-        if let lists = backup.tagLists {
-            tagListManager.tagLists = lists
-            tagListManager.defaultIndex = backup.tagListDefaultIndex
-            tagListManager.initialize()
-            tagListManager.save()
+        // The tag list catalog itself is owned by the RoboFrame server;
+        // only restore the user's local "Default List" preference.
+        if let defaultIdx = backup.tagListDefaultIndex {
+            tagListManager.defaultIndex = defaultIdx
         }
 
         // Actor-based trackers
