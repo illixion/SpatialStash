@@ -487,11 +487,16 @@ class RemoteViewerModel: SlideshowEngine {
                 goToNextImage()
             } else if let n = next {
                 // Already on the right current; keep `next` queued for the
-                // engine's lookahead.
+                // engine's lookahead and wake the prefetch task so it
+                // actually drains the new entry — without this kick the
+                // engine's prefetch loop has already ended and the next
+                // tick falls through to the failure placeholder.
                 provider?.enqueueFromPlayback([n])
+                triggerPrefetch()
             }
         } else if let n = next {
             provider?.enqueueFromPlayback([n])
+            triggerPrefetch()
         }
     }
 
