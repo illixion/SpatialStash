@@ -177,7 +177,53 @@ actor BackgroundRemover {
             from: handler
         )
 
-        return (CIImage(cvPixelBuffer: maskPixelBuffer), CIImage(cgImage: cgImage))
+        let rawMask = CIImage(cvPixelBuffer: maskPixelBuffer)
+        return (Self.refineMask(rawMask), CIImage(cgImage: cgImage))
+    }
+
+    /// Clean up Vision's soft probabilistic mask before compositing.
+    ///
+    /// Vision's `VNGenerateForegroundInstanceMaskRequest` returns a grayscale
+    /// mask where interior pixels often carry alpha around 0.3–0.7 in regions
+    /// the model is uncertain about. That manifests as the "cloud-like"
+    /// translucency you can see when compositing — particularly noticeable on
+    /// digital art and stylized images where Vision's training distribution
+    /// doesn't match the input.
+    ///
+    /// Two-step refinement:
+    ///  1. Morphological closing (dilate → erode) fills small interior holes
+    ///     while leaving the silhouette dimensions roughly intact.
+    ///  2. Contrast steepening pushes interior pixels to ~1 and background
+    ///     pixels to ~0, leaving only a thin soft band at the silhouette
+    ///     boundary — the matting equivalent of Pixelmator Pro's first-stage
+    ///     mask cleanup before its color-decontamination pass.
+    private static func refineMask(_ mask: CIImage) -> CIImage {
+        let extent = mask.extent
+
+        // Closing radius is small but not microscopic — large enough to fill
+        // typical Vision interior noise without erasing legitimate small gaps
+        // (e.g. between fingers). 5px in mask space is invisible on the final
+        // composite at viewing distances.
+        let dilate = CIFilter.morphologyMaximum()
+        dilate.inputImage = mask
+        dilate.radius = 5
+        guard let dilated = dilate.outputImage else { return mask }
+
+        let erode = CIFilter.morphologyMinimum()
+        erode.inputImage = dilated
+        erode.radius = 5
+        guard let closed = erode.outputImage?.cropped(to: extent) else { return mask }
+
+        // Contrast around the 0.5 midpoint: contrast=15 leaves a transition
+        // band of roughly ±3% of full range. Wide enough that anti-aliased
+        // silhouette pixels still feather smoothly; narrow enough that
+        // probabilistic interior fog snaps to fully opaque.
+        let contrast = CIFilter.colorControls()
+        contrast.inputImage = closed
+        contrast.contrast = 15.0
+        contrast.brightness = 0.0
+        contrast.saturation = 1.0
+        return contrast.outputImage?.cropped(to: extent) ?? closed
     }
 
     enum BackgroundRemovalError: Error {

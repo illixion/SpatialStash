@@ -79,7 +79,7 @@ struct PhotoDisplayView: View {
             // Diorama layers — backdrop covers the original with the subject
             // region heavily blurred (so off-axis viewing doesn't reveal a
             // doubled silhouette behind the floating foreground), and the
-            // foreground rides at z=20 in front. Hidden while a popover is
+            // foreground rides at z=40 in front. Hidden while a popover is
             // open so it doesn't occlude the adjustment menu.
             if windowModel.currentAdjustments.isDiorama,
                !windowModel.hasOpenPopover,
@@ -108,7 +108,7 @@ struct PhotoDisplayView: View {
                         .opacity(windowModel.effectiveAdjustments.opacity)
                         .scaleEffect(x: windowModel.isImageFlipped ? -1 : 1, y: 1)
                         .offset(x: dragOffset)
-                        .offset(z: 20)
+                        .offset(z: 40)
                         .allowsHitTesting(false)
                 }
             }

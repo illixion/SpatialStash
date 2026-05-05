@@ -240,7 +240,7 @@ struct RemoteViewerWindowView: View {
                         .offset(useKenBurns ? kenBurnsOffset : .zero)
                         .opacity(model.isTransitioning ? 0 : 1)
                         .clipped()
-                        .offset(z: 20)
+                        .offset(z: 40)
                         .allowsHitTesting(false)
                 }
             }
@@ -275,7 +275,7 @@ struct RemoteViewerWindowView: View {
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .clipped()
-                        .offset(z: 20)
+                        .offset(z: 40)
                         .allowsHitTesting(false)
                 }
             }
