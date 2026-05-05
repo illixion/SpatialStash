@@ -52,27 +52,6 @@ actor BackgroundRemover {
         }
     """)
 
-    /// Mask firming kernel. Vision returns medium-confidence (0.3–0.6) alpha
-    /// across the subject interior on stylized digital art — too transparent
-    /// for the diorama foreground to composite opaquely against the blurred
-    /// backdrop (the blur shows through the foreground at 40-70%). A linear
-    /// CIColorControls curve can't fix this without cropping everything
-    /// below 0.4 (the previous "stairstep" thin-feature loss). Smoothstep
-    /// has the right shape: hard ceiling at the high end, hard floor at the
-    /// low end, cubic interpolation between for clean silhouette transitions.
-    ///
-    /// Edges (0.05, 0.4): values ≥ 0.4 → fully opaque (subject interior
-    /// firms up regardless of Vision's confidence), values ≤ 0.05 → fully
-    /// transparent (clean background, no haze), values in between get a
-    /// smooth cubic ramp that preserves silhouette anti-aliasing and keeps
-    /// thin features (typically α ∈ 0.15–0.35) visible at proportional alpha.
-    private static let maskFirmingKernel: CIColorKernel? = CIColorKernel(source: """
-        kernel vec4 firmMask(__sample mask) {
-            float a = smoothstep(0.05, 0.3, mask.r);
-            return vec4(vec3(a), 1.0);
-        }
-    """)
-
     private init() {}
 
     /// Remove the background from a UIImage and return the foreground at the
@@ -108,26 +87,33 @@ actor BackgroundRemover {
         blurFilter.radius = Float(blurRadius)
         let blurred = blurFilter.outputImage?.cropped(to: extent) ?? originalCIImage
 
-        // Foreground: simple blendWithMask. Color decontamination doesn't
-        // buy much in the diorama use case — the backdrop layered behind IS
-        // the original (blurred only in the subject region), so a soft-alpha
-        // foreground pixel showing original color through composites
-        // correctly against the matching original color in the backdrop's
-        // non-subject region. The decontamination kernel was also a single
-        // point of failure: if CIColorKernel compilation returned nil
-        // (deprecated CI-Kernel-Language API quirks), the foreground would
-        // be nil and the user would see only the backdrop — looking like
-        // the diorama has no depth. blendWithMask is a built-in CIFilter
-        // and always works.
+        // Foreground: simple blendWithMask. Force an explicit RGBA8 + sRGB
+        // output format on createCGImage so the alpha channel is guaranteed
+        // preserved end-to-end. The auto-chosen format from the working
+        // color space (extended-linear) was producing CGImages that read as
+        // fully opaque in some pipelines, making the foreground render as
+        // the entire blurred image instead of a transparent-bg subject.
         let foregroundImage: UIImage? = {
             let blendFilter = CIFilter.blendWithMask()
             blendFilter.inputImage = originalCIImage
             blendFilter.backgroundImage = CIImage.empty()
             blendFilter.maskImage = maskCIImage
             guard let outputCIImage = blendFilter.outputImage,
-                  let outputCGImage = ciContext.createCGImage(outputCIImage, from: extent) else {
+                  let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) else {
                 return nil
             }
+            guard let outputCGImage = ciContext.createCGImage(
+                outputCIImage,
+                from: extent,
+                format: .RGBA8,
+                colorSpace: colorSpace
+            ) else {
+                AppLogger.backgroundRemover.warning("Failed to render diorama foreground CGImage")
+                return nil
+            }
+            AppLogger.backgroundRemover.info(
+                "Generated diorama foreground: \(outputCGImage.width, privacy: .public)×\(outputCGImage.height, privacy: .public), alphaInfo=\(String(describing: outputCGImage.alphaInfo), privacy: .public)"
+            )
             return UIImage(cgImage: outputCGImage, scale: image.scale, orientation: image.imageOrientation)
         }()
 
@@ -299,12 +285,14 @@ actor BackgroundRemover {
     /// Pipeline:
     ///  1. Morphological closing fills small holes left by Vision's
     ///     probabilistic interior output.
-    ///  2. **Smoothstep firming** (`maskFirmingKernel`) pushes Vision's
-    ///     medium-confidence interior pixels (0.4+) to fully opaque while
-    ///     preserving silhouette anti-aliasing and thin features below 0.4.
-    ///     Replaces the prior `CIColorControls` linear curve, which couldn't
-    ///     simultaneously firm up 0.5-input-to-opaque AND keep thin
-    ///     features intact — the linear shape has wrong slope for this.
+    ///  2. **Linear firming** via `CIColorMatrix` with scale=5, offset=-1.
+    ///     Maps Vision's mask values: ≤0.2 → 0 (clean background), ≥0.4 →
+    ///     1 (subject interior fully opaque), 0.2-0.4 → linear ramp for
+    ///     silhouette anti-aliasing and thin features. Built-in CIFilter
+    ///     so always available — replaces the prior CIColorKernel-based
+    ///     smoothstep which could fail silently when the deprecated
+    ///     CI-Kernel-Language compiler returned nil and leave the mask too
+    ///     soft for the diorama foreground to composite opaquely.
     ///  3. **Flood-fill enclosed holes** — anything not reachable from the
     ///     image boundary via background pixels gets forced to opaque,
     ///     fixing large interior cavities morphology can't close.
@@ -321,16 +309,23 @@ actor BackgroundRemover {
         erode.radius = 10
         guard let closed = erode.outputImage?.cropped(to: extent) else { return mask }
 
-        // Smoothstep firming. Output already in [0,1] (smoothstep saturates).
-        let firmed: CIImage
-        if let kernel = Self.maskFirmingKernel,
-           let firmedOutput = kernel.apply(extent: extent, arguments: [closed]) {
-            firmed = firmedOutput
-        } else {
-            firmed = closed
-        }
+        // Linear firming via color matrix: out = in * 5 - 1, then clamped.
+        let firming = CIFilter.colorMatrix()
+        firming.inputImage = closed
+        firming.rVector = CIVector(x: 5, y: 0, z: 0, w: 0)
+        firming.gVector = CIVector(x: 0, y: 5, z: 0, w: 0)
+        firming.bVector = CIVector(x: 0, y: 0, z: 5, w: 0)
+        firming.aVector = CIVector(x: 0, y: 0, z: 0, w: 1)
+        firming.biasVector = CIVector(x: -1, y: -1, z: -1, w: 0)
+        let firmed = firming.outputImage?.cropped(to: extent) ?? closed
 
-        return fillEnclosedHoles(firmed) ?? firmed
+        let clamp = CIFilter.colorClamp()
+        clamp.inputImage = firmed
+        clamp.minComponents = CIVector(x: 0, y: 0, z: 0, w: 0)
+        clamp.maxComponents = CIVector(x: 1, y: 1, z: 1, w: 1)
+        let clamped = clamp.outputImage?.cropped(to: extent) ?? firmed
+
+        return fillEnclosedHoles(clamped) ?? clamped
     }
 
     /// Fill mask regions that aren't reachable from the image boundary via
