@@ -75,14 +75,14 @@ actor BackgroundRemover {
         blurFilter.radius = Float(blurRadius)
         let blurred = blurFilter.outputImage?.cropped(to: extent) ?? originalCIImage
 
-        // Backdrop mask: dilate the foreground mask significantly so the blur
-        // region extends beyond the actual silhouette. This covers two cases
-        // the foreground mask alone misses: (a) interior holes from
-        // probabilistic Vision output (the "swiss cheese" effect — through
-        // those holes the unblurred original would leak the subject), and
-        // (b) edge feathering, where the silhouette band would otherwise
-        // show a sharp original/blurred boundary right at the foreground.
-        let dilateRadius = max(8.0, Double(max(extent.width, extent.height)) * 0.015)
+        // Backdrop mask: small dilation just to ensure the silhouette band
+        // is fully blurred (without it, the soft transition pixels would show
+        // sharp original on one side and blurred on the other right at the
+        // silhouette — visible as a thin sharp edge). Now that the foreground
+        // mask has its interior holes filled, we don't need aggressive
+        // dilation to cover leakage; a few pixels suffices and keeps the
+        // blur edge tight to the subject instead of casting a shadow.
+        let dilateRadius: Double = 5
         let backdropDilate = CIFilter.morphologyMaximum()
         backdropDilate.inputImage = maskCIImage
         backdropDilate.radius = Float(dilateRadius)
@@ -190,33 +190,24 @@ actor BackgroundRemover {
         )
 
         let rawMask = CIImage(cvPixelBuffer: maskPixelBuffer)
-        return (Self.refineMask(rawMask), CIImage(cgImage: cgImage))
+        return (refineMask(rawMask), CIImage(cgImage: cgImage))
     }
 
     /// Clean up Vision's soft probabilistic mask before compositing.
     ///
-    /// Vision's `VNGenerateForegroundInstanceMaskRequest` returns a grayscale
-    /// mask where interior pixels often carry alpha around 0.3–0.7 in regions
-    /// the model is uncertain about. That manifests as the "cloud-like"
-    /// translucency you can see when compositing — particularly noticeable on
-    /// digital art and stylized images where Vision's training distribution
-    /// doesn't match the input.
-    ///
-    /// Two-step refinement:
-    ///  1. Morphological closing (dilate → erode) fills small interior holes
-    ///     while leaving the silhouette dimensions roughly intact.
-    ///  2. Contrast steepening pushes interior pixels to ~1 and background
-    ///     pixels to ~0, leaving only a thin soft band at the silhouette
-    ///     boundary — the matting equivalent of Pixelmator Pro's first-stage
-    ///     mask cleanup before its color-decontamination pass.
-    private static func refineMask(_ mask: CIImage) -> CIImage {
+    /// Three-step pipeline:
+    ///  1. Morphological closing fills small holes (cheap, CIFilter).
+    ///  2. Contrast bias snaps Vision's medium-confidence interior pixels to
+    ///     opaque and clear-background pixels to transparent, leaving a thin
+    ///     soft band at the silhouette.
+    ///  3. **Flood-fill enclosed holes** — anything not reachable from the
+    ///     image boundary via background pixels gets forced to opaque. This
+    ///     is the only step that actually fixes hole patterns morphology
+    ///     can't close (large interior cavities Vision was uncertain about).
+    ///     Implemented in CPU since CIFilter has no flood-fill primitive.
+    private func refineMask(_ mask: CIImage) -> CIImage {
         let extent = mask.extent
 
-        // Closing radius needs to be big enough to fill the medium-sized
-        // interior holes Vision returns on stylized inputs. 10px in mask
-        // space closes ~20px-diameter holes — large enough to bridge typical
-        // probabilistic gaps without erasing legitimate features (e.g.
-        // between fingers).
         let dilate = CIFilter.morphologyMaximum()
         dilate.inputImage = mask
         dilate.radius = 10
@@ -227,13 +218,10 @@ actor BackgroundRemover {
         erode.radius = 10
         guard let closed = erode.outputImage?.cropped(to: extent) else { return mask }
 
-        // Contrast steepening with a bias toward keeping soft pixels as
-        // foreground. Vision's interior fog often sits in the 0.3–0.45 band;
-        // a symmetric curve around 0.5 would push those to background and
-        // create the "swiss cheese" hole pattern. brightness=+0.2 shifts the
-        // effective midpoint to ~0.3, so anything Vision was at-least-somewhat
-        // confident about (>~0.3) snaps to opaque while clear-background
-        // (<~0.3) snaps to transparent.
+        // brightness=+0.2 shifts the effective midpoint of contrast to ~0.3,
+        // keeping Vision's medium-confidence interior pixels on the subject
+        // side. A pure 0.5-symmetric curve binned them to background and
+        // produced the swiss-cheese hole pattern.
         let contrast = CIFilter.colorControls()
         contrast.inputImage = closed
         contrast.contrast = 10.0
@@ -241,16 +229,125 @@ actor BackgroundRemover {
         contrast.saturation = 1.0
         guard let contrasted = contrast.outputImage?.cropped(to: extent) else { return closed }
 
-        // Clamp to [0, 1]. CI's working color space is extended-linear, so the
-        // contrast pump produces interior values >>1 and background values <0.
-        // blendWithMask reads these literally as `out = mask*fg + (1-mask)*bg`,
-        // which over-amplifies the foreground when a mask value of 8 is
-        // multiplied through the RGB. Clamp resolves it.
+        // CI's working space is extended-linear; the contrast pump produces
+        // values way outside [0,1]. blendWithMask reads them literally and
+        // over-amplifies the foreground (deep-fried colors). Clamp first.
         let clamp = CIFilter.colorClamp()
         clamp.inputImage = contrasted
         clamp.minComponents = CIVector(x: 0, y: 0, z: 0, w: 0)
         clamp.maxComponents = CIVector(x: 1, y: 1, z: 1, w: 1)
-        return clamp.outputImage?.cropped(to: extent) ?? contrasted
+        guard let clamped = clamp.outputImage?.cropped(to: extent) else { return contrasted }
+
+        return fillEnclosedHoles(clamped) ?? clamped
+    }
+
+    /// Fill mask regions that aren't reachable from the image boundary via
+    /// background pixels. CPU pass — converts the mask to an 8-bit grayscale
+    /// buffer, flood-fills from the four edges marking everything reachable
+    /// through pixels below threshold, then forces any unmarked sub-threshold
+    /// pixel to opaque (interior hole). Preserves the silhouette band's soft
+    /// alpha by only modifying pixels that were already binarized to
+    /// background by the contrast step.
+    ///
+    /// Cost: O(width × height) once per image. ~3.7M pixels at 2560×1440.
+    /// Stack-based iterative flood fill to avoid recursion depth issues.
+    private func fillEnclosedHoles(_ mask: CIImage) -> CIImage? {
+        let extent = mask.extent
+        let width = Int(extent.width)
+        let height = Int(extent.height)
+        guard width > 0, height > 0 else { return nil }
+
+        // Render to a single-channel 8-bit buffer via CIContext. Going through
+        // a CGContext + draw(CGImage) path doesn't work for this — the mask
+        // CIImage from `cvPixelBuffer:` doesn't have an addressable CGImage
+        // until rendered. CIContext.render writes directly to a bitmap.
+        let bytesPerRow = width
+        var pixels = [UInt8](repeating: 0, count: width * height)
+        guard let graySpace = CGColorSpace(name: CGColorSpace.linearGray) ?? CGColorSpace(name: CGColorSpace.genericGrayGamma2_2) else { return nil }
+        pixels.withUnsafeMutableBytes { buffer in
+            guard let base = buffer.baseAddress else { return }
+            ciContext.render(
+                mask,
+                toBitmap: base,
+                rowBytes: bytesPerRow,
+                bounds: extent,
+                format: .L8,
+                colorSpace: graySpace
+            )
+        }
+
+        // Background threshold matches the contrast step's effective cutoff.
+        // After clamp, interior pixels are at 255 and background at 0; the
+        // soft silhouette band is in between. We treat anything < 128 as
+        // background-candidate for flood-fill purposes — silhouette pixels
+        // above 128 are subject and won't be visited.
+        let threshold: UInt8 = 128
+        var visited = [Bool](repeating: false, count: width * height)
+        var stack: [Int] = []
+        stack.reserveCapacity(max(width, height) * 2)
+
+        // Seed with all four image edges.
+        for x in 0..<width {
+            if pixels[x] < threshold { stack.append(x) }
+            let bottomIdx = (height - 1) * width + x
+            if pixels[bottomIdx] < threshold { stack.append(bottomIdx) }
+        }
+        for y in 1..<(height - 1) {
+            let leftIdx = y * width
+            if pixels[leftIdx] < threshold { stack.append(leftIdx) }
+            let rightIdx = leftIdx + width - 1
+            if pixels[rightIdx] < threshold { stack.append(rightIdx) }
+        }
+
+        // 4-connectivity flood fill. Marks every background pixel reachable
+        // from the boundary; anything left unmarked is by definition enclosed.
+        while let idx = stack.popLast() {
+            if visited[idx] { continue }
+            visited[idx] = true
+            let x = idx % width
+            let y = idx / width
+            if x > 0 {
+                let n = idx - 1
+                if !visited[n] && pixels[n] < threshold { stack.append(n) }
+            }
+            if x < width - 1 {
+                let n = idx + 1
+                if !visited[n] && pixels[n] < threshold { stack.append(n) }
+            }
+            if y > 0 {
+                let n = idx - width
+                if !visited[n] && pixels[n] < threshold { stack.append(n) }
+            }
+            if y < height - 1 {
+                let n = idx + width
+                if !visited[n] && pixels[n] < threshold { stack.append(n) }
+            }
+        }
+
+        // Fill: any sub-threshold pixel not visited is an enclosed hole.
+        // Set to fully opaque so blendWithMask treats it as subject.
+        for i in 0..<pixels.count {
+            if !visited[i] && pixels[i] < threshold {
+                pixels[i] = 255
+            }
+        }
+
+        // Reconstruct CIImage from the modified pixel buffer.
+        guard let outCtx = CGContext(
+            data: &pixels,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: bytesPerRow,
+            space: graySpace,
+            bitmapInfo: CGImageAlphaInfo.none.rawValue
+        ), let outCG = outCtx.makeImage() else {
+            return nil
+        }
+        let filled = CIImage(cgImage: outCG)
+        // Translate to match the original mask's extent origin (rare to be
+        // non-zero, but mask buffers from Vision can be).
+        return filled.transformed(by: CGAffineTransform(translationX: extent.origin.x, y: extent.origin.y))
     }
 
     enum BackgroundRemovalError: Error {
