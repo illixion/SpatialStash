@@ -68,7 +68,7 @@ actor BackgroundRemover {
     /// thin features (typically α ∈ 0.15–0.35) visible at proportional alpha.
     private static let maskFirmingKernel: CIColorKernel? = CIColorKernel(source: """
         kernel vec4 firmMask(__sample mask) {
-            float a = smoothstep(0.05, 0.4, mask.r);
+            float a = smoothstep(0.05, 0.3, mask.r);
             return vec4(vec3(a), 1.0);
         }
     """)
@@ -108,12 +108,23 @@ actor BackgroundRemover {
         blurFilter.radius = Float(blurRadius)
         let blurred = blurFilter.outputImage?.cropped(to: extent) ?? originalCIImage
 
-        // Foreground: decontaminated color + mask alpha. Replaces the prior
-        // blendWithMask path so silhouette pixels carry clean subject color
-        // (no halo from the original background bleeding through soft alpha).
+        // Foreground: simple blendWithMask. Color decontamination doesn't
+        // buy much in the diorama use case — the backdrop layered behind IS
+        // the original (blurred only in the subject region), so a soft-alpha
+        // foreground pixel showing original color through composites
+        // correctly against the matching original color in the backdrop's
+        // non-subject region. The decontamination kernel was also a single
+        // point of failure: if CIColorKernel compilation returned nil
+        // (deprecated CI-Kernel-Language API quirks), the foreground would
+        // be nil and the user would see only the backdrop — looking like
+        // the diorama has no depth. blendWithMask is a built-in CIFilter
+        // and always works.
         let foregroundImage: UIImage? = {
-            guard let kernel = Self.decontaminationKernel,
-                  let outputCIImage = kernel.apply(extent: extent, arguments: [originalCIImage, maskCIImage, blurred]),
+            let blendFilter = CIFilter.blendWithMask()
+            blendFilter.inputImage = originalCIImage
+            blendFilter.backgroundImage = CIImage.empty()
+            blendFilter.maskImage = maskCIImage
+            guard let outputCIImage = blendFilter.outputImage,
                   let outputCGImage = ciContext.createCGImage(outputCIImage, from: extent) else {
                 return nil
             }
