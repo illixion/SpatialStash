@@ -184,10 +184,15 @@ actor AutoEnhanceCache {
         ) else { return nil }
 
         let orientation = cgImagePropertyOrientation(for: image.imageOrientation)
-        let properties: [CFString: Any] = [
+        // Preserve bit depth on encode: HEIC/HEVC Main10 supports 10-bit color.
+        let isDeep = cgImage.bitsPerComponent > 8
+        var properties: [CFString: Any] = [
             kCGImageDestinationLossyCompressionQuality: heicCompressionQuality,
             kCGImagePropertyOrientation: orientation.rawValue
         ]
+        if isDeep {
+            properties[kCGImagePropertyDepth] = 10
+        }
 
         CGImageDestinationAddImage(destination, cgImage, properties as CFDictionary)
         guard CGImageDestinationFinalize(destination) else { return nil }

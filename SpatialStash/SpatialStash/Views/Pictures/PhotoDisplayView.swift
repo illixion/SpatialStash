@@ -362,7 +362,8 @@ struct PhotoDisplayView: View {
                 texture: texture,
                 brightness: Float(windowModel.effectiveAdjustments.brightness),
                 contrast: Float(windowModel.effectiveAdjustments.contrast),
-                saturation: Float(windowModel.effectiveAdjustments.saturation)
+                saturation: Float(windowModel.effectiveAdjustments.saturation),
+                sharpen: Float(windowModel.effectiveAdjustments.sharpen)
             )
             .opacity(windowModel.effectiveAdjustments.opacity)
             .aspectRatio(windowModel.imageAspectRatio, contentMode: .fit)

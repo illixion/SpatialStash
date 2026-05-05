@@ -43,30 +43,18 @@ actor ImageLoader {
     }
 
     /// Normalize an image by redrawing it to avoid Core Graphics decoding issues
-    /// with certain 24-bit image formats (rdar://143602439)
+    /// with certain 24-bit image formats (rdar://143602439). Preserves bit depth
+    /// — UIGraphicsImageRenderer would flatten 16-bit sources to 8-bit.
     private nonisolated func normalizeImage(_ image: UIImage) -> UIImage {
-        // Skip normalization for animated images or images without cgImage
         guard let cgImage = image.cgImage else {
             return image
         }
 
-        // autoreleasepool ensures the intermediate graphics context and
-        // temporary CGImage copies are drained immediately rather than
-        // accumulating until the next event-loop drain.
         return autoreleasepool {
-            let format = UIGraphicsImageRendererFormat()
-            format.scale = image.scale
-            format.opaque = false
-
-            let renderer = UIGraphicsImageRenderer(
-                size: CGSize(width: cgImage.width, height: cgImage.height),
-                format: format
-            )
-
-            return renderer.image { context in
-                UIImage(cgImage: cgImage, scale: 1.0, orientation: image.imageOrientation)
-                    .draw(in: CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height))
+            guard let redrawn = CGImageDeepColor.redraw(cgImage) else {
+                return image
             }
+            return UIImage(cgImage: redrawn, scale: image.scale, orientation: image.imageOrientation)
         }
     }
 

@@ -799,21 +799,17 @@ class PhotoWindowModel {
             return image // Already smaller than target, no downsampling needed
         }
 
-        // Create a new UIImage at the downsampled size
+        // Bit-depth-preserving downscale via CGImageDeepColor: UIGraphicsImageRenderer
+        // would flatten 16-bit sources (e.g. JXL upscaler output) to 8-bit.
+        guard let cgImage = image.cgImage else { return image }
         let scaleFactor = targetDimension / nativeMaxDim
-        let newSize = CGSize(
-            width: imageWidth * scaleFactor,
-            height: imageHeight * scaleFactor
-        )
+        let newWidth = Int((CGFloat(cgImage.width) * scaleFactor).rounded())
+        let newHeight = Int((CGFloat(cgImage.height) * scaleFactor).rounded())
 
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = image.scale
-        format.opaque = false
-
-        let renderer = UIGraphicsImageRenderer(size: newSize, format: format)
-        return renderer.image { context in
-            image.draw(in: CGRect(origin: .zero, size: newSize))
+        guard let resized = CGImageDeepColor.redraw(cgImage, size: (newWidth, newHeight)) else {
+            return image
         }
+        return UIImage(cgImage: resized, scale: image.scale, orientation: image.imageOrientation)
     }
 
     /// Downscale a UIImage for display and upload directly to a GPU-private texture.

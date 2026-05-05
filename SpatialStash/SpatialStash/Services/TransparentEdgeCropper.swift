@@ -54,7 +54,13 @@ enum TransparentEdgeCropper {
             return cgImage
         }
 
-        return cropped
+        // `cropping(to:)` returns a CGImage that shares the parent buffer and
+        // carries an internal offset. Some downstream drawing paths (notably
+        // `UIImage.draw(in:)` via `UIGraphicsImageRenderer`) draw the parent
+        // extent rather than the cropped region, which manifests as the
+        // subject appearing shrunken inside extra padding. Rebake into a
+        // fresh standalone buffer so the result has no parent dependency.
+        return CGImageDeepColor.redraw(cropped) ?? cropped
     }
 
     /// Find the tightest image-space rect containing pixels with alpha > 0.

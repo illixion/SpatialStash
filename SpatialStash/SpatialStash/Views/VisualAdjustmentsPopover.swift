@@ -164,6 +164,14 @@ struct VisualAdjustmentsPopover: View {
             )
 
             adjustmentSlider(
+                label: "Sharpen",
+                value: $currentAdjustments.sharpen,
+                range: 0.0...1.0,
+                defaultValue: 0.0,
+                linear: true
+            )
+
+            adjustmentSlider(
                 label: "Opacity",
                 value: $currentAdjustments.opacity,
                 range: 0.01...1.0,
@@ -175,6 +183,7 @@ struct VisualAdjustmentsPopover: View {
                 currentAdjustments.brightness = 0.0
                 currentAdjustments.contrast = 1.0
                 currentAdjustments.saturation = 1.0
+                currentAdjustments.sharpen = 0.0
                 currentAdjustments.opacity = 1.0
                 // Note: auto-enhance is toggled separately, not reset here
                 onCurrentAdjustmentsChanged?(currentAdjustments)
@@ -184,6 +193,7 @@ struct VisualAdjustmentsPopover: View {
                 currentAdjustments.brightness == 0.0
                 && currentAdjustments.contrast == 1.0
                 && currentAdjustments.saturation == 1.0
+                && currentAdjustments.sharpen == 0.0
                 && currentAdjustments.opacity == 1.0
             )
         }
@@ -221,6 +231,14 @@ struct VisualAdjustmentsPopover: View {
                 value: $globalAdjustments.saturation,
                 range: 0.0...3.0,
                 defaultValue: 1.0
+            )
+
+            adjustmentSlider(
+                label: "Sharpen",
+                value: $globalAdjustments.sharpen,
+                range: 0.0...1.0,
+                defaultValue: 0.0,
+                linear: true
             )
 
             adjustmentSlider(

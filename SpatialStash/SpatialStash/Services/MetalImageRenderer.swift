@@ -30,8 +30,14 @@ final class MetalImageRenderer: Sendable {
 
     let device: MTLDevice
     let commandQueue: MTLCommandQueue
+    /// Pass-2 pipeline (FXAA + brightness/contrast/saturation), 8-bit drawable.
     let pipelineState: MTLRenderPipelineState
+    /// Pass-2 pipeline, 16-bit drawable.
     let pipelineState16: MTLRenderPipelineState
+    /// Pass-1 RCAS pipeline, renders to an 8-bit intermediate.
+    let rcasPipelineState: MTLRenderPipelineState
+    /// Pass-1 RCAS pipeline, renders to a 16-bit intermediate.
+    let rcasPipelineState16: MTLRenderPipelineState
     private let ciContext: CIContext
 
     private init?() {
@@ -46,34 +52,43 @@ final class MetalImageRenderer: Sendable {
             .outputPremultiplied: true
         ])
 
-        // Build render pipeline for fullscreen quad + brightness/contrast/saturation shader
         guard let library = device.makeDefaultLibrary(),
               let vertexFunction = library.makeFunction(name: "imageVertexShader"),
-              let fragmentFunction = library.makeFunction(name: "imageFragmentShader") else {
+              let aaTonalFn = library.makeFunction(name: "imageFragmentShader"),
+              let rcasFn = library.makeFunction(name: "rcasFragmentShader") else {
             return nil
         }
 
-        let pipelineDescriptor = MTLRenderPipelineDescriptor()
-        pipelineDescriptor.vertexFunction = vertexFunction
-        pipelineDescriptor.fragmentFunction = fragmentFunction
+        // Pass-2 (final): alpha blending enabled so transparent pixels (bg removal)
+        // composite over whatever's behind the MTKView.
+        let finalDesc = MTLRenderPipelineDescriptor()
+        finalDesc.vertexFunction = vertexFunction
+        finalDesc.fragmentFunction = aaTonalFn
+        finalDesc.colorAttachments[0].isBlendingEnabled = true
+        finalDesc.colorAttachments[0].rgbBlendOperation = .add
+        finalDesc.colorAttachments[0].alphaBlendOperation = .add
+        finalDesc.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
+        finalDesc.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+        finalDesc.colorAttachments[0].sourceAlphaBlendFactor = .one
+        finalDesc.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
 
-        // Enable alpha blending for images with transparency (background removal)
-        pipelineDescriptor.colorAttachments[0].isBlendingEnabled = true
-        pipelineDescriptor.colorAttachments[0].rgbBlendOperation = .add
-        pipelineDescriptor.colorAttachments[0].alphaBlendOperation = .add
-        pipelineDescriptor.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
-        pipelineDescriptor.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
-        pipelineDescriptor.colorAttachments[0].sourceAlphaBlendFactor = .one
-        pipelineDescriptor.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
+        // Pass-1 (RCAS → intermediate): no blending — we want to write the
+        // RCAS'd RGBA verbatim into the offscreen target so pass 2 can read it.
+        let rcasDesc = MTLRenderPipelineDescriptor()
+        rcasDesc.vertexFunction = vertexFunction
+        rcasDesc.fragmentFunction = rcasFn
+        rcasDesc.colorAttachments[0].isBlendingEnabled = false
 
         do {
-            // 8-bit pipeline (bgra8Unorm framebuffer)
-            pipelineDescriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
-            self.pipelineState = try device.makeRenderPipelineState(descriptor: pipelineDescriptor)
+            finalDesc.colorAttachments[0].pixelFormat = .bgra8Unorm
+            self.pipelineState = try device.makeRenderPipelineState(descriptor: finalDesc)
+            finalDesc.colorAttachments[0].pixelFormat = .rgba16Float
+            self.pipelineState16 = try device.makeRenderPipelineState(descriptor: finalDesc)
 
-            // 16-bit pipeline (rgba16Float framebuffer for HDR / deep color)
-            pipelineDescriptor.colorAttachments[0].pixelFormat = .rgba16Float
-            self.pipelineState16 = try device.makeRenderPipelineState(descriptor: pipelineDescriptor)
+            rcasDesc.colorAttachments[0].pixelFormat = .bgra8Unorm
+            self.rcasPipelineState = try device.makeRenderPipelineState(descriptor: rcasDesc)
+            rcasDesc.colorAttachments[0].pixelFormat = .rgba16Float
+            self.rcasPipelineState16 = try device.makeRenderPipelineState(descriptor: rcasDesc)
         } catch {
             return nil
         }

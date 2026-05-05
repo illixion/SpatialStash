@@ -8,12 +8,20 @@
 
 import CoreImage
 import CoreImage.CIFilterBuiltins
+import ImageIO
 import os
 import UIKit
 import Vision
 
 actor BackgroundRemover {
     static let shared = BackgroundRemover()
+
+    /// Cap on the long edge (in pixels) of the image fed into Vision.
+    /// Vision's segmentation model resamples internally to ~512–1024px regardless of input,
+    /// so feeding a 33MP source just multiplies pre/post-processing and composite cost
+    /// without improving silhouette quality. 2560 keeps mask edges crisp at panel-resolution
+    /// viewing while cutting work ~10-16x on 8K sources.
+    private static let maxLongEdgeForSegmentation: CGFloat = 2560
 
     private let ciContext = CIContext(options: [.useSoftwareRenderer: false])
 
@@ -22,11 +30,12 @@ actor BackgroundRemover {
     /// Remove the background from a UIImage, automatically cropping transparent space.
     /// Returns a new UIImage with transparent background and no fully transparent margins.
     func removeBackground(from image: UIImage) async throws -> UIImage? {
-        guard let cgImage = image.cgImage else {
+        guard let sourceCG = image.cgImage else {
             AppLogger.backgroundRemover.warning("No CGImage available for background removal")
             return nil
         }
 
+        let cgImage = Self.downsampleIfNeeded(sourceCG)
         let (maskCIImage, originalCIImage) = try generateForegroundMask(cgImage: cgImage)
 
         return applyMaskAndCrop(
@@ -43,11 +52,12 @@ actor BackgroundRemover {
     /// for correct exposure analysis), then the same mask is composited over it.
     /// Returns (regular, autoEnhanced) — either may be nil on failure.
     func removeBackgroundWithAutoEnhance(from image: UIImage) async throws -> (regular: UIImage?, autoEnhanced: UIImage?) {
-        guard let cgImage = image.cgImage else {
+        guard let sourceCG = image.cgImage else {
             AppLogger.backgroundRemover.warning("No CGImage available for background removal")
             return (nil, nil)
         }
 
+        let cgImage = Self.downsampleIfNeeded(sourceCG)
         let (maskCIImage, originalCIImage) = try generateForegroundMask(cgImage: cgImage)
 
         // 1. Apply mask to original → regular bg-removed
@@ -105,6 +115,23 @@ actor BackgroundRemover {
 
     enum BackgroundRemovalError: Error {
         case noMaskResults
+    }
+
+    /// Downsample a CGImage so its long edge does not exceed `maxLongEdgeForSegmentation`.
+    /// Returns the original image if it's already within the cap.
+    /// Uses `CGContext` resampling for predictable quality and to avoid the ImageIO
+    /// thumbnail path (which requires a CGImageSource and we only have a CGImage here).
+    private static func downsampleIfNeeded(_ image: CGImage) -> CGImage {
+        let w = CGFloat(image.width)
+        let h = CGFloat(image.height)
+        let longEdge = max(w, h)
+        guard longEdge > maxLongEdgeForSegmentation else { return image }
+
+        let scale = maxLongEdgeForSegmentation / longEdge
+        let newW = Int((w * scale).rounded())
+        let newH = Int((h * scale).rounded())
+
+        return CGImageDeepColor.redraw(image, size: (newW, newH)) ?? image
     }
 
     /// Apply a foreground mask to an image and crop transparent margins.

@@ -11,11 +11,20 @@
 import MetalKit
 import SwiftUI
 
-/// Matches `ImageUniforms` in Shaders.metal
+/// Matches `ImageUniforms` in Shaders.metal — pass-1 (RCAS) input.
 private struct ImageUniforms {
     var brightness: Float
     var contrast: Float
     var saturation: Float
+    var sharpen: Float
+}
+
+/// Matches `AAUniforms` in Shaders.metal — pass-2 (resolve + tonal) input.
+private struct AAUniforms {
+    var brightness: Float
+    var contrast: Float
+    var saturation: Float
+    var applyResolve: Float
 }
 
 struct MetalImageView: UIViewRepresentable {
@@ -23,6 +32,7 @@ struct MetalImageView: UIViewRepresentable {
     let brightness: Float
     let contrast: Float
     let saturation: Float
+    let sharpen: Float
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -55,6 +65,7 @@ struct MetalImageView: UIViewRepresentable {
         context.coordinator.brightness = brightness
         context.coordinator.contrast = contrast
         context.coordinator.saturation = saturation
+        context.coordinator.sharpen = sharpen
 
         mtkView.setNeedsDisplay()
         return mtkView
@@ -86,6 +97,10 @@ struct MetalImageView: UIViewRepresentable {
             coordinator.saturation = saturation
             needsRedraw = true
         }
+        if coordinator.sharpen != sharpen {
+            coordinator.sharpen = sharpen
+            needsRedraw = true
+        }
 
         if needsRedraw {
             mtkView.setNeedsDisplay()
@@ -111,11 +126,16 @@ struct MetalImageView: UIViewRepresentable {
         var brightness: Float = 0
         var contrast: Float = 1
         var saturation: Float = 1
+        var sharpen: Float = 0
+
+        /// Offscreen RCAS target. Allocated lazily and reused across draws.
+        /// Reallocated when drawable size or pixel format changes.
+        private var intermediate: MTLTexture?
 
         func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
-            // Redraw when drawable size changes — ensures the image is rendered
-            // at the correct resolution after layout (especially on first appear
-            // when the view may initially have zero size).
+            // Drawable resize — drop the cached intermediate so it gets
+            // reallocated at the new size on the next draw.
+            intermediate = nil
             view.setNeedsDisplay()
         }
 
@@ -123,31 +143,106 @@ struct MetalImageView: UIViewRepresentable {
             guard let renderer,
                   let texture,
                   let drawable = view.currentDrawable,
-                  let renderPassDescriptor = view.currentRenderPassDescriptor,
+                  let finalPassDesc = view.currentRenderPassDescriptor,
                   let commandBuffer = renderer.commandQueue.makeCommandBuffer() else {
                 return
             }
 
-            guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) else {
+            let is16 = view.colorPixelFormat == .rgba16Float
+            let useRCAS = sharpen > 0.001
+            let drawableW = drawable.texture.width
+            let drawableH = drawable.texture.height
+
+            // Pass-2 input texture: either the offscreen RCAS result, or the source.
+            var pass2InputTexture: MTLTexture = texture
+
+            if useRCAS {
+                // Render RCAS at source resolution for SSAA — capped at 2×
+                // drawable per axis so a huge source doesn't blow up VRAM.
+                // Floor at drawable size so we never upsample-then-downsample
+                // a small source for no benefit.
+                let interW = min(max(texture.width, drawableW), drawableW * 2)
+                let interH = min(max(texture.height, drawableH), drawableH * 2)
+
+                let intermediateTex = ensureIntermediate(
+                    device: renderer.device,
+                    width: interW,
+                    height: interH,
+                    pixelFormat: view.colorPixelFormat
+                )
+
+                if let intermediateTex {
+                    let pass1Desc = MTLRenderPassDescriptor()
+                    pass1Desc.colorAttachments[0].texture = intermediateTex
+                    pass1Desc.colorAttachments[0].loadAction = .clear
+                    pass1Desc.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
+                    pass1Desc.colorAttachments[0].storeAction = .store
+
+                    if let pass1Encoder = commandBuffer.makeRenderCommandEncoder(descriptor: pass1Desc) {
+                        let rcasPipeline = is16 ? renderer.rcasPipelineState16 : renderer.rcasPipelineState
+                        pass1Encoder.setRenderPipelineState(rcasPipeline)
+                        pass1Encoder.setFragmentTexture(texture, index: 0)
+                        var rcasU = ImageUniforms(brightness: 0, contrast: 1, saturation: 1, sharpen: sharpen)
+                        pass1Encoder.setFragmentBytes(&rcasU, length: MemoryLayout<ImageUniforms>.size, index: 0)
+                        pass1Encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
+                        pass1Encoder.endEncoding()
+                        pass2InputTexture = intermediateTex
+                    }
+                }
+            }
+
+            // Engage rotated-grid resolve whenever pass-2's input is larger
+            // than the drawable — independent of RCAS. A raw source bigger
+            // than the drawable still benefits from area-averaged downsample
+            // (existing aliasing in the source gets smoothed out).
+            let didSupersample = pass2InputTexture.width > drawableW || pass2InputTexture.height > drawableH
+
+            guard let pass2Encoder = commandBuffer.makeRenderCommandEncoder(descriptor: finalPassDesc) else {
                 return
             }
 
-            // Select pipeline matching the framebuffer format
-            let pipeline = (view.colorPixelFormat == .rgba16Float)
-                ? renderer.pipelineState16
-                : renderer.pipelineState
+            let finalPipeline = is16 ? renderer.pipelineState16 : renderer.pipelineState
+            pass2Encoder.setRenderPipelineState(finalPipeline)
+            pass2Encoder.setFragmentTexture(pass2InputTexture, index: 0)
 
-            encoder.setRenderPipelineState(pipeline)
-            encoder.setFragmentTexture(texture, index: 0)
-
-            var uniforms = ImageUniforms(brightness: brightness, contrast: contrast, saturation: saturation)
-            encoder.setFragmentBytes(&uniforms, length: MemoryLayout<ImageUniforms>.size, index: 0)
-
-            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
-            encoder.endEncoding()
+            var aaU = AAUniforms(
+                brightness: brightness,
+                contrast: contrast,
+                saturation: saturation,
+                applyResolve: didSupersample ? 1.0 : 0.0
+            )
+            pass2Encoder.setFragmentBytes(&aaU, length: MemoryLayout<AAUniforms>.size, index: 0)
+            pass2Encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
+            pass2Encoder.endEncoding()
 
             commandBuffer.present(drawable)
             commandBuffer.commit()
+        }
+
+        /// Allocate or reuse the offscreen RCAS target. Returns nil on failure.
+        private func ensureIntermediate(
+            device: MTLDevice,
+            width: Int,
+            height: Int,
+            pixelFormat: MTLPixelFormat
+        ) -> MTLTexture? {
+            if let existing = intermediate,
+               existing.width == width,
+               existing.height == height,
+               existing.pixelFormat == pixelFormat {
+                return existing
+            }
+            let desc = MTLTextureDescriptor.texture2DDescriptor(
+                pixelFormat: pixelFormat,
+                width: width,
+                height: height,
+                mipmapped: false
+            )
+            desc.usage = [.shaderRead, .renderTarget]
+            desc.storageMode = .private
+            let tex = device.makeTexture(descriptor: desc)
+            intermediate = tex
+            return tex
         }
     }
 }
