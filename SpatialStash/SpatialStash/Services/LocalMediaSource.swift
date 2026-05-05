@@ -103,6 +103,11 @@ actor LocalMediaSource {
         scanAllMedia().filter { $0.type == .image }
     }
 
+    /// Scan for local images recursively under a specific folder
+    func scanImages(under root: URL) -> [LocalMediaFile] {
+        scanDirectory(root, recursive: true).filter { $0.type == .image }
+    }
+
     /// Scan for local videos
     func scanVideos() -> [LocalMediaFile] {
         scanAllMedia().filter { $0.type == .video }
@@ -219,10 +224,23 @@ actor LocalMediaSource {
 
 /// ImageSource implementation for local files
 final class LocalImageSource: ImageSource, @unchecked Sendable {
+    /// Optional folder root. When non-nil, scans recursively from this folder.
+    /// When nil, scans the entire Documents directory.
+    let rootURL: URL?
+
+    init(rootURL: URL? = nil) {
+        self.rootURL = rootURL
+    }
+
     func fetchImages(page: Int, pageSize: Int) async throws -> ImageFetchResult {
         AppLogger.localMedia.debug("Fetching images page \(page, privacy: .public), pageSize \(pageSize, privacy: .public)")
 
-        let allImages = await LocalMediaSource.shared.scanImages()
+        let allImages: [LocalMediaFile]
+        if let rootURL {
+            allImages = await LocalMediaSource.shared.scanImages(under: rootURL)
+        } else {
+            allImages = await LocalMediaSource.shared.scanImages()
+        }
         AppLogger.localMedia.debug("Total images found: \(allImages.count, privacy: .public)")
 
         let startIndex = page * pageSize

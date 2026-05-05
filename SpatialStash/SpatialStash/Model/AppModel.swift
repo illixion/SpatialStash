@@ -26,15 +26,7 @@ enum BackgroundRemovalState {
 class AppModel {
     // MARK: - Navigation State
 
-    var selectedTab: Tab = .pictures
     var isShowingVideoDetail: Bool = false
-
-
-    /// Tracks the last content tab (pictures or videos) for filter context
-    var lastContentTab: Tab = .pictures
-
-    /// Incremented when Local tab is tapped while already on Local tab
-    var localTabReselected: Int = 0
 
     // MARK: - Server Configuration (with UserDefaults persistence)
 
@@ -132,6 +124,12 @@ class AppModel {
     // MARK: - Image Source (stored, always Stash server)
 
     private(set) var imageSource: any ImageSource
+
+    /// Transient override consumed by the next gallery-mode remote viewer launch.
+    /// Set by the photo-viewer slideshow button so the slideshow runs over the
+    /// originating window's source/filter (e.g. local-folder source) instead of
+    /// the app-wide Stash source. Cleared once consumed.
+    var pendingGallerySlideshowSource: GallerySlideshowSourceOverride?
 
     // MARK: - Video Source (stored, always Stash server)
 

@@ -8,6 +8,7 @@ import SwiftUI
 
 struct TabBarOrnament: View {
     @Environment(AppModel.self) private var appModel
+    @Environment(MainWindowModel.self) private var windowModel
 
     private var visibleTabs: [Tab] {
         let orderedTabs: [Tab] = [.pictures, .videos, .local, .remote, .filters, .console, .settings]
@@ -29,14 +30,14 @@ struct TabBarOrnament: View {
                 Button {
                     // Track last content tab for filter context
                     if tab == .pictures || tab == .videos {
-                        appModel.lastContentTab = tab
+                        windowModel.lastContentTab = tab
                     }
-                    
+
                     // Special handling for Local tab re-selection
-                    if tab == .local && appModel.selectedTab == .local {
-                        appModel.localTabReselected += 1
+                    if tab == .local && windowModel.selectedTab == .local {
+                        windowModel.localTabReselected += 1
                     } else {
-                        appModel.selectedTab = tab
+                        windowModel.selectedTab = tab
                     }
                 } label: {
                     VStack(spacing: 4) {
@@ -45,11 +46,11 @@ struct TabBarOrnament: View {
                         Text(tab.rawValue)
                             .font(.caption)
                     }
-                    .foregroundColor(appModel.selectedTab == tab ? .white : .secondary)
+                    .foregroundColor(windowModel.selectedTab == tab ? .white : .secondary)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)
                     .background(
-                        appModel.selectedTab == tab
+                        windowModel.selectedTab == tab
                             ? Color.accentColor.opacity(0.3)
                             : Color.clear
                     )

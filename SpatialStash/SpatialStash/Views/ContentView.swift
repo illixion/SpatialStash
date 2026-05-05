@@ -10,10 +10,11 @@ struct ContentView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismissWindow) private var dismissWindow
+    @State private var windowModel = MainWindowModel()
 
     var body: some View {
         Group {
-            switch appModel.selectedTab {
+            switch windowModel.selectedTab {
             case .pictures:
                 PicturesTabView()
             case .videos:
@@ -31,11 +32,14 @@ struct ContentView: View {
             }
         }
         .environment(appModel)
+        .environment(windowModel)
         .ornament(
             visibility: .visible,
             attachmentAnchor: .scene(.bottomFront),
             ornament: {
                 TabBarOrnament()
+                    .environment(appModel)
+                    .environment(windowModel)
             }
         )
         .background(

@@ -9,12 +9,13 @@ import SwiftUI
 
 struct FiltersTabView: View {
     @Environment(AppModel.self) private var appModel
+    @Environment(MainWindowModel.self) private var windowModel
     @State private var showingSaveViewSheet = false
     @State private var newViewName = ""
 
     /// Whether we're filtering videos (scenes) or images
     private var isVideoFilter: Bool {
-        appModel.lastContentTab == .videos
+        windowModel.lastContentTab == .videos
     }
 
     var body: some View {

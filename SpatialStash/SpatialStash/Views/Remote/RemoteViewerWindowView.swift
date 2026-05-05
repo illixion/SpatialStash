@@ -240,7 +240,7 @@ struct RemoteViewerWindowView: View {
                         .offset(useKenBurns ? kenBurnsOffset : .zero)
                         .opacity(model.isTransitioning ? 0 : 1)
                         .clipped()
-                        .offset(z: 20)
+                        .offset(z: 40)
                         .allowsHitTesting(false)
                 }
             }
@@ -275,7 +275,7 @@ struct RemoteViewerWindowView: View {
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .clipped()
-                        .offset(z: 20)
+                        .offset(z: 40)
                         .allowsHitTesting(false)
                 }
             }
@@ -405,12 +405,15 @@ struct RemoteViewerWindowView: View {
 
         // Set up content provider based on mode
         if config.apiEndpoint.isEmpty {
-            // Gallery mode: use the app's image source
+            // Gallery mode: prefer a transient override set by the launching
+            // photo viewer (e.g. local-folder slideshow), otherwise fall back
+            // to the app-wide image source and current filter.
             let source: any ImageSource
             let filter: ImageFilterCriteria?
-            if appModel.selectedTab == .local {
-                source = LocalImageSource()
-                filter = nil
+            if let override = appModel.pendingGallerySlideshowSource {
+                source = override.imageSource
+                filter = override.filter
+                appModel.pendingGallerySlideshowSource = nil
             } else {
                 source = appModel.imageSource
                 filter = appModel.currentFilter

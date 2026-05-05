@@ -10,6 +10,7 @@ import SwiftUI
 
 struct LocalTabView: View {
     @Environment(AppModel.self) private var appModel
+    @Environment(MainWindowModel.self) private var windowModel
     @State private var selectedFolderPath: [String] = []
 
     enum LocalMediaFolder: String, CaseIterable, Identifiable {
@@ -53,7 +54,7 @@ struct LocalTabView: View {
         }
         .environment(appModel)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onChange(of: appModel.localTabReselected) { oldValue, newValue in
+        .onChange(of: windowModel.localTabReselected) { oldValue, newValue in
             // When Local tab is re-tapped while already viewing it, close folders and return to root
             if !selectedFolderPath.isEmpty {
                 selectedFolderPath = []
@@ -151,6 +152,22 @@ struct LocalMediaListView: View {
 
     var currentPath: String {
         folderPath.joined(separator: " / ")
+    }
+
+    /// Resolved on-disk URL for the folder this view is showing.
+    private var currentFolderURL: URL {
+        let documentsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        var url = documentsDir
+        for component in folderPath {
+            url = url.appendingPathComponent(component, isDirectory: true)
+        }
+        return url
+    }
+
+    /// Whether the folder slideshow control should be shown — only inside a
+    /// Photos subtree (Videos can't run an image slideshow).
+    private var canSlideshowCurrentFolder: Bool {
+        folderPath.first == "Photos"
     }
 
     var body: some View {
@@ -278,6 +295,25 @@ struct LocalMediaListView: View {
                         }
                     }
                 }
+                .safeAreaInset(edge: .bottom) {
+                    if canSlideshowCurrentFolder {
+                        HStack {
+                            Button {
+                                launchFolderSlideshow()
+                            } label: {
+                                Label("Play Slideshow", systemImage: "play.fill")
+                                    .font(.headline)
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 10)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .help("Slideshow of all images in this folder (recursive)")
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(.ultraThinMaterial)
+                    }
+                }
                 .onAppear {
                     loadContent()
                 }
@@ -294,6 +330,26 @@ struct LocalMediaListView: View {
                 }
         }
         .environment(appModel)
+    }
+
+    private func launchFolderSlideshow() {
+        let config: RemoteViewerConfig
+        if let existing = appModel.gallerySlideshowConfig {
+            config = existing
+        } else {
+            var newConfig = RemoteViewerConfig(name: "Gallery Slideshow")
+            newConfig.apiEndpoint = ""
+            newConfig.delay = appModel.slideshowDelay
+            newConfig.showClock = false
+            newConfig.transparentBackground = true
+            appModel.gallerySlideshowConfig = newConfig
+            config = newConfig
+        }
+        appModel.pendingGallerySlideshowSource = GallerySlideshowSourceOverride(
+            imageSource: LocalImageSource(rootURL: currentFolderURL),
+            filter: nil
+        )
+        appModel.enqueueRemoteViewerOpen(configId: config.id)
     }
 
     private func loadContent() {

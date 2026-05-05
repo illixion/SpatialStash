@@ -10,6 +10,7 @@ import UniformTypeIdentifiers
 
 struct SettingsTabView: View {
     @Environment(AppModel.self) private var appModel
+    @Environment(MainWindowModel.self) private var windowModel
     @Environment(SceneDelegate.self) private var sceneDelegate: SceneDelegate?
     @Environment(\.openWindow) private var openWindow
     @State private var imageCacheStats: (fileCount: Int, totalSize: Int64) = (0, 0)
@@ -337,8 +338,8 @@ struct SettingsTabView: View {
                         get: { appModel.enableRemoteViewer },
                         set: { newValue in
                             appModel.enableRemoteViewer = newValue
-                            if !newValue && appModel.selectedTab == .remote {
-                                appModel.selectedTab = .settings
+                            if !newValue && windowModel.selectedTab == .remote {
+                                windowModel.selectedTab = .settings
                             }
                         }
                     ))
@@ -347,8 +348,8 @@ struct SettingsTabView: View {
                         get: { appModel.showDebugConsole },
                         set: { newValue in
                             appModel.showDebugConsole = newValue
-                            if !newValue && appModel.selectedTab == .console {
-                                appModel.selectedTab = .settings
+                            if !newValue && windowModel.selectedTab == .console {
+                                windowModel.selectedTab = .settings
                             }
                         }
                     ))

@@ -164,6 +164,10 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
             appModel.gallerySlideshowConfig = newConfig
             config = newConfig
         }
+        appModel.pendingGallerySlideshowSource = GallerySlideshowSourceOverride(
+            imageSource: windowModel.imageSource,
+            filter: windowModel.snapshotFilter
+        )
         appModel.enqueueRemoteViewerOpen(configId: config.id)
     }
 

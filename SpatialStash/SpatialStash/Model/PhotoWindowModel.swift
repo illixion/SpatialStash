@@ -389,7 +389,10 @@ class PhotoWindowModel {
         // over LocalImageSource's flat scan of the Documents folder, not the
         // Stash gallery the app happens to have loaded.
         if image.source == "local" {
-            self.imageSource = LocalImageSource()
+            // Scope navigation/slideshow to the folder this image lives in
+            // (recursively), rather than the whole Documents directory.
+            let folderRoot = image.fullSizeURL.isFileURL ? image.fullSizeURL.deletingLastPathComponent() : nil
+            self.imageSource = LocalImageSource(rootURL: folderRoot)
             self.snapshotFilter = nil
             self.currentPage = 0
             self.hasMorePages = true
