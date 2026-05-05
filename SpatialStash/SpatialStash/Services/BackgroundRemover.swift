@@ -87,17 +87,41 @@ actor BackgroundRemover {
         blurFilter.radius = Float(blurRadius)
         let blurred = blurFilter.outputImage?.cropped(to: extent) ?? originalCIImage
 
-        // Foreground: simple blendWithMask. Force an explicit RGBA8 + sRGB
-        // output format on createCGImage so the alpha channel is guaranteed
-        // preserved end-to-end. The auto-chosen format from the working
-        // color space (extended-linear) was producing CGImages that read as
-        // fully opaque in some pipelines, making the foreground render as
-        // the entire blurred image instead of a transparent-bg subject.
+        // Foreground with color decontamination via subject color extension.
+        //
+        // Silhouette pixels carry the contamination `α·F + (1-α)·B` from the
+        // original background — for a black ink line on a white page,
+        // α=0.3 gives an observed pixel that's mostly white-tinted gray, so
+        // when composited against a non-white backdrop a white halo bleeds
+        // through. Pixelmator's "decontaminate colors" inverts the matte
+        // equation analytically; CIMaskedVariableBlur is a built-in filter
+        // that approximates the same effect by smearing nearby subject
+        // colors *outward* into the silhouette band, replacing the
+        // contaminated colors with extrapolated subject colors.
+        //
+        // Variable-blur reads its mask as a per-pixel blur radius driver
+        // (lighter mask = more blur). We pass the inverted alpha mask, so:
+        //   - Subject interior (α=1, inverted=0) → no blur, stays sharp
+        //   - Silhouette band (α=0.5, inverted=0.5) → moderate blur, smears
+        //     adjacent subject colors over the contaminated band
+        //   - Background (α=0, inverted=1) → max blur (irrelevant, will be
+        //     masked out by the subsequent blendWithMask)
         let foregroundImage: UIImage? = {
+            let invertFilter = CIFilter.colorInvert()
+            invertFilter.inputImage = maskCIImage
+            let invertedMask = invertFilter.outputImage?.cropped(to: extent) ?? maskCIImage
+
+            let varBlur = CIFilter.maskedVariableBlur()
+            varBlur.inputImage = originalCIImage
+            varBlur.mask = invertedMask
+            varBlur.radius = 10
+            let extendedForeground = varBlur.outputImage?.cropped(to: extent) ?? originalCIImage
+
             let blendFilter = CIFilter.blendWithMask()
-            blendFilter.inputImage = originalCIImage
+            blendFilter.inputImage = extendedForeground
             blendFilter.backgroundImage = CIImage.empty()
             blendFilter.maskImage = maskCIImage
+
             guard let outputCIImage = blendFilter.outputImage,
                   let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) else {
                 return nil
