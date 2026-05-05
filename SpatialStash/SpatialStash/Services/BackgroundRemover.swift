@@ -223,7 +223,18 @@ actor BackgroundRemover {
         contrast.contrast = 15.0
         contrast.brightness = 0.0
         contrast.saturation = 1.0
-        return contrast.outputImage?.cropped(to: extent) ?? closed
+        guard let contrasted = contrast.outputImage?.cropped(to: extent) else { return closed }
+
+        // Clamp to [0, 1]. CI's working color space is extended-linear, so the
+        // contrast pump produces interior values ~8 and background values ~-7.
+        // blendWithMask reads these literally as `out = mask*fg + (1-mask)*bg`,
+        // which over-amplifies the foreground (the "deep fried" look) when a
+        // mask value of 8 is multiplied through the RGB. Clamp resolves it.
+        let clamp = CIFilter.colorClamp()
+        clamp.inputImage = contrasted
+        clamp.minComponents = CIVector(x: 0, y: 0, z: 0, w: 0)
+        clamp.maxComponents = CIVector(x: 1, y: 1, z: 1, w: 1)
+        return clamp.outputImage?.cropped(to: extent) ?? contrasted
     }
 
     enum BackgroundRemovalError: Error {
