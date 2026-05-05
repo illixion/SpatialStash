@@ -182,6 +182,17 @@ class PhotoWindowModel {
         showAdjustmentsPopover || showMediaInfoPopover
     }
 
+    /// Counter for ornament-anchored Menu drop-downs (More, 3D, Resolution).
+    /// SwiftUI's `Menu` doesn't expose an open binding, so we increment when
+    /// the menu's content view appears and decrement when it disappears.
+    /// Used to suppress the diorama foreground while a menu is shown so the
+    /// menu panel isn't visually occluded by the popped-forward foreground.
+    var openOrnamentMenuCount: Int = 0
+
+    var isAnyOrnamentMenuOpen: Bool {
+        openOrnamentMenuCount > 0
+    }
+
     // MARK: - Image Flip State
 
     /// Whether the image is horizontally flipped (showing its "back side")

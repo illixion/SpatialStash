@@ -190,6 +190,9 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
         .buttonStyle(.borderless)
         .disabled(windowModel.isAnimatedImage)
         .help("3D")
+        .onChange(of: show3DPopover) { _, isOpen in
+            updateOrnamentMenuCount(opened: isOpen)
+        }
         .popover(isPresented: $show3DPopover) {
             VStack(spacing: 4) {
                 popoverMenuButton(
@@ -273,6 +276,9 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
         .buttonStyle(.borderless)
         .disabled(windowModel.isLoadingDetailImage)
         .help(windowModel.resolutionOverride != nil ? "Resolution Override: \(resolutionOverrideLabel)" : "Image Resolution")
+        .onChange(of: showResolutionPopover) { _, isOpen in
+            updateOrnamentMenuCount(opened: isOpen)
+        }
         .popover(isPresented: $showResolutionPopover) {
             VStack(spacing: 4) {
                 popoverMenuButton(
@@ -338,29 +344,37 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
 
     private var moreMenu: some View {
         Menu {
-            // Visual Adjustments (opens popover — use a Button that toggles the popover state)
-            Button {
-                windowModel.showAdjustmentsPopover.toggle()
-            } label: {
-                Label("Adjustments", systemImage: "slider.horizontal.3")
-            }
-
-            // Flip (only in 2D non-animated mode)
-            if !windowModel.isRealityKitDisplay && !windowModel.is3DMode && !windowModel.isAnimatedImage {
+            // Tracker — fires onAppear when the Menu's content panel is
+            // instantiated (i.e. the menu opens) and onDisappear when it's
+            // dismissed. Lets us suppress the diorama foreground while the
+            // menu panel is shown so its drop-down isn't visually occluded.
+            Group {
+                // Visual Adjustments (opens popover — use a Button that toggles the popover state)
                 Button {
-                    withAnimation(.easeInOut(duration: 0.3)) {
-                        windowModel.toggleFlip()
-                    }
+                    windowModel.showAdjustmentsPopover.toggle()
                 } label: {
-                    Label(
-                        windowModel.isImageFlipped ? "Unflip" : "Flip",
-                        systemImage: "arrow.left.and.right.righttriangle.left.righttriangle.right"
-                    )
+                    Label("Adjustments", systemImage: "slider.horizontal.3")
                 }
-            }
 
-            // Context-specific extra menu items
-            extraMenuItems()
+                // Flip (only in 2D non-animated mode)
+                if !windowModel.isRealityKitDisplay && !windowModel.is3DMode && !windowModel.isAnimatedImage {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            windowModel.toggleFlip()
+                        }
+                    } label: {
+                        Label(
+                            windowModel.isImageFlipped ? "Unflip" : "Flip",
+                            systemImage: "arrow.left.and.right.righttriangle.left.righttriangle.right"
+                        )
+                    }
+                }
+
+                // Context-specific extra menu items
+                extraMenuItems()
+            }
+            .onAppear { updateOrnamentMenuCount(opened: true) }
+            .onDisappear { updateOrnamentMenuCount(opened: false) }
         } label: {
             Image(systemName: "ellipsis.circle")
                 .font(.title3)
@@ -425,6 +439,16 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
     }
 
     /// Whether the More menu button should show a highlight (adjustments modified or image flipped)
+    /// Increment / decrement the open-menu counter on `windowModel`. Clamped
+    /// at zero so a missed event can't drive the count negative.
+    private func updateOrnamentMenuCount(opened: Bool) {
+        if opened {
+            windowModel.openOrnamentMenuCount += 1
+        } else {
+            windowModel.openOrnamentMenuCount = max(0, windowModel.openOrnamentMenuCount - 1)
+        }
+    }
+
     private var moreMenuHighlighted: Bool {
         windowModel.effectiveAdjustments.isModified || windowModel.isImageFlipped
     }

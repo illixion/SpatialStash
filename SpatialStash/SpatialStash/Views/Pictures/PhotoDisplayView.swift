@@ -76,14 +76,14 @@ struct PhotoDisplayView: View {
                 .scaleEffect(x: windowModel.isImageFlipped ? -1 : 1, y: 1)
                 .offset(x: dragOffset)
 
-            // Diorama layers — push the backdrop behind the window plane and
-            // keep the foreground at z=0. Same 40pt parallax between layers,
-            // but the foreground now sits at the same depth as ornament
-            // popovers and menus (More, 3D, Resolution) so they're not
-            // visually occluded. The popover-open hide is still useful for
-            // the adjustments popover that anchors directly on the ornament.
+            // Diorama layers — backdrop at the window plane, foreground popped
+            // forward in z. Hidden whenever a popover or menu (More, 3D,
+            // Resolution, etc.) is open, since the ornament-anchored panels
+            // render at the window's depth and would otherwise be visually
+            // covered by the foreground at z=20.
             if windowModel.currentAdjustments.isDiorama,
                !windowModel.hasOpenPopover,
+               !windowModel.isAnyOrnamentMenuOpen,
                !windowModel.is3DMode,
                !windowModel.isViewingSpatial3DImmersive,
                !windowModel.isAnimatedGIF {
@@ -97,7 +97,6 @@ struct PhotoDisplayView: View {
                         .opacity(windowModel.effectiveAdjustments.opacity)
                         .scaleEffect(x: windowModel.isImageFlipped ? -1 : 1, y: 1)
                         .offset(x: dragOffset)
-                        .offset(z: -40)
                         .allowsHitTesting(false)
                 }
                 if let foreground = windowModel.dioramaForegroundImage {
@@ -110,6 +109,7 @@ struct PhotoDisplayView: View {
                         .opacity(windowModel.effectiveAdjustments.opacity)
                         .scaleEffect(x: windowModel.isImageFlipped ? -1 : 1, y: 1)
                         .offset(x: dragOffset)
+                        .offset(z: 20)
                         .allowsHitTesting(false)
                 }
             }
