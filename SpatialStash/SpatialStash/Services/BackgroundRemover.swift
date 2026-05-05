@@ -65,10 +65,9 @@ actor BackgroundRemover {
         }()
 
         // Backdrop: heavy gaussian blur of the original, composited under the
-        // original via the inverted mask so only the subject region is blurred.
-        // Radius is scaled by image size so a portrait at 2560 looks similar to
-        // one at 1024 — about 2.5% of the long edge gives a strong "out of focus"
-        // smear without leaking detail through.
+        // original via the mask so only the subject region is blurred.
+        // Radius is scaled by image size — about 2.5% of the long edge gives
+        // a strong "out of focus" smear without leaking detail through.
         let blurRadius = max(20.0, Double(max(extent.width, extent.height)) * 0.025)
         let clamped = originalCIImage.clampedToExtent()
         let blurFilter = CIFilter.gaussianBlur()
@@ -76,12 +75,25 @@ actor BackgroundRemover {
         blurFilter.radius = Float(blurRadius)
         let blurred = blurFilter.outputImage?.cropped(to: extent) ?? originalCIImage
 
+        // Backdrop mask: dilate the foreground mask significantly so the blur
+        // region extends beyond the actual silhouette. This covers two cases
+        // the foreground mask alone misses: (a) interior holes from
+        // probabilistic Vision output (the "swiss cheese" effect — through
+        // those holes the unblurred original would leak the subject), and
+        // (b) edge feathering, where the silhouette band would otherwise
+        // show a sharp original/blurred boundary right at the foreground.
+        let dilateRadius = max(8.0, Double(max(extent.width, extent.height)) * 0.015)
+        let backdropDilate = CIFilter.morphologyMaximum()
+        backdropDilate.inputImage = maskCIImage
+        backdropDilate.radius = Float(dilateRadius)
+        let backdropMask = backdropDilate.outputImage?.cropped(to: extent) ?? maskCIImage
+
         // blendWithMask: where mask is opaque (subject), show inputImage (blurred);
         // where mask is transparent (background), show backgroundImage (original).
         let bgFilter = CIFilter.blendWithMask()
         bgFilter.inputImage = blurred
         bgFilter.backgroundImage = originalCIImage
-        bgFilter.maskImage = maskCIImage
+        bgFilter.maskImage = backdropMask
 
         let backdropImage: UIImage? = {
             guard let outputCIImage = bgFilter.outputImage,
@@ -200,36 +212,40 @@ actor BackgroundRemover {
     private static func refineMask(_ mask: CIImage) -> CIImage {
         let extent = mask.extent
 
-        // Closing radius is small but not microscopic — large enough to fill
-        // typical Vision interior noise without erasing legitimate small gaps
-        // (e.g. between fingers). 5px in mask space is invisible on the final
-        // composite at viewing distances.
+        // Closing radius needs to be big enough to fill the medium-sized
+        // interior holes Vision returns on stylized inputs. 10px in mask
+        // space closes ~20px-diameter holes — large enough to bridge typical
+        // probabilistic gaps without erasing legitimate features (e.g.
+        // between fingers).
         let dilate = CIFilter.morphologyMaximum()
         dilate.inputImage = mask
-        dilate.radius = 5
+        dilate.radius = 10
         guard let dilated = dilate.outputImage else { return mask }
 
         let erode = CIFilter.morphologyMinimum()
         erode.inputImage = dilated
-        erode.radius = 5
+        erode.radius = 10
         guard let closed = erode.outputImage?.cropped(to: extent) else { return mask }
 
-        // Contrast around the 0.5 midpoint: contrast=15 leaves a transition
-        // band of roughly ±3% of full range. Wide enough that anti-aliased
-        // silhouette pixels still feather smoothly; narrow enough that
-        // probabilistic interior fog snaps to fully opaque.
+        // Contrast steepening with a bias toward keeping soft pixels as
+        // foreground. Vision's interior fog often sits in the 0.3–0.45 band;
+        // a symmetric curve around 0.5 would push those to background and
+        // create the "swiss cheese" hole pattern. brightness=+0.2 shifts the
+        // effective midpoint to ~0.3, so anything Vision was at-least-somewhat
+        // confident about (>~0.3) snaps to opaque while clear-background
+        // (<~0.3) snaps to transparent.
         let contrast = CIFilter.colorControls()
         contrast.inputImage = closed
-        contrast.contrast = 15.0
-        contrast.brightness = 0.0
+        contrast.contrast = 10.0
+        contrast.brightness = 0.2
         contrast.saturation = 1.0
         guard let contrasted = contrast.outputImage?.cropped(to: extent) else { return closed }
 
         // Clamp to [0, 1]. CI's working color space is extended-linear, so the
-        // contrast pump produces interior values ~8 and background values ~-7.
+        // contrast pump produces interior values >>1 and background values <0.
         // blendWithMask reads these literally as `out = mask*fg + (1-mask)*bg`,
-        // which over-amplifies the foreground (the "deep fried" look) when a
-        // mask value of 8 is multiplied through the RGB. Clamp resolves it.
+        // which over-amplifies the foreground when a mask value of 8 is
+        // multiplied through the RGB. Clamp resolves it.
         let clamp = CIFilter.colorClamp()
         clamp.inputImage = contrasted
         clamp.minComponents = CIVector(x: 0, y: 0, z: 0, w: 0)
