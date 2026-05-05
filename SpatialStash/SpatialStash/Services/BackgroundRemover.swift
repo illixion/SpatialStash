@@ -264,22 +264,21 @@ actor BackgroundRemover {
 
     /// Clean up Vision's soft probabilistic mask before compositing.
     ///
-    /// Three-step pipeline (kept light so soft alpha at the silhouette
-    /// survives — color decontamination handles the color halo separately):
+    /// Pipeline:
     ///  1. Morphological closing fills small holes left by Vision's
     ///     probabilistic interior output.
-    ///  2. Clamp to [0,1].
-    ///  3. **Flood-fill enclosed holes** — anything not reachable from the
+    ///  2. Mild contrast steepening (`contrast=3, brightness=+0.15`) firms
+    ///     up the subject interior so it composites opaquely. The previous
+    ///     aggressive binarization (`contrast=10, brightness=+0.2`) clipped
+    ///     thin features like ink lines on white pages; this gentler curve
+    ///     pushes alpha ≥ 0.5 to ~1.0 while preserving alpha ∈ (0.13, 0.5)
+    ///     as soft transitions for silhouette anti-aliasing and thin
+    ///     features. The decontamination kernel handles color contamination
+    ///     in that preserved soft band so it renders cleanly.
+    ///  3. Clamp to [0,1].
+    ///  4. **Flood-fill enclosed holes** — anything not reachable from the
     ///     image boundary via background pixels gets forced to opaque,
     ///     fixing large interior cavities morphology can't close.
-    ///
-    /// The previous version of this method also did aggressive contrast
-    /// steepening (binarizing the silhouette) to suppress soft cloud
-    /// patterns. That worked for thick subjects but clipped thin features
-    /// like ink lines on white backgrounds — an alpha=0.3 line pixel would
-    /// snap to fully transparent. With the decontamination kernel correcting
-    /// RGB at silhouette pixels, soft alpha renders cleanly against any
-    /// backdrop, so the binarization step is no longer necessary.
     private func refineMask(_ mask: CIImage) -> CIImage {
         let extent = mask.extent
 
@@ -293,11 +292,21 @@ actor BackgroundRemover {
         erode.radius = 10
         guard let closed = erode.outputImage?.cropped(to: extent) else { return mask }
 
+        let contrast = CIFilter.colorControls()
+        contrast.inputImage = closed
+        contrast.contrast = 3.0
+        contrast.brightness = 0.15
+        contrast.saturation = 1.0
+        guard let contrasted = contrast.outputImage?.cropped(to: extent) else { return closed }
+
+        // CIColorControls on a CI extended-linear context produces values
+        // outside [0,1]; clamp before the mask hits blendWithMask /
+        // decontamination kernel (which expect normalized alpha).
         let clamp = CIFilter.colorClamp()
-        clamp.inputImage = closed
+        clamp.inputImage = contrasted
         clamp.minComponents = CIVector(x: 0, y: 0, z: 0, w: 0)
         clamp.maxComponents = CIVector(x: 1, y: 1, z: 1, w: 1)
-        guard let clamped = clamp.outputImage?.cropped(to: extent) else { return closed }
+        guard let clamped = clamp.outputImage?.cropped(to: extent) else { return contrasted }
 
         return fillEnclosedHoles(clamped) ?? clamped
     }
