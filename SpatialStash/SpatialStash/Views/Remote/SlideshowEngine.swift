@@ -153,6 +153,25 @@ class SlideshowEngine {
     var enableDynamicBrightness: Bool
     var maxImageResolution: Int = 0
 
+    /// Diorama mode — when enabled, the engine generates an uncropped
+    /// foreground (background-removed) for each loaded image so the view
+    /// layer can pop the subject forward in z. Disabled by default; expensive
+    /// per-image processing.
+    var enableDiorama: Bool = false {
+        didSet { if !enableDiorama { clearDioramaForegrounds() } }
+    }
+
+    /// Uncropped foreground for the currently displayed post, when diorama
+    /// is enabled. Nil while still being generated or when diorama is off.
+    var currentForegroundImage: UIImage?
+
+    /// Uncropped foreground for the prefetched next post.
+    var nextForegroundImage: UIImage?
+
+    /// Tracks foreground generation tasks keyed by post id so we can cancel
+    /// in-flight work when navigating away or disabling diorama.
+    private var dioramaTasks: [Int: Task<Void, Never>] = [:]
+
     // MARK: - Content Provider & Tag List Manager
 
     var contentProvider: SlideshowContentProvider?
@@ -207,11 +226,51 @@ class SlideshowEngine {
 
     // MARK: - Init
 
-    init(delay: TimeInterval = 15, enableKenBurns: Bool = true, useAspectRatio: Bool = true, enableDynamicBrightness: Bool = true) {
+    init(delay: TimeInterval = 15, enableKenBurns: Bool = true, useAspectRatio: Bool = true, enableDynamicBrightness: Bool = true, enableDiorama: Bool = false) {
         self.delay = delay
         self.enableKenBurns = enableKenBurns
         self.useAspectRatio = useAspectRatio
         self.enableDynamicBrightness = enableDynamicBrightness
+        self.enableDiorama = enableDiorama
+    }
+
+    // MARK: - Diorama Foreground Processing
+
+    /// Kick off uncropped foreground generation for `post` using `image`.
+    /// Stores the result in `currentForegroundImage` if the post is still
+    /// the displayed one when generation finishes; otherwise stashes for the
+    /// prefetched next slot if it matches.
+    func generateDioramaForeground(post: RemotePost, image: UIImage, isCurrent: Bool) {
+        guard enableDiorama else { return }
+        // Avoid duplicate tasks for the same post.
+        if dioramaTasks[post.id] != nil { return }
+
+        let postId = post.id
+        let task = Task { @MainActor [weak self] in
+            defer { Task { @MainActor [weak self] in self?.dioramaTasks.removeValue(forKey: postId) } }
+            do {
+                guard let foreground = try await BackgroundRemover.shared.removeBackgroundUncropped(from: image) else {
+                    return
+                }
+                guard !Task.isCancelled, let self else { return }
+                if isCurrent, self.currentPost?.id == postId {
+                    self.currentForegroundImage = foreground
+                } else if self.nextPost?.id == postId {
+                    self.nextForegroundImage = foreground
+                }
+            } catch {
+                // Generation can fail on unsupported formats; silently skip.
+            }
+        }
+        dioramaTasks[postId] = task
+    }
+
+    /// Drop all in-flight diorama work and clear cached foregrounds.
+    func clearDioramaForegrounds() {
+        for (_, task) in dioramaTasks { task.cancel() }
+        dioramaTasks.removeAll()
+        currentForegroundImage = nil
+        nextForegroundImage = nil
     }
 
     // MARK: - State Transitions
@@ -622,6 +681,8 @@ class SlideshowEngine {
         gifConversionTask = nil
         currentImage = nil
         nextImage = nil
+        currentForegroundImage = nil
+        nextForegroundImage = nil
         currentPost = nil
         currentMediaType = .image
         isCurrentPostAnimatedGIF = false
@@ -771,6 +832,8 @@ class SlideshowEngine {
         hasDisplayedFirstMedia = true
         currentImage = nil
         nextImage = nil
+        currentForegroundImage = nil
+        nextForegroundImage = nil
         isTransitioning = false
         currentPost = post
         currentMediaType = .video(url)
@@ -844,6 +907,19 @@ class SlideshowEngine {
         lastAdvanceTime = Date()
         advanceDisplayDeadline()
 
+        // Promote prefetched diorama foreground (if any) to current; if not
+        // ready yet, kick off generation. nextForegroundImage is dropped here.
+        if enableDiorama && mediaType == .image {
+            currentForegroundImage = nextForegroundImage
+            nextForegroundImage = nil
+            if currentForegroundImage == nil {
+                generateDioramaForeground(post: post, image: image, isCurrent: true)
+            }
+        } else {
+            currentForegroundImage = nil
+            nextForegroundImage = nil
+        }
+
         // If still transitioning (nobody interrupted), move to displaying.
         // If state was changed (e.g. goToNextImage during crossfade), respect that.
         if state == .transitioning {
@@ -903,6 +979,12 @@ class SlideshowEngine {
                 guard !Task.isCancelled else { break }
                 prefetchedImages.append((post: post, image: result.image, url: imageURL))
                 AppLogger.remoteViewer.debug("Prefetched post \(post._id, privacy: .public) (\(self.prefetchedImages.count, privacy: .public)/\(Self.prefetchTarget, privacy: .public))")
+
+                // Pre-process diorama foreground for the upcoming post so the
+                // overlay is ready the moment it transitions in.
+                if enableDiorama {
+                    generateDioramaForeground(post: post, image: result.image, isCurrent: false)
+                }
             }
         }
 

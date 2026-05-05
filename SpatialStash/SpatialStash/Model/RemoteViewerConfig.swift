@@ -28,6 +28,7 @@ struct RemoteViewerConfig: Codable, Identifiable {
     var useAspectRatio: Bool = true
     var enableKenBurns: Bool = true
     var enableDynamicBrightness: Bool = true
+    var enableDiorama: Bool = false
     var transparentBackground: Bool = false
     var textSize: Double = 1.0
 
@@ -70,7 +71,7 @@ struct RemoteViewerConfig: Codable, Identifiable {
         case id, name, savedDate
         case apiEndpoint, wsDeviceId, accessToken
         case delay, showClock, showSensors, useAspectRatio, enableKenBurns
-        case enableDynamicBrightness
+        case enableDynamicBrightness, enableDiorama
         case transparentBackground, textSize
         case homeAssistantURL
         // Decoded silently from older saved configs and never re-encoded.
@@ -95,6 +96,7 @@ struct RemoteViewerConfig: Codable, Identifiable {
         useAspectRatio = try container.decodeIfPresent(Bool.self, forKey: .useAspectRatio) ?? true
         enableKenBurns = try container.decodeIfPresent(Bool.self, forKey: .enableKenBurns) ?? true
         enableDynamicBrightness = try container.decodeIfPresent(Bool.self, forKey: .enableDynamicBrightness) ?? true
+        enableDiorama = try container.decodeIfPresent(Bool.self, forKey: .enableDiorama) ?? false
         transparentBackground = try container.decodeIfPresent(Bool.self, forKey: .transparentBackground) ?? false
         textSize = try container.decodeIfPresent(Double.self, forKey: .textSize) ?? 1.0
 
@@ -128,6 +130,7 @@ struct RemoteViewerConfig: Codable, Identifiable {
         try container.encode(useAspectRatio, forKey: .useAspectRatio)
         try container.encode(enableKenBurns, forKey: .enableKenBurns)
         try container.encode(enableDynamicBrightness, forKey: .enableDynamicBrightness)
+        try container.encode(enableDiorama, forKey: .enableDiorama)
         try container.encode(transparentBackground, forKey: .transparentBackground)
         try container.encode(textSize, forKey: .textSize)
 

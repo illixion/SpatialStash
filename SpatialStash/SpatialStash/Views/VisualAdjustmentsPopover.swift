@@ -58,6 +58,21 @@ struct VisualAdjustmentsPopover: View {
     /// Callback for flip toggle
     var onToggleFlip: (() -> Void)? = nil
 
+    // MARK: - Diorama
+
+    /// Whether to show the diorama enhancement button (photo viewer only —
+    /// for slideshows the toggle lives in the Viewer tab as a persistent display option).
+    var showDiorama: Bool = false
+
+    /// Whether diorama mode is currently engaged on this image.
+    var isDioramaActive: Bool = false
+
+    /// Whether diorama foreground generation is in progress.
+    var isProcessingDiorama: Bool = false
+
+    /// Callback for diorama toggle
+    var onToggleDiorama: (() -> Void)? = nil
+
     // MARK: - Remote Viewer Display Toggles
 
     /// Optional remote viewer model — when provided, shows a "Viewer" tab
@@ -97,8 +112,8 @@ struct VisualAdjustmentsPopover: View {
     @ViewBuilder
     private var currentTabContent: some View {
         VStack(spacing: 14) {
-            // Action buttons row (auto-enhance, background removal, flip)
-            if showAutoEnhance || showBackgroundRemoval || showFlip {
+            // Action buttons row (auto-enhance, background removal, diorama, flip)
+            if showAutoEnhance || showBackgroundRemoval || showDiorama || showFlip {
                 HStack(spacing: 0) {
                     if showAutoEnhance {
                         actionToggle(
@@ -123,6 +138,17 @@ struct VisualAdjustmentsPopover: View {
                             isProcessing: backgroundRemovalState == .removing
                         ) {
                             onToggleBackgroundRemoval?()
+                        }
+                    }
+
+                    if showDiorama {
+                        actionToggle(
+                            icon: "spatial.capture.on.hexagon",
+                            tooltip: isDioramaActive ? "Disable Diorama" : "Diorama",
+                            isActive: isDioramaActive,
+                            isProcessing: isProcessingDiorama
+                        ) {
+                            onToggleDiorama?()
                         }
                     }
 
@@ -274,6 +300,8 @@ struct VisualAdjustmentsPopover: View {
                 Toggle("Show Sensors", isOn: $model.displayShowSensors)
 
                 Toggle("Ken Burns Effect", isOn: $model.displayEnableKenBurns)
+
+                Toggle("Diorama (Foreground Pop-Out)", isOn: $model.displayEnableDiorama)
 
                 Toggle("Dynamic Brightness", isOn: $model.displayEnableDynamicBrightness)
 

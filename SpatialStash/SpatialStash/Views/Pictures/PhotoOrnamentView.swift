@@ -411,6 +411,14 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
                     withAnimation(.easeInOut(duration: 0.3)) {
                         windowModel.toggleFlip()
                     }
+                },
+                showDiorama: !windowModel.isAnimatedImage && !windowModel.is3DMode && !windowModel.isRealityKitDisplay,
+                isDioramaActive: windowModel.currentAdjustments.isDiorama,
+                isProcessingDiorama: windowModel.isProcessingDiorama,
+                onToggleDiorama: {
+                    Task {
+                        await windowModel.toggleDiorama()
+                    }
                 }
             )
         }

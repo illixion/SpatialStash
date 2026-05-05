@@ -216,6 +216,21 @@ struct RemoteViewerWindowView: View {
                     .offset(useKenBurns ? kenBurnsOffset : .zero)
                     .opacity(model.isTransitioning ? 0 : 1)
                     .clipped()
+
+                // Diorama overlay — masked foreground popped forward in z so
+                // the subject floats in front of the backdrop. Mirrors the
+                // Ken Burns transform so the parallax stays consistent.
+                if model.enableDiorama, let foreground = model.currentForegroundImage {
+                    Image(uiImage: foreground)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .scaleEffect(useKenBurns ? kenBurnsScale : 1.0)
+                        .offset(useKenBurns ? kenBurnsOffset : .zero)
+                        .opacity(model.isTransitioning ? 0 : 1)
+                        .clipped()
+                        .offset(z: 40)
+                        .allowsHitTesting(false)
+                }
             }
 
             // Failure placeholder — shown when the auto-advance couldn't produce
@@ -235,6 +250,15 @@ struct RemoteViewerWindowView: View {
                     .aspectRatio(contentMode: .fit)
                     .opacity(1)
                     .clipped()
+
+                if model.enableDiorama, let foreground = model.nextForegroundImage {
+                    Image(uiImage: foreground)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .clipped()
+                        .offset(z: 40)
+                        .allowsHitTesting(false)
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

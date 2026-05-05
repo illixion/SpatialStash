@@ -167,6 +167,55 @@ actor BackgroundRemovalCache {
         saveImage(image, for: url)
     }
 
+    // MARK: - Diorama Foreground (uncropped)
+
+    /// Cache key for the uncropped foreground variant used by diorama mode.
+    /// Distinct namespace from the standard cropped variant — separate file.
+    private func dioramaCacheFileURL(for url: URL) -> URL {
+        let urlString = url.absoluteString + ":dioramaForeground"
+        let data = Data(urlString.utf8)
+        var hash = [UInt8](repeating: 0, count: 32)
+        data.withUnsafeBytes { bytes in
+            _ = CC_SHA256(bytes.baseAddress, CC_LONG(data.count), &hash)
+        }
+        let key = hash.map { String(format: "%02x", $0) }.joined()
+        return cacheDirectory.appendingPathComponent(key + ".heic")
+    }
+
+    /// Whether an uncropped foreground for `url` is on disk.
+    func isDioramaForegroundCached(url: URL) -> Bool {
+        fileManager.fileExists(atPath: dioramaCacheFileURL(for: url).path)
+    }
+
+    /// Load the uncropped foreground HEIC bytes for `url`, or nil.
+    func loadDioramaForegroundData(for url: URL) -> Data? {
+        let fileURL = dioramaCacheFileURL(for: url)
+        guard fileManager.fileExists(atPath: fileURL.path),
+              let data = try? Data(contentsOf: fileURL, options: .mappedIfSafe) else {
+            return nil
+        }
+        try? fileManager.setAttributes([.modificationDate: Date()], ofItemAtPath: fileURL.path)
+        return data
+    }
+
+    /// Persist an uncropped foreground (full-frame, transparent background)
+    /// to the cache. Used when diorama mode generates the foreground.
+    func saveDioramaForeground(_ image: UIImage, for url: URL) {
+        let fileURL = dioramaCacheFileURL(for: url)
+        guard let heicData = encodeHeicData(from: image) else {
+            AppLogger.diskCache.warning("Failed to encode diorama foreground as HEIC")
+            return
+        }
+        do {
+            try heicData.write(to: fileURL)
+            Task { [self] in
+                await self.cleanupIfNeeded()
+            }
+        } catch {
+            AppLogger.diskCache.error("Failed to save diorama foreground: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
     /// Get total cache size in bytes
     private func getCacheSize() -> Int64 {
         guard let enumerator = fileManager.enumerator(

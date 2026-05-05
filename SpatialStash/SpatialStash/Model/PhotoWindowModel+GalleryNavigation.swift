@@ -56,6 +56,7 @@ extension PhotoWindowModel {
         contentEntity.components.remove(ImagePresentationComponent.self)
         clearAutoEnhanceState()
         clearBackgroundRemovalState()
+        clearDioramaState()
 
         is3DMode = false
         desiredViewingMode = .mono
@@ -98,6 +99,14 @@ extension PhotoWindowModel {
 
         await restoreAdjustments()
         await applyPendingViewingMode()
+
+        // Persisted diorama enhancement — load the uncropped foreground in
+        // the background so the overlay appears as soon as it's ready.
+        if currentAdjustments.isDiorama {
+            Task { @MainActor [weak self] in
+                await self?.ensureDioramaForegroundLoaded()
+            }
+        }
     }
 
     /// Navigate to next image in gallery

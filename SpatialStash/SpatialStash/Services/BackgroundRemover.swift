@@ -27,6 +27,31 @@ actor BackgroundRemover {
 
     private init() {}
 
+    /// Remove the background from a UIImage and return the foreground at the
+    /// source's original frame size (no transparent-margin cropping). Used by
+    /// diorama mode where the foreground must align with the unmodified
+    /// backdrop via z-offset layering.
+    func removeBackgroundUncropped(from image: UIImage) async throws -> UIImage? {
+        guard let sourceCG = image.cgImage else {
+            AppLogger.backgroundRemover.warning("No CGImage available for uncropped background removal")
+            return nil
+        }
+
+        let cgImage = Self.downsampleIfNeeded(sourceCG)
+        let (maskCIImage, originalCIImage) = try generateForegroundMask(cgImage: cgImage)
+
+        let filter = CIFilter.blendWithMask()
+        filter.inputImage = originalCIImage
+        filter.backgroundImage = CIImage.empty()
+        filter.maskImage = maskCIImage
+
+        guard let outputCIImage = filter.outputImage,
+              let outputCGImage = ciContext.createCGImage(outputCIImage, from: originalCIImage.extent) else {
+            return nil
+        }
+        return UIImage(cgImage: outputCGImage, scale: image.scale, orientation: image.imageOrientation)
+    }
+
     /// Remove the background from a UIImage, automatically cropping transparent space.
     /// Returns a new UIImage with transparent background and no fully transparent margins.
     func removeBackground(from image: UIImage) async throws -> UIImage? {

@@ -79,7 +79,8 @@ class RemoteViewerModel: SlideshowEngine {
             delay: config.delay,
             enableKenBurns: config.enableKenBurns,
             useAspectRatio: config.useAspectRatio,
-            enableDynamicBrightness: config.enableDynamicBrightness
+            enableDynamicBrightness: config.enableDynamicBrightness,
+            enableDiorama: config.enableDiorama
         )
 
         // blockedPosts / blockedTags hydrate from the server's `blocked`
@@ -227,6 +228,23 @@ class RemoteViewerModel: SlideshowEngine {
             if config.enableDynamicBrightness != newValue {
                 config.enableDynamicBrightness = newValue
                 onConfigChanged?(config)
+            }
+        }
+    }
+
+    var displayEnableDiorama: Bool {
+        get { enableDiorama }
+        set {
+            enableDiorama = newValue
+            if config.enableDiorama != newValue {
+                config.enableDiorama = newValue
+                onConfigChanged?(config)
+            }
+            // When toggled on while a post is already displayed, kick off
+            // foreground generation so the overlay appears without waiting
+            // for the next slide to advance.
+            if newValue, let post = currentPost, let image = currentImage, currentForegroundImage == nil {
+                generateDioramaForeground(post: post, image: image, isCurrent: true)
             }
         }
     }

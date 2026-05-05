@@ -120,6 +120,18 @@ class PhotoWindowModel {
     /// Task for background removal (tracked so cleanup can cancel it)
     var backgroundRemovalTask: Task<Void, Never>?
 
+    // MARK: - Diorama State
+
+    /// Uncropped foreground (full source frame, transparent background) used
+    /// for the diorama overlay. Loaded from cache or generated on demand.
+    var dioramaForegroundImage: UIImage? = nil
+
+    /// Whether diorama foreground generation is currently running.
+    var isProcessingDiorama: Bool = false
+
+    /// Task for diorama foreground generation (cancellable on cleanup / image switch).
+    var dioramaTask: Task<Void, Never>?
+
     // MARK: - Visual Adjustments State
 
     /// Per-image visual adjustments (Current tab values)
@@ -440,6 +452,14 @@ class PhotoWindowModel {
             }
             self.isInitialLoadInProgress = false
             await self.applyPendingViewingMode()
+
+            // Persisted diorama enhancement — load the uncropped foreground in
+            // the background so the overlay appears as soon as it's ready.
+            if self.currentAdjustments.isDiorama {
+                Task { @MainActor [weak self] in
+                    await self?.ensureDioramaForegroundLoaded()
+                }
+            }
         }
     }
 
@@ -872,6 +892,7 @@ class PhotoWindowModel {
         isShowingAdjustmentPreview = false
         clearAutoEnhanceState()
         clearBackgroundRemovalState()
+        clearDioramaState()
 
         // Only remove the component if generation is NOT active.
         // If active, the entity retains the component until ARC releases both.

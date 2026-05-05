@@ -76,6 +76,28 @@ struct PhotoDisplayView: View {
                 .scaleEffect(x: windowModel.isImageFlipped ? -1 : 1, y: 1)
                 .offset(x: dragOffset)
 
+            // Diorama overlay — masked foreground popped forward in z so the
+            // subject appears to float in front of the backdrop. Pure visionOS
+            // spatial layering, no RealityKit. Only renders for static 2D
+            // photos (skips animated GIFs and immersive 3D modes).
+            if windowModel.currentAdjustments.isDiorama,
+               let foreground = windowModel.dioramaForegroundImage,
+               !windowModel.is3DMode,
+               !windowModel.isViewingSpatial3DImmersive,
+               !windowModel.isAnimatedGIF {
+                Image(uiImage: foreground)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .brightness(windowModel.effectiveAdjustments.brightness)
+                    .contrast(windowModel.effectiveAdjustments.contrast)
+                    .saturation(windowModel.effectiveAdjustments.saturation)
+                    .opacity(windowModel.effectiveAdjustments.opacity)
+                    .scaleEffect(x: windowModel.isImageFlipped ? -1 : 1, y: 1)
+                    .offset(x: dragOffset)
+                    .offset(z: 40)
+                    .allowsHitTesting(false)
+            }
+
             // 3D restore prompt pill at the bottom
             if windowModel.showAutoRestorePrompt {
                 VStack {
