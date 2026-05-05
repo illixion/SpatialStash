@@ -111,7 +111,7 @@ actor BackgroundRemover {
                 AppLogger.backgroundRemover.warning("Failed to render diorama foreground CGImage")
                 return nil
             }
-            AppLogger.backgroundRemover.info(
+            AppLogger.backgroundRemover.debug(
                 "Generated diorama foreground: \(outputCGImage.width, privacy: .public)×\(outputCGImage.height, privacy: .public), alphaInfo=\(String(describing: outputCGImage.alphaInfo), privacy: .public)"
             )
             return UIImage(cgImage: outputCGImage, scale: image.scale, orientation: image.imageOrientation)
