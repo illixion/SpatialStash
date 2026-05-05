@@ -52,6 +52,27 @@ actor BackgroundRemover {
         }
     """)
 
+    /// Mask firming kernel. Vision returns medium-confidence (0.3–0.6) alpha
+    /// across the subject interior on stylized digital art — too transparent
+    /// for the diorama foreground to composite opaquely against the blurred
+    /// backdrop (the blur shows through the foreground at 40-70%). A linear
+    /// CIColorControls curve can't fix this without cropping everything
+    /// below 0.4 (the previous "stairstep" thin-feature loss). Smoothstep
+    /// has the right shape: hard ceiling at the high end, hard floor at the
+    /// low end, cubic interpolation between for clean silhouette transitions.
+    ///
+    /// Edges (0.05, 0.4): values ≥ 0.4 → fully opaque (subject interior
+    /// firms up regardless of Vision's confidence), values ≤ 0.05 → fully
+    /// transparent (clean background, no haze), values in between get a
+    /// smooth cubic ramp that preserves silhouette anti-aliasing and keeps
+    /// thin features (typically α ∈ 0.15–0.35) visible at proportional alpha.
+    private static let maskFirmingKernel: CIColorKernel? = CIColorKernel(source: """
+        kernel vec4 firmMask(__sample mask) {
+            float a = smoothstep(0.05, 0.4, mask.r);
+            return vec4(vec3(a), 1.0);
+        }
+    """)
+
     private init() {}
 
     /// Remove the background from a UIImage and return the foreground at the
@@ -267,16 +288,13 @@ actor BackgroundRemover {
     /// Pipeline:
     ///  1. Morphological closing fills small holes left by Vision's
     ///     probabilistic interior output.
-    ///  2. Mild contrast steepening (`contrast=3, brightness=+0.15`) firms
-    ///     up the subject interior so it composites opaquely. The previous
-    ///     aggressive binarization (`contrast=10, brightness=+0.2`) clipped
-    ///     thin features like ink lines on white pages; this gentler curve
-    ///     pushes alpha ≥ 0.5 to ~1.0 while preserving alpha ∈ (0.13, 0.5)
-    ///     as soft transitions for silhouette anti-aliasing and thin
-    ///     features. The decontamination kernel handles color contamination
-    ///     in that preserved soft band so it renders cleanly.
-    ///  3. Clamp to [0,1].
-    ///  4. **Flood-fill enclosed holes** — anything not reachable from the
+    ///  2. **Smoothstep firming** (`maskFirmingKernel`) pushes Vision's
+    ///     medium-confidence interior pixels (0.4+) to fully opaque while
+    ///     preserving silhouette anti-aliasing and thin features below 0.4.
+    ///     Replaces the prior `CIColorControls` linear curve, which couldn't
+    ///     simultaneously firm up 0.5-input-to-opaque AND keep thin
+    ///     features intact — the linear shape has wrong slope for this.
+    ///  3. **Flood-fill enclosed holes** — anything not reachable from the
     ///     image boundary via background pixels gets forced to opaque,
     ///     fixing large interior cavities morphology can't close.
     private func refineMask(_ mask: CIImage) -> CIImage {
@@ -292,23 +310,16 @@ actor BackgroundRemover {
         erode.radius = 10
         guard let closed = erode.outputImage?.cropped(to: extent) else { return mask }
 
-        let contrast = CIFilter.colorControls()
-        contrast.inputImage = closed
-        contrast.contrast = 3.0
-        contrast.brightness = 0.15
-        contrast.saturation = 1.0
-        guard let contrasted = contrast.outputImage?.cropped(to: extent) else { return closed }
+        // Smoothstep firming. Output already in [0,1] (smoothstep saturates).
+        let firmed: CIImage
+        if let kernel = Self.maskFirmingKernel,
+           let firmedOutput = kernel.apply(extent: extent, arguments: [closed]) {
+            firmed = firmedOutput
+        } else {
+            firmed = closed
+        }
 
-        // CIColorControls on a CI extended-linear context produces values
-        // outside [0,1]; clamp before the mask hits blendWithMask /
-        // decontamination kernel (which expect normalized alpha).
-        let clamp = CIFilter.colorClamp()
-        clamp.inputImage = contrasted
-        clamp.minComponents = CIVector(x: 0, y: 0, z: 0, w: 0)
-        clamp.maxComponents = CIVector(x: 1, y: 1, z: 1, w: 1)
-        guard let clamped = clamp.outputImage?.cropped(to: extent) else { return contrasted }
-
-        return fillEnclosedHoles(clamped) ?? clamped
+        return fillEnclosedHoles(firmed) ?? firmed
     }
 
     /// Fill mask regions that aren't reachable from the image boundary via
