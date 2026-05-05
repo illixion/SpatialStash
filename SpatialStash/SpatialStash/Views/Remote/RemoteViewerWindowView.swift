@@ -217,9 +217,10 @@ struct RemoteViewerWindowView: View {
                     .opacity(model.isTransitioning ? 0 : 1)
                     .clipped()
 
-                // Diorama backdrop — replaces the visible base in the subject
-                // region with a blurred fill so the floating foreground doesn't
-                // reveal a doubled silhouette when viewed off-axis.
+                // Diorama backdrop — pushed behind the window plane (z=-40) so
+                // ornament popovers and menus at z=0 aren't visually occluded
+                // by the foreground. Subject region is blurred so the
+                // foreground silhouette doesn't reveal a doubled outline.
                 if model.enableDiorama, let backdrop = model.currentBackdropImage {
                     Image(uiImage: backdrop)
                         .resizable()
@@ -228,10 +229,13 @@ struct RemoteViewerWindowView: View {
                         .offset(useKenBurns ? kenBurnsOffset : .zero)
                         .opacity(model.isTransitioning ? 0 : 1)
                         .clipped()
+                        .offset(z: -40)
                         .allowsHitTesting(false)
                 }
 
-                // Diorama foreground — masked subject popped forward in z.
+                // Diorama foreground — at the window plane. Parallax comes
+                // from the backdrop being pushed behind, not from the
+                // foreground popping out, so menus render alongside cleanly.
                 if model.enableDiorama, let foreground = model.currentForegroundImage {
                     Image(uiImage: foreground)
                         .resizable()
@@ -240,7 +244,6 @@ struct RemoteViewerWindowView: View {
                         .offset(useKenBurns ? kenBurnsOffset : .zero)
                         .opacity(model.isTransitioning ? 0 : 1)
                         .clipped()
-                        .offset(z: 40)
                         .allowsHitTesting(false)
                 }
             }
@@ -268,6 +271,7 @@ struct RemoteViewerWindowView: View {
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .clipped()
+                        .offset(z: -40)
                         .allowsHitTesting(false)
                 }
                 if model.enableDiorama, let foreground = model.nextForegroundImage {
@@ -275,7 +279,6 @@ struct RemoteViewerWindowView: View {
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .clipped()
-                        .offset(z: 40)
                         .allowsHitTesting(false)
                 }
             }

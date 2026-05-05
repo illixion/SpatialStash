@@ -76,11 +76,12 @@ struct PhotoDisplayView: View {
                 .scaleEffect(x: windowModel.isImageFlipped ? -1 : 1, y: 1)
                 .offset(x: dragOffset)
 
-            // Diorama layers — backdrop covers the original with the subject
-            // region heavily blurred (so off-axis viewing doesn't reveal a
-            // doubled silhouette behind the floating foreground), and the
-            // foreground rides at z=40 in front. Hidden while a popover is
-            // open so it doesn't occlude the adjustment menu.
+            // Diorama layers — push the backdrop behind the window plane and
+            // keep the foreground at z=0. Same 40pt parallax between layers,
+            // but the foreground now sits at the same depth as ornament
+            // popovers and menus (More, 3D, Resolution) so they're not
+            // visually occluded. The popover-open hide is still useful for
+            // the adjustments popover that anchors directly on the ornament.
             if windowModel.currentAdjustments.isDiorama,
                !windowModel.hasOpenPopover,
                !windowModel.is3DMode,
@@ -96,6 +97,7 @@ struct PhotoDisplayView: View {
                         .opacity(windowModel.effectiveAdjustments.opacity)
                         .scaleEffect(x: windowModel.isImageFlipped ? -1 : 1, y: 1)
                         .offset(x: dragOffset)
+                        .offset(z: -40)
                         .allowsHitTesting(false)
                 }
                 if let foreground = windowModel.dioramaForegroundImage {
@@ -108,7 +110,6 @@ struct PhotoDisplayView: View {
                         .opacity(windowModel.effectiveAdjustments.opacity)
                         .scaleEffect(x: windowModel.isImageFlipped ? -1 : 1, y: 1)
                         .offset(x: dragOffset)
-                        .offset(z: 40)
                         .allowsHitTesting(false)
                 }
             }
