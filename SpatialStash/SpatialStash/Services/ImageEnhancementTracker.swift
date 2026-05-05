@@ -15,6 +15,7 @@ enum ViewingModePreference: String {
     case backgroundRemoved
     case autoEnhanced
     case backgroundRemovedAutoEnhanced
+    case diorama
 }
 
 actor ImageEnhancementTracker {

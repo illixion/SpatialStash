@@ -189,7 +189,7 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
             }
             .font(.title3)
             .padding(6)
-            .background(is3DModeActive ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
+            .background(isAnyAlternateModeActive ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
         }
         .buttonStyle(.borderless)
         .disabled(windowModel.isAnimatedImage)
@@ -233,7 +233,21 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
                     }
                 }
 
-                if is3DModeActive {
+                Divider()
+
+                popoverMenuButton(
+                    title: "Diorama",
+                    icon: "spatial.capture.on.hexagon",
+                    isChecked: windowModel.isDioramaMode,
+                    isDisabled: windowModel.isAnimatedImage || windowModel.isRealityKitDisplay || windowModel.isProcessingDiorama
+                ) {
+                    show3DPopover = false
+                    Task {
+                        await windowModel.toggleDiorama()
+                    }
+                }
+
+                if isAnyAlternateModeActive {
                     Divider()
 
                     popoverMenuButton(
@@ -243,7 +257,12 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
                     ) {
                         show3DPopover = false
                         Task {
-                            await windowModel.switchToViewingMode(.mono)
+                            if windowModel.isDioramaMode {
+                                await windowModel.setDioramaMode(false)
+                            }
+                            if windowModel.desiredViewingMode != .mono {
+                                await windowModel.switchToViewingMode(.mono)
+                            }
                         }
                     }
                 }
@@ -256,7 +275,12 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
         windowModel.desiredViewingMode == .spatial3D || windowModel.desiredViewingMode == .spatial3DImmersive
     }
 
+    private var isAnyAlternateModeActive: Bool {
+        is3DModeActive || windowModel.isDioramaMode
+    }
+
     private var threeDMenuIcon: String {
+        if windowModel.isDioramaMode { return "spatial.capture.on.hexagon" }
         switch windowModel.desiredViewingMode {
         case .spatial3D: return "spatial.capture.fill"
         case .spatial3DImmersive: return "inset.filled.pano"
@@ -428,14 +452,6 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
                 onToggleFlip: {
                     withAnimation(.easeInOut(duration: 0.3)) {
                         windowModel.toggleFlip()
-                    }
-                },
-                showDiorama: !windowModel.isAnimatedImage && !windowModel.is3DMode && !windowModel.isRealityKitDisplay,
-                isDioramaActive: windowModel.currentAdjustments.isDiorama,
-                isProcessingDiorama: windowModel.isProcessingDiorama,
-                onToggleDiorama: {
-                    Task {
-                        await windowModel.toggleDiorama()
                     }
                 }
             )

@@ -134,6 +134,11 @@ class PhotoWindowModel {
     /// Whether diorama foreground generation is currently running.
     var isProcessingDiorama: Bool = false
 
+    /// Whether the photo viewer is currently in diorama viewing mode. Treated
+    /// as a sibling viewing mode to spatial 3D / immersive 3D — mutually
+    /// exclusive with both. Persisted via `ViewingModePreference.diorama`.
+    var isDioramaMode: Bool = false
+
     /// Task for diorama foreground generation (cancellable on cleanup / image switch).
     var dioramaTask: Task<Void, Never>?
 
@@ -222,6 +227,42 @@ class PhotoWindowModel {
         await ImageEnhancementTracker.shared.setAdjustments(
             url: imageURL, adjustments: currentAdjustments.isModified ? currentAdjustments : nil
         )
+    }
+
+    /// Apply the user's default viewing mode (Settings → Display) when an
+    /// image opens without a remembered per-image mode and no auto-restore
+    /// is in flight. No-op for animated images, in-progress 3D modes, or when
+    /// any enhancement / remembered mode is already active.
+    func applyDefaultViewingModeIfNeeded() async {
+        guard !isAnimatedImage else { return }
+        guard backgroundRemovalState == .original else { return }
+        guard !showAutoRestorePrompt else { return }
+        guard !isDioramaMode, !is3DMode, desiredViewingMode == .mono else { return }
+        guard !currentAdjustments.isAutoEnhanced else { return }
+
+        // If the user has a remembered mode for this image, respect it instead
+        // of overriding with the default.
+        if appModel.rememberImageEnhancements,
+           let lastMode = await ImageEnhancementTracker.shared.lastViewingMode(url: imageURL) {
+            if lastMode == .diorama {
+                await setDioramaMode(true)
+                return
+            }
+            // Other modes are handled by autoRestorePreviousEnhancement; don't
+            // override them here.
+            if lastMode != .mono { return }
+        }
+
+        switch appModel.defaultImageViewingMode {
+        case .mono:
+            return
+        case .spatial3D:
+            await switchToViewingMode(.spatial3D)
+        case .spatial3DImmersive:
+            await switchToViewingMode(.spatial3DImmersive)
+        case .diorama:
+            await setDioramaMode(true)
+        }
     }
 
     /// Restore saved visual adjustments (slider values) for the current image.
@@ -472,13 +513,8 @@ class PhotoWindowModel {
             self.isInitialLoadInProgress = false
             await self.applyPendingViewingMode()
 
-            // Persisted diorama enhancement — load the uncropped foreground in
-            // the background so the overlay appears as soon as it's ready.
-            if self.currentAdjustments.isDiorama {
-                Task { @MainActor [weak self] in
-                    await self?.ensureDioramaForegroundLoaded()
-                }
-            }
+            // Apply default viewing mode if nothing else has been restored.
+            await self.applyDefaultViewingModeIfNeeded()
         }
     }
 

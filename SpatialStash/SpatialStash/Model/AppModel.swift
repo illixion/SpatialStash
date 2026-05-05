@@ -537,6 +537,16 @@ class AppModel {
         }
     }
 
+    /// Default viewing mode applied when an image is opened and no per-image
+    /// remembered mode applies. Choices mirror the photo viewer's 3D menu.
+    var defaultImageViewingMode: DefaultImageViewingMode {
+        didSet {
+            if defaultImageViewingMode != oldValue {
+                UserDefaults.standard.set(defaultImageViewingMode.rawValue, forKey: "defaultImageViewingMode")
+            }
+        }
+    }
+
     /// When true, previously converted images auto-restore into spatial 3D mode.
     /// This only applies when rememberImageEnhancements is enabled.
     var autoRestoreSpatial3D: Bool {
@@ -723,6 +733,15 @@ class AppModel {
             ? UserDefaults.standard.bool(forKey: "rememberImageEnhancements")
             : true
 
+        // Load default image viewing mode (default: 2D / mono)
+        let loadedDefaultImageViewingMode: DefaultImageViewingMode
+        if let raw = UserDefaults.standard.string(forKey: "defaultImageViewingMode"),
+           let mode = DefaultImageViewingMode(rawValue: raw) {
+            loadedDefaultImageViewingMode = mode
+        } else {
+            loadedDefaultImageViewingMode = .mono
+        }
+
         // Load 3D auto-restore (default: true)
         let loadedAutoRestoreSpatial3D = UserDefaults.standard.object(forKey: "autoRestoreSpatial3D") != nil
             ? UserDefaults.standard.bool(forKey: "autoRestoreSpatial3D")
@@ -763,6 +782,7 @@ class AppModel {
         self.openMediaInNewWindows = loadedOpenMediaInNewWindows
         self.rememberImageEnhancements = loadedRememberImageEnhancements
         self.autoRestoreSpatial3D = loadedAutoRestoreSpatial3D
+        self.defaultImageViewingMode = loadedDefaultImageViewingMode
         self.enableRemoteViewer = loadedEnableRemoteViewer
         self.showDebugConsole = loadedShowDebugConsole
         self.respectMemoryAlerts = loadedRespectMemoryAlerts

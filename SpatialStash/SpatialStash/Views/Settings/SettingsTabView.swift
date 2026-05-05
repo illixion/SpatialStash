@@ -63,6 +63,13 @@ struct SettingsTabView: View {
                         Toggle("Auto-Restore 3D", isOn: $appModel.autoRestoreSpatial3D)
                     }
 
+                    Picker("Default Viewing Mode", selection: $appModel.defaultImageViewingMode) {
+                        ForEach(DefaultImageViewingMode.allCases) { mode in
+                            Text(mode.label).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.menu)
+
                     Picker("Max Image Resolution", selection: $appModel.maxImageResolution) {
                         ForEach(AppModel.maxImageResolutionOptions, id: \.value) { option in
                             Text(option.label).tag(option.value)

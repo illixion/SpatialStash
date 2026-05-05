@@ -28,11 +28,7 @@ struct VisualAdjustments: Codable, Equatable {
     /// Whether CIImage auto-enhancement filters have been applied (photos only)
     var isAutoEnhanced: Bool = false
 
-    /// Whether diorama mode is enabled — renders the masked foreground floating
-    /// in front of the unmodified backdrop via z-offset layering.
-    var isDiorama: Bool = false
-
-    /// Decode with backward compatibility — older persisted data lacks the opacity/sharpen/isDiorama fields
+    /// Decode with backward compatibility — older persisted data lacks the opacity/sharpen fields
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         brightness = try container.decodeIfPresent(Double.self, forKey: .brightness) ?? 0.0
@@ -41,18 +37,17 @@ struct VisualAdjustments: Codable, Equatable {
         opacity = try container.decodeIfPresent(Double.self, forKey: .opacity) ?? 1.0
         sharpen = try container.decodeIfPresent(Double.self, forKey: .sharpen) ?? 0.0
         isAutoEnhanced = try container.decodeIfPresent(Bool.self, forKey: .isAutoEnhanced) ?? false
-        isDiorama = try container.decodeIfPresent(Bool.self, forKey: .isDiorama) ?? false
     }
 
     init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case brightness, contrast, saturation, opacity, sharpen, isAutoEnhanced, isDiorama
+        case brightness, contrast, saturation, opacity, sharpen, isAutoEnhanced
     }
 
     /// Whether any adjustment differs from the neutral defaults
     var isModified: Bool {
-        brightness != 0.0 || contrast != 1.0 || saturation != 1.0 || opacity != 1.0 || sharpen != 0.0 || isAutoEnhanced || isDiorama
+        brightness != 0.0 || contrast != 1.0 || saturation != 1.0 || opacity != 1.0 || sharpen != 0.0 || isAutoEnhanced
     }
 
     /// Reset all values to their neutral defaults
@@ -63,7 +58,6 @@ struct VisualAdjustments: Codable, Equatable {
         opacity = 1.0
         sharpen = 0.0
         isAutoEnhanced = false
-        isDiorama = false
     }
 
     /// CSS filter string for WebVideoPlayerView (GIF/video via WKWebView).

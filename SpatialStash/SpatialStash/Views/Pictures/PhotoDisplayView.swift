@@ -81,7 +81,7 @@ struct PhotoDisplayView: View {
             // Resolution, etc.) is open, since the ornament-anchored panels
             // render at the window's depth and would otherwise be visually
             // covered by the foreground at z=20.
-            if windowModel.currentAdjustments.isDiorama,
+            if windowModel.isDioramaMode,
                !windowModel.hasOpenPopover,
                !windowModel.isAnyOrnamentMenuOpen,
                !windowModel.is3DMode,

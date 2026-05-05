@@ -6,10 +6,14 @@
  via SwiftUI `.offset(z:)`. No RealityKit, no 3D engine — just visionOS
  spatial layering. Reuses the existing background-removal pipeline through
  a sibling cache namespace so a once-processed image stays cheap on reopen.
+
+ Diorama is a sibling viewing mode to spatial 3D — engaged from the 3D
+ menu, mutually exclusive with the RealityKit-based 3D modes.
  */
 
 import Foundation
 import os
+import RealityKit
 import SwiftUI
 
 extension PhotoWindowModel {
@@ -18,10 +22,22 @@ extension PhotoWindowModel {
     /// the uncropped foreground is loaded (from cache or freshly generated).
     func toggleDiorama() async {
         recordInteraction()
-        currentAdjustments.isDiorama.toggle()
-        await persistAdjustments()
-        if currentAdjustments.isDiorama {
+        await setDioramaMode(!isDioramaMode)
+    }
+
+    /// Set diorama mode explicitly. Engaging diorama exits any 3D mode.
+    func setDioramaMode(_ on: Bool) async {
+        if on {
+            // Diorama is incompatible with RealityKit 3D — drop out of 3D first.
+            if is3DMode || desiredViewingMode != .mono {
+                await switchToViewingMode(.mono)
+            }
+            isDioramaMode = true
+            await trackViewingMode(.diorama)
             await ensureDioramaForegroundLoaded()
+        } else {
+            isDioramaMode = false
+            await trackViewingMode(.mono)
         }
     }
 
@@ -80,10 +96,6 @@ extension PhotoWindowModel {
         dioramaForegroundImage = nil
         dioramaBackdropImage = nil
         isProcessingDiorama = false
-    }
-
-    private func persistAdjustments() async {
-        guard appModel.rememberImageEnhancements else { return }
-        await ImageEnhancementTracker.shared.setAdjustments(url: imageURL, adjustments: currentAdjustments)
+        isDioramaMode = false
     }
 }
