@@ -41,6 +41,12 @@ class TagListManager {
     /// caches and restart fetching.
     private var changeHandlers: [UUID: () -> Void] = [:]
 
+    /// Registered send handlers keyed by engine/window ID. Called only on
+    /// *user-initiated* switches so each viewer's WS forwards a `setTagList`
+    /// to the server. Server-initiated changes (`handleServerTagListChange`)
+    /// skip this to avoid a feedback loop.
+    private var sendHandlers: [UUID: (Int) -> Void] = [:]
+
     /// Incremented on each tag list switch. Views can observe this
     /// with onChange(of:) for lightweight reactivity.
     var changeVersion: Int = 0
@@ -77,9 +83,20 @@ class TagListManager {
         changeHandlers[id] = nil
     }
 
+    func addSendHandler(id: UUID, _ handler: @escaping (Int) -> Void) {
+        sendHandlers[id] = handler
+    }
+
+    func removeSendHandler(id: UUID) {
+        sendHandlers[id] = nil
+    }
+
     // MARK: - Switching
 
-    /// Manually switch to a specific tag list. Notifies all registered engines.
+    /// Manually switch to a specific tag list. Notifies all registered engines
+    /// AND broadcasts the switch to the server via every registered send
+    /// handler so other clients (web kiosks, other spatialstash windows)
+    /// pick up the change.
     func switchToTagList(_ index: Int) {
         guard index < tagLists.count, index != activeIndex else { return }
         activeIndex = index
@@ -87,6 +104,9 @@ class TagListManager {
         changeVersion += 1
         save()
         notifyChangeHandlers()
+        for handler in sendHandlers.values {
+            handler(index)
+        }
     }
 
     /// Cycle to the next tag list.

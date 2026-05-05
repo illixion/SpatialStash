@@ -45,6 +45,9 @@ enum RemoteWSMessage {
     ///     currentList: Int, modTags: [String],
     ///     current: { id: Int, ext: String }?, next: { id: Int, ext: String }? }
     case playback(payload: [String: Any])
+    /// Server rejected the upgrade with close code 1008 (policy violation).
+    /// Emitted once; reconnects are halted until the next explicit connect.
+    case fatalAuthError(reason: String)
 }
 
 @MainActor
@@ -63,6 +66,10 @@ class RemoteWebSocketClient {
     private var receiveTask: Task<Void, Never>?
     private var retryCount: Int = 0
     private static let maxRetryDelay: TimeInterval = 30
+    /// Set when the server rejects the upgrade with 1008. Suppresses
+    /// further reconnect attempts so we don't spam the server with
+    /// requests that will keep failing for the same reason.
+    private var halted: Bool = false
 
     var onMessage: ((RemoteWSMessage) -> Void)?
 
@@ -72,6 +79,9 @@ class RemoteWebSocketClient {
         self.wsURL = url
         self.initialDeviceId = deviceId
         self.session = URLSession(configuration: .default)
+        // A new connect attempt clears any prior halt — caller may have
+        // updated the access token in config and is asking us to retry.
+        self.halted = false
 
         doConnect()
     }
@@ -134,6 +144,13 @@ class RemoteWebSocketClient {
         sendJSON(["action": "setModTags", "payload": ["tags": tags]])
     }
 
+    /// Switch the active tag list catalog index. Server is authoritative
+    /// (broadcasts `currentTagList` to every client), so this is the only
+    /// way a non-primary spatialstash window can ask everyone to switch.
+    func sendSetTagList(listNumber: Int) {
+        sendJSON(["action": "setTagList", "payload": ["listNumber": listNumber]])
+    }
+
     /// Ask the server to advance the channel. The orchestrator only honors
     /// this from the primary; other clients' calls are dropped.
     func sendRequestNext() {
@@ -182,6 +199,22 @@ class RemoteWebSocketClient {
             } catch {
                 logWebSocketFailure(error, task: task)
                 isConnected = false
+                // The broker closes unauthenticated upgrades with 1008
+                // (policy violation). Reconnecting won't fix a bad token,
+                // so halt the loop and surface the reason once.
+                if task.closeCode == .policyViolation {
+                    halted = true
+                    let reasonStr: String = {
+                        if let data = task.closeReason, let s = String(data: data, encoding: .utf8), !s.isEmpty {
+                            return s
+                        }
+                        return "invalid token"
+                    }()
+                    let msg = "Server rejected WebSocket: \(reasonStr). Check the Access Token in viewer settings."
+                    AppLogger.remoteViewer.error("\(msg, privacy: .public)")
+                    onMessage?(.fatalAuthError(reason: msg))
+                    break
+                }
                 scheduleReconnect()
                 break
             }
@@ -323,6 +356,7 @@ class RemoteWebSocketClient {
     }
 
     private func scheduleReconnect() {
+        if halted { return }
         reconnectTask?.cancel()
         reconnectTask = Task { [weak self] in
             guard let self else { return }
@@ -330,7 +364,7 @@ class RemoteWebSocketClient {
             retryCount += 1
             AppLogger.remoteViewer.info("WebSocket reconnecting in \(delay, privacy: .public)s")
             try? await Task.sleep(for: .seconds(delay))
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, !halted else { return }
             doConnect()
         }
     }

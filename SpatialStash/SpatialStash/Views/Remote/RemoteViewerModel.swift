@@ -132,6 +132,7 @@ class RemoteViewerModel: SlideshowEngine {
         SlideshowSyncHub.shared.unregisterForLocalSync(self)
         SlideshowSyncHub.shared.unsubscribeWS(wsToken)
         modTagManager?.removeSendHandler(id: engineId)
+        tagListManager?.removeSendHandler(id: engineId)
         wsToken = nil
         wsClient = nil
     }
@@ -387,6 +388,14 @@ class RemoteViewerModel: SlideshowEngine {
         modTagManager?.addSendHandler(id: engineId) { [weak self] tags in
             self?.wsClient?.sendSetModTags(tags: tags)
         }
+
+        // Same wiring for tag list switches initiated from the viewer
+        // ornament. The TagListManager only fires this on user-initiated
+        // changes — server-pushed `currentTagList` frames go through a
+        // separate path and are not echoed back.
+        tagListManager?.addSendHandler(id: engineId) { [weak self] listNumber in
+            self?.wsClient?.sendSetTagList(listNumber: listNumber)
+        }
     }
 
     private func handleWSMessage(_ message: RemoteWSMessage) {
@@ -441,6 +450,14 @@ class RemoteViewerModel: SlideshowEngine {
 
         case .playback(let payload):
             handlePlaybackFrame(payload)
+
+        case .fatalAuthError(let reason):
+            // Server closed the upgrade with 1008. The WS client has
+            // already halted reconnects; surface the reason so the user
+            // can fix the Access Token instead of staring at a blank
+            // viewer wondering why nothing is loading.
+            AppLogger.remoteViewer.error("WS auth rejected: \(reason, privacy: .public)")
+            showToast(reason, isError: true)
         }
     }
 
