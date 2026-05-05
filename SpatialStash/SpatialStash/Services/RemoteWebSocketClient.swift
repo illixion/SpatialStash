@@ -39,11 +39,12 @@ enum RemoteWSMessage {
     case sensorUpdate(entityId: String, state: String, friendlyName: String, unit: String)
     case refresh
     /// Server → client playback channel state. The orchestrator pushes this
-    /// on every channel change (advance, primary claim, tag list change,
+    /// on every channel change (advance, displaySync claim, tag list change,
     /// mod-tag change). Payload shape:
-    ///   { primary: String?, enabled: Bool, interval: Int (ms),
+    ///   { deviceId: String, mergeDriver: String?, interval: Int (ms),
     ///     currentList: Int, modTags: [String],
-    ///     current: { id: Int, ext: String }?, next: { id: Int, ext: String }? }
+    ///     current: { id: Int, ext: String }?, next: { id: Int, ext: String }?,
+    ///     upcoming: [{ id: Int, ext: String }] }
     case playback(payload: [String: Any])
     /// Server rejected the upgrade with close code 1008 (policy violation).
     /// Emitted once; reconnects are halted until the next explicit connect.
@@ -110,20 +111,20 @@ class RemoteWebSocketClient {
         sendJSON(["action": "block", "payload": ["id": postId]])
     }
 
-    /// displaySync is a primary-claim toggle. `enabled: true` says "I'm
-    /// primary; advance the channel for everyone using my interval and mod
-    /// tags". `enabled: false` releases the role. Server broadcasts a new
-    /// `playback` frame in response.
+    /// displaySync claims the merge driver role: `enabled: true` makes this
+    /// session the source of truth for every channel — every connected display
+    /// mirrors the driver's playback regardless of its own deviceId.
+    /// `enabled: false` releases the merge and each channel resumes its own
+    /// cadence. Server broadcasts a new `playback` frame in response.
     func sendDisplaySync(enabled: Bool) {
         sendJSON(["action": "displaySync", "payload": ["enabled": enabled]])
     }
 
-    /// Required after WS open: register this session with the orchestrator.
-    /// Server may auto-promote us to primary if no other session holds it.
-    /// Mod tags ride along so the orchestrator's first refill query already
-    /// includes them — without that, the auto-claim runs an unfiltered
-    /// query first and discards it when a separate setModTags arrives a
-    /// few ms later.
+    /// Required after WS open: join this session to the channel for `deviceId`.
+    /// Two sessions on the same deviceId share a channel and lockstep on the
+    /// same image. Mod tags ride along so the orchestrator's first refill
+    /// query already includes them — without that the initial query is
+    /// discarded when a separate setModTags arrives a few ms later.
     func sendSlideshowConfig(deviceId: String, interval: Int, width: Int, height: Int, bright: Bool, convert: Bool, ratio: String? = nil, modTags: [String] = []) {
         var payload: [String: Any] = [
             "deviceId": deviceId,
@@ -138,23 +139,33 @@ class RemoteWebSocketClient {
         sendJSON(["action": "slideshowConfig", "payload": payload])
     }
 
-    /// Client-supplied modifier tags. The orchestrator includes them in its
-    /// DuckDB query when this client is the channel primary.
+    /// Client-supplied modifier tags. The orchestrator folds them into this
+    /// channel's DuckDB query (last-write-wins among same-channel sessions).
     func sendSetModTags(tags: [String]) {
         sendJSON(["action": "setModTags", "payload": ["tags": tags]])
     }
 
     /// Switch the active tag list catalog index. Server is authoritative
-    /// (broadcasts `currentTagList` to every client), so this is the only
-    /// way a non-primary spatialstash window can ask everyone to switch.
+    /// (broadcasts `currentTagList` to every client), so this is how a
+    /// session asks every channel to retag.
     func sendSetTagList(listNumber: Int) {
         sendJSON(["action": "setTagList", "payload": ["listNumber": listNumber]])
     }
 
-    /// Ask the server to advance the channel. The orchestrator only honors
-    /// this from the primary; other clients' calls are dropped.
+    /// Ask the server to advance the channel. Any session may call this;
+    /// when displaySync is active, the merge driver's channel advances and
+    /// every display sees the same new image.
     func sendRequestNext() {
         sendJSON(["action": "requestNext"])
+    }
+
+    /// Tell the server we've finished transitioning to `postId`. The
+    /// orchestrator's readiness barrier waits for every visible session on
+    /// the channel before starting the dwell timer; without this report the
+    /// channel rides the 10 s bad-network fallback every cycle, which makes
+    /// the effective server cycle ~10 s longer than the configured interval.
+    func sendImageReady(postId: Int) {
+        sendJSON(["action": "imageReady", "payload": ["id": postId]])
     }
 
     // MARK: - Private

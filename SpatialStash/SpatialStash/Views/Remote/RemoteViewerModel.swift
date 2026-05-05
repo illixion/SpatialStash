@@ -22,10 +22,11 @@ class RemoteViewerModel: SlideshowEngine {
 
     // MARK: - Display State (remote-specific)
 
-    /// User-facing toggle that claims/releases primary on the server.
-    /// Writing this property emits `displaySync { enabled }`. On `true` the
-    /// orchestrator promotes us to primary (driving channel timing for
-    /// everyone); on `false` we go back to following.
+    /// User-facing toggle that claims/releases the displaySync merge driver
+    /// role on the server. Writing this emits `displaySync { enabled }`. On
+    /// `true` the orchestrator merges every channel into this session's
+    /// channel — every connected display mirrors what we play. On `false`
+    /// each channel resumes its own cadence.
     var enableDisplaySync: Bool = false {
         didSet {
             if oldValue != enableDisplaySync {
@@ -34,8 +35,10 @@ class RemoteViewerModel: SlideshowEngine {
         }
     }
 
-    /// Last `playback.primary` value the server pushed. Used by the UI to
-    /// reflect "you are primary" state independently of the local toggle.
+    /// Last `playback.mergeDriver` value the server pushed (deviceId of the
+    /// session currently holding the displaySync merge claim, or `nil` when
+    /// no merge is active). Used by the UI to reflect merge state
+    /// independently of the local toggle.
     private(set) var serverPrimaryDeviceId: String?
 
     /// Shared mod-tag preset catalog. Injected by RemoteViewerWindowView,
@@ -284,14 +287,23 @@ class RemoteViewerModel: SlideshowEngine {
     // MARK: - Display Sync (subclass hook)
 
     override func onPostTransitioned(post: RemotePost, url: URL) {
-        // The server is authoritative on what's playing — no need to echo
-        // the post/cursor over the WebSocket. The displaySync action is a
-        // primary-claim toggle (handled in `enableDisplaySync.didSet`).
+        // Tell the server we've finished transitioning to this post. The
+        // orchestrator's readiness barrier closes once every visible session
+        // reports — without this the server rides the 10 s bad-network
+        // fallback every cycle, drifting the channel ~10 s slower than the
+        // engine's local deadline. The drift causes the engine to drain its
+        // prefetch and flash the warning placeholder while the server
+        // catches up. (Skip when applying an incoming local sync: the
+        // transition was driven by another window, not by our own engine
+        // ticking, and that window already reported.)
+        if !isApplyingIncomingSync {
+            wsClient?.sendImageReady(postId: post._id)
+        }
 
         // Local broadcast — keeps multiple visionOS windows on the same
         // host in lockstep. (When they all share one WS connection, they
         // all receive the same `playback` frames anyway, so this is mostly
-        // redundant once primary mode is on; still needed for gallery mode
+        // redundant once displaySync is on; still needed for gallery mode
         // where there's no WS.)
         guard enableDisplaySync, !isApplyingIncomingSync else { return }
 
@@ -382,13 +394,13 @@ class RemoteViewerModel: SlideshowEngine {
         wsToken = result.token
         wsClient = result.client
 
-        // Register this session with the orchestrator. The server
-        // auto-promotes the first registered session to primary, then
-        // broadcasts a `playback` frame which our handler picks up below.
-        // Width/height are nominal — spatialstash doesn't pass them to /get.
-        // Mod tags ride along on the same frame so the orchestrator's
-        // first refill query already includes them — no immediate-after
-        // refill round-trip from a separate setModTags.
+        // Register this session with the orchestrator. The server creates
+        // (or joins us to) the channel for `wsDeviceId` and broadcasts a
+        // `playback` frame which our handler picks up below. Width/height
+        // are nominal — spatialstash doesn't pass them to /get. Mod tags
+        // ride along on the same frame so the orchestrator's first refill
+        // query already includes them — no immediate-after refill round-trip
+        // from a separate setModTags.
         let intervalMs = max(2000, Int(config.delay * 1000))
         wsClient?.sendSlideshowConfig(
             deviceId: config.wsDeviceId,
@@ -480,8 +492,8 @@ class RemoteViewerModel: SlideshowEngine {
     }
 
     /// A `playback` frame from the orchestrator. Updates interval, tag
-    /// list, primary status, and feeds the engine's queue with the server's
-    /// `current` / `next` posts.
+    /// list, merge-driver status, and feeds the engine's queue with the
+    /// server's `current` / `next` posts.
     private func handlePlaybackFrame(_ payload: [String: Any]) {
         // Interval — the channel timer source of truth. Convert ms → seconds.
         if let intervalMs = payload["interval"] as? Int, intervalMs > 0 {
@@ -497,8 +509,9 @@ class RemoteViewerModel: SlideshowEngine {
             _ = tlm.handleServerTagListChange(to: listNumber)
         }
 
-        // Primary status — server tells us who currently drives the channel.
-        serverPrimaryDeviceId = payload["primary"] as? String
+        // Merge driver — server tells us who, if anyone, currently holds
+        // the displaySync claim and is broadcasting to every channel.
+        serverPrimaryDeviceId = payload["mergeDriver"] as? String
 
         let provider = contentProvider as? RemoteContentProvider
         let current = postFromPlaybackEntry(payload["current"])
