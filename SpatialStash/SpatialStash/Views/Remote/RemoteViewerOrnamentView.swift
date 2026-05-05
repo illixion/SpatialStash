@@ -145,18 +145,22 @@ struct RemoteViewerOrnamentView: View {
                     .help("No posts found")
             } else {
                 Menu {
-                    ForEach(tagListManager.tagLists.indices, id: \.self) { index in
-                        Button {
-                            tagListManager.switchToTagList(index)
-                        } label: {
-                            HStack {
-                                Text(tagListLabel(index))
-                                if tagListManager.activeIndex == index {
-                                    Image(systemName: "checkmark")
+                    Group {
+                        ForEach(tagListManager.tagLists.indices, id: \.self) { index in
+                            Button {
+                                tagListManager.switchToTagList(index)
+                            } label: {
+                                HStack {
+                                    Text(tagListLabel(index))
+                                    if tagListManager.activeIndex == index {
+                                        Image(systemName: "checkmark")
+                                    }
                                 }
                             }
                         }
                     }
+                    .onAppear { updateOrnamentMenuCount(opened: true) }
+                    .onDisappear { updateOrnamentMenuCount(opened: false) }
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "arrow.triangle.2.circlepath")
@@ -182,29 +186,33 @@ struct RemoteViewerOrnamentView: View {
 
     private var modTagMenu: some View {
         Menu {
-            // "None" sentinel for clearing any active preset.
-            Button {
-                modTagManager.clearActive()
-            } label: {
-                HStack {
-                    Text("None")
-                    if modTagManager.activeIndex == nil {
-                        Image(systemName: "checkmark")
-                    }
-                }
-            }
-            ForEach(modTagManager.modTagLists.indices, id: \.self) { index in
+            Group {
+                // "None" sentinel for clearing any active preset.
                 Button {
-                    modTagManager.switchToPreset(index)
+                    modTagManager.clearActive()
                 } label: {
                     HStack {
-                        Text(modTagLabel(index))
-                        if modTagManager.activeIndex == index {
+                        Text("None")
+                        if modTagManager.activeIndex == nil {
                             Image(systemName: "checkmark")
                         }
                     }
                 }
+                ForEach(modTagManager.modTagLists.indices, id: \.self) { index in
+                    Button {
+                        modTagManager.switchToPreset(index)
+                    } label: {
+                        HStack {
+                            Text(modTagLabel(index))
+                            if modTagManager.activeIndex == index {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
             }
+            .onAppear { updateOrnamentMenuCount(opened: true) }
+            .onDisappear { updateOrnamentMenuCount(opened: false) }
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "tag")
@@ -255,6 +263,17 @@ struct RemoteViewerOrnamentView: View {
                 showAutoEnhance: false,
                 remoteViewerModel: model
             )
+        }
+    }
+
+    /// Increment / decrement the model's open-menu counter. Clamped at zero
+    /// so a missed event can't drive the count negative. Used by the window
+    /// view to suppress the diorama foreground while a menu is shown.
+    private func updateOrnamentMenuCount(opened: Bool) {
+        if opened {
+            model.openOrnamentMenuCount += 1
+        } else {
+            model.openOrnamentMenuCount = max(0, model.openOrnamentMenuCount - 1)
         }
     }
 }

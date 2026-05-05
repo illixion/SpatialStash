@@ -116,6 +116,18 @@ class SlideshowEngine {
     var showAdjustmentsPopover: Bool = false
     var globalAdjustments: VisualAdjustments = VisualAdjustments()
 
+    /// Counter for ornament-anchored Menu drop-downs (tag list, mod tag, etc.).
+    /// SwiftUI's `Menu` doesn't expose an open binding; ornaments increment
+    /// when the menu's content panel appears and decrement when it dismisses.
+    /// Used by the window view to suppress the diorama foreground while a
+    /// menu panel is shown so the menu isn't visually occluded by the
+    /// popped-forward foreground at z=40.
+    var openOrnamentMenuCount: Int = 0
+
+    var isAnyOrnamentMenuOpen: Bool {
+        openOrnamentMenuCount > 0
+    }
+
     var effectiveBrightness: Double {
         autoBrightnessAdjustment + currentAdjustments.brightness + globalAdjustments.brightness
     }

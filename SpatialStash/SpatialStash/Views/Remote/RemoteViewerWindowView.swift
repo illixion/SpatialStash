@@ -118,6 +118,7 @@ struct RemoteViewerWindowView: View {
         .ornament(
             visibility: controlsVisible ? .visible : .hidden,
             attachmentAnchor: .scene(.bottomFront),
+            contentAlignment: .top,
             ornament: {
                 if let model = viewerModel {
                     RemoteViewerOrnamentView(
@@ -217,10 +218,16 @@ struct RemoteViewerWindowView: View {
                     .opacity(model.isTransitioning ? 0 : 1)
                     .clipped()
 
-                // Diorama backdrop — replaces the visible base in the subject
-                // region with a blurred fill so the floating foreground doesn't
-                // reveal a doubled silhouette when viewed off-axis.
-                if model.enableDiorama, let backdrop = model.currentBackdropImage {
+                // Diorama layers — hidden whenever an ornament-anchored
+                // panel is open (adjustments popover, tag-list / mod-tag
+                // menus). The popped-forward foreground at z=40 would
+                // otherwise occlude the menu drop-down which renders near
+                // the window plane.
+                let dioramaVisible = model.enableDiorama
+                    && !model.showAdjustmentsPopover
+                    && !model.isAnyOrnamentMenuOpen
+
+                if dioramaVisible, let backdrop = model.currentBackdropImage {
                     Image(uiImage: backdrop)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
@@ -231,8 +238,7 @@ struct RemoteViewerWindowView: View {
                         .allowsHitTesting(false)
                 }
 
-                // Diorama foreground — masked subject popped forward in z.
-                if model.enableDiorama, let foreground = model.currentForegroundImage {
+                if dioramaVisible, let foreground = model.currentForegroundImage {
                     Image(uiImage: foreground)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
