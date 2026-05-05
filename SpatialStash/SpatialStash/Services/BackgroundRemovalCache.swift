@@ -216,6 +216,50 @@ actor BackgroundRemovalCache {
         }
     }
 
+    /// Cache file URL for the diorama backdrop variant — original image with
+    /// the subject region heavily blurred, used as the backdrop layer so the
+    /// floating foreground doesn't reveal a doubled silhouette behind it.
+    private func dioramaBackdropCacheFileURL(for url: URL) -> URL {
+        let urlString = url.absoluteString + ":dioramaBackdrop"
+        let data = Data(urlString.utf8)
+        var hash = [UInt8](repeating: 0, count: 32)
+        data.withUnsafeBytes { bytes in
+            _ = CC_SHA256(bytes.baseAddress, CC_LONG(data.count), &hash)
+        }
+        let key = hash.map { String(format: "%02x", $0) }.joined()
+        return cacheDirectory.appendingPathComponent(key + ".heic")
+    }
+
+    func isDioramaBackdropCached(url: URL) -> Bool {
+        fileManager.fileExists(atPath: dioramaBackdropCacheFileURL(for: url).path)
+    }
+
+    func loadDioramaBackdropData(for url: URL) -> Data? {
+        let fileURL = dioramaBackdropCacheFileURL(for: url)
+        guard fileManager.fileExists(atPath: fileURL.path),
+              let data = try? Data(contentsOf: fileURL, options: .mappedIfSafe) else {
+            return nil
+        }
+        try? fileManager.setAttributes([.modificationDate: Date()], ofItemAtPath: fileURL.path)
+        return data
+    }
+
+    func saveDioramaBackdrop(_ image: UIImage, for url: URL) {
+        let fileURL = dioramaBackdropCacheFileURL(for: url)
+        guard let heicData = encodeHeicData(from: image) else {
+            AppLogger.diskCache.warning("Failed to encode diorama backdrop as HEIC")
+            return
+        }
+        do {
+            try heicData.write(to: fileURL)
+            Task { [self] in
+                await self.cleanupIfNeeded()
+            }
+        } catch {
+            AppLogger.diskCache.error("Failed to save diorama backdrop: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
     /// Get total cache size in bytes
     private func getCacheSize() -> Int64 {
         guard let enumerator = fileManager.enumerator(

@@ -126,6 +126,11 @@ class PhotoWindowModel {
     /// for the diorama overlay. Loaded from cache or generated on demand.
     var dioramaForegroundImage: UIImage? = nil
 
+    /// Subject-blurred backdrop. The original image with the subject region
+    /// gaussian-blurred so the floating foreground doesn't reveal a doubled
+    /// silhouette behind it when viewed off-axis. Same dimensions as source.
+    var dioramaBackdropImage: UIImage? = nil
+
     /// Whether diorama foreground generation is currently running.
     var isProcessingDiorama: Bool = false
 

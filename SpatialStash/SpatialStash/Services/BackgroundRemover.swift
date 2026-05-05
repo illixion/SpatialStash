@@ -32,24 +32,66 @@ actor BackgroundRemover {
     /// diorama mode where the foreground must align with the unmodified
     /// backdrop via z-offset layering.
     func removeBackgroundUncropped(from image: UIImage) async throws -> UIImage? {
+        try await generateDioramaPair(from: image).foreground
+    }
+
+    /// Generate the foreground + a subject-removed backdrop in a single Vision
+    /// pass. The backdrop replaces the subject region with a heavily blurred
+    /// version of the original so the diorama overlay doesn't show a doubled
+    /// silhouette behind the floating foreground when viewed off-axis. The
+    /// non-subject regions stay sharp at full resolution.
+    func generateDioramaPair(from image: UIImage) async throws -> (foreground: UIImage?, backdrop: UIImage?) {
         guard let sourceCG = image.cgImage else {
-            AppLogger.backgroundRemover.warning("No CGImage available for uncropped background removal")
-            return nil
+            AppLogger.backgroundRemover.warning("No CGImage available for diorama pair")
+            return (nil, nil)
         }
 
         let cgImage = Self.downsampleIfNeeded(sourceCG)
         let (maskCIImage, originalCIImage) = try generateForegroundMask(cgImage: cgImage)
+        let extent = originalCIImage.extent
 
-        let filter = CIFilter.blendWithMask()
-        filter.inputImage = originalCIImage
-        filter.backgroundImage = CIImage.empty()
-        filter.maskImage = maskCIImage
+        // Foreground: original masked by subject alpha, full-frame, transparent bg.
+        let fgFilter = CIFilter.blendWithMask()
+        fgFilter.inputImage = originalCIImage
+        fgFilter.backgroundImage = CIImage.empty()
+        fgFilter.maskImage = maskCIImage
 
-        guard let outputCIImage = filter.outputImage,
-              let outputCGImage = ciContext.createCGImage(outputCIImage, from: originalCIImage.extent) else {
-            return nil
-        }
-        return UIImage(cgImage: outputCGImage, scale: image.scale, orientation: image.imageOrientation)
+        let foregroundImage: UIImage? = {
+            guard let outputCIImage = fgFilter.outputImage,
+                  let outputCGImage = ciContext.createCGImage(outputCIImage, from: extent) else {
+                return nil
+            }
+            return UIImage(cgImage: outputCGImage, scale: image.scale, orientation: image.imageOrientation)
+        }()
+
+        // Backdrop: heavy gaussian blur of the original, composited under the
+        // original via the inverted mask so only the subject region is blurred.
+        // Radius is scaled by image size so a portrait at 2560 looks similar to
+        // one at 1024 — about 2.5% of the long edge gives a strong "out of focus"
+        // smear without leaking detail through.
+        let blurRadius = max(20.0, Double(max(extent.width, extent.height)) * 0.025)
+        let clamped = originalCIImage.clampedToExtent()
+        let blurFilter = CIFilter.gaussianBlur()
+        blurFilter.inputImage = clamped
+        blurFilter.radius = Float(blurRadius)
+        let blurred = blurFilter.outputImage?.cropped(to: extent) ?? originalCIImage
+
+        // blendWithMask: where mask is opaque (subject), show inputImage (blurred);
+        // where mask is transparent (background), show backgroundImage (original).
+        let bgFilter = CIFilter.blendWithMask()
+        bgFilter.inputImage = blurred
+        bgFilter.backgroundImage = originalCIImage
+        bgFilter.maskImage = maskCIImage
+
+        let backdropImage: UIImage? = {
+            guard let outputCIImage = bgFilter.outputImage,
+                  let outputCGImage = ciContext.createCGImage(outputCIImage, from: extent) else {
+                return nil
+            }
+            return UIImage(cgImage: outputCGImage, scale: image.scale, orientation: image.imageOrientation)
+        }()
+
+        return (foregroundImage, backdropImage)
     }
 
     /// Remove the background from a UIImage, automatically cropping transparent space.

@@ -165,8 +165,16 @@ class SlideshowEngine {
     /// is enabled. Nil while still being generated or when diorama is off.
     var currentForegroundImage: UIImage?
 
+    /// Subject-blurred backdrop for the currently displayed post — replaces
+    /// the original as the base layer when diorama is on so the floating
+    /// foreground doesn't expose a doubled silhouette.
+    var currentBackdropImage: UIImage?
+
     /// Uncropped foreground for the prefetched next post.
     var nextForegroundImage: UIImage?
+
+    /// Subject-blurred backdrop for the prefetched next post.
+    var nextBackdropImage: UIImage?
 
     /// Tracks foreground generation tasks keyed by post id so we can cancel
     /// in-flight work when navigating away or disabling diorama.
@@ -236,27 +244,25 @@ class SlideshowEngine {
 
     // MARK: - Diorama Foreground Processing
 
-    /// Kick off uncropped foreground generation for `post` using `image`.
-    /// Stores the result in `currentForegroundImage` if the post is still
-    /// the displayed one when generation finishes; otherwise stashes for the
-    /// prefetched next slot if it matches.
+    /// Kick off diorama foreground+backdrop generation for `post`. Stores the
+    /// pair in current/next slots once ready, depending on `isCurrent` and
+    /// whether the post is still the displayed/prefetched one.
     func generateDioramaForeground(post: RemotePost, image: UIImage, isCurrent: Bool) {
         guard enableDiorama else { return }
-        // Avoid duplicate tasks for the same post.
         if dioramaTasks[post.id] != nil { return }
 
         let postId = post.id
         let task = Task { @MainActor [weak self] in
             defer { Task { @MainActor [weak self] in self?.dioramaTasks.removeValue(forKey: postId) } }
             do {
-                guard let foreground = try await BackgroundRemover.shared.removeBackgroundUncropped(from: image) else {
-                    return
-                }
+                let pair = try await BackgroundRemover.shared.generateDioramaPair(from: image)
                 guard !Task.isCancelled, let self else { return }
                 if isCurrent, self.currentPost?.id == postId {
-                    self.currentForegroundImage = foreground
+                    self.currentForegroundImage = pair.foreground
+                    self.currentBackdropImage = pair.backdrop
                 } else if self.nextPost?.id == postId {
-                    self.nextForegroundImage = foreground
+                    self.nextForegroundImage = pair.foreground
+                    self.nextBackdropImage = pair.backdrop
                 }
             } catch {
                 // Generation can fail on unsupported formats; silently skip.
@@ -265,12 +271,14 @@ class SlideshowEngine {
         dioramaTasks[postId] = task
     }
 
-    /// Drop all in-flight diorama work and clear cached foregrounds.
+    /// Drop all in-flight diorama work and clear cached foregrounds + backdrops.
     func clearDioramaForegrounds() {
         for (_, task) in dioramaTasks { task.cancel() }
         dioramaTasks.removeAll()
         currentForegroundImage = nil
+        currentBackdropImage = nil
         nextForegroundImage = nil
+        nextBackdropImage = nil
     }
 
     // MARK: - State Transitions
@@ -682,7 +690,9 @@ class SlideshowEngine {
         currentImage = nil
         nextImage = nil
         currentForegroundImage = nil
+        currentBackdropImage = nil
         nextForegroundImage = nil
+        nextBackdropImage = nil
         currentPost = nil
         currentMediaType = .image
         isCurrentPostAnimatedGIF = false
@@ -833,7 +843,9 @@ class SlideshowEngine {
         currentImage = nil
         nextImage = nil
         currentForegroundImage = nil
+        currentBackdropImage = nil
         nextForegroundImage = nil
+        nextBackdropImage = nil
         isTransitioning = false
         currentPost = post
         currentMediaType = .video(url)
@@ -907,17 +919,21 @@ class SlideshowEngine {
         lastAdvanceTime = Date()
         advanceDisplayDeadline()
 
-        // Promote prefetched diorama foreground (if any) to current; if not
-        // ready yet, kick off generation. nextForegroundImage is dropped here.
+        // Promote prefetched diorama pair (if any) to current; if not ready,
+        // kick off generation. The next slot is cleared on promotion.
         if enableDiorama && mediaType == .image {
             currentForegroundImage = nextForegroundImage
+            currentBackdropImage = nextBackdropImage
             nextForegroundImage = nil
+            nextBackdropImage = nil
             if currentForegroundImage == nil {
                 generateDioramaForeground(post: post, image: image, isCurrent: true)
             }
         } else {
             currentForegroundImage = nil
+            currentBackdropImage = nil
             nextForegroundImage = nil
+            nextBackdropImage = nil
         }
 
         // If still transitioning (nobody interrupted), move to displaying.

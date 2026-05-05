@@ -25,16 +25,19 @@ extension PhotoWindowModel {
         }
     }
 
-    /// Load the uncropped foreground from cache, or generate and cache it.
-    /// No-op if already loaded for the current image.
+    /// Load the diorama foreground + backdrop pair from cache, or generate and
+    /// cache it. No-op if already loaded for the current image.
     func ensureDioramaForegroundLoaded() async {
-        if dioramaForegroundImage != nil { return }
+        if dioramaForegroundImage != nil && dioramaBackdropImage != nil { return }
         if isProcessingDiorama { return }
 
-        // Disk cache hit
-        if let data = await BackgroundRemovalCache.shared.loadDioramaForegroundData(for: imageURL),
-           let image = UIImage(data: data) {
-            dioramaForegroundImage = image
+        // Disk cache hit (need both variants — partial hit falls through to regen)
+        if let fgData = await BackgroundRemovalCache.shared.loadDioramaForegroundData(for: imageURL),
+           let bgData = await BackgroundRemovalCache.shared.loadDioramaBackdropData(for: imageURL),
+           let fg = UIImage(data: fgData),
+           let bg = UIImage(data: bgData) {
+            dioramaForegroundImage = fg
+            dioramaBackdropImage = bg
             return
         }
 
@@ -50,16 +53,19 @@ extension PhotoWindowModel {
         let task = Task { @MainActor [weak self] in
             defer { Task { @MainActor [weak self] in self?.isProcessingDiorama = false } }
             do {
-                guard let foreground = try await BackgroundRemover.shared.removeBackgroundUncropped(from: fullResImage) else {
-                    return
-                }
+                let pair = try await BackgroundRemover.shared.generateDioramaPair(from: fullResImage)
                 guard !Task.isCancelled, let self else { return }
-                // Bail out if the user navigated to a different image while we worked.
                 guard self.imageURL == url else { return }
-                self.dioramaForegroundImage = foreground
-                await BackgroundRemovalCache.shared.saveDioramaForeground(foreground, for: url)
+                if let fg = pair.foreground {
+                    self.dioramaForegroundImage = fg
+                    await BackgroundRemovalCache.shared.saveDioramaForeground(fg, for: url)
+                }
+                if let bg = pair.backdrop {
+                    self.dioramaBackdropImage = bg
+                    await BackgroundRemovalCache.shared.saveDioramaBackdrop(bg, for: url)
+                }
             } catch {
-                AppLogger.photoWindow.error("Diorama foreground generation failed: \(error.localizedDescription, privacy: .public)")
+                AppLogger.photoWindow.error("Diorama generation failed: \(error.localizedDescription, privacy: .public)")
             }
         }
         dioramaTask = task
@@ -72,6 +78,7 @@ extension PhotoWindowModel {
         dioramaTask?.cancel()
         dioramaTask = nil
         dioramaForegroundImage = nil
+        dioramaBackdropImage = nil
         isProcessingDiorama = false
     }
 
