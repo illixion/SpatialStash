@@ -25,6 +25,33 @@ actor BackgroundRemover {
 
     private let ciContext = CIContext(options: [.useSoftwareRenderer: false])
 
+    /// Color decontamination kernel. At each silhouette-band pixel (where
+    /// alpha is in (0,1)), inverts the matte equation observed = α·F + (1-α)·B
+    /// to recover the contaminant-free foreground color. Without this, soft-
+    /// alpha pixels carry the original background color (e.g. white halo
+    /// around black ink lines on a white page) and render incorrectly when
+    /// composited onto a new backdrop. CIColorKernel runs per-pixel with no
+    /// neighbor sampling — the background estimate is supplied as a
+    /// precomputed heavy blur of the source.
+    ///
+    /// FIXME: the CI-Kernel-Language `init(source:)` is deprecated in favor
+    /// of Metal-based CIKernels. Migrating requires adding a `.ci.metal`
+    /// file with custom build settings, which this project hasn't set up.
+    /// Functional on visionOS; revisit if Apple removes the GL path.
+    private static let decontaminationKernel: CIColorKernel? = CIColorKernel(source: """
+        kernel vec4 decontaminate(__sample input, __sample mask, __sample bg) {
+            float a = mask.r;
+            if (a < 0.001) {
+                return vec4(0.0, 0.0, 0.0, 0.0);
+            }
+            if (a > 0.999) {
+                return vec4(input.rgb, 1.0);
+            }
+            vec3 clean = (input.rgb - (1.0 - a) * bg.rgb) / a;
+            return vec4(clamp(clean, 0.0, 1.0), a);
+        }
+    """)
+
     private init() {}
 
     /// Remove the background from a UIImage and return the foreground at the
@@ -50,30 +77,27 @@ actor BackgroundRemover {
         let (maskCIImage, originalCIImage) = try generateForegroundMask(cgImage: cgImage)
         let extent = originalCIImage.extent
 
-        // Foreground: original masked by subject alpha, full-frame, transparent bg.
-        let fgFilter = CIFilter.blendWithMask()
-        fgFilter.inputImage = originalCIImage
-        fgFilter.backgroundImage = CIImage.empty()
-        fgFilter.maskImage = maskCIImage
-
-        let foregroundImage: UIImage? = {
-            guard let outputCIImage = fgFilter.outputImage,
-                  let outputCGImage = ciContext.createCGImage(outputCIImage, from: extent) else {
-                return nil
-            }
-            return UIImage(cgImage: outputCGImage, scale: image.scale, orientation: image.imageOrientation)
-        }()
-
-        // Backdrop: heavy gaussian blur of the original, composited under the
-        // original via the mask so only the subject region is blurred.
-        // Radius is scaled by image size — about 2.5% of the long edge gives
-        // a strong "out of focus" smear without leaking detail through.
+        // Heavy gaussian blur of the original — used both as the diorama
+        // backdrop's blurred subject region AND as the bg estimate for
+        // foreground color decontamination. Radius scales with image size.
         let blurRadius = max(20.0, Double(max(extent.width, extent.height)) * 0.025)
         let clamped = originalCIImage.clampedToExtent()
         let blurFilter = CIFilter.gaussianBlur()
         blurFilter.inputImage = clamped
         blurFilter.radius = Float(blurRadius)
         let blurred = blurFilter.outputImage?.cropped(to: extent) ?? originalCIImage
+
+        // Foreground: decontaminated color + mask alpha. Replaces the prior
+        // blendWithMask path so silhouette pixels carry clean subject color
+        // (no halo from the original background bleeding through soft alpha).
+        let foregroundImage: UIImage? = {
+            guard let kernel = Self.decontaminationKernel,
+                  let outputCIImage = kernel.apply(extent: extent, arguments: [originalCIImage, maskCIImage, blurred]),
+                  let outputCGImage = ciContext.createCGImage(outputCIImage, from: extent) else {
+                return nil
+            }
+            return UIImage(cgImage: outputCGImage, scale: image.scale, orientation: image.imageOrientation)
+        }()
 
         // Backdrop mask: small dilation just to ensure the silhouette band
         // is fully blurred (without it, the soft transition pixels would show
@@ -117,6 +141,12 @@ actor BackgroundRemover {
         let cgImage = Self.downsampleIfNeeded(sourceCG)
         let (maskCIImage, originalCIImage) = try generateForegroundMask(cgImage: cgImage)
 
+        // Decontamination kernel bakes the mask alpha into its output, so
+        // we render+crop directly. Fall back to blendWithMask only if the
+        // kernel failed to compile.
+        if let decontaminated = decontaminatedRGBA(input: originalCIImage, mask: maskCIImage) {
+            return renderAndCrop(decontaminated, extent: originalCIImage.extent, scale: image.scale, orientation: image.imageOrientation)
+        }
         return applyMaskAndCrop(
             inputImage: originalCIImage,
             maskImage: maskCIImage,
@@ -138,14 +168,20 @@ actor BackgroundRemover {
 
         let cgImage = Self.downsampleIfNeeded(sourceCG)
         let (maskCIImage, originalCIImage) = try generateForegroundMask(cgImage: cgImage)
+        let extent = originalCIImage.extent
 
-        // 1. Apply mask to original → regular bg-removed
-        let regularResult = applyMaskAndCrop(
-            inputImage: originalCIImage,
-            maskImage: maskCIImage,
-            scale: image.scale,
-            orientation: image.imageOrientation
-        )
+        // 1. Regular variant — decontaminated + mask alpha baked in.
+        let regularResult: UIImage? = {
+            if let decontaminated = decontaminatedRGBA(input: originalCIImage, mask: maskCIImage) {
+                return renderAndCrop(decontaminated, extent: extent, scale: image.scale, orientation: image.imageOrientation)
+            }
+            return applyMaskAndCrop(
+                inputImage: originalCIImage,
+                maskImage: maskCIImage,
+                scale: image.scale,
+                orientation: image.imageOrientation
+            )
+        }()
 
         // 2. Auto-enhance the original CIImage (full-image context for correct analysis)
         let autoFilters = originalCIImage.autoAdjustmentFilters(options: [
@@ -160,15 +196,48 @@ actor BackgroundRemover {
             }
         }
 
-        // 3. Apply the same mask to the enhanced version
-        let enhancedResult = applyMaskAndCrop(
-            inputImage: enhancedCI,
-            maskImage: maskCIImage,
-            scale: image.scale,
-            orientation: image.imageOrientation
-        )
+        // 3. Enhanced variant — decontaminate using post-enhance colors so the
+        // bg estimate matches the pixels we're un-mixing against.
+        let enhancedResult: UIImage? = {
+            if let decontaminated = decontaminatedRGBA(input: enhancedCI, mask: maskCIImage) {
+                return renderAndCrop(decontaminated, extent: extent, scale: image.scale, orientation: image.imageOrientation)
+            }
+            return applyMaskAndCrop(
+                inputImage: enhancedCI,
+                maskImage: maskCIImage,
+                scale: image.scale,
+                orientation: image.imageOrientation
+            )
+        }()
 
         return (regularResult, enhancedResult)
+    }
+
+    /// Render a CIImage that already carries final alpha (from the
+    /// decontamination kernel) to a CGImage, then trim transparent margins.
+    /// Distinct from `applyMaskAndCrop` which would re-multiply by the mask.
+    private func renderAndCrop(_ image: CIImage, extent: CGRect, scale: CGFloat, orientation: UIImage.Orientation) -> UIImage? {
+        guard let outputCGImage = ciContext.createCGImage(image, from: extent) else { return nil }
+        let cropped = TransparentEdgeCropper.crop(outputCGImage)
+        return UIImage(cgImage: cropped, scale: scale, orientation: orientation)
+    }
+
+    /// Apply color decontamination to `input` using `mask`. Computes a heavy
+    /// gaussian blur of `input` as the bg estimate and runs the kernel.
+    /// Returns nil if the kernel isn't available or extent is empty.
+    private func decontaminatedRGBA(input: CIImage, mask: CIImage) -> CIImage? {
+        let extent = input.extent
+        guard extent.width > 0, extent.height > 0,
+              let kernel = Self.decontaminationKernel else { return nil }
+
+        let blurRadius = max(20.0, Double(max(extent.width, extent.height)) * 0.025)
+        let clamped = input.clampedToExtent()
+        let blurFilter = CIFilter.gaussianBlur()
+        blurFilter.inputImage = clamped
+        blurFilter.radius = Float(blurRadius)
+        let bgEstimate = blurFilter.outputImage?.cropped(to: extent) ?? input
+
+        return kernel.apply(extent: extent, arguments: [input, mask, bgEstimate])
     }
 
     /// Generate the foreground mask from a CGImage using Vision.
@@ -195,16 +264,22 @@ actor BackgroundRemover {
 
     /// Clean up Vision's soft probabilistic mask before compositing.
     ///
-    /// Three-step pipeline:
-    ///  1. Morphological closing fills small holes (cheap, CIFilter).
-    ///  2. Contrast bias snaps Vision's medium-confidence interior pixels to
-    ///     opaque and clear-background pixels to transparent, leaving a thin
-    ///     soft band at the silhouette.
+    /// Three-step pipeline (kept light so soft alpha at the silhouette
+    /// survives — color decontamination handles the color halo separately):
+    ///  1. Morphological closing fills small holes left by Vision's
+    ///     probabilistic interior output.
+    ///  2. Clamp to [0,1].
     ///  3. **Flood-fill enclosed holes** — anything not reachable from the
-    ///     image boundary via background pixels gets forced to opaque. This
-    ///     is the only step that actually fixes hole patterns morphology
-    ///     can't close (large interior cavities Vision was uncertain about).
-    ///     Implemented in CPU since CIFilter has no flood-fill primitive.
+    ///     image boundary via background pixels gets forced to opaque,
+    ///     fixing large interior cavities morphology can't close.
+    ///
+    /// The previous version of this method also did aggressive contrast
+    /// steepening (binarizing the silhouette) to suppress soft cloud
+    /// patterns. That worked for thick subjects but clipped thin features
+    /// like ink lines on white backgrounds — an alpha=0.3 line pixel would
+    /// snap to fully transparent. With the decontamination kernel correcting
+    /// RGB at silhouette pixels, soft alpha renders cleanly against any
+    /// backdrop, so the binarization step is no longer necessary.
     private func refineMask(_ mask: CIImage) -> CIImage {
         let extent = mask.extent
 
@@ -218,25 +293,11 @@ actor BackgroundRemover {
         erode.radius = 10
         guard let closed = erode.outputImage?.cropped(to: extent) else { return mask }
 
-        // brightness=+0.2 shifts the effective midpoint of contrast to ~0.3,
-        // keeping Vision's medium-confidence interior pixels on the subject
-        // side. A pure 0.5-symmetric curve binned them to background and
-        // produced the swiss-cheese hole pattern.
-        let contrast = CIFilter.colorControls()
-        contrast.inputImage = closed
-        contrast.contrast = 10.0
-        contrast.brightness = 0.2
-        contrast.saturation = 1.0
-        guard let contrasted = contrast.outputImage?.cropped(to: extent) else { return closed }
-
-        // CI's working space is extended-linear; the contrast pump produces
-        // values way outside [0,1]. blendWithMask reads them literally and
-        // over-amplifies the foreground (deep-fried colors). Clamp first.
         let clamp = CIFilter.colorClamp()
-        clamp.inputImage = contrasted
+        clamp.inputImage = closed
         clamp.minComponents = CIVector(x: 0, y: 0, z: 0, w: 0)
         clamp.maxComponents = CIVector(x: 1, y: 1, z: 1, w: 1)
-        guard let clamped = clamp.outputImage?.cropped(to: extent) else { return contrasted }
+        guard let clamped = clamp.outputImage?.cropped(to: extent) else { return closed }
 
         return fillEnclosedHoles(clamped) ?? clamped
     }
