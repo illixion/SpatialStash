@@ -21,32 +21,23 @@ struct GalleryThumbnailView: View {
             // Background
             Color.secondary.opacity(0.2)
 
-            if let loadedImage {
-                // Flat thumbnail always sits underneath. The diorama overlay
-                // fades in only while gaze is on the cell, driven by the
-                // hover-effect proxy below.
+            if let dioramaPair {
+                // Both layers always rendered, both at z=0 — looks flat at
+                // rest. On gaze the foreground scales beyond the container's
+                // hover scale and tilts slightly, reading as forward motion
+                // without needing dynamic z-offset (which the hover-effect
+                // transform vocabulary doesn't expose).
+                Image(uiImage: dioramaPair.backdrop)
+                    .resizable()
+                    .scaledToFill()
+                Image(uiImage: dioramaPair.foreground)
+                    .resizable()
+                    .scaledToFill()
+                    .hoverEffect(DioramaForegroundHoverEffect())
+            } else if let loadedImage {
                 Image(uiImage: loadedImage)
                     .resizable()
                     .scaledToFill()
-
-                if let dioramaPair {
-                    ZStack {
-                        Image(uiImage: dioramaPair.backdrop)
-                            .resizable()
-                            .scaledToFill()
-                        Image(uiImage: dioramaPair.foreground)
-                            .resizable()
-                            .scaledToFill()
-                            .offset(z: 24)
-                    }
-                    // The reveal effect drives opacity 0→1 from the hover
-                    // proxy, but a fully transparent view isn't gaze-eligible
-                    // on visionOS — without an explicit hover content shape
-                    // the effect would never activate. Pin a rectangle hit
-                    // region so gaze hits the overlay even at opacity 0.
-                    .contentShape(.hoverEffect, Rectangle())
-                    .hoverEffect(DioramaRevealHoverEffect())
-                }
             } else if isLoading {
                 ProgressView()
             } else {
