@@ -16,7 +16,7 @@ struct GalleryGridView: View {
     @State private var showBulkDeleteConfirmation = false
 
     let columns = [
-        GridItem(.adaptive(minimum: 384, maximum: 480), spacing: 16)
+        GridItem(.adaptive(minimum: 200, maximum: 300), spacing: 16)
     ]
 
     var body: some View {
