@@ -32,6 +32,13 @@ extension PhotoWindowModel {
             if is3DMode || desiredViewingMode != .mono {
                 await switchToViewingMode(.mono)
             }
+            // Diorama is also mutually exclusive with background removal —
+            // mixing the masked foreground with the bg-removed display texture
+            // produces a broken composite, so clear bg removal before we flip
+            // the diorama flag.
+            if backgroundRemovalState != .original {
+                clearBackgroundRemovalState()
+            }
             // Load fg/bg first so the diorama layers don't pop in after the
             // mode flag flips. ensureDioramaForegroundLoaded uses imageURL as
             // its identity guard, so it's safe to call before isDioramaMode.

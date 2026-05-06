@@ -8,6 +8,7 @@
 import Foundation
 import Metal
 import os
+import RealityKit
 import SwiftUI
 
 extension PhotoWindowModel {
@@ -19,6 +20,16 @@ extension PhotoWindowModel {
         recordInteraction()
         switch backgroundRemovalState {
         case .original:
+            // Background removal is mutually exclusive with diorama and the
+            // RealityKit 3D modes — they target different display pipelines
+            // and mixing them produces a broken composite. Exit them first
+            // before activating bg removal.
+            if isDioramaMode {
+                await setDioramaMode(false)
+            }
+            if is3DMode || desiredViewingMode != .mono {
+                await switchToViewingMode(.mono)
+            }
             // First check in-memory cache
             if let cached = backgroundRemovedTexture {
                 originalDisplayTexture = displayTexture
