@@ -95,7 +95,9 @@ final class SlideshowSyncHub {
         client.onMessage = { [weak shared] message in
             guard let shared else { return }
             for sub in shared.subscribers.values {
-                sub.onMessage(message)
+                if Self.shouldDeliver(message, to: sub) {
+                    sub.onMessage(message)
+                }
             }
         }
 
@@ -104,6 +106,27 @@ final class SlideshowSyncHub {
         AppLogger.remoteViewer.info("WS opened new shared connection")
 
         return (WSSubscriptionToken(endpoint: endpoint, id: subId, deviceId: deviceId), client)
+    }
+
+    /// Per-channel routing for messages whose payload is scoped to a
+    /// specific deviceId. Without this filter, two windows on the same
+    /// shared WS but different deviceIds would each apply the other's
+    /// `playback` frames — they'd lockstep on the union of both channels'
+    /// queues and visibly skip every other image. While `mergeDriver` is
+    /// set, the merge is active server-side and every subscriber is
+    /// expected to mirror the driver's channel, so we deliver to all.
+    private static func shouldDeliver(_ message: RemoteWSMessage, to sub: WSSubscriber) -> Bool {
+        switch message {
+        case .playback(let payload):
+            if payload["mergeDriver"] is String { return true }
+            guard let frameDeviceId = payload["deviceId"] as? String else { return true }
+            // Empty subscriber deviceId = legacy / unconfigured — receive everything
+            // rather than going silent.
+            if sub.deviceId.isEmpty { return true }
+            return frameDeviceId == sub.deviceId
+        default:
+            return true
+        }
     }
 
     func unsubscribeWS(_ token: WSSubscriptionToken?) {
