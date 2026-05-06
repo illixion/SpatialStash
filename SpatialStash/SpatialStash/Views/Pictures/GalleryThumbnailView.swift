@@ -53,7 +53,7 @@ struct GalleryThumbnailView: View {
                 }
             }
         }
-        .frame(width: 200, height: 200)
+        .frame(width: 384, height: 384)
         .cornerRadius(12)
         .clipped()
         .contentShape(Rectangle())
