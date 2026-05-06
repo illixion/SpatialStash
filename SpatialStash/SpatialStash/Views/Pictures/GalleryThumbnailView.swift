@@ -25,22 +25,18 @@ struct GalleryThumbnailView: View {
                 // Two-layer diorama: blurred-subject backdrop, masked foreground.
                 // The foreground gets its own hover effect that lifts it forward
                 // on gaze for an Apple TV-style parallax pop.
-                ZStack {
-                    Image(uiImage: dioramaPair.backdrop)
-                        .resizable()
-                        .scaledToFill()
-                    Image(uiImage: dioramaPair.foreground)
-                        .resizable()
-                        .scaledToFill()
-                        .offset(z: 24)
-                }
-                .transition(.opacity)
+                Image(uiImage: dioramaPair.backdrop)
+                    .resizable()
+                    .scaledToFill()
+                Image(uiImage: dioramaPair.foreground)
+                    .resizable()
+                    .scaledToFill()
+                    .offset(z: 24)
             } else if let loadedImage {
                 // Display static image
                 Image(uiImage: loadedImage)
                     .resizable()
                     .scaledToFill()
-                    .transition(.opacity)
             } else if isLoading {
                 ProgressView()
             } else {
@@ -85,7 +81,7 @@ struct GalleryThumbnailView: View {
         guard let loadedImage else { return }
         let key = image.thumbnailURL
         if let cached = ThumbnailDioramaCache.shared.cached(for: key) {
-            withAnimation(.easeInOut(duration: 0.35)) { dioramaPair = cached }
+            dioramaPair = cached
             return
         }
         do {
@@ -95,7 +91,7 @@ struct GalleryThumbnailView: View {
         }
         let pair = await ThumbnailDioramaCache.shared.dioramaPair(for: key) { loadedImage }
         guard !Task.isCancelled else { return }
-        withAnimation(.easeInOut(duration: 0.35)) { dioramaPair = pair }
+        dioramaPair = pair
     }
 
     private func loadThumbnail() async {
