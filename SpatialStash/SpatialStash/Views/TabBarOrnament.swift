@@ -61,5 +61,8 @@ struct TabBarOrnament: View {
         }
         .padding()
         .glassBackgroundEffect()
+        // Lift the ornament forward in z so that gallery thumbnails using
+        // diorama parallax (foreground at z≈24) don't poke through it.
+        .offset(z: 30)
     }
 }
