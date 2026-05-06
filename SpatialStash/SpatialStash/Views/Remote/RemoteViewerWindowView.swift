@@ -128,6 +128,7 @@ struct RemoteViewerWindowView: View {
                         showHomeAssistant: $showHomeAssistant,
                         showHistory: $showHistory
                     )
+                    .offset(z: model.enableDiorama ? 30 : 0)
                 }
             }
         )

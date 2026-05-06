@@ -160,7 +160,7 @@ struct PhotoDisplayView: View {
                 .animation(.easeInOut(duration: 0.3), value: windowModel.showAutoRestorePrompt)
                 // Match the ornament's z-offset so the pill stays above the
                 // diorama foreground (which sits at appModel.dioramaDistance).
-                .offset(z: 30)
+                .offset(z: windowModel.isDioramaMode ? 30 : 0)
             }
         }
         .background(

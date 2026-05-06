@@ -642,8 +642,9 @@ class PhotoWindowModel {
             if appModel.rememberImageEnhancements {
                 let lastMode = await ImageEnhancementTracker.shared.lastViewingMode(url: imageURL)
                 let wasConverted = await ImageEnhancementTracker.shared.wasConverted(url: imageURL)
+                let defaultIs3D = appModel.defaultImageViewingMode == .spatial3D || appModel.defaultImageViewingMode == .spatial3DImmersive
                 let shouldOfferRestore = appModel.autoRestoreSpatial3D && wasConverted && (lastMode == .spatial3D || lastMode == .spatial3DImmersive)
-                if shouldOfferRestore {
+                if shouldOfferRestore && !defaultIs3D {
                     presentAutoRestorePrompt(immersive: lastMode == .spatial3DImmersive)
                 }
                 activate3DMode(generateImmediately: false)
@@ -659,8 +660,13 @@ class PhotoWindowModel {
         let wasConverted = await ImageEnhancementTracker.shared.wasConverted(url: imageURL)
 
         if appModel.autoRestoreSpatial3D && wasConverted && (lastMode == .spatial3D || lastMode == .spatial3DImmersive) {
-            // Show prompt pill instead of auto-generating — user opts in
-            presentAutoRestorePrompt(immersive: lastMode == .spatial3DImmersive)
+            // Skip the prompt when the user's default mode is already 3D /
+            // immersive 3D — applyDefaultViewingModeIfNeeded will switch into
+            // that mode anyway, so the offer would be redundant.
+            let defaultIs3D = appModel.defaultImageViewingMode == .spatial3D || appModel.defaultImageViewingMode == .spatial3DImmersive
+            if !defaultIs3D {
+                presentAutoRestorePrompt(immersive: lastMode == .spatial3DImmersive)
+            }
         } else if lastMode == .autoEnhanced {
             if let cachedData = await AutoEnhanceCache.shared.loadData(for: imageURL),
                let cachedImage = UIImage(data: cachedData) {

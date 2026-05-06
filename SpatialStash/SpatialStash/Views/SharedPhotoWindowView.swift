@@ -55,7 +55,7 @@ struct SharedPhotoWindowView: View {
                         .disabled(isSaving || isSaved)
                     }
                 )
-                .offset(z: 30)
+                .offset(z: windowModel.isDioramaMode ? 30 : 0)
             }
         )
         .onAppear {

@@ -36,6 +36,7 @@ struct ContentView: View {
         .ornament(
             visibility: .visible,
             attachmentAnchor: .scene(.bottomFront),
+            contentAlignment: .top,
             ornament: {
                 TabBarOrnament()
                     .environment(appModel)
