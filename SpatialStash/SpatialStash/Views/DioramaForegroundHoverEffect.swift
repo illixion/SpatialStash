@@ -11,7 +11,7 @@
 import SwiftUI
 
 struct DioramaForegroundHoverEffect: CustomHoverEffect {
-    var scale: CGFloat = 1.10
+    var scale: CGFloat = 1.067
 
     func body(content: Content) -> some CustomHoverEffect {
         content.hoverEffect { effect, isActive, _ in

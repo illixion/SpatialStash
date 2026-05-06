@@ -227,28 +227,38 @@ struct RemoteViewerWindowView: View {
                     && !model.showAdjustmentsPopover
                     && !model.isAnyOrnamentMenuOpen
 
-                if dioramaVisible, let backdrop = model.currentBackdropImage {
-                    Image(uiImage: backdrop)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .scaleEffect(useKenBurns ? kenBurnsScale : 1.0)
-                        .offset(useKenBurns ? kenBurnsOffset : .zero)
-                        .opacity(model.isTransitioning ? 0 : 1)
-                        .clipped()
-                        .allowsHitTesting(false)
-                }
+                // Wrapped so a single .animation modifier drives the
+                // fade-in when the diorama layers materialize after
+                // fire-and-forget generation, instead of snapping in.
+                Group {
+                    if dioramaVisible, let backdrop = model.currentBackdropImage {
+                        Image(uiImage: backdrop)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .scaleEffect(useKenBurns ? kenBurnsScale : 1.0)
+                            .offset(useKenBurns ? kenBurnsOffset : .zero)
+                            .opacity(model.isTransitioning ? 0 : 1)
+                            .clipped()
+                            .allowsHitTesting(false)
+                            .transition(.opacity)
+                    }
 
-                if dioramaVisible, let foreground = model.currentForegroundImage {
-                    Image(uiImage: foreground)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .scaleEffect(useKenBurns ? kenBurnsScale : 1.0)
-                        .offset(useKenBurns ? kenBurnsOffset : .zero)
-                        .opacity(model.isTransitioning ? 0 : 1)
-                        .clipped()
-                        .offset(z: appModel.dioramaDistance)
-                        .allowsHitTesting(false)
+                    if dioramaVisible, let foreground = model.currentForegroundImage {
+                        Image(uiImage: foreground)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .scaleEffect(useKenBurns ? kenBurnsScale : 1.0)
+                            .offset(useKenBurns ? kenBurnsOffset : .zero)
+                            .opacity(model.isTransitioning ? 0 : 1)
+                            .clipped()
+                            .offset(z: appModel.dioramaDistance)
+                            .allowsHitTesting(false)
+                            .transition(.opacity)
+                    }
                 }
+                .animation(.easeInOut(duration: 0.5), value: dioramaVisible)
+                .animation(.easeInOut(duration: 0.5), value: model.currentForegroundImage != nil)
+                .animation(.easeInOut(duration: 0.5), value: model.currentBackdropImage != nil)
             }
 
             // Failure placeholder — shown when the auto-advance couldn't produce

@@ -115,8 +115,8 @@ struct PhotoDisplayView: View {
                 }
             }
             }
-            .animation(.easeInOut(duration: 0.3), value: windowModel.isDioramaMode)
-            .animation(.easeInOut(duration: 0.3), value: windowModel.dioramaForegroundImage != nil)
+            .animation(.easeInOut(duration: 0.5), value: windowModel.isDioramaMode)
+            .animation(.easeInOut(duration: 0.5), value: windowModel.dioramaForegroundImage != nil)
 
             // 3D restore prompt pill at the bottom
             if windowModel.showAutoRestorePrompt {
