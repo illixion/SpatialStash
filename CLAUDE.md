@@ -10,7 +10,7 @@ Spatial Stash is a visionOS app for Apple Vision Pro that displays images and vi
 
 Run this command to test your changes:
 ```bash
-xcodebuild -quiet -project SpatialStash/SpatialStash.xcodeproj -scheme SpatialStash -destination 'generic/platform=visionOS' build
+xcodebuild -quiet -project SpatialStash/SpatialStash.xcodeproj -scheme SpatialStash -destination 'generic/platform=visionOS' build CODE_SIGNING_ALLOWED=NO
 ```
 
 ## Architecture
