@@ -32,9 +32,12 @@ extension PhotoWindowModel {
             if is3DMode || desiredViewingMode != .mono {
                 await switchToViewingMode(.mono)
             }
+            // Load fg/bg first so the diorama layers don't pop in after the
+            // mode flag flips. ensureDioramaForegroundLoaded uses imageURL as
+            // its identity guard, so it's safe to call before isDioramaMode.
+            await ensureDioramaForegroundLoaded()
             isDioramaMode = true
             await trackViewingMode(.diorama)
-            await ensureDioramaForegroundLoaded()
         } else {
             isDioramaMode = false
             await trackViewingMode(.mono)

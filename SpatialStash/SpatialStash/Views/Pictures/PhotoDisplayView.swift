@@ -47,7 +47,7 @@ struct PhotoDisplayView: View {
     @State private var sizeVerificationTask: Task<Void, Never>?
 
     /// Minimum drag fraction of container width to trigger swipe
-    private let swipeThresholdFraction: CGFloat = 0.3
+    private let swipeThresholdFraction: CGFloat = 0.2
 
     /// Very large window size for immersive mode (fills field of vision)
     private let immersiveWindowSize: CGSize = CGSize(width: 3000, height: 3000)
@@ -462,7 +462,7 @@ struct PhotoDisplayView: View {
             return
         }
 
-        let threshold = max(containerWidth * swipeThresholdFraction, 80)
+        let threshold = max(containerWidth * swipeThresholdFraction, 54)
         let actualDistance = abs(translation)
 
         // Only allow predicted velocity to assist if the finger has already moved at least 40% of the threshold
@@ -690,7 +690,7 @@ private struct SwipeGestureModifier: ViewModifier {
     func body(content: Content) -> some View {
         if enabled {
             content.gesture(
-                DragGesture(minimumDistance: 30)
+                DragGesture(minimumDistance: 20)
                     .onEnded { value in
                         onEnded(value.translation.width, value.predictedEndTranslation.width)
                     }
@@ -710,7 +710,7 @@ private struct EntitySwipeGestureModifier: ViewModifier {
     func body(content: Content) -> some View {
         if enabled {
             content.gesture(
-                DragGesture(minimumDistance: 30)
+                DragGesture(minimumDistance: 20)
                     .targetedToAnyEntity()
                     .onEnded { value in
                         onEnded(value.translation.width, value.predictedEndTranslation.width)

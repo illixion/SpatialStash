@@ -261,10 +261,28 @@ class PhotoWindowModel {
             return
         case .spatial3D:
             await switchToViewingMode(.spatial3D)
+            await waitForSpatial3DGeneration()
         case .spatial3DImmersive:
             await switchToViewingMode(.spatial3DImmersive)
+            await waitForSpatial3DGeneration()
         case .diorama:
             await setDioramaMode(true)
+        }
+    }
+
+    /// Polls `spatial3DImageState` until generation finishes (or a safety
+    /// deadline elapses). Used by `applyDefaultViewingModeIfNeeded` so a
+    /// gallery prev/next swipe doesn't slide the new image in before the
+    /// RealityKit scene has actually been built — avoiding a 2D→3D pop.
+    /// `switchToViewingMode(.spatial3D)` only kicks off `activate3DMode`;
+    /// the real generation runs from the RealityView's init closure.
+    func waitForSpatial3DGeneration() async {
+        let deadline = Date().addingTimeInterval(15)
+        while !Task.isCancelled, Date() < deadline {
+            if spatial3DImageState == .generated { return }
+            // If 3D was abandoned (e.g. failed init / animated image), stop waiting.
+            if !is3DMode && pendingViewingMode == nil { return }
+            try? await Task.sleep(for: .milliseconds(50))
         }
     }
 
