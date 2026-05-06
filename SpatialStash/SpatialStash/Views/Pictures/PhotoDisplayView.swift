@@ -78,6 +78,10 @@ struct PhotoDisplayView: View {
 
             // Diorama layers — backdrop at the window plane, foreground popped
             // forward in z. The ornament has its own z-offset to float above.
+            // Wrapped in a Group so a single .animation modifier drives the
+            // fade-in transition when the diorama layers appear (e.g. after
+            // fire-and-forget generation completes during a gallery swipe).
+            Group {
             if windowModel.isDioramaMode,
                !windowModel.is3DMode,
                !windowModel.isViewingSpatial3DImmersive,
@@ -93,6 +97,7 @@ struct PhotoDisplayView: View {
                         .scaleEffect(x: windowModel.isImageFlipped ? -1 : 1, y: 1)
                         .offset(x: dragOffset)
                         .allowsHitTesting(false)
+                        .transition(.opacity)
                 }
                 if let foreground = windowModel.dioramaForegroundImage {
                     Image(uiImage: foreground)
@@ -106,8 +111,12 @@ struct PhotoDisplayView: View {
                         .offset(x: dragOffset)
                         .offset(z: appModel.dioramaDistance)
                         .allowsHitTesting(false)
+                        .transition(.opacity)
                 }
             }
+            }
+            .animation(.easeInOut(duration: 0.3), value: windowModel.isDioramaMode)
+            .animation(.easeInOut(duration: 0.3), value: windowModel.dioramaForegroundImage != nil)
 
             // 3D restore prompt pill at the bottom
             if windowModel.showAutoRestorePrompt {

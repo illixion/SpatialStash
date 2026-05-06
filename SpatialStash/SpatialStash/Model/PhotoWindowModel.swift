@@ -239,16 +239,22 @@ class PhotoWindowModel {
         guard !is3DMode, desiredViewingMode == .mono else { return }
         guard !currentAdjustments.isAutoEnhanced else { return }
 
-        // Diorama default takes precedence over the 3D auto-restore prompt and
-        // any per-image remembered mode — the user has expressed a strong
-        // preference at the global level. Apply it unconditionally so toggling
-        // remember-image-enhancements / autoRestoreSpatial3D doesn't block it.
+        // Diorama default takes precedence over any per-image remembered mode
+        // and is not blocked by the 3D auto-restore prompt — the user has
+        // expressed a strong preference at the global level. The prompt stays
+        // visible (rendered above the diorama foreground) so the user can
+        // still opt in to 3D for this image.
+        //
+        // The diorama foreground/backdrop generation is fire-and-forget here
+        // so a gallery prev/next swipe doesn't pause its slide-in waiting on
+        // Vision. The diorama layers fade in once ready.
         if appModel.defaultImageViewingMode == .diorama {
-            if showAutoRestorePrompt { dismissAutoRestorePrompt() }
             guard !isDioramaMode else { return }
             isApplyingDefaultViewingMode = true
-            defer { isApplyingDefaultViewingMode = false }
-            await setDioramaMode(true)
+            Task { @MainActor [weak self] in
+                await self?.setDioramaMode(true)
+                self?.isApplyingDefaultViewingMode = false
+            }
             return
         }
 
