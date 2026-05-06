@@ -55,6 +55,7 @@ struct SharedPhotoWindowView: View {
                         .disabled(isSaving || isSaved)
                     }
                 )
+                .offset(z: 30)
             }
         )
         .onAppear {

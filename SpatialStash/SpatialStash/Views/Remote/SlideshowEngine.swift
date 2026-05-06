@@ -241,6 +241,11 @@ class SlideshowEngine {
 
     var prefetchedImages: [(post: RemotePost, image: UIImage, url: URL)] = []
     private static let prefetchTarget = 3
+    /// Tracks whether the prefetch task is actively running. A completed
+    /// `Task` reports `isCancelled == false`, so we can't tell from the
+    /// task handle alone whether prefetch finished normally or is still
+    /// in flight. Set true at task start, false on exit.
+    private var prefetchInProgress: Bool = false
 
     /// When set, the next run loop iteration will display this specific post
     /// instead of advancing normally. Used by previousImage/jumpToHistoryPost.
@@ -370,6 +375,7 @@ class SlideshowEngine {
         runLoopTask = nil
         prefetchTask?.cancel()
         prefetchTask = nil
+        prefetchInProgress = false
         gifConversionTask?.cancel()
         gifConversionTask = nil
         watchdogTask?.cancel()
@@ -1003,17 +1009,20 @@ class SlideshowEngine {
 
     // MARK: - Prefetching
 
-    /// Kick prefetch only if no task is already running. Cancelling an
+    /// Kick prefetch only if a task isn't currently running. Cancelling an
     /// in-flight prefetch threw away mid-download work, which is the main
     /// reason the engine ever ran out of prefetched images during a
     /// transient network blip. Trigger sites call this freely; the running
-    /// task drains itself once `prefetchedImages` reaches the target.
+    /// task drains itself once `prefetchedImages` reaches the target. We
+    /// track liveness via `prefetchInProgress` because a `Task` that has
+    /// completed still reports `isCancelled == false`, so the handle alone
+    /// can't tell us whether prefetch is still running or already exited.
     func triggerPrefetch() {
-        if let existing = prefetchTask, !existing.isCancelled {
-            return
-        }
+        if prefetchInProgress { return }
+        prefetchInProgress = true
         prefetchTask = Task { [weak self] in
             await self?.prefetchImages()
+            await MainActor.run { self?.prefetchInProgress = false }
         }
     }
 

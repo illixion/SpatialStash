@@ -72,6 +72,7 @@ struct PhotoWindowView: View {
                         }
                     }
                 )
+                .offset(z: 30)
             }
         )
         .onAppear {

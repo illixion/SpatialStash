@@ -77,13 +77,8 @@ struct PhotoDisplayView: View {
                 .offset(x: dragOffset)
 
             // Diorama layers — backdrop at the window plane, foreground popped
-            // forward in z. Hidden whenever a popover or menu (More, 3D,
-            // Resolution, etc.) is open, since the ornament-anchored panels
-            // render at the window's depth and would otherwise be visually
-            // covered by the foreground at z=20.
+            // forward in z. The ornament has its own z-offset to float above.
             if windowModel.isDioramaMode,
-               !windowModel.hasOpenPopover,
-               !windowModel.isAnyOrnamentMenuOpen,
                !windowModel.is3DMode,
                !windowModel.isViewingSpatial3DImmersive,
                !windowModel.isAnimatedGIF {
