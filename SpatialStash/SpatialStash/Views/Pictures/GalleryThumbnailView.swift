@@ -14,13 +14,25 @@ struct GalleryThumbnailView: View {
     @State private var loadedImage: UIImage?
     @State private var isLoading = true
     @State private var loadFailed = false
+    @State private var dioramaPair: ThumbnailDioramaCache.Pair?
 
     var body: some View {
         ZStack {
             // Background
             Color.secondary.opacity(0.2)
-            
-            if let loadedImage {
+
+            if let dioramaPair {
+                // Two-layer diorama: blurred-subject backdrop, masked foreground.
+                // The foreground gets its own hover effect that lifts it forward
+                // on gaze for an Apple TV-style parallax pop.
+                Image(uiImage: dioramaPair.backdrop)
+                    .resizable()
+                    .scaledToFill()
+                Image(uiImage: dioramaPair.foreground)
+                    .resizable()
+                    .scaledToFill()
+                    .offset(z: 24)
+            } else if let loadedImage {
                 // Display static image
                 Image(uiImage: loadedImage)
                     .resizable()
@@ -51,12 +63,35 @@ struct GalleryThumbnailView: View {
         }
         .task {
             await loadThumbnail()
+            await generateDioramaIfPossible()
         }
         .onDisappear {
             loadedImage = nil
             isLoading = true
             loadFailed = false
+            dioramaPair = nil
         }
+    }
+
+    /// After the thumbnail bitmap is on screen, kick off Vision-driven
+    /// foreground/backdrop generation. A short debounce avoids queuing
+    /// work for thumbnails that scroll past quickly. The cache hands back
+    /// any in-flight or completed result without re-running Vision.
+    private func generateDioramaIfPossible() async {
+        guard let loadedImage else { return }
+        let key = image.thumbnailURL
+        if let cached = ThumbnailDioramaCache.shared.cached(for: key) {
+            dioramaPair = cached
+            return
+        }
+        do {
+            try await Task.sleep(nanoseconds: 400_000_000)
+        } catch {
+            return // cancelled (scrolled away)
+        }
+        let pair = await ThumbnailDioramaCache.shared.dioramaPair(for: key) { loadedImage }
+        guard !Task.isCancelled else { return }
+        dioramaPair = pair
     }
 
     private func loadThumbnail() async {
