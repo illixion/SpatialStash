@@ -22,6 +22,8 @@ struct SettingsBackup: Codable {
     var autoHideDelay: TimeInterval?
     var slideshowDelay: TimeInterval?
     var maxImageResolution: Int?
+    var spatial3DMaxResolution: Int?
+    var dioramaDistance: Double?
     var roundedCorners: Bool?
     var openMediaInNewWindows: Bool?
     /// Legacy key for backward compatibility when importing old backups

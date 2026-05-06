@@ -104,7 +104,7 @@ struct PhotoDisplayView: View {
                         .opacity(windowModel.effectiveAdjustments.opacity)
                         .scaleEffect(x: windowModel.isImageFlipped ? -1 : 1, y: 1)
                         .offset(x: dragOffset)
-                        .offset(z: 25)
+                        .offset(z: appModel.dioramaDistance)
                         .allowsHitTesting(false)
                 }
             }

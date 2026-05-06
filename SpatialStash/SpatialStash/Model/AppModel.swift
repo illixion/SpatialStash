@@ -508,6 +508,36 @@ class AppModel {
         ("Off", 0),
     ]
 
+    /// Maximum resolution passed to RealityKit's `Spatial3DImage`. Independent
+    /// of `maxImageResolution` so the 2D path can stay full-res while the 3D
+    /// depth/parallax mesh uses a smaller source. Capped at min(this, maxImageResolution)
+    /// when the latter is non-zero. 0 = no extra cap (defer to maxImageResolution).
+    var spatial3DMaxResolution: Int {
+        didSet {
+            if spatial3DMaxResolution != oldValue {
+                UserDefaults.standard.set(spatial3DMaxResolution, forKey: "spatial3DMaxResolution")
+            }
+        }
+    }
+
+    /// Distance (in points along z) the diorama foreground is popped forward
+    /// from the backdrop plane. Higher = more pronounced parallax.
+    var dioramaDistance: Double {
+        didSet {
+            if dioramaDistance != oldValue {
+                UserDefaults.standard.set(dioramaDistance, forKey: "dioramaDistance")
+            }
+        }
+    }
+
+    /// Available diorama distance options
+    static let dioramaDistanceOptions: [(label: String, value: Double)] = [
+        ("10", 10), ("15", 15), ("20", 20), ("25", 25),
+        ("30", 30), ("35", 35), ("40", 40), ("45", 45), ("50", 50),
+    ]
+
+    static let defaultDioramaDistance: Double = 25
+
     /// When true, image viewer windows have rounded corners.
     var roundedCorners: Bool {
         didSet {
@@ -709,6 +739,22 @@ class AppModel {
             loadedMaxImageResolution = 4096
         }
 
+        // Load spatial 3D max resolution (default: 4096)
+        let loadedSpatial3DMaxResolution: Int
+        if UserDefaults.standard.object(forKey: "spatial3DMaxResolution") != nil {
+            loadedSpatial3DMaxResolution = UserDefaults.standard.integer(forKey: "spatial3DMaxResolution")
+        } else {
+            loadedSpatial3DMaxResolution = 4096
+        }
+
+        // Load diorama distance (default: 25)
+        let loadedDioramaDistance: Double
+        if UserDefaults.standard.object(forKey: "dioramaDistance") != nil {
+            loadedDioramaDistance = UserDefaults.standard.double(forKey: "dioramaDistance")
+        } else {
+            loadedDioramaDistance = AppModel.defaultDioramaDistance
+        }
+
         // Load rounded corners (default: true)
         let loadedRoundedCorners = UserDefaults.standard.object(forKey: "roundedCorners") != nil
             ? UserDefaults.standard.bool(forKey: "roundedCorners")
@@ -778,6 +824,8 @@ class AppModel {
         self.autoHideDelay = loadedAutoHideDelay
         self.slideshowDelay = loadedSlideshowDelay
         self.maxImageResolution = loadedMaxImageResolution
+        self.spatial3DMaxResolution = loadedSpatial3DMaxResolution
+        self.dioramaDistance = loadedDioramaDistance
         self.roundedCorners = loadedRoundedCorners
         self.openMediaInNewWindows = loadedOpenMediaInNewWindows
         self.rememberImageEnhancements = loadedRememberImageEnhancements
@@ -1286,6 +1334,8 @@ class AppModel {
             autoHideDelay: autoHideDelay,
             slideshowDelay: slideshowDelay,
             maxImageResolution: maxImageResolution,
+            spatial3DMaxResolution: spatial3DMaxResolution,
+            dioramaDistance: dioramaDistance,
             roundedCorners: roundedCorners,
             openMediaInNewWindows: openMediaInNewWindows,
             rememberImageEnhancements: rememberImageEnhancements,
@@ -1318,6 +1368,8 @@ class AppModel {
         if let v = backup.autoHideDelay { autoHideDelay = v }
         if let v = backup.slideshowDelay { slideshowDelay = v }
         if let v = backup.maxImageResolution { maxImageResolution = v }
+        if let v = backup.spatial3DMaxResolution { spatial3DMaxResolution = v }
+        if let v = backup.dioramaDistance { dioramaDistance = v }
         if let v = backup.roundedCorners { roundedCorners = v }
         if let v = backup.openMediaInNewWindows ?? backup.openImagesInSeparateWindows { openMediaInNewWindows = v }
         if let v = backup.rememberImageEnhancements { rememberImageEnhancements = v }

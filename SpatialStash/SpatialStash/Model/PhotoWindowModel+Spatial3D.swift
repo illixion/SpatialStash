@@ -156,8 +156,19 @@ extension PhotoWindowModel {
             }
 
             // Respect the max image resolution setting by downsampling the source
-            // image before passing it to RealityKit's Spatial3DImage
-            let effectiveRes = effectiveMaxResolution
+            // image before passing it to RealityKit's Spatial3DImage. The dedicated
+            // spatial3DMaxResolution can clamp lower than the global cap so the 2D
+            // path keeps its full resolution while the depth/parallax mesh works
+            // off a smaller source.
+            let globalRes = effectiveMaxResolution
+            let s3dRes = appModel.spatial3DMaxResolution
+            let effectiveRes: Int
+            switch (globalRes, s3dRes) {
+            case (0, 0): effectiveRes = 0
+            case (0, let s): effectiveRes = s
+            case (let g, 0): effectiveRes = g
+            case (let g, let s): effectiveRes = min(g, s)
+            }
             if effectiveRes > 0,
                let downsampledData = Self.createDownsampledImageData(from: sourceURL, maxDimension: CGFloat(effectiveRes)),
                let downsampledSource = CGImageSourceCreateWithData(downsampledData as CFData, nil) {

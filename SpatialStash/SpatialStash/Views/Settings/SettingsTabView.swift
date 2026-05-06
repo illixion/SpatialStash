@@ -77,6 +77,20 @@ struct SettingsTabView: View {
                     }
                     .pickerStyle(.menu)
 
+                    Picker("Spatial 3D Resolution", selection: $appModel.spatial3DMaxResolution) {
+                        ForEach(AppModel.maxImageResolutionOptions, id: \.value) { option in
+                            Text(option.label).tag(option.value)
+                        }
+                    }
+                    .pickerStyle(.menu)
+
+                    Picker("Diorama Distance", selection: $appModel.dioramaDistance) {
+                        ForEach(AppModel.dioramaDistanceOptions, id: \.value) { option in
+                            Text(option.label).tag(option.value)
+                        }
+                    }
+                    .pickerStyle(.menu)
+
                     Picker("Auto-hide Controls", selection: $appModel.autoHideDelay) {
                         ForEach(AppModel.autoHideDelayOptions, id: \.value) { option in
                             Text(option.label).tag(option.value)
