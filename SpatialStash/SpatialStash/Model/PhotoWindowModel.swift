@@ -236,9 +236,24 @@ class PhotoWindowModel {
     func applyDefaultViewingModeIfNeeded() async {
         guard !isAnimatedImage else { return }
         guard backgroundRemovalState == .original else { return }
-        guard !showAutoRestorePrompt else { return }
-        guard !isDioramaMode, !is3DMode, desiredViewingMode == .mono else { return }
+        guard !is3DMode, desiredViewingMode == .mono else { return }
         guard !currentAdjustments.isAutoEnhanced else { return }
+
+        // Diorama default takes precedence over the 3D auto-restore prompt and
+        // any per-image remembered mode — the user has expressed a strong
+        // preference at the global level. Apply it unconditionally so toggling
+        // remember-image-enhancements / autoRestoreSpatial3D doesn't block it.
+        if appModel.defaultImageViewingMode == .diorama {
+            if showAutoRestorePrompt { dismissAutoRestorePrompt() }
+            guard !isDioramaMode else { return }
+            isApplyingDefaultViewingMode = true
+            defer { isApplyingDefaultViewingMode = false }
+            await setDioramaMode(true)
+            return
+        }
+
+        guard !showAutoRestorePrompt else { return }
+        guard !isDioramaMode else { return }
 
         // If the user has a remembered mode for this image, respect it instead
         // of overriding with the default.
@@ -257,7 +272,7 @@ class PhotoWindowModel {
         defer { isApplyingDefaultViewingMode = false }
 
         switch appModel.defaultImageViewingMode {
-        case .mono:
+        case .mono, .diorama:
             return
         case .spatial3D:
             await switchToViewingMode(.spatial3D)
@@ -265,8 +280,6 @@ class PhotoWindowModel {
         case .spatial3DImmersive:
             await switchToViewingMode(.spatial3DImmersive)
             await waitForSpatial3DGeneration()
-        case .diorama:
-            await setDioramaMode(true)
         }
     }
 
