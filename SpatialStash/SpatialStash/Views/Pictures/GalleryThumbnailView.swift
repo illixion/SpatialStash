@@ -22,19 +22,16 @@ struct GalleryThumbnailView: View {
             // Background
             Color.secondary.opacity(0.2)
 
-            if let dioramaPair, !appModel.effectiveReduceMotion {
-                // Both layers always rendered, both at z=0 — looks flat at
-                // rest. On gaze the foreground scales beyond the container's
-                // hover scale and tilts slightly, reading as forward motion
-                // without needing dynamic z-offset (which the hover-effect
-                // transform vocabulary doesn't expose).
+            if let dioramaPair, appModel.effectiveThumbnailDiorama {
+                // Two-layer diorama: blurred-subject backdrop, masked foreground
+                // popped forward in z for an Apple TV-style parallax pop.
                 Image(uiImage: dioramaPair.backdrop)
                     .resizable()
                     .scaledToFill()
                 Image(uiImage: dioramaPair.foreground)
                     .resizable()
                     .scaledToFill()
-                    .hoverEffect(DioramaForegroundHoverEffect())
+                    .offset(z: 24)
             } else if let loadedImage {
                 Image(uiImage: loadedImage)
                     .resizable()
@@ -81,7 +78,7 @@ struct GalleryThumbnailView: View {
     /// any in-flight or completed result without re-running Vision.
     private func generateDioramaIfPossible() async {
         guard let loadedImage else { return }
-        guard !appModel.effectiveReduceMotion else { return }
+        guard appModel.effectiveThumbnailDiorama else { return }
         let key = image.thumbnailURL
         if let cached = ThumbnailDioramaCache.shared.cached(for: key) {
             dioramaPair = cached

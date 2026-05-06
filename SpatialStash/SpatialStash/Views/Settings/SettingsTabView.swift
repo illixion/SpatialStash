@@ -51,6 +51,10 @@ struct SettingsTabView: View {
                             .foregroundColor(.secondary)
                     }
 
+                    if !appModel.effectiveReduceMotion {
+                        Toggle("Diorama Thumbnails", isOn: $appModel.thumbnailDiorama)
+                    }
+
                     Toggle("Rounded Corners", isOn: $appModel.roundedCorners)
 
                     Toggle("Always Open In New Window", isOn: $appModel.openMediaInNewWindows)

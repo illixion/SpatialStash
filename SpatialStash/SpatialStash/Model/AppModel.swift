@@ -562,6 +562,23 @@ class AppModel {
         reduceMotion || systemReduceMotion
     }
 
+    /// When true, gallery thumbnails render the two-layer diorama with the
+    /// foreground popped forward in z. Independent from Reduce Motion: a
+    /// user may want the parallax-free look without disabling other motion.
+    /// Forced off when `effectiveReduceMotion` is true — read
+    /// `effectiveThumbnailDiorama` at use sites.
+    var thumbnailDiorama: Bool {
+        didSet {
+            if thumbnailDiorama != oldValue {
+                UserDefaults.standard.set(thumbnailDiorama, forKey: "thumbnailDiorama")
+            }
+        }
+    }
+
+    var effectiveThumbnailDiorama: Bool {
+        thumbnailDiorama && !effectiveReduceMotion
+    }
+
     /// When true, image viewer windows have rounded corners.
     var roundedCorners: Bool {
         didSet {
@@ -827,6 +844,11 @@ class AppModel {
         // Accessibility setting overrides via effectiveReduceMotion)
         let loadedReduceMotion = UserDefaults.standard.bool(forKey: "reduceMotion")
 
+        // Load thumbnail diorama preference (default: true)
+        let loadedThumbnailDiorama = UserDefaults.standard.object(forKey: "thumbnailDiorama") != nil
+            ? UserDefaults.standard.bool(forKey: "thumbnailDiorama")
+            : true
+
         // Load rounded corners (default: true)
         let loadedRoundedCorners = UserDefaults.standard.object(forKey: "roundedCorners") != nil
             ? UserDefaults.standard.bool(forKey: "roundedCorners")
@@ -907,6 +929,7 @@ class AppModel {
         self.spatial3DMaxResolution = loadedSpatial3DMaxResolution
         self.dioramaDistance = loadedDioramaDistance
         self.reduceMotion = loadedReduceMotion
+        self.thumbnailDiorama = loadedThumbnailDiorama
         self.roundedCorners = loadedRoundedCorners
         self.openMediaInNewWindows = loadedOpenMediaInNewWindows
         self.rememberImageEnhancements = loadedRememberImageEnhancements
