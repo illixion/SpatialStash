@@ -46,7 +46,7 @@ struct SettingsTabView: View {
                 Section("Display") {
                     Toggle("Rounded Corners", isOn: $appModel.roundedCorners)
 
-                    Toggle("Open media in new windows", isOn: $appModel.openMediaInNewWindows)
+                    Toggle("Always Open In New Window", isOn: $appModel.openMediaInNewWindows)
 
                     Toggle("Remember Image Enhancements", isOn: Binding(
                         get: { appModel.rememberImageEnhancements },
@@ -60,7 +60,7 @@ struct SettingsTabView: View {
                     ))
 
                     if appModel.rememberImageEnhancements {
-                        Toggle("Auto-Restore 3D", isOn: $appModel.autoRestoreSpatial3D)
+                        Toggle("Remember Last 3D State", isOn: $appModel.autoRestoreSpatial3D)
                     }
 
                     Picker("Default Viewing Mode", selection: $appModel.defaultImageViewingMode) {
@@ -70,28 +70,28 @@ struct SettingsTabView: View {
                     }
                     .pickerStyle(.menu)
 
-                    Picker("Max Image Resolution", selection: $appModel.maxImageResolution) {
+                    Picker("2D Image Resolution Limit", selection: $appModel.maxImageResolution) {
                         ForEach(AppModel.maxImageResolutionOptions, id: \.value) { option in
                             Text(option.label).tag(option.value)
                         }
                     }
                     .pickerStyle(.menu)
 
-                    Picker("Spatial 3D Resolution", selection: $appModel.spatial3DMaxResolution) {
+                    Picker("Spatial 3D Resolution Limit", selection: $appModel.spatial3DMaxResolution) {
                         ForEach(AppModel.maxImageResolutionOptions, id: \.value) { option in
                             Text(option.label).tag(option.value)
                         }
                     }
                     .pickerStyle(.menu)
 
-                    Picker("Diorama Distance", selection: $appModel.dioramaDistance) {
+                    Picker("Diorama Layer Distance", selection: $appModel.dioramaDistance) {
                         ForEach(AppModel.dioramaDistanceOptions, id: \.value) { option in
                             Text(option.label).tag(option.value)
                         }
                     }
                     .pickerStyle(.menu)
 
-                    Picker("Auto-hide Controls", selection: $appModel.autoHideDelay) {
+                    Picker("Auto-hide Controls After", selection: $appModel.autoHideDelay) {
                         ForEach(AppModel.autoHideDelayOptions, id: \.value) { option in
                             Text(option.label).tag(option.value)
                         }
@@ -102,7 +102,7 @@ struct SettingsTabView: View {
                 Section("Slideshow") {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            Text("Delay Between Images")
+                            Text("Delay")
                             Spacer()
                             Text(formatSlideshowDelay(appModel.slideshowDelay))
                                 .foregroundColor(.secondary)
@@ -355,7 +355,7 @@ struct SettingsTabView: View {
                 }
 
                 Section("Developer") {
-                    Toggle("Enable Remote API Viewer", isOn: Binding(
+                    Toggle("Enable RoboFrame Viewer", isOn: Binding(
                         get: { appModel.enableRemoteViewer },
                         set: { newValue in
                             appModel.enableRemoteViewer = newValue
@@ -364,6 +364,9 @@ struct SettingsTabView: View {
                             }
                         }
                     ))
+                    Text("Enable viewer for RoboFrame photo slideshow engine, see README.md for info on backend setup.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
 
                     Toggle("Show Debug Console", isOn: Binding(
                         get: { appModel.showDebugConsole },
@@ -374,7 +377,7 @@ struct SettingsTabView: View {
                             }
                         }
                     ))
-                    Text("Adds a Console tab showing app log messages in real time. Log capture only runs while a console view is open.")
+                    Text("Adds a Console tab showing app log messages in real time.")
                         .font(.caption)
                         .foregroundColor(.secondary)
 
