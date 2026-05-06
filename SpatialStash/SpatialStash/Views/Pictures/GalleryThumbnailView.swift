@@ -9,6 +9,7 @@ import os
 import SwiftUI
 
 struct GalleryThumbnailView: View {
+    @Environment(AppModel.self) private var appModel
     let image: GalleryImage
     var onTap: (() -> Void)? = nil
     @State private var loadedImage: UIImage?
@@ -21,7 +22,7 @@ struct GalleryThumbnailView: View {
             // Background
             Color.secondary.opacity(0.2)
 
-            if let dioramaPair {
+            if let dioramaPair, !appModel.effectiveReduceMotion {
                 // Both layers always rendered, both at z=0 — looks flat at
                 // rest. On gaze the foreground scales beyond the container's
                 // hover scale and tilts slightly, reading as forward motion
@@ -58,7 +59,7 @@ struct GalleryThumbnailView: View {
         .cornerRadius(12)
         .clipped()
         .contentShape(Rectangle())
-        .hoverEffect(ScaleHoverEffect())
+        .modifier(ThumbnailHoverModifier(reduceMotion: appModel.effectiveReduceMotion))
         .onTapGesture {
             onTap?()
         }
@@ -80,6 +81,7 @@ struct GalleryThumbnailView: View {
     /// any in-flight or completed result without re-running Vision.
     private func generateDioramaIfPossible() async {
         guard let loadedImage else { return }
+        guard !appModel.effectiveReduceMotion else { return }
         let key = image.thumbnailURL
         if let cached = ThumbnailDioramaCache.shared.cached(for: key) {
             dioramaPair = cached
@@ -116,6 +118,21 @@ struct GalleryThumbnailView: View {
         isLoading = false
     }
     
+    /// Wraps the thumbnail's hover effect choice. Reduce-motion swaps the
+    /// scale-up animation for the system default highlight so gaze still
+    /// gives feedback without movement.
+    private struct ThumbnailHoverModifier: ViewModifier {
+        let reduceMotion: Bool
+
+        func body(content: Content) -> some View {
+            if reduceMotion {
+                content.hoverEffect(.highlight)
+            } else {
+                content.hoverEffect(ScaleHoverEffect())
+            }
+        }
+    }
+
     private nonisolated static func cropToSquare(_ image: UIImage) -> UIImage {
         let side = min(image.size.width, image.size.height)
         let xOffset = (image.size.width - side) / 2

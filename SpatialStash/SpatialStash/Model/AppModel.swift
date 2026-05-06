@@ -538,6 +538,30 @@ class AppModel {
 
     static let defaultDioramaDistance: Double = 25
 
+    /// User preference for reduced-motion behavior (disable thumbnail
+    /// gaze animations, instant photo-viewer swipe transitions, instant
+    /// slideshow image switches). The system Accessibility setting also
+    /// forces this on — read `effectiveReduceMotion` at use sites.
+    var reduceMotion: Bool {
+        didSet {
+            if reduceMotion != oldValue {
+                UserDefaults.standard.set(reduceMotion, forKey: "reduceMotion")
+            }
+        }
+    }
+
+    /// Mirrors `UIAccessibility.isReduceMotionEnabled`, kept current via a
+    /// notification observer registered in `init`. Stored separately so
+    /// SwiftUI views observing `effectiveReduceMotion` rebuild when the
+    /// system setting changes outside the app.
+    private(set) var systemReduceMotion: Bool = UIAccessibility.isReduceMotionEnabled
+
+    /// True when either the user toggle or the system Accessibility setting
+    /// requests reduced motion. This is the value views should react to.
+    var effectiveReduceMotion: Bool {
+        reduceMotion || systemReduceMotion
+    }
+
     /// When true, image viewer windows have rounded corners.
     var roundedCorners: Bool {
         didSet {
@@ -799,6 +823,10 @@ class AppModel {
             loadedDioramaDistance = AppModel.defaultDioramaDistance
         }
 
+        // Load reduce-motion user preference (default: false; system
+        // Accessibility setting overrides via effectiveReduceMotion)
+        let loadedReduceMotion = UserDefaults.standard.bool(forKey: "reduceMotion")
+
         // Load rounded corners (default: true)
         let loadedRoundedCorners = UserDefaults.standard.object(forKey: "roundedCorners") != nil
             ? UserDefaults.standard.bool(forKey: "roundedCorners")
@@ -878,6 +906,7 @@ class AppModel {
         self.maxImageResolution = loadedMaxImageResolution
         self.spatial3DMaxResolution = loadedSpatial3DMaxResolution
         self.dioramaDistance = loadedDioramaDistance
+        self.reduceMotion = loadedReduceMotion
         self.roundedCorners = loadedRoundedCorners
         self.openMediaInNewWindows = loadedOpenMediaInNewWindows
         self.rememberImageEnhancements = loadedRememberImageEnhancements
@@ -932,6 +961,18 @@ class AppModel {
         // Windows in the current room are never touched — the OS can
         // evict/restore GPU-private texture pages more efficiently than
         // app-level downscale-restore cycles.
+        // Track system Accessibility "Reduce Motion" so effectiveReduceMotion
+        // updates live when the user changes it outside the app.
+        NotificationCenter.default.addObserver(
+            forName: UIAccessibility.reduceMotionStatusDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            Task { @MainActor [weak self] in
+                self?.systemReduceMotion = UIAccessibility.isReduceMotionEnabled
+            }
+        }
+
         NotificationCenter.default.addObserver(
             forName: UIApplication.didReceiveMemoryWarningNotification,
             object: nil,

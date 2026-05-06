@@ -44,6 +44,13 @@ struct SettingsTabView: View {
         NavigationStack {
             List {
                 Section("Display") {
+                    Toggle("Reduce Motion", isOn: $appModel.reduceMotion)
+                    if appModel.systemReduceMotion && !appModel.reduceMotion {
+                        Text("Currently enforced by system Accessibility setting.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+
                     Toggle("Rounded Corners", isOn: $appModel.roundedCorners)
 
                     Toggle("Always Open In New Window", isOn: $appModel.openMediaInNewWindows)

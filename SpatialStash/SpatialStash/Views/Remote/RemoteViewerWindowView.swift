@@ -160,6 +160,9 @@ struct RemoteViewerWindowView: View {
         .onChange(of: appModel.globalVisualAdjustments) { _, newValue in
             viewerModel?.globalAdjustments = newValue
         }
+        .onChange(of: appModel.effectiveReduceMotion, initial: true) { _, newValue in
+            viewerModel?.reduceMotion = newValue
+        }
         .onChange(of: viewerModel?.showAdjustmentsPopover) { _, isOpen in
             if isOpen == true {
                 autoHideTimer?.cancel()
@@ -256,9 +259,9 @@ struct RemoteViewerWindowView: View {
                             .transition(.opacity)
                     }
                 }
-                .animation(.easeInOut(duration: 0.5), value: dioramaVisible)
-                .animation(.easeInOut(duration: 0.5), value: model.currentForegroundImage != nil)
-                .animation(.easeInOut(duration: 0.5), value: model.currentBackdropImage != nil)
+                .animation(appModel.effectiveReduceMotion ? nil : .easeInOut(duration: 0.5), value: dioramaVisible)
+                .animation(appModel.effectiveReduceMotion ? nil : .easeInOut(duration: 0.5), value: model.currentForegroundImage != nil)
+                .animation(appModel.effectiveReduceMotion ? nil : .easeInOut(duration: 0.5), value: model.currentBackdropImage != nil)
             }
 
             // Failure placeholder — shown when the auto-advance couldn't produce

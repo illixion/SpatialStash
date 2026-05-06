@@ -115,8 +115,8 @@ struct PhotoDisplayView: View {
                 }
             }
             }
-            .animation(.easeInOut(duration: 0.5), value: windowModel.isDioramaMode)
-            .animation(.easeInOut(duration: 0.5), value: windowModel.dioramaForegroundImage != nil)
+            .animation(appModel.effectiveReduceMotion ? nil : .easeInOut(duration: 0.5), value: windowModel.isDioramaMode)
+            .animation(appModel.effectiveReduceMotion ? nil : .easeInOut(duration: 0.5), value: windowModel.dioramaForegroundImage != nil)
 
             // 3D restore prompt pill at the bottom
             if windowModel.showAutoRestorePrompt {
@@ -507,15 +507,23 @@ struct PhotoDisplayView: View {
         isSwipeTransitioning = true
         suppressWindowResize = true
         let offScreenOffset: CGFloat = direction == .next ? -containerWidth : containerWidth
+        let reduceMotion = appModel.effectiveReduceMotion
 
-        // Phase 1: Animate current image off-screen
-        withAnimation(.easeIn(duration: 0.2)) {
-            dragOffset = offScreenOffset
+        // Phase 1: Animate current image off-screen (skipped under reduce motion)
+        if reduceMotion {
+            var t = Transaction(); t.disablesAnimations = true
+            withTransaction(t) { dragOffset = 0 }
+        } else {
+            withAnimation(.easeIn(duration: 0.2)) {
+                dragOffset = offScreenOffset
+            }
         }
 
         Task { @MainActor in
             // Wait for off-screen animation to complete
-            try? await Task.sleep(for: .milliseconds(220))
+            if !reduceMotion {
+                try? await Task.sleep(for: .milliseconds(220))
+            }
 
             // Phase 2: Switch to new image (await ensures image data is ready)
             if direction == .next {
@@ -528,19 +536,26 @@ struct PhotoDisplayView: View {
             var transaction = Transaction()
             transaction.disablesAnimations = true
             withTransaction(transaction) {
-                dragOffset = -offScreenOffset
+                dragOffset = reduceMotion ? 0 : -offScreenOffset
             }
 
             // Brief pause to let SwiftUI process the view update
             try? await Task.sleep(for: .milliseconds(50))
 
             // Phase 3: Animate new image sliding to center
-            withAnimation(.easeOut(duration: 0.25)) {
-                dragOffset = 0
+            if reduceMotion {
+                var t = Transaction(); t.disablesAnimations = true
+                withTransaction(t) { dragOffset = 0 }
+            } else {
+                withAnimation(.easeOut(duration: 0.25)) {
+                    dragOffset = 0
+                }
             }
 
             // Wait for slide-in animation to complete
-            try? await Task.sleep(for: .milliseconds(270))
+            if !reduceMotion {
+                try? await Task.sleep(for: .milliseconds(270))
+            }
 
             // Phase 4: Clear transition state and resize window
             isSwipeTransitioning = false

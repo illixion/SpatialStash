@@ -179,6 +179,10 @@ class SlideshowEngine {
         didSet { if !enableDiorama { clearDioramaForegrounds() } }
     }
 
+    /// When true, the crossfade between images is replaced with an instant
+    /// switch (driven by AppModel's effectiveReduceMotion).
+    var reduceMotion: Bool = false
+
     /// Uncropped foreground for the currently displayed post, when diorama
     /// is enabled. Nil while still being generated or when diorama is off.
     var currentForegroundImage: UIImage?
@@ -937,15 +941,23 @@ class SlideshowEngine {
             gifConversionTask = nil
         }
 
-        // Crossfade transition
+        // Crossfade transition (skipped under reduce motion — instant switch)
         transition(to: .transitioning)
-        withAnimation(.easeInOut(duration: 1.0)) {
-            nextImage = image
-            nextPost = post
-            isTransitioning = true
+        if reduceMotion {
+            var t = Transaction(); t.disablesAnimations = true
+            withTransaction(t) {
+                nextImage = image
+                nextPost = post
+                isTransitioning = true
+            }
+        } else {
+            withAnimation(.easeInOut(duration: 1.0)) {
+                nextImage = image
+                nextPost = post
+                isTransitioning = true
+            }
+            try? await Task.sleep(for: .seconds(1.0))
         }
-
-        try? await Task.sleep(for: .seconds(1.0))
 
         // Commit the transition using local parameters (not nextImage/nextPost)
         // to avoid races with interleaved calls
