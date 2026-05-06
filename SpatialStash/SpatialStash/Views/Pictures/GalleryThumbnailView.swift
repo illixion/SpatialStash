@@ -21,22 +21,26 @@ struct GalleryThumbnailView: View {
             // Background
             Color.secondary.opacity(0.2)
 
-            if let dioramaPair {
-                // Two-layer diorama: blurred-subject backdrop, masked foreground.
-                // The foreground gets its own hover effect that lifts it forward
-                // on gaze for an Apple TV-style parallax pop.
-                Image(uiImage: dioramaPair.backdrop)
-                    .resizable()
-                    .scaledToFill()
-                Image(uiImage: dioramaPair.foreground)
-                    .resizable()
-                    .scaledToFill()
-                    .offset(z: 24)
-            } else if let loadedImage {
-                // Display static image
+            if let loadedImage {
+                // Flat thumbnail always sits underneath. The diorama overlay
+                // fades in only while gaze is on the cell, driven by the
+                // hover-effect proxy below.
                 Image(uiImage: loadedImage)
                     .resizable()
                     .scaledToFill()
+
+                if let dioramaPair {
+                    ZStack {
+                        Image(uiImage: dioramaPair.backdrop)
+                            .resizable()
+                            .scaledToFill()
+                        Image(uiImage: dioramaPair.foreground)
+                            .resizable()
+                            .scaledToFill()
+                            .offset(z: 24)
+                    }
+                    .hoverEffect(DioramaRevealHoverEffect())
+                }
             } else if isLoading {
                 ProgressView()
             } else {
