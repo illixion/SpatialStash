@@ -51,6 +51,9 @@ extension PhotoWindowModel {
     func activate3DMode(generateImmediately: Bool = false) {
         recordInteraction()
         guard !isAnimatedImage, !is3DMode else { return }
+        if backgroundRemovalState == .removed {
+            restoreOriginalBackground()
+        }
         clearBackgroundRemovalState()
         if isImageFlipped {
             isImageFlipped = false

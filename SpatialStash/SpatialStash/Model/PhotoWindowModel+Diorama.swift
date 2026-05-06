@@ -34,8 +34,11 @@ extension PhotoWindowModel {
             }
             // Diorama is also mutually exclusive with background removal —
             // mixing the masked foreground with the bg-removed display texture
-            // produces a broken composite, so clear bg removal before we flip
-            // the diorama flag.
+            // produces a broken composite (two foreground copies), so restore
+            // the original display first, then drop cached bg-removal state.
+            if backgroundRemovalState == .removed {
+                restoreOriginalBackground()
+            }
             if backgroundRemovalState != .original {
                 clearBackgroundRemovalState()
             }
