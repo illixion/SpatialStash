@@ -39,6 +39,12 @@ struct GalleryThumbnailView: View {
                             .scaledToFill()
                             .offset(z: 24)
                     }
+                    // The reveal effect drives opacity 0→1 from the hover
+                    // proxy, but a fully transparent view isn't gaze-eligible
+                    // on visionOS — without an explicit hover content shape
+                    // the effect would never activate. Pin a rectangle hit
+                    // region so gaze hits the overlay even at opacity 0.
+                    .contentShape(.hoverEffect, Rectangle())
                     .hoverEffect(DioramaRevealHoverEffect())
                 }
             } else if isLoading {
