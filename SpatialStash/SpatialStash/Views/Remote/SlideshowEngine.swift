@@ -88,6 +88,12 @@ class SlideshowEngine {
     /// on cold start before falling through to the placeholder.
     private static let firstLoadTimeout: TimeInterval = 20
 
+    /// In steady state, when the auto-advance can't produce a prefetched
+    /// image, we keep the current image displayed and re-check after this
+    /// short interval rather than flashing the warning placeholder. Short
+    /// enough that the slideshow resumes quickly once prefetch fills.
+    private static let steadyStateRetryInterval: TimeInterval = 3
+
     /// Convenience for views — true when state is .paused
     var isPaused: Bool { state == .paused }
 
@@ -627,12 +633,15 @@ class SlideshowEngine {
         defer { isLoading = false }
 
         // Manual navigation: specific post requested (prev/jump).
-        // Awaits download; shows placeholder on failure.
+        // Awaits download; on failure, keep the current image and toast —
+        // the user explicitly initiated nav, so silently dropping is bad,
+        // but clobbering their current view with a warning icon is worse.
         if let post = pendingPost {
             pendingPost = nil
             let displayed = await fetchAndDisplayPost(post)
             if !displayed {
-                displayFailurePlaceholder(toast: "Image failed to load")
+                showToast("Image failed to load", isError: true)
+                advanceDisplayDeadline()
             }
             if state == .loading {
                 transition(to: .displaying)
@@ -675,14 +684,27 @@ class SlideshowEngine {
                 triggerPrefetch()
                 return
             }
-            // Timed out waiting for first image — fall through to placeholder
+            // Timed out waiting for first image — fall through to placeholder.
+            // Only the cold-start path ever shows the warning icon now.
         }
 
-        // Steady-state miss: never block the timer on network — show the
-        // placeholder so the interval is honored, kick prefetch to populate
-        // for the next cycle, and return.
-        let toast = cachedPosts.isEmpty ? "No images cached" : "Next image not ready"
-        displayFailurePlaceholder(toast: toast)
+        // Steady-state miss: keep the current image on screen, re-arm a
+        // short retry deadline, and let prefetch try to fill. The slideshow
+        // visibly stalls for a few seconds rather than flashing the warning
+        // icon — much less disruptive when the cause is a transient network
+        // hiccup or a momentarily slow server.
+        if hasDisplayedFirstMedia {
+            triggerPrefetch()
+            displayDeadline = Date().addingTimeInterval(Self.steadyStateRetryInterval)
+            if state == .loading {
+                transition(to: .displaying)
+            }
+            return
+        }
+
+        // Cold start with no first image yet AND wait timed out: there's
+        // genuinely nothing to show, so the placeholder is appropriate.
+        displayFailurePlaceholder(toast: "No images available")
         triggerPrefetch()
         if state == .loading {
             transition(to: .displaying)
@@ -981,8 +1003,15 @@ class SlideshowEngine {
 
     // MARK: - Prefetching
 
+    /// Kick prefetch only if no task is already running. Cancelling an
+    /// in-flight prefetch threw away mid-download work, which is the main
+    /// reason the engine ever ran out of prefetched images during a
+    /// transient network blip. Trigger sites call this freely; the running
+    /// task drains itself once `prefetchedImages` reaches the target.
     func triggerPrefetch() {
-        prefetchTask?.cancel()
+        if let existing = prefetchTask, !existing.isCancelled {
+            return
+        }
         prefetchTask = Task { [weak self] in
             await self?.prefetchImages()
         }
@@ -1003,16 +1032,29 @@ class SlideshowEngine {
 
             guard let imageURL = contentProvider?.resolveImageURL(for: post) else { continue }
 
-            if let result = await contentProvider?.downloadImage(for: post, maxResolution: maxImageResolution) {
-                guard !Task.isCancelled else { break }
-                prefetchedImages.append((post: post, image: result.image, url: imageURL))
-                AppLogger.remoteViewer.debug("Prefetched post \(post._id, privacy: .public) (\(self.prefetchedImages.count, privacy: .public)/\(Self.prefetchTarget, privacy: .public))")
-
-                // Pre-process diorama foreground for the upcoming post so the
-                // overlay is ready the moment it transitions in.
-                if enableDiorama {
-                    generateDioramaForeground(post: post, image: result.image, isCurrent: false)
+            // Retry transient download failures a couple of times before
+            // dropping the post — a single network hiccup shouldn't cost
+            // us a slot in the prefetch buffer.
+            var result: (image: UIImage, data: Data)?
+            for attempt in 0..<3 {
+                if Task.isCancelled { break }
+                if let r = await contentProvider?.downloadImage(for: post, maxResolution: maxImageResolution) {
+                    result = r
+                    break
                 }
+                if attempt < 2 {
+                    let delay: TimeInterval = attempt == 0 ? 0.5 : 1.5
+                    try? await Task.sleep(for: .seconds(delay))
+                }
+            }
+            guard let result, !Task.isCancelled else { continue }
+            prefetchedImages.append((post: post, image: result.image, url: imageURL))
+            AppLogger.remoteViewer.debug("Prefetched post \(post._id, privacy: .public) (\(self.prefetchedImages.count, privacy: .public)/\(Self.prefetchTarget, privacy: .public))")
+
+            // Pre-process diorama foreground for the upcoming post so the
+            // overlay is ready the moment it transitions in.
+            if enableDiorama {
+                generateDioramaForeground(post: post, image: result.image, isCurrent: false)
             }
         }
 

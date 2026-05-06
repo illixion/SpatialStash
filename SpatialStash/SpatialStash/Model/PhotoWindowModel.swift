@@ -253,6 +253,9 @@ class PhotoWindowModel {
             if lastMode != .mono { return }
         }
 
+        isApplyingDefaultViewingMode = true
+        defer { isApplyingDefaultViewingMode = false }
+
         switch appModel.defaultImageViewingMode {
         case .mono:
             return
@@ -576,8 +579,13 @@ class PhotoWindowModel {
     }
 
     /// Record an enhancement in the tracker, but only if the setting is enabled.
+    /// When true, viewing-mode changes triggered by `applyDefaultViewingModeIfNeeded`
+    /// are suppressed from being persisted as a per-image user choice.
+    var isApplyingDefaultViewingMode: Bool = false
+
     func trackViewingMode(_ mode: ViewingModePreference) async {
         guard appModel.rememberImageEnhancements else { return }
+        guard !isApplyingDefaultViewingMode else { return }
         await ImageEnhancementTracker.shared.setLastViewingMode(url: imageURL, mode: mode)
     }
 

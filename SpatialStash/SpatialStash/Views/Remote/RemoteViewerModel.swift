@@ -146,6 +146,10 @@ class RemoteViewerModel: SlideshowEngine {
     }
 
     override func onBecameActive() {
+        // Returning to active after tracking loss / true backgrounding may
+        // have left the WS sleeping in a backoff. Kick it before reporting
+        // visibility so the visibility frame actually goes out.
+        wsClient?.forceReconnectNow()
         wsClient?.sendVisibilityChange(deviceId: config.wsDeviceId, visible: true)
     }
 

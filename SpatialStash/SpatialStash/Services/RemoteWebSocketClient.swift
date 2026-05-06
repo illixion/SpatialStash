@@ -78,11 +78,36 @@ class RemoteWebSocketClient {
 
         self.wsURL = url
         self.initialDeviceId = deviceId
-        self.session = URLSession(configuration: .default)
+        // `waitsForConnectivity` lets the upgrade stall briefly while the
+        // radio reattaches instead of failing instantly on a transient
+        // outage — important on visionOS where tracking loss can briefly
+        // tear down the network path.
+        let configuration = URLSessionConfiguration.default
+        configuration.waitsForConnectivity = true
+        self.session = URLSession(configuration: configuration)
         // A new connect attempt clears any prior halt — caller may have
         // updated the access token in config and is asking us to retry.
         self.halted = false
 
+        doConnect()
+    }
+
+    /// Force an immediate reconnect attempt, cancelling any sleeping
+    /// backoff. Called by viewers when returning to the foreground so
+    /// recovery doesn't have to wait out the exponential delay.
+    func forceReconnectNow() {
+        if halted { return }
+        guard wsURL != nil, session != nil else { return }
+        // Already connected and the receive loop is running — nothing to do.
+        if isConnected, webSocketTask != nil, receiveTask != nil { return }
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        receiveTask?.cancel()
+        receiveTask = nil
+        webSocketTask?.cancel(with: .goingAway, reason: nil)
+        webSocketTask = nil
+        retryCount = 0
+        AppLogger.remoteViewer.info("WebSocket force reconnect requested")
         doConnect()
     }
 
@@ -174,8 +199,11 @@ class RemoteWebSocketClient {
 
         webSocketTask = session.webSocketTask(with: url)
         webSocketTask?.resume()
+        // Optimistic — flipped to false on receive error, and confirmed
+        // stable by resetting `retryCount` only after the first successful
+        // receive (so repeated handshake failures actually compound the
+        // backoff instead of resetting it on every doomed attempt).
         isConnected = true
-        retryCount = 0
 
         AppLogger.remoteViewer.info("WebSocket connecting to \(url.absoluteString, privacy: .private)")
 
@@ -191,11 +219,18 @@ class RemoteWebSocketClient {
     }
 
     private func receiveLoop() async {
+        var sawFirstMessage = false
         while !Task.isCancelled {
             guard let task = webSocketTask else { break }
 
             do {
                 let message = try await task.receive()
+                if !sawFirstMessage {
+                    // The connection has produced at least one frame —
+                    // reset backoff so the next failure starts fresh.
+                    sawFirstMessage = true
+                    retryCount = 0
+                }
                 switch message {
                 case .string(let text):
                     handleMessage(text)
