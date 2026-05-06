@@ -21,6 +21,14 @@ struct SettingsBackup: Codable {
     var stashAPIKey: String?
     var autoHideDelay: TimeInterval?
     var slideshowDelay: TimeInterval?
+    var slideshowShowClock: Bool?
+    var slideshowShowSensors: Bool?
+    var slideshowUseAspectRatio: Bool?
+    var slideshowEnableKenBurns: Bool?
+    var slideshowEnableDynamicBrightness: Bool?
+    var slideshowEnableDiorama: Bool?
+    var slideshowTransparentBackground: Bool?
+    var slideshowTextSize: Double?
     var maxImageResolution: Int?
     var spatial3DMaxResolution: Int?
     var dioramaDistance: Double?

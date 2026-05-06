@@ -141,6 +141,14 @@ struct RemoteTabView: View {
                 }
             }
             .navigationTitle("Remote Viewer")
+            .onAppear {
+                // Seed the "New Configuration" editor with the user's slideshow
+                // defaults the first time it's shown. Once the user edits or
+                // loads a saved config the defaults stop being relevant.
+                if selectedConfigId == nil {
+                    appModel.applySlideshowDefaults(to: &editingConfig)
+                }
+            }
             .alert("Save Configuration", isPresented: $showSaveAlert) {
                 TextField("Name", text: $saveName)
                 Button("Save") {

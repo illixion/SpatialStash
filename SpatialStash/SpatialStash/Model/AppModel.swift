@@ -706,6 +706,34 @@ class AppModel {
         3, 5, 10, 15, 20, 30, 45, 60, 90, 120
     ]
 
+    /// Default slideshow display settings, used as initial values for every
+    /// slideshow source (gallery, local folder, video, remote API). Saved
+    /// `RemoteViewerConfig` profiles override these per-profile but inherit
+    /// them when first created.
+    var slideshowShowClock: Bool { didSet { if slideshowShowClock != oldValue { UserDefaults.standard.set(slideshowShowClock, forKey: "slideshowShowClock") } } }
+    var slideshowShowSensors: Bool { didSet { if slideshowShowSensors != oldValue { UserDefaults.standard.set(slideshowShowSensors, forKey: "slideshowShowSensors") } } }
+    var slideshowUseAspectRatio: Bool { didSet { if slideshowUseAspectRatio != oldValue { UserDefaults.standard.set(slideshowUseAspectRatio, forKey: "slideshowUseAspectRatio") } } }
+    var slideshowEnableKenBurns: Bool { didSet { if slideshowEnableKenBurns != oldValue { UserDefaults.standard.set(slideshowEnableKenBurns, forKey: "slideshowEnableKenBurns") } } }
+    var slideshowEnableDynamicBrightness: Bool { didSet { if slideshowEnableDynamicBrightness != oldValue { UserDefaults.standard.set(slideshowEnableDynamicBrightness, forKey: "slideshowEnableDynamicBrightness") } } }
+    var slideshowEnableDiorama: Bool { didSet { if slideshowEnableDiorama != oldValue { UserDefaults.standard.set(slideshowEnableDiorama, forKey: "slideshowEnableDiorama") } } }
+    var slideshowTransparentBackground: Bool { didSet { if slideshowTransparentBackground != oldValue { UserDefaults.standard.set(slideshowTransparentBackground, forKey: "slideshowTransparentBackground") } } }
+    var slideshowTextSize: Double { didSet { if slideshowTextSize != oldValue { UserDefaults.standard.set(slideshowTextSize, forKey: "slideshowTextSize") } } }
+
+    /// Apply the current slideshow defaults to a `RemoteViewerConfig`. Used
+    /// when creating a new gallery/local/video slideshow config and when
+    /// initializing a fresh profile in the Remote tab editor.
+    func applySlideshowDefaults(to config: inout RemoteViewerConfig) {
+        config.delay = slideshowDelay
+        config.showClock = slideshowShowClock
+        config.showSensors = slideshowShowSensors
+        config.useAspectRatio = slideshowUseAspectRatio
+        config.enableKenBurns = slideshowEnableKenBurns
+        config.enableDynamicBrightness = slideshowEnableDynamicBrightness
+        config.enableDiorama = slideshowEnableDiorama
+        config.transparentBackground = slideshowTransparentBackground
+        config.textSize = slideshowTextSize
+    }
+
     // MARK: - Initialization
 
     init() {
@@ -725,6 +753,22 @@ class AppModel {
         // Load slideshow delay
         let savedSlideshowDelay = UserDefaults.standard.double(forKey: "slideshowDelay")
         let loadedSlideshowDelay = UserDefaults.standard.object(forKey: "slideshowDelay") != nil ? savedSlideshowDelay : defaultSlideshowDelay
+
+        // Load slideshow display defaults (defaults match the previous
+        // RemoteViewerConfig defaults so behavior is unchanged on first launch).
+        func loadBool(_ key: String, default defaultValue: Bool) -> Bool {
+            UserDefaults.standard.object(forKey: key) != nil ? UserDefaults.standard.bool(forKey: key) : defaultValue
+        }
+        let loadedSlideshowShowClock = loadBool("slideshowShowClock", default: true)
+        let loadedSlideshowShowSensors = loadBool("slideshowShowSensors", default: true)
+        let loadedSlideshowUseAspectRatio = loadBool("slideshowUseAspectRatio", default: true)
+        let loadedSlideshowEnableKenBurns = loadBool("slideshowEnableKenBurns", default: true)
+        let loadedSlideshowEnableDynamicBrightness = loadBool("slideshowEnableDynamicBrightness", default: true)
+        let loadedSlideshowEnableDiorama = loadBool("slideshowEnableDiorama", default: false)
+        let loadedSlideshowTransparentBackground = loadBool("slideshowTransparentBackground", default: false)
+        let loadedSlideshowTextSize: Double = UserDefaults.standard.object(forKey: "slideshowTextSize") != nil
+            ? UserDefaults.standard.double(forKey: "slideshowTextSize")
+            : 1.0
 
         // Load max image resolution (default: 4096, migrate from old bool key if needed)
         let loadedMaxImageResolution: Int
@@ -823,6 +867,14 @@ class AppModel {
         self.stashAPIKey = loadedAPIKey
         self.autoHideDelay = loadedAutoHideDelay
         self.slideshowDelay = loadedSlideshowDelay
+        self.slideshowShowClock = loadedSlideshowShowClock
+        self.slideshowShowSensors = loadedSlideshowShowSensors
+        self.slideshowUseAspectRatio = loadedSlideshowUseAspectRatio
+        self.slideshowEnableKenBurns = loadedSlideshowEnableKenBurns
+        self.slideshowEnableDynamicBrightness = loadedSlideshowEnableDynamicBrightness
+        self.slideshowEnableDiorama = loadedSlideshowEnableDiorama
+        self.slideshowTransparentBackground = loadedSlideshowTransparentBackground
+        self.slideshowTextSize = loadedSlideshowTextSize
         self.maxImageResolution = loadedMaxImageResolution
         self.spatial3DMaxResolution = loadedSpatial3DMaxResolution
         self.dioramaDistance = loadedDioramaDistance
@@ -1333,6 +1385,14 @@ class AppModel {
             stashAPIKey: stashAPIKey,
             autoHideDelay: autoHideDelay,
             slideshowDelay: slideshowDelay,
+            slideshowShowClock: slideshowShowClock,
+            slideshowShowSensors: slideshowShowSensors,
+            slideshowUseAspectRatio: slideshowUseAspectRatio,
+            slideshowEnableKenBurns: slideshowEnableKenBurns,
+            slideshowEnableDynamicBrightness: slideshowEnableDynamicBrightness,
+            slideshowEnableDiorama: slideshowEnableDiorama,
+            slideshowTransparentBackground: slideshowTransparentBackground,
+            slideshowTextSize: slideshowTextSize,
             maxImageResolution: maxImageResolution,
             spatial3DMaxResolution: spatial3DMaxResolution,
             dioramaDistance: dioramaDistance,
@@ -1367,6 +1427,14 @@ class AppModel {
         if let v = backup.stashAPIKey { stashAPIKey = v }
         if let v = backup.autoHideDelay { autoHideDelay = v }
         if let v = backup.slideshowDelay { slideshowDelay = v }
+        if let v = backup.slideshowShowClock { slideshowShowClock = v }
+        if let v = backup.slideshowShowSensors { slideshowShowSensors = v }
+        if let v = backup.slideshowUseAspectRatio { slideshowUseAspectRatio = v }
+        if let v = backup.slideshowEnableKenBurns { slideshowEnableKenBurns = v }
+        if let v = backup.slideshowEnableDynamicBrightness { slideshowEnableDynamicBrightness = v }
+        if let v = backup.slideshowEnableDiorama { slideshowEnableDiorama = v }
+        if let v = backup.slideshowTransparentBackground { slideshowTransparentBackground = v }
+        if let v = backup.slideshowTextSize { slideshowTextSize = v }
         if let v = backup.maxImageResolution { maxImageResolution = v }
         if let v = backup.spatial3DMaxResolution { spatial3DMaxResolution = v }
         if let v = backup.dioramaDistance { dioramaDistance = v }

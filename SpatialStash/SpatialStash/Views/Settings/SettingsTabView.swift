@@ -99,7 +99,7 @@ struct SettingsTabView: View {
                     .pickerStyle(.menu)
                 }
 
-                Section("Slideshow") {
+                Section {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
                             Text("Delay")
@@ -113,6 +113,28 @@ struct SettingsTabView: View {
                             step: 1
                         )
                     }
+
+                    Toggle("Show Clock", isOn: $appModel.slideshowShowClock)
+                    Toggle("Show Sensors", isOn: $appModel.slideshowShowSensors)
+                    Toggle("Fit to Window Aspect Ratio", isOn: $appModel.slideshowUseAspectRatio)
+                    Toggle("Ken Burns Effect", isOn: $appModel.slideshowEnableKenBurns)
+                    Toggle("Dynamic Brightness", isOn: $appModel.slideshowEnableDynamicBrightness)
+                    Toggle("Diorama Layers", isOn: $appModel.slideshowEnableDiorama)
+                    Toggle("Transparent Background", isOn: $appModel.slideshowTransparentBackground)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("Text Size")
+                            Spacer()
+                            Text(String(format: "%.0f%%", appModel.slideshowTextSize * 100))
+                                .foregroundColor(.secondary)
+                        }
+                        Slider(value: $appModel.slideshowTextSize, in: 0.5...3.0, step: 0.1)
+                    }
+                } header: {
+                    Text("Slideshow Defaults")
+                } footer: {
+                    Text("Used when starting a slideshow from any source. Saved Remote API profiles override these per-profile.")
                 }
 
                 Section("Window Groups") {

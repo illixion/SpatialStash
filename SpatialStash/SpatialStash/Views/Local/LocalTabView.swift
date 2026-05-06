@@ -339,9 +339,7 @@ struct LocalMediaListView: View {
         } else {
             var newConfig = RemoteViewerConfig(name: "Gallery Slideshow")
             newConfig.apiEndpoint = ""
-            newConfig.delay = appModel.slideshowDelay
-            newConfig.showClock = false
-            newConfig.transparentBackground = true
+            appModel.applySlideshowDefaults(to: &newConfig)
             appModel.gallerySlideshowConfig = newConfig
             config = newConfig
         }
