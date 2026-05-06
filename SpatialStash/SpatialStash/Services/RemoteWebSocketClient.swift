@@ -30,7 +30,6 @@ struct HASensorReading: Identifiable {
 
 enum RemoteWSMessage {
     case tagLists(lists: [[String]])
-    case blocked(posts: [Int], tags: [String])
     case currentTagList(index: Int)
     case showText(text: String, bgColorHex: String, imageUrl: String?)
     case dismissText
@@ -276,13 +275,6 @@ class RemoteWebSocketClient {
             } else if let flat = payload as? [String] {
                 let split = flat.map { $0.split(whereSeparator: { $0.isWhitespace }).map(String.init) }
                 onMessage?(.tagLists(lists: split))
-            }
-
-        case "blocked":
-            if let dict = payload as? [String: Any] {
-                let posts = (dict["blockedPosts"] as? [Int]) ?? []
-                let tags = (dict["blockedTags"] as? [String]) ?? []
-                onMessage?(.blocked(posts: posts, tags: tags))
             }
 
         case "currentTagList":

@@ -86,8 +86,12 @@ class RemoteViewerModel: SlideshowEngine {
             enableDiorama: config.enableDiorama
         )
 
-        // blockedPosts / blockedTags hydrate from the server's `blocked`
-        // frame on connect — the server is authoritative.
+        // Block lists are server-only state — the orchestrator filters
+        // blocked posts out of every channel's queue before broadcasting,
+        // so a remote-mode kiosk never sees them. The engine's local
+        // blockedPosts/blockedTags Sets stay empty here and are only
+        // populated by the gallery-mode code path, where local filtering
+        // is the only option (no WS).
     }
 
     /// Callback to persist config changes back to AppModel
@@ -167,9 +171,9 @@ class RemoteViewerModel: SlideshowEngine {
 
     func blockCurrentPost() {
         guard let post = currentPost else { return }
-        // Optimistic local insert so the next post is filtered immediately;
-        // the server's `blocked` echo arrives shortly after and replaces
-        // the set with the authoritative copy.
+        // Local insert keeps gallery-mode filtering working (no WS to
+        // notify); in remote mode the server is the only filter and the
+        // local Set is incidental.
         blockedPosts.insert(post._id)
         wsClient?.sendBlock(postId: post._id)
         showToast("Blocked post #\(post._id)")
@@ -437,13 +441,6 @@ class RemoteViewerModel: SlideshowEngine {
                 AppLogger.remoteViewer.info("Server pushed tagLists: \(lists.count, privacy: .public) lists")
                 showToast("Loaded \(lists.count) tag lists from server")
             }
-
-        case .blocked(let posts, let tags):
-            // Server is authoritative — replace, don't union. The previous
-            // `formUnion` left removed entries stuck locally because the
-            // local set could only grow.
-            blockedPosts = Set(posts)
-            blockedTags = Set(tags)
 
         case .currentTagList(let index):
             if let tlm = tagListManager {
