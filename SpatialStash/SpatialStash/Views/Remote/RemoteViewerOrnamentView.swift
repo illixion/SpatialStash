@@ -16,6 +16,12 @@ struct RemoteViewerOrnamentView: View {
     @Binding var showHomeAssistant: Bool
     @Binding var showHistory: Bool
 
+    /// Local UI state for the in-ornament "Add Preset…" popover. Lives here
+    /// rather than on the model since it's view-only and tied to this
+    /// window's ornament.
+    @State private var showAddPresetPopover = false
+    @State private var newPresetText = ""
+
     var body: some View {
         HStack(spacing: 16) {
             // Grid - Open main app window
@@ -210,6 +216,13 @@ struct RemoteViewerOrnamentView: View {
                         }
                     }
                 }
+                Divider()
+                Button {
+                    newPresetText = ""
+                    showAddPresetPopover = true
+                } label: {
+                    Label("Add Preset…", systemImage: "plus")
+                }
             }
             .onAppear { updateOrnamentMenuCount(opened: true) }
             .onDisappear { updateOrnamentMenuCount(opened: false) }
@@ -224,8 +237,56 @@ struct RemoteViewerOrnamentView: View {
         }
         .menuStyle(.button)
         .buttonStyle(.borderless)
-        .disabled(modTagManager.modTagLists.isEmpty)
         .help("Mod Tags")
+        .popover(isPresented: $showAddPresetPopover) {
+            addPresetPopover
+        }
+    }
+
+    private var addPresetPopover: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("New Mod Tag Preset")
+                .font(.headline)
+            Text("Space-separated tags. Negate with a leading `-`.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            TextField("rating:s -blood", text: $newPresetText)
+                .textFieldStyle(.roundedBorder)
+                .font(.body.monospaced())
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                .frame(minWidth: 320)
+                .onSubmit { commitNewPreset() }
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel) {
+                    showAddPresetPopover = false
+                }
+                Button("Add & Apply") { commitNewPreset() }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(parsedNewPresetTags.isEmpty)
+            }
+        }
+        .padding(20)
+    }
+
+    private var parsedNewPresetTags: [String] {
+        newPresetText
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+    }
+
+    private func commitNewPreset() {
+        let tags = parsedNewPresetTags
+        guard !tags.isEmpty else { return }
+        var lists = modTagManager.modTagLists
+        lists.append(tags)
+        modTagManager.modTagLists = lists
+        // Switch to the freshly added preset so it takes effect immediately —
+        // matches the "tap the menu, see the slideshow react" expectation.
+        modTagManager.switchToPreset(lists.count - 1)
+        newPresetText = ""
+        showAddPresetPopover = false
     }
 
     private func modTagLabel(_ index: Int) -> String {

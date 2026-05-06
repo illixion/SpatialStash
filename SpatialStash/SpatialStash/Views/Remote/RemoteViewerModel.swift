@@ -62,10 +62,11 @@ class RemoteViewerModel: SlideshowEngine {
     // MARK: - Services
 
     let apiClient = RemoteAPIClient()
-    /// Shared WebSocket client, acquired from SlideshowSyncHub when WS is configured.
-    /// Multiple RemoteViewerModels pointing at the same RoboFrame instance share a single client.
+    /// Per-model WebSocket client. Each viewer window owns its own connection
+    /// to the broker; the server's per-deviceId channel (and `displaySync`
+    /// merge claim) is what keeps multiple windows in lockstep, not any
+    /// in-app multiplexing.
     private(set) var wsClient: RemoteWebSocketClient?
-    private var wsToken: SlideshowSyncHub.WSSubscriptionToken?
 
     /// When true, `onPostTransitioned` skips broadcasting local sync to avoid
     /// feedback loops while this model is applying an incoming sync.
@@ -138,10 +139,9 @@ class RemoteViewerModel: SlideshowEngine {
     override func stop() {
         super.stop()
         SlideshowSyncHub.shared.unregisterForLocalSync(self)
-        SlideshowSyncHub.shared.unsubscribeWS(wsToken)
+        wsClient?.disconnect()
         modTagManager?.removeSendHandler(id: engineId)
         tagListManager?.removeSendHandler(id: engineId)
-        wsToken = nil
         wsClient = nil
     }
 
@@ -308,12 +308,13 @@ class RemoteViewerModel: SlideshowEngine {
             wsClient?.sendImageReady(postId: post._id)
         }
 
-        // Local broadcast — keeps multiple visionOS windows on the same
-        // host in lockstep. (When they all share one WS connection, they
-        // all receive the same `playback` frames anyway, so this is mostly
-        // redundant once displaySync is on; still needed for gallery mode
-        // where there's no WS.)
-        guard enableDisplaySync, !isApplyingIncomingSync else { return }
+        // Local broadcast — gallery mode only. In remote mode each window
+        // owns its own WS, and the server's per-deviceId channel (or the
+        // displaySync merge driver) already pushes the same `playback`
+        // frames to every connected window. Running local sync there too
+        // would race those broadcasts and pull peer windows out of sync
+        // with other clients (browser kiosks, node-display).
+        guard isGalleryMode, enableDisplaySync, !isApplyingIncomingSync else { return }
 
         let payload = LocalDisplaySyncPayload(
             currentPost: post,
@@ -334,6 +335,8 @@ class RemoteViewerModel: SlideshowEngine {
     /// Images/data are reference-typed so no bitmap copies occur. Only
     /// mirrors cheap live state — pause/play and visibility are not synced.
     func applyLocalDisplaySync(_ payload: LocalDisplaySyncPayload) {
+        // Gallery mode only — see broadcast site for rationale.
+        guard isGalleryMode else { return }
         // Display Sync OFF → this instance is independent; skip incoming syncs
         guard enableDisplaySync else { return }
         // Engine must be running — don't apply while idle/stopped
@@ -390,17 +393,13 @@ class RemoteViewerModel: SlideshowEngine {
         let wsURL = config.effectiveWsEndpoint
         guard !wsURL.isEmpty else { return }
 
-        guard let result = SlideshowSyncHub.shared.subscribeWS(
-            endpoint: wsURL,
-            deviceId: config.wsDeviceId,
-            onMessage: { [weak self] message in
-                guard let self else { return }
-                self.handleWSMessage(message)
-            }
-        ) else { return }
-
-        wsToken = result.token
-        wsClient = result.client
+        let client = RemoteWebSocketClient()
+        client.onMessage = { [weak self] message in
+            guard let self else { return }
+            self.handleWSMessage(message)
+        }
+        client.connect(wsEndpoint: wsURL, deviceId: config.wsDeviceId)
+        wsClient = client
 
         // Register this session with the orchestrator. The server creates
         // (or joins us to) the channel for `wsDeviceId` and broadcasts a
