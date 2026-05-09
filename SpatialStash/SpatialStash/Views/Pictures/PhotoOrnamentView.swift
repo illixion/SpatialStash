@@ -462,8 +462,12 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
     private func updateOrnamentMenuCount(opened: Bool) {
         if opened {
             windowModel.openOrnamentMenuCount += 1
+            windowModel.cancelAutoHideTimer()
         } else {
             windowModel.openOrnamentMenuCount = max(0, windowModel.openOrnamentMenuCount - 1)
+            if windowModel.openOrnamentMenuCount == 0 {
+                windowModel.startAutoHideTimer()
+            }
         }
     }
 

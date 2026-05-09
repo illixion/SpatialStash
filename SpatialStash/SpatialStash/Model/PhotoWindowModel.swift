@@ -184,7 +184,7 @@ class PhotoWindowModel {
 
     /// Whether any popover is currently open (used to suppress auto-hide timer)
     var hasOpenPopover: Bool {
-        showAdjustmentsPopover || showMediaInfoPopover
+        showAdjustmentsPopover || showMediaInfoPopover || openOrnamentMenuCount > 0
     }
 
     /// Counter for ornament-anchored Menu drop-downs (More, 3D, Resolution).
