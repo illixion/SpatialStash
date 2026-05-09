@@ -61,8 +61,17 @@ struct GalleryThumbnailView: View {
             onTap?()
         }
         .task {
-            await loadThumbnail()
-            await generateDioramaIfPossible()
+            // Load base thumbnail and any cached diorama in parallel so a
+            // disk-warm pair lands in the same render commit as the base —
+            // no foreground pop-in on scroll.
+            async let baseTask: Void = loadThumbnail()
+            async let cachedDioramaTask: ThumbnailDioramaCache.Pair? = preloadCachedDiorama()
+            _ = await baseTask
+            if let pair = await cachedDioramaTask {
+                dioramaPair = pair
+            } else {
+                await generateDioramaIfPossible()
+            }
         }
         .onDisappear {
             loadedImage = nil
@@ -72,18 +81,21 @@ struct GalleryThumbnailView: View {
         }
     }
 
-    /// After the thumbnail bitmap is on screen, kick off Vision-driven
-    /// foreground/backdrop generation. A short debounce avoids queuing
-    /// work for thumbnails that scroll past quickly. The cache hands back
-    /// any in-flight or completed result without re-running Vision.
+    /// Memory + disk lookup only — never invokes Vision. Returns `nil` if
+    /// no cached pair exists, in which case the caller falls through to
+    /// `generateDioramaIfPossible()` for cold generation.
+    private func preloadCachedDiorama() async -> ThumbnailDioramaCache.Pair? {
+        guard appModel.effectiveThumbnailDiorama else { return nil }
+        return await ThumbnailDioramaCache.shared.cachedOrDisk(for: image.thumbnailURL)
+    }
+
+    /// Cold-path generation: kicks off Vision-driven foreground/backdrop
+    /// generation. A short debounce avoids queuing work for thumbnails
+    /// that scroll past quickly.
     private func generateDioramaIfPossible() async {
         guard let loadedImage else { return }
         guard appModel.effectiveThumbnailDiorama else { return }
         let key = image.thumbnailURL
-        if let cached = ThumbnailDioramaCache.shared.cached(for: key) {
-            dioramaPair = cached
-            return
-        }
         do {
             try await Task.sleep(nanoseconds: 400_000_000)
         } catch {
