@@ -21,7 +21,9 @@ struct GalleryGridView: View {
 
     var body: some View {
         Group {
-            if appModel.galleryImages.isEmpty && appModel.isLoadingGallery {
+            if appModel.imageSource is StaticURLImageSource && !appModel.demoImagesConfirmed {
+                demoConfirmationView
+            } else if appModel.galleryImages.isEmpty && appModel.isLoadingGallery {
                 // Loading state
                 VStack(spacing: 20) {
                     ProgressView()
@@ -127,6 +129,27 @@ struct GalleryGridView: View {
             }
             Button("Cancel", role: .cancel) {}
         }
+    }
+
+    private var demoConfirmationView: some View {
+        VStack(spacing: 20) {
+            Image(systemName: "photo.on.rectangle.angled")
+                .font(.system(size: 64))
+                .foregroundColor(.secondary)
+            Text("Load Sample Images?")
+                .font(.title2)
+            Text("No Stash server is configured. Tapping Load will fetch demo images from an external site.")
+                .font(.callout)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 480)
+            Button("Load Sample Images") {
+                appModel.demoImagesConfirmed = true
+                Task { await appModel.loadInitialGallery() }
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     @ViewBuilder

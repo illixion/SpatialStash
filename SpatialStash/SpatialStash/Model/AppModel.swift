@@ -125,6 +125,11 @@ class AppModel {
 
     private(set) var imageSource: any ImageSource
 
+    /// Session-only flag: user has explicitly opted in to loading demo images
+    /// (StaticURLImageSource). Resets on app relaunch so external sample URLs
+    /// are never fetched without confirmation.
+    var demoImagesConfirmed: Bool = false
+
     /// Transient override consumed by the next gallery-mode remote viewer launch.
     /// Set by the photo-viewer slideshow button so the slideshow runs over the
     /// originating window's source/filter (e.g. local-folder source) instead of
@@ -1614,6 +1619,15 @@ class AppModel {
 
         let sourceType = String(describing: type(of: imageSource))
         AppLogger.appModel.debug("loadInitialGallery called, source: \(sourceType, privacy: .public)")
+        // Demo source is gated behind an explicit user opt-in to avoid silently
+        // fetching from external sample URLs on launch.
+        if imageSource is StaticURLImageSource && !demoImagesConfirmed {
+            currentPage = 0
+            galleryImages = []
+            hasMorePages = true
+            isLoadingGallery = false
+            return
+        }
         // Ensure random sort has a seed for consistent pagination
         if currentFilter.sortField == .random && currentFilter.randomSeed == nil {
             currentFilter.shuffleRandomSort()
