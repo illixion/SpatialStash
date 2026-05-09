@@ -570,6 +570,17 @@ class RemoteWebSocketClient {
 
     private func scheduleReconnect() {
         if halted { return }
+        // If the OS reports the network path as unsatisfied, retrying on
+        // a 1 s timer just produces an immediate ENOTCONN (errno 57) on
+        // every attempt and burns battery for the entire outage. Park
+        // here and let the path monitor's unsatisfied → satisfied
+        // callback wake us via forceReconnectNow().
+        if !lastPathSatisfied {
+            AppLogger.remoteViewer.info("WebSocket reconnect deferred — network path unsatisfied")
+            reconnectTask?.cancel()
+            reconnectTask = nil
+            return
+        }
         reconnectTask?.cancel()
         reconnectTask = Task { [weak self] in
             guard let self else { return }
@@ -578,6 +589,12 @@ class RemoteWebSocketClient {
             AppLogger.remoteViewer.info("WebSocket reconnecting in \(delay, privacy: .public)s")
             try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled, !halted else { return }
+            // Re-check the path right before connecting — the path may
+            // have flipped during the backoff sleep.
+            if !self.lastPathSatisfied {
+                AppLogger.remoteViewer.info("WebSocket reconnect aborted — path went unsatisfied during backoff")
+                return
+            }
             doConnect()
         }
     }
