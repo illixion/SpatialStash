@@ -398,27 +398,16 @@ class RemoteViewerModel: SlideshowEngine {
             guard let self else { return }
             self.handleWSMessage(message)
         }
+        // Replay channel binding on every (re)connection. The server
+        // forgets which channel a session belongs to when the socket
+        // dies, so without this the auto-reconnect succeeds at the
+        // protocol level but never receives another `playback` frame
+        // and the slideshow gets stuck on the last image.
+        client.onConnected = { [weak self] in
+            self?.sendSlideshowConfigToServer()
+        }
         client.connect(wsEndpoint: wsURL, deviceId: config.wsDeviceId)
         wsClient = client
-
-        // Register this session with the orchestrator. The server creates
-        // (or joins us to) the channel for `wsDeviceId` and broadcasts a
-        // `playback` frame which our handler picks up below. Width/height
-        // are nominal — spatialstash doesn't pass them to /get. Mod tags
-        // ride along on the same frame so the orchestrator's first refill
-        // query already includes them — no immediate-after refill round-trip
-        // from a separate setModTags.
-        let intervalMs = max(2000, Int(config.delay * 1000))
-        wsClient?.sendSlideshowConfig(
-            deviceId: config.wsDeviceId,
-            interval: intervalMs,
-            width: 1920,
-            height: 1080,
-            bright: false,
-            convert: false,
-            ratio: nil,
-            modTags: modTagManager?.activeTags ?? []
-        )
 
         // Push later switches from the shared ModTagManager out to this
         // viewer's WS so any window's preset change reaches the server.
@@ -433,6 +422,27 @@ class RemoteViewerModel: SlideshowEngine {
         tagListManager?.addSendHandler(id: engineId) { [weak self] listNumber in
             self?.wsClient?.sendSetTagList(listNumber: listNumber)
         }
+    }
+
+    /// Register (or re-register) this session with the orchestrator. The
+    /// server creates or joins us to the channel for `wsDeviceId` and
+    /// broadcasts a `playback` frame which our handler picks up. Mod tags
+    /// ride along so the orchestrator's first refill query already includes
+    /// them — no immediate-after refill round-trip from a separate
+    /// setModTags. Called once on initial connect and again from
+    /// `onConnected` after every auto-reconnect.
+    private func sendSlideshowConfigToServer() {
+        let intervalMs = max(2000, Int(config.delay * 1000))
+        wsClient?.sendSlideshowConfig(
+            deviceId: config.wsDeviceId,
+            interval: intervalMs,
+            width: 1920,
+            height: 1080,
+            bright: false,
+            convert: false,
+            ratio: nil,
+            modTags: modTagManager?.activeTags ?? []
+        )
     }
 
     private func handleWSMessage(_ message: RemoteWSMessage) {

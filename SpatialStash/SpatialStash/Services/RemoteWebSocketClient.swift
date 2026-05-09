@@ -88,6 +88,11 @@ class RemoteWebSocketClient {
     private var halted: Bool = false
 
     var onMessage: ((RemoteWSMessage) -> Void)?
+    /// Fires after the first inbound frame arrives on each (re)connection.
+    /// The server forgets per-session state (channel binding via
+    /// `slideshowConfig`) when the socket dies, so the viewer must replay
+    /// it here or the channel will never push `playback` frames again.
+    var onConnected: (() -> Void)?
 
     func connect(wsEndpoint: String, deviceId: String) {
         guard !wsEndpoint.isEmpty, let url = URL(string: wsEndpoint) else { return }
@@ -281,6 +286,7 @@ class RemoteWebSocketClient {
                     // failure starts fresh.
                     isConnected = true
                     retryCount = 0
+                    onConnected?()
                 }
                 switch message {
                 case .string(let text):
