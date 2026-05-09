@@ -119,6 +119,18 @@ final class ThumbnailDioramaCache {
         inFlight.removeValue(forKey: url)
     }
 
+    func clearCache() {
+        cache.removeAllObjects()
+        inFlight.values.forEach { $0.cancel() }
+        inFlight.removeAll()
+        diskLoads.values.forEach { $0.cancel() }
+        diskLoads.removeAll()
+        let fm = FileManager.default
+        try? fm.removeItem(at: Self.cacheDirectory)
+        try? fm.createDirectory(at: Self.cacheDirectory, withIntermediateDirectories: true)
+        AppLogger.diskCache.notice("Thumbnail diorama cache cleared")
+    }
+
     // MARK: - Disk persistence
 
     nonisolated private static func diskKey(for url: URL) -> String {

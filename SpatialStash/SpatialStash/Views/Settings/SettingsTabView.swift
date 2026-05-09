@@ -618,6 +618,7 @@ struct SettingsTabView: View {
 
     private func clearImageCache() async {
         await ImageLoader.shared.clearCache()
+        ThumbnailDioramaCache.shared.clearCache()
     }
 
     private func clearVideoCache() async {
@@ -626,6 +627,7 @@ struct SettingsTabView: View {
 
     private func clearBackgroundRemovalCache() async {
         await BackgroundRemovalCache.shared.clearCache()
+        ThumbnailDioramaCache.shared.clearCache()
     }
 
     private func formatBytes(_ bytes: Int64) -> String {

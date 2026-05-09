@@ -131,60 +131,62 @@ actor BackgroundRemover {
             return UIImage(cgImage: outputCGImage, scale: image.scale, orientation: image.imageOrientation)
         }()
 
-        // Backdrop: grow surrounding background pixels inward via iterative
-        // morphological dilation of the original image masked to background-
-        // only, then blend a moderate blur over the remaining gap. This
-        // replaces subject pixels with plausible nearby background texture
-        // rather than a heavy blur ghost.
+        // Backdrop: iterative blur-and-replace fill. Each pass blurs the
+        // whole image then pastes the known background back on top, so
+        // background colors progressively diffuse inward into the subject
+        // hole without bright-halo artifacts (unlike morphological max
+        // which picks the brightest neighbor and bleeds subject colors).
         //
-        // 1. Create a background-only image (subject region transparent).
-        // 2. Iteratively dilate it — each pass grows edge pixels inward by
-        //    the kernel radius, extending real background texture into the
-        //    subject hole.
-        // 3. Composite the grown background over a moderate blur fallback
-        //    to fill any remaining center gap.
-        // 4. Feather the composite mask so the transition from sharp
-        //    background to filled region is gradual, not a hard seam.
+        // Passes × blur radius controls fill depth. 20 passes × 4px ≈
+        // 80px of inward fill, enough for most subjects at 2560px.
 
         let dilateRadius: Float = 15
-        // Iterative morphological fill: grow background pixels inward.
-        // Each pass extends the edge by `fillStepRadius` pixels. 5 passes
-        // at 6px each covers ~30px into the subject hole with real texture.
-        var filledBg = originalCIImage
-        let fillStepRadius: Float = 6
-        let fillPasses = 5
-        for _ in 0..<fillPasses {
-            let grow = CIFilter.morphologyMaximum()
-            grow.inputImage = filledBg
-            grow.radius = fillStepRadius
-            filledBg = grow.outputImage?.cropped(to: extent) ?? filledBg
-        }
+        let fillBlurRadius: Float = 4
+        let fillPasses = 20
 
-        // Composite: morphologically-filled image over moderate blur fallback
-        // for any remaining unfilled center pixels.
-        let moderateBlurRadius = max(10.0, Double(max(extent.width, extent.height)) * 0.015)
-        let moderateBlurFilter = CIFilter.gaussianBlur()
-        moderateBlurFilter.inputImage = originalCIImage.clampedToExtent()
-        moderateBlurFilter.radius = Float(moderateBlurRadius)
-        let moderateBlur = moderateBlurFilter.outputImage?.cropped(to: extent) ?? originalCIImage
-        let filledComposite = filledBg.composited(over: moderateBlur)
-
-        // Dilated + feathered mask for the backdrop blend.
+        // Dilated mask marking the fill zone.
         let backdropDilate = CIFilter.morphologyMaximum()
         backdropDilate.inputImage = maskCIImage
         backdropDilate.radius = dilateRadius
         let dilatedMask = backdropDilate.outputImage?.cropped(to: extent) ?? maskCIImage
 
+        // Seed: replace subject region with a heavy initial blur so the
+        // iterative fill has something to diffuse from (avoids the sharp
+        // subject being visible through early blur passes).
+        let seedBlurRadius = max(20.0, Double(max(extent.width, extent.height)) * 0.02)
+        let seedBlurFilter = CIFilter.gaussianBlur()
+        seedBlurFilter.inputImage = originalCIImage.clampedToExtent()
+        seedBlurFilter.radius = Float(seedBlurRadius)
+        let seedBlur = seedBlurFilter.outputImage?.cropped(to: extent) ?? originalCIImage
+
+        let seedBlend = CIFilter.blendWithMask()
+        seedBlend.inputImage = seedBlur
+        seedBlend.backgroundImage = originalCIImage
+        seedBlend.maskImage = dilatedMask
+        var filled = seedBlend.outputImage?.cropped(to: extent) ?? originalCIImage
+
+        for _ in 0..<fillPasses {
+            let blur = CIFilter.gaussianBlur()
+            blur.inputImage = filled.clampedToExtent()
+            blur.radius = fillBlurRadius
+            let blurred = blur.outputImage?.cropped(to: extent) ?? filled
+
+            let blend = CIFilter.blendWithMask()
+            blend.inputImage = blurred
+            blend.backgroundImage = originalCIImage
+            blend.maskImage = dilatedMask
+            filled = blend.outputImage?.cropped(to: extent) ?? filled
+        }
+
+        // Feather the mask boundary for a gradual sharp→filled transition.
         let featherRadius = max(8.0, Double(dilateRadius) * 0.8)
         let featherBlur = CIFilter.gaussianBlur()
         featherBlur.inputImage = dilatedMask.clampedToExtent()
         featherBlur.radius = Float(featherRadius)
         let featheredMask = featherBlur.outputImage?.cropped(to: extent) ?? dilatedMask
 
-        // blendWithMask: where mask is opaque (subject region), show the
-        // morphologically-filled composite; where transparent, show original.
         let bgFilter = CIFilter.blendWithMask()
-        bgFilter.inputImage = filledComposite
+        bgFilter.inputImage = filled
         bgFilter.backgroundImage = originalCIImage
         bgFilter.maskImage = featheredMask
 
