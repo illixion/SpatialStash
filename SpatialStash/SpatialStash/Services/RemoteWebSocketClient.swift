@@ -94,29 +94,25 @@ class RemoteWebSocketClient {
 
         self.wsURL = url
         self.initialDeviceId = deviceId
-        // `waitsForConnectivity` lets the upgrade stall briefly while the
-        // radio reattaches instead of failing instantly on a transient
-        // outage — important on visionOS where tracking loss can briefly
-        // tear down the network path.
-        let configuration = URLSessionConfiguration.default
-        configuration.waitsForConnectivity = true
-        // Bound the handshake so a doomed upgrade fails fast and falls
-        // through to the reconnect backoff instead of hanging behind the
-        // default 7-day resource timeout.
-        configuration.timeoutIntervalForRequest = 15
-        configuration.timeoutIntervalForResource = 30
-        // Tear down the previous session before spinning up a new one.
-        // `connect` is sometimes called on an already-configured client
-        // (e.g. after a config edit) and the old session would otherwise
-        // leak its delegate queue.
-        session?.invalidateAndCancel()
-        self.session = URLSession(configuration: configuration)
-        startPathMonitor()
         // A new connect attempt clears any prior halt — caller may have
         // updated the access token in config and is asking us to retry.
         self.halted = false
+        startPathMonitor()
 
         doConnect()
+    }
+
+    /// Fresh URLSession per connect attempt. Reusing across reconnects
+    /// lets stale HTTP/2 multiplex state and connection-pool entries
+    /// survive an EPIPE — symptom: the new `webSocketTask` resumes, the
+    /// server logs the upgrade, but no frames ever reach our receive
+    /// loop. Ephemeral config also avoids any cookie/credential carry.
+    private func makeSession() -> URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.waitsForConnectivity = true
+        configuration.timeoutIntervalForRequest = 15
+        configuration.timeoutIntervalForResource = 30
+        return URLSession(configuration: configuration)
     }
 
     /// Force an immediate reconnect attempt, cancelling any sleeping
@@ -234,9 +230,14 @@ class RemoteWebSocketClient {
     // MARK: - Private
 
     private func doConnect() {
-        guard let url = wsURL, let session else { return }
+        guard let url = wsURL else { return }
 
-        webSocketTask = session.webSocketTask(with: url)
+        // Always rebuild the session — see makeSession() comment.
+        session?.invalidateAndCancel()
+        let newSession = makeSession()
+        self.session = newSession
+
+        webSocketTask = newSession.webSocketTask(with: url)
         webSocketTask?.resume()
         // Don't flip `isConnected` until the first inbound frame arrives —
         // an in-progress upgrade can look healthy for a long time before
@@ -262,8 +263,14 @@ class RemoteWebSocketClient {
     }
 
     private func receiveLoop() async {
+        AppLogger.remoteViewer.info("WebSocket receive loop entered")
+        defer { AppLogger.remoteViewer.info("WebSocket receive loop exited") }
+        let myTask = webSocketTask
         while !Task.isCancelled {
-            guard let task = webSocketTask else { break }
+            guard let task = myTask, task === webSocketTask else {
+                AppLogger.remoteViewer.info("WebSocket receive loop: task no longer current, exiting")
+                break
+            }
 
             do {
                 let message = try await task.receive()
@@ -456,16 +463,19 @@ class RemoteWebSocketClient {
     /// last ping send?". On timeout we force a reconnect; this is the
     /// primary detector for half-open sockets after sleep/wake.
     private func keepaliveLoop() async {
+        AppLogger.remoteViewer.info("WebSocket keepalive loop entered")
+        defer { AppLogger.remoteViewer.info("WebSocket keepalive loop exited") }
         while !Task.isCancelled {
             try? await Task.sleep(for: .seconds(Self.pingInterval))
             if Task.isCancelled { return }
             guard webSocketTask != nil else { return }
             let sentAt = Date()
+            AppLogger.remoteViewer.debug("WebSocket sending keepalive ping")
             sendJSON(["action": "ping"])
             try? await Task.sleep(for: .seconds(Self.pongTimeout))
             if Task.isCancelled { return }
             if lastReceiveAt < sentAt {
-                AppLogger.remoteViewer.warning("WebSocket pong timeout — forcing reconnect")
+                AppLogger.remoteViewer.warning("WebSocket pong timeout (last rx \(self.lastReceiveAt.timeIntervalSinceNow, privacy: .public)s ago) — forcing reconnect")
                 forceReconnectNow()
                 return
             }
