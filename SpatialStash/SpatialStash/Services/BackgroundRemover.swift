@@ -73,6 +73,17 @@ actor BackgroundRemover {
             return (nil, nil)
         }
 
+        // Sticker-style sources (PNGs with a fully-transparent background)
+        // have no real backdrop to recover. The iterative blur-and-fill would
+        // diffuse transparency into the subject hole, producing a corrupted
+        // halo on black; the foreground would also visually duplicate the
+        // already-cut-out subject. Skip diorama for these — callers fall
+        // back to the plain image display.
+        if Self.hasSignificantTransparency(sourceCG) {
+            AppLogger.backgroundRemover.debug("Skipping diorama: source has transparent background")
+            return (nil, nil)
+        }
+
         let cgImage = Self.downsampleIfNeeded(sourceCG)
         let (maskCIImage, originalCIImage) = try generateForegroundMask(cgImage: cgImage)
         let extent = originalCIImage.extent
@@ -492,6 +503,42 @@ actor BackgroundRemover {
 
     enum BackgroundRemovalError: Error {
         case noMaskResults
+    }
+
+    /// Detect whether a CGImage has a meaningfully transparent background.
+    /// Renders the image into a tiny 32×32 RGBA buffer and counts pixels
+    /// with low alpha. Cheap (1024 samples) and correct regardless of how
+    /// the source was decoded, since we re-render through CGContext.
+    private static func hasSignificantTransparency(_ image: CGImage) -> Bool {
+        switch image.alphaInfo {
+        case .none, .noneSkipFirst, .noneSkipLast:
+            return false
+        default:
+            break
+        }
+
+        let side = 32
+        var pixels = [UInt8](repeating: 0, count: side * side * 4)
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB) else { return false }
+        let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+        guard let ctx = CGContext(
+            data: &pixels,
+            width: side,
+            height: side,
+            bitsPerComponent: 8,
+            bytesPerRow: side * 4,
+            space: space,
+            bitmapInfo: bitmapInfo
+        ) else { return false }
+        ctx.clear(CGRect(x: 0, y: 0, width: side, height: side))
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: side, height: side))
+
+        var transparent = 0
+        for i in stride(from: 3, to: pixels.count, by: 4) where pixels[i] < 250 {
+            transparent += 1
+        }
+        // >5% transparent pixels in the downsampled view — treat as sticker.
+        return transparent > (side * side) / 20
     }
 
     /// Downsample a CGImage so its long edge does not exceed `maxLongEdgeForSegmentation`.
