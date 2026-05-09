@@ -30,7 +30,7 @@ class RemoteViewerModel: SlideshowEngine {
     var enableDisplaySync: Bool = false {
         didSet {
             if oldValue != enableDisplaySync {
-                wsClient?.sendDisplaySync(enabled: enableDisplaySync)
+                wsSession?.sendDisplaySync(enabled: enableDisplaySync)
             }
         }
     }
@@ -51,7 +51,7 @@ class RemoteViewerModel: SlideshowEngine {
     // MARK: - Sensor Display
 
     var sortedSensors: [HASensorReading] {
-        wsClient?.sensorData.values.sorted { $0.friendlyName < $1.friendlyName } ?? []
+        wsSession?.sensorData.values.sorted { $0.friendlyName < $1.friendlyName } ?? []
     }
 
     // MARK: - Window Callbacks
@@ -62,11 +62,11 @@ class RemoteViewerModel: SlideshowEngine {
     // MARK: - Services
 
     let apiClient = RemoteAPIClient()
-    /// Per-model WebSocket client. Each viewer window owns its own connection
-    /// to the broker; the server's per-deviceId channel (and `displaySync`
-    /// merge claim) is what keeps multiple windows in lockstep, not any
-    /// in-app multiplexing.
-    private(set) var wsClient: RemoteWebSocketClient?
+    /// Per-viewer logical session over a shared WebSocket connection.
+    /// All viewers pointed at the same WS endpoint share one TCP/TLS path
+    /// (one server-side ws) and multiplex under per-session sessionIds —
+    /// see SlideshowSyncHub.subscribeWS and protocol.md.
+    private(set) var wsSession: RemoteWSSession?
 
     /// When true, `onPostTransitioned` skips broadcasting local sync to avoid
     /// feedback loops while this model is applying an incoming sync.
@@ -139,22 +139,22 @@ class RemoteViewerModel: SlideshowEngine {
     override func stop() {
         super.stop()
         SlideshowSyncHub.shared.unregisterForLocalSync(self)
-        wsClient?.disconnect()
+        wsSession?.close()
         modTagManager?.removeSendHandler(id: engineId)
         tagListManager?.removeSendHandler(id: engineId)
-        wsClient = nil
+        wsSession = nil
     }
 
     override func onBecameActive() {
         // Returning to active after tracking loss / true backgrounding may
         // have left the WS sleeping in a backoff. Kick it before reporting
         // visibility so the visibility frame actually goes out.
-        wsClient?.forceReconnectNow()
-        wsClient?.sendVisibilityChange(deviceId: config.wsDeviceId, visible: true)
+        wsSession?.forceReconnectNow()
+        wsSession?.sendVisibilityChange(deviceId: config.wsDeviceId, visible: true)
     }
 
     override func onEnteredBackground() {
-        wsClient?.sendVisibilityChange(deviceId: config.wsDeviceId, visible: false)
+        wsSession?.sendVisibilityChange(deviceId: config.wsDeviceId, visible: false)
     }
 
     // MARK: - Remote Actions
@@ -179,7 +179,7 @@ class RemoteViewerModel: SlideshowEngine {
         // notify); in remote mode the server is the only filter and the
         // local Set is incidental.
         blockedPosts.insert(post._id)
-        wsClient?.sendBlock(postId: post._id)
+        wsSession?.sendBlock(postId: post._id)
         showToast("Blocked post #\(post._id)")
         goToNextImage()
     }
@@ -305,7 +305,7 @@ class RemoteViewerModel: SlideshowEngine {
         // transition was driven by another window, not by our own engine
         // ticking, and that window already reported.)
         if !isApplyingIncomingSync {
-            wsClient?.sendImageReady(postId: post._id)
+            wsSession?.sendImageReady(postId: post._id)
         }
 
         // Local broadcast — gallery mode only. In remote mode each window
@@ -393,26 +393,37 @@ class RemoteViewerModel: SlideshowEngine {
         let wsURL = config.effectiveWsEndpoint
         guard !wsURL.isEmpty else { return }
 
-        let client = RemoteWebSocketClient()
-        client.onMessage = { [weak self] message in
-            guard let self else { return }
-            self.handleWSMessage(message)
+        // Each viewer instance gets its own logical session id. The
+        // underlying WebSocket connection is shared with any other
+        // viewers pointed at the same endpoint — see SlideshowSyncHub.
+        let session = SlideshowSyncHub.shared.subscribeWS(endpoint: wsURL, sessionId: engineId.uuidString)
+        session.onMessage = { [weak self] message in
+            self?.handleWSMessage(message)
         }
         // Replay channel binding on every (re)connection. The server
         // forgets which channel a session belongs to when the socket
         // dies, so without this the auto-reconnect succeeds at the
         // protocol level but never receives another `playback` frame
         // and the slideshow gets stuck on the last image.
-        client.onConnected = { [weak self] in
+        session.onConnected = { [weak self] in
             self?.sendSlideshowConfigToServer()
+            self?.wsSession?.sendVisibilityChange(deviceId: self?.config.wsDeviceId ?? "", visible: true)
         }
-        client.connect(wsEndpoint: wsURL, deviceId: config.wsDeviceId)
-        wsClient = client
+        wsSession = session
+
+        // If the connection was already alive when we attached (a sibling
+        // viewer brought it up first), the session's onConnected won't
+        // fire on its own — flip the switch ourselves so the orchestrator
+        // gets our slideshowConfig immediately.
+        if session.isConnected {
+            sendSlideshowConfigToServer()
+            session.sendVisibilityChange(deviceId: config.wsDeviceId, visible: true)
+        }
 
         // Push later switches from the shared ModTagManager out to this
         // viewer's WS so any window's preset change reaches the server.
         modTagManager?.addSendHandler(id: engineId) { [weak self] tags in
-            self?.wsClient?.sendSetModTags(tags: tags)
+            self?.wsSession?.sendSetModTags(tags: tags)
         }
 
         // Same wiring for tag list switches initiated from the viewer
@@ -420,7 +431,7 @@ class RemoteViewerModel: SlideshowEngine {
         // changes — server-pushed `currentTagList` frames go through a
         // separate path and are not echoed back.
         tagListManager?.addSendHandler(id: engineId) { [weak self] listNumber in
-            self?.wsClient?.sendSetTagList(listNumber: listNumber)
+            self?.wsSession?.sendSetTagList(listNumber: listNumber)
         }
     }
 
@@ -433,7 +444,7 @@ class RemoteViewerModel: SlideshowEngine {
     /// `onConnected` after every auto-reconnect.
     private func sendSlideshowConfigToServer() {
         let intervalMs = max(2000, Int(config.delay * 1000))
-        wsClient?.sendSlideshowConfig(
+        wsSession?.sendSlideshowConfig(
             deviceId: config.wsDeviceId,
             interval: intervalMs,
             width: 1920,

@@ -36,6 +36,35 @@ final class SlideshowSyncHub {
 
     private init() {}
 
+    // MARK: - Shared WebSocket connections
+
+    /// One RemoteWebSocketClient per WS endpoint URL. Multiple viewer
+    /// windows pointed at the same endpoint share one connection and
+    /// multiplex under different sessionIds — see protocol.md.
+    private var wsClientsByEndpoint: [String: RemoteWebSocketClient] = [:]
+
+    /// Acquire a session on the shared client for `endpoint`. The client
+    /// is created lazily on the first call and torn down by the matching
+    /// `unsubscribeWS` once the last session leaves.
+    func subscribeWS(endpoint: String, sessionId: String) -> RemoteWSSession {
+        let client = wsClientsByEndpoint[endpoint] ?? {
+            let c = RemoteWebSocketClient()
+            wsClientsByEndpoint[endpoint] = c
+            return c
+        }()
+        let handlers = client.attachSession(sessionId: sessionId, wsEndpoint: endpoint)
+        return RemoteWSSession(client: client, sessionId: sessionId, endpoint: endpoint, handlers: handlers)
+    }
+
+    func unsubscribeWS(_ session: RemoteWSSession) {
+        guard let client = wsClientsByEndpoint[session.endpoint] else { return }
+        let remaining = client.detachSession(sessionId: session.sessionId)
+        if remaining == 0 {
+            client.disconnect()
+            wsClientsByEndpoint.removeValue(forKey: session.endpoint)
+        }
+    }
+
     // MARK: - Local Display Sync Broadcast
 
     private final class WeakModelRef {

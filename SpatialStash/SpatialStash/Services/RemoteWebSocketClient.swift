@@ -51,6 +51,18 @@ enum RemoteWSMessage {
     case fatalAuthError(reason: String)
 }
 
+/// One logical viewer session multiplexed onto a shared connection.
+/// Per-session onMessage receives `playback` frames addressed to this
+/// sessionId plus all connection-wide frames (tagLists, currentTagList,
+/// sensors, effect frames). onConnected fires after the underlying
+/// connection produces its first inbound frame on every (re)connection
+/// — replay slideshowConfig from there.
+@MainActor
+final class RemoteWSSessionHandlers {
+    var onMessage: ((RemoteWSMessage) -> Void)?
+    var onConnected: (() -> Void)?
+}
+
 @MainActor
 @Observable
 class RemoteWebSocketClient {
@@ -60,9 +72,6 @@ class RemoteWebSocketClient {
     private var webSocketTask: URLSessionWebSocketTask?
     private var session: URLSession?
     private var wsURL: URL?
-    /// Device ID used for the initial visibility ping on (re)connect.
-    /// Additional subscribers send their own device IDs via `sendVisibilityChange(deviceId:)`.
-    private var initialDeviceId: String = ""
     private var reconnectTask: Task<Void, Never>?
     private var receiveTask: Task<Void, Never>?
     private var keepaliveTask: Task<Void, Never>?
@@ -87,24 +96,64 @@ class RemoteWebSocketClient {
     /// requests that will keep failing for the same reason.
     private var halted: Bool = false
 
-    var onMessage: ((RemoteWSMessage) -> Void)?
-    /// Fires after the first inbound frame arrives on each (re)connection.
-    /// The server forgets per-session state (channel binding via
-    /// `slideshowConfig`) when the socket dies, so the viewer must replay
-    /// it here or the channel will never push `playback` frames again.
-    var onConnected: (() -> Void)?
+    /// Multiplexing — multiple viewer windows can share one underlying
+    /// connection, each addressed by a sessionId. `playback` frames carry
+    /// a `sessionIds` array and are routed to matching entries here;
+    /// connection-wide frames (tagLists, sensors, effects) fan out to
+    /// every entry. Refcount: when the last session detaches, the
+    /// connection is torn down.
+    private var sessions: [String: RemoteWSSessionHandlers] = [:]
 
-    func connect(wsEndpoint: String, deviceId: String) {
-        guard !wsEndpoint.isEmpty, let url = URL(string: wsEndpoint) else { return }
+    /// Attach a logical viewer session to this connection. The connection
+    /// is established lazily on the first attach. Returns the handlers
+    /// record so the caller can wire its onMessage/onConnected closures.
+    /// `wsEndpoint` is honored only on the first attach; subsequent
+    /// attaches reuse the existing connection regardless of endpoint.
+    @discardableResult
+    func attachSession(sessionId: String, wsEndpoint: String) -> RemoteWSSessionHandlers {
+        if let existing = sessions[sessionId] { return existing }
+        let entry = RemoteWSSessionHandlers()
+        sessions[sessionId] = entry
+        if wsURL == nil, !wsEndpoint.isEmpty, let url = URL(string: wsEndpoint) {
+            self.wsURL = url
+            self.halted = false
+            startPathMonitor()
+            doConnect()
+        } else if isConnected {
+            // Connection already alive — fire onConnected for late joiners
+            // immediately (after the caller wires the closure; they'll do
+            // that synchronously after this returns).
+            DispatchQueue.main.async { [weak entry] in
+                entry?.onConnected?()
+            }
+        }
+        return entry
+    }
 
-        self.wsURL = url
-        self.initialDeviceId = deviceId
-        // A new connect attempt clears any prior halt — caller may have
-        // updated the access token in config and is asking us to retry.
-        self.halted = false
-        startPathMonitor()
+    /// Detach a session. Sends a best-effort `sessionEnd` to the server
+    /// so the orchestrator can drop the channel binding without waiting
+    /// for the channel grace timeout. Returns the number of remaining
+    /// attached sessions; zero means the caller should call `disconnect()`
+    /// to release the underlying connection.
+    @discardableResult
+    func detachSession(sessionId: String) -> Int {
+        guard sessions.removeValue(forKey: sessionId) != nil else { return sessions.count }
+        if isConnected {
+            sendJSON(["sessionId": sessionId, "action": "sessionEnd"])
+        }
+        return sessions.count
+    }
 
-        doConnect()
+    var attachedSessionCount: Int { sessions.count }
+
+    private func broadcastToSessions(_ message: RemoteWSMessage) {
+        for entry in sessions.values { entry.onMessage?(message) }
+    }
+
+    private func routeToSessions(_ message: RemoteWSMessage, sessionIds: [String]) {
+        for id in sessionIds {
+            sessions[id]?.onMessage?(message)
+        }
     }
 
     /// Fresh URLSession per connect attempt. Reusing across reconnects
@@ -176,12 +225,11 @@ class RemoteWebSocketClient {
     }
 
     /// displaySync claims the merge driver role: `enabled: true` makes this
-    /// session the source of truth for every channel — every connected display
-    /// mirrors the driver's playback regardless of its own deviceId.
-    /// `enabled: false` releases the merge and each channel resumes its own
-    /// cadence. Server broadcasts a new `playback` frame in response.
-    func sendDisplaySync(enabled: Bool) {
-        sendJSON(["action": "displaySync", "payload": ["enabled": enabled]])
+    /// session's channel the source of truth for every channel — every
+    /// connected display mirrors the driver's playback regardless of its
+    /// own deviceId. `enabled: false` releases the merge.
+    func sendDisplaySync(sessionId: String, enabled: Bool) {
+        sendJSON(["sessionId": sessionId, "action": "displaySync", "payload": ["enabled": enabled]])
     }
 
     /// Required after WS open: join this session to the channel for `deviceId`.
@@ -189,7 +237,7 @@ class RemoteWebSocketClient {
     /// same image. Mod tags ride along so the orchestrator's first refill
     /// query already includes them — without that the initial query is
     /// discarded when a separate setModTags arrives a few ms later.
-    func sendSlideshowConfig(deviceId: String, interval: Int, width: Int, height: Int, bright: Bool, convert: Bool, ratio: String? = nil, modTags: [String] = []) {
+    func sendSlideshowConfig(sessionId: String, deviceId: String, interval: Int, width: Int, height: Int, bright: Bool, convert: Bool, ratio: String? = nil, modTags: [String] = []) {
         var payload: [String: Any] = [
             "deviceId": deviceId,
             "interval": interval,
@@ -200,36 +248,32 @@ class RemoteWebSocketClient {
             "modTags": modTags,
         ]
         if let ratio { payload["ratio"] = ratio }
-        sendJSON(["action": "slideshowConfig", "payload": payload])
+        sendJSON(["sessionId": sessionId, "action": "slideshowConfig", "payload": payload])
     }
 
     /// Client-supplied modifier tags. The orchestrator folds them into this
     /// channel's DuckDB query (last-write-wins among same-channel sessions).
-    func sendSetModTags(tags: [String]) {
-        sendJSON(["action": "setModTags", "payload": ["tags": tags]])
+    func sendSetModTags(sessionId: String, tags: [String]) {
+        sendJSON(["sessionId": sessionId, "action": "setModTags", "payload": ["tags": tags]])
     }
 
     /// Switch the active tag list catalog index. Server is authoritative
-    /// (broadcasts `currentTagList` to every client), so this is how a
-    /// session asks every channel to retag.
+    /// and connection-wide — no sessionId required.
     func sendSetTagList(listNumber: Int) {
         sendJSON(["action": "setTagList", "payload": ["listNumber": listNumber]])
     }
 
     /// Ask the server to advance the channel. Any session may call this;
-    /// when displaySync is active, the merge driver's channel advances and
-    /// every display sees the same new image.
-    func sendRequestNext() {
-        sendJSON(["action": "requestNext"])
+    /// when displaySync is active, the merge driver's channel advances.
+    func sendRequestNext(sessionId: String) {
+        sendJSON(["sessionId": sessionId, "action": "requestNext"])
     }
 
     /// Tell the server we've finished transitioning to `postId`. The
     /// orchestrator's readiness barrier waits for every visible session on
-    /// the channel before starting the dwell timer; without this report the
-    /// channel rides the 10 s bad-network fallback every cycle, which makes
-    /// the effective server cycle ~10 s longer than the configured interval.
-    func sendImageReady(postId: Int) {
-        sendJSON(["action": "imageReady", "payload": ["id": postId]])
+    /// the channel before starting the dwell timer.
+    func sendImageReady(sessionId: String, postId: Int) {
+        sendJSON(["sessionId": sessionId, "action": "imageReady", "payload": ["id": postId]])
     }
 
     // MARK: - Private
@@ -253,11 +297,9 @@ class RemoteWebSocketClient {
 
         AppLogger.remoteViewer.info("WebSocket connecting to \(url.absoluteString, privacy: .private)")
 
-        // RoboFrame's rpcserver pushes `tagLists`, `blocked`, and `currentTagList`
-        // automatically on connect — no need to request them. We just announce visibility.
-        if !initialDeviceId.isEmpty {
-            sendVisibilityChange(deviceId: initialDeviceId, visible: true)
-        }
+        // RoboFrame's rpcserver pushes `tagLists` and `currentTagList`
+        // automatically on connect — no need to request them. Sessions
+        // announce their own visibility from `onConnected`.
 
         receiveTask = Task { [weak self] in
             await self?.receiveLoop()
@@ -283,10 +325,13 @@ class RemoteWebSocketClient {
                 if !isConnected {
                     // First frame from the upgraded connection — promote
                     // to fully-connected and reset backoff so the next
-                    // failure starts fresh.
+                    // failure starts fresh. Notify every attached session
+                    // so each one re-sends slideshowConfig (the server
+                    // forgets per-session channel binding when a socket
+                    // dies).
                     isConnected = true
                     retryCount = 0
-                    onConnected?()
+                    for entry in sessions.values { entry.onConnected?() }
                 }
                 switch message {
                 case .string(let text):
@@ -316,7 +361,7 @@ class RemoteWebSocketClient {
                     }()
                     let msg = "Server rejected WebSocket: \(reasonStr). Check the Access Token in viewer settings."
                     AppLogger.remoteViewer.error("\(msg, privacy: .public)")
-                    onMessage?(.fatalAuthError(reason: msg))
+                    broadcastToSessions(.fatalAuthError(reason: msg))
                     break
                 }
                 scheduleReconnect()
@@ -365,16 +410,16 @@ class RemoteWebSocketClient {
             // Server-pushed canonical tag list catalog. Accepts either
             // [[String]] (canonical) or [String] (legacy: space-separated).
             if let nested = payload as? [[String]] {
-                onMessage?(.tagLists(lists: nested))
+                broadcastToSessions(.tagLists(lists: nested))
             } else if let flat = payload as? [String] {
                 let split = flat.map { $0.split(whereSeparator: { $0.isWhitespace }).map(String.init) }
-                onMessage?(.tagLists(lists: split))
+                broadcastToSessions(.tagLists(lists: split))
             }
 
         case "currentTagList":
             if let dict = payload as? [String: Any],
                let listNumber = dict["listNumber"] as? Int {
-                onMessage?(.currentTagList(index: listNumber))
+                broadcastToSessions(.currentTagList(index: listNumber))
             }
 
         case "playVideo", "stopVideo":
@@ -387,21 +432,21 @@ class RemoteWebSocketClient {
                let text = dict["text"] as? String {
                 let bgColor = dict["bgColorHex"] as? String ?? "#000000"
                 let imageUrl = dict["imageUrl"] as? String
-                onMessage?(.showText(text: text, bgColorHex: bgColor, imageUrl: imageUrl))
+                broadcastToSessions(.showText(text: text, bgColorHex: bgColor, imageUrl: imageUrl))
             }
 
         case "dismissText":
-            onMessage?(.dismissText)
+            broadcastToSessions(.dismissText)
 
         case "playAudio":
             if let dict = payload as? [String: Any],
                let urlStr = dict["url"] as? String,
                let url = URL(string: urlStr) {
-                onMessage?(.playAudio(url: url))
+                broadcastToSessions(.playAudio(url: url))
             }
 
         case "stopAudio":
-            onMessage?(.stopAudio)
+            broadcastToSessions(.stopAudio)
 
         case "update":
             if let dict = payload as? [String: Any],
@@ -425,15 +470,23 @@ class RemoteWebSocketClient {
                         unitOfMeasurement: unit
                     )
                 }
-                onMessage?(.sensorUpdate(entityId: entity, state: state, friendlyName: friendlyName, unit: unit))
+                broadcastToSessions(.sensorUpdate(entityId: entity, state: state, friendlyName: friendlyName, unit: unit))
             }
 
         case "refresh":
-            onMessage?(.refresh)
+            broadcastToSessions(.refresh)
 
         case "playback":
+            // Session-scoped: route to the sessionIds the server addressed.
             if let dict = payload as? [String: Any] {
-                onMessage?(.playback(payload: dict))
+                if let ids = json["sessionIds"] as? [String], !ids.isEmpty {
+                    routeToSessions(.playback(payload: dict), sessionIds: ids)
+                } else {
+                    // Defensive fallback (server shouldn't omit sessionIds,
+                    // but if it does, deliver to every session so something
+                    // renders).
+                    broadcastToSessions(.playback(payload: dict))
+                }
             }
 
         case "ping":
