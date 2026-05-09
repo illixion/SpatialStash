@@ -212,8 +212,12 @@ actor BackgroundRemover {
         return (foregroundImage, backdropImage)
     }
 
-    /// Remove the background from a UIImage, automatically cropping transparent space.
-    /// Returns a new UIImage with transparent background and no fully transparent margins.
+    /// Remove the background from a UIImage. Keeps the subject at the source
+    /// frame size — transparent margins are NOT trimmed. Tight alpha-bounds
+    /// cropping shifts the subject's position and aspect ratio when the
+    /// source has asymmetric padding around the subject, which surfaces as
+    /// the viewer "jumping" on toggle. The downstream display already
+    /// letterboxes transparent areas correctly.
     func removeBackground(from image: UIImage) async throws -> UIImage? {
         guard let sourceCG = image.cgImage else {
             AppLogger.backgroundRemover.warning("No CGImage available for background removal")
@@ -223,13 +227,10 @@ actor BackgroundRemover {
         let cgImage = Self.downsampleIfNeeded(sourceCG)
         let (maskCIImage, originalCIImage) = try generateForegroundMask(cgImage: cgImage)
 
-        // Decontamination kernel bakes the mask alpha into its output, so
-        // we render+crop directly. Fall back to blendWithMask only if the
-        // kernel failed to compile.
         if let decontaminated = decontaminatedRGBA(input: originalCIImage, mask: maskCIImage) {
-            return renderAndCrop(decontaminated, extent: originalCIImage.extent, scale: image.scale, orientation: image.imageOrientation)
+            return render(decontaminated, extent: originalCIImage.extent, scale: image.scale, orientation: image.imageOrientation)
         }
-        return applyMaskAndCrop(
+        return applyMask(
             inputImage: originalCIImage,
             maskImage: maskCIImage,
             scale: image.scale,
@@ -255,9 +256,9 @@ actor BackgroundRemover {
         // 1. Regular variant — decontaminated + mask alpha baked in.
         let regularResult: UIImage? = {
             if let decontaminated = decontaminatedRGBA(input: originalCIImage, mask: maskCIImage) {
-                return renderAndCrop(decontaminated, extent: extent, scale: image.scale, orientation: image.imageOrientation)
+                return render(decontaminated, extent: extent, scale: image.scale, orientation: image.imageOrientation)
             }
-            return applyMaskAndCrop(
+            return applyMask(
                 inputImage: originalCIImage,
                 maskImage: maskCIImage,
                 scale: image.scale,
@@ -282,9 +283,9 @@ actor BackgroundRemover {
         // bg estimate matches the pixels we're un-mixing against.
         let enhancedResult: UIImage? = {
             if let decontaminated = decontaminatedRGBA(input: enhancedCI, mask: maskCIImage) {
-                return renderAndCrop(decontaminated, extent: extent, scale: image.scale, orientation: image.imageOrientation)
+                return render(decontaminated, extent: extent, scale: image.scale, orientation: image.imageOrientation)
             }
-            return applyMaskAndCrop(
+            return applyMask(
                 inputImage: enhancedCI,
                 maskImage: maskCIImage,
                 scale: image.scale,
@@ -296,12 +297,12 @@ actor BackgroundRemover {
     }
 
     /// Render a CIImage that already carries final alpha (from the
-    /// decontamination kernel) to a CGImage, then trim transparent margins.
-    /// Distinct from `applyMaskAndCrop` which would re-multiply by the mask.
-    private func renderAndCrop(_ image: CIImage, extent: CGRect, scale: CGFloat, orientation: UIImage.Orientation) -> UIImage? {
+    /// decontamination kernel) to a CGImage at the source frame size.
+    /// Transparent margins are intentionally preserved so the subject keeps
+    /// its position relative to the original image.
+    private func render(_ image: CIImage, extent: CGRect, scale: CGFloat, orientation: UIImage.Orientation) -> UIImage? {
         guard let outputCGImage = ciContext.createCGImage(image, from: extent) else { return nil }
-        let cropped = TransparentEdgeCropper.crop(outputCGImage)
-        return UIImage(cgImage: cropped, scale: scale, orientation: orientation)
+        return UIImage(cgImage: outputCGImage, scale: scale, orientation: orientation)
     }
 
     /// Apply color decontamination to `input` using `mask`. Computes a heavy
@@ -558,8 +559,9 @@ actor BackgroundRemover {
         return CGImageDeepColor.redraw(image, size: (newW, newH)) ?? image
     }
 
-    /// Apply a foreground mask to an image and crop transparent margins.
-    private func applyMaskAndCrop(
+    /// Apply a foreground mask to an image at the source frame size.
+    /// Transparent margins are preserved (see `render(_:extent:...)`).
+    private func applyMask(
         inputImage: CIImage,
         maskImage: CIImage,
         scale: CGFloat,
@@ -583,7 +585,6 @@ actor BackgroundRemover {
             return nil
         }
 
-        let croppedCGImage = TransparentEdgeCropper.crop(outputCGImage)
-        return UIImage(cgImage: croppedCGImage, scale: scale, orientation: orientation)
+        return UIImage(cgImage: outputCGImage, scale: scale, orientation: orientation)
     }
 }
