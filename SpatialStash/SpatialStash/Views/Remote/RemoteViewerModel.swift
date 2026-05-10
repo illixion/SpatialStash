@@ -146,10 +146,13 @@ class RemoteViewerModel: SlideshowEngine {
     }
 
     override func onBecameActive() {
-        // Returning to active after tracking loss / true backgrounding may
-        // have left the WS sleeping in a backoff. Kick it before reporting
-        // visibility so the visibility frame actually goes out.
-        wsSession?.forceReconnectNow()
+        // visionOS flips scenePhase on gaze shifts and minor system
+        // interruptions, not just true sleep/wake. Probing with a ping
+        // lets a healthy socket prove itself; only a missing pong
+        // forces a reconnect. Unconditionally reconnecting here was
+        // dropping the server session on every blip, which made the
+        // broker emit displayDisconnect frames to peer kiosks.
+        wsSession?.probeOrReconnect()
         wsSession?.sendVisibilityChange(deviceId: config.wsDeviceId, visible: true)
     }
 

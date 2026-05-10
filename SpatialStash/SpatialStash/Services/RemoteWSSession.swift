@@ -76,6 +76,10 @@ final class RemoteWSSession {
         client?.forceReconnectNow()
     }
 
+    func probeOrReconnect() {
+        client?.probeOrReconnect()
+    }
+
     /// Drop just this session. The shared connection stays up if any
     /// other sessions are still attached; the hub closes it when the
     /// last subscriber leaves.

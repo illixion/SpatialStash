@@ -175,6 +175,32 @@ class RemoteWebSocketClient {
         return URLSession(configuration: configuration)
     }
 
+    /// Probe the socket with a JSON ping; if no inbound traffic arrives
+    /// within `timeout` seconds, force a reconnect. Use this on
+    /// scene-phase wakes instead of unconditionally reconnecting — a
+    /// healthy connection answers the ping with a pong (per protocol.md)
+    /// and we leave it alone, avoiding spurious displayDisconnect
+    /// broadcasts to peer kiosks.
+    func probeOrReconnect(timeout: TimeInterval = 3) {
+        if halted { return }
+        guard wsURL != nil else { return }
+        if !isConnected || webSocketTask == nil {
+            forceReconnectNow()
+            return
+        }
+        let sentAt = Date()
+        AppLogger.remoteViewer.info("WebSocket probe ping (timeout=\(timeout, privacy: .public)s)")
+        sendJSON(["action": "ping"])
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(timeout))
+            guard let self else { return }
+            if self.lastReceiveAt < sentAt {
+                AppLogger.remoteViewer.warning("WebSocket probe timed out — forcing reconnect")
+                self.forceReconnectNow()
+            }
+        }
+    }
+
     /// Force an immediate reconnect attempt, cancelling any sleeping
     /// backoff. Called by viewers when returning to the foreground so
     /// recovery doesn't have to wait out the exponential delay.
