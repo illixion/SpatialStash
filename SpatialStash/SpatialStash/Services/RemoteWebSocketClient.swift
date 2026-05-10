@@ -294,12 +294,22 @@ class RemoteWebSocketClient {
     private func doConnect() {
         guard let url = wsURL else { return }
 
-        // Always rebuild the session — see makeSession() comment.
-        session?.invalidateAndCancel()
-        let newSession = makeSession()
-        self.session = newSession
+        // Reuse the URLSession across reconnects. An earlier version of
+        // this code rebuilt the session on every doConnect to clear stale
+        // HTTP/2 multiplex state, but that produced an even worse failure
+        // mode: invalidating the old session and immediately resuming a
+        // new task on a freshly-built session races kernel socket teardown,
+        // and the new task throws ENOTCONN inside a millisecond. That's
+        // the storm the user saw — instant fail, retry, instant fail.
+        // WebSocket tasks are HTTP/1.1 (no multiplexing) so there's no
+        // pool state to worry about; the previous fix was solving a
+        // problem that doesn't apply here.
+        if session == nil {
+            session = makeSession()
+        }
+        guard let session else { return }
 
-        webSocketTask = newSession.webSocketTask(with: url)
+        webSocketTask = session.webSocketTask(with: url)
         webSocketTask?.resume()
         lastConnectAttemptAt = Date()
         // Don't flip `isConnected` until the first inbound frame arrives —
@@ -359,6 +369,15 @@ class RemoteWebSocketClient {
                 }
             } catch {
                 logWebSocketFailure(error, task: task)
+                // If we're not the current task, the connection has
+                // already been swapped (forceReconnectNow / disconnect);
+                // bail without rescheduling. Otherwise both loops race
+                // scheduleReconnect, the second cancels the first's
+                // backoff timer, and retryCount effectively never climbs.
+                guard task === webSocketTask else {
+                    AppLogger.remoteViewer.info("WebSocket stale receive loop exiting (current task swapped)")
+                    break
+                }
                 isConnected = false
                 keepaliveTask?.cancel()
                 keepaliveTask = nil
