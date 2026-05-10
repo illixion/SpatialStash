@@ -76,6 +76,12 @@ class RemoteWebSocketClient {
     private var receiveTask: Task<Void, Never>?
     private var keepaliveTask: Task<Void, Never>?
     private var retryCount: Int = 0
+    /// Wall-clock timestamp of the last `doConnect` call. Used to floor
+    /// the reconnect interval — without this, when the new socket fails
+    /// inside a millisecond (ENOTCONN during sleep / interface flap), the
+    /// retry firehose hammers the server even if `retryCount` is climbing.
+    private var lastConnectAttemptAt: Date = .distantPast
+    private static let minRetryDelay: TimeInterval = 2
     private static let maxRetryDelay: TimeInterval = 30
     /// Interval between application-level `ping` frames. The server
     /// expects JSON `{action: "ping"}` and replies with `{action: "pong"}`.
@@ -190,7 +196,14 @@ class RemoteWebSocketClient {
         webSocketTask?.cancel(with: .goingAway, reason: nil)
         webSocketTask = nil
         isConnected = false
-        retryCount = 0
+        // Intentionally NOT resetting retryCount here. forceReconnectNow
+        // is fired on path-up transitions and scenePhase wakes — neither
+        // proves the connection will actually succeed. Resetting here
+        // produced a 1 s reconnect storm whenever the socket failed
+        // instantly with ENOTCONN: each failure called scheduleReconnect,
+        // some other caller fired forceReconnectNow, retryCount went back
+        // to 0, and the cycle repeated. retryCount only resets after
+        // we've actually received a frame (see receiveLoop).
         AppLogger.remoteViewer.info("WebSocket force reconnect requested")
         doConnect()
     }
@@ -288,6 +301,7 @@ class RemoteWebSocketClient {
 
         webSocketTask = newSession.webSocketTask(with: url)
         webSocketTask?.resume()
+        lastConnectAttemptAt = Date()
         // Don't flip `isConnected` until the first inbound frame arrives —
         // an in-progress upgrade can look healthy for a long time before
         // failing, and consumers (incl. forceReconnect callers) rely on
@@ -582,11 +596,23 @@ class RemoteWebSocketClient {
             return
         }
         reconnectTask?.cancel()
+        let attempt = retryCount
+        retryCount += 1
+        // Two flooring rules:
+        //  1. Min 2 s between attempts. ENOTCONN can throw inside a
+        //     millisecond, and a 1 s loop on top of that hammered the
+        //     server hard enough to keep emitting `displayDisconnect`
+        //     broadcasts to peer kiosks every cycle.
+        //  2. Subtract elapsed-since-last-attempt from the exponential
+        //     delay so a long connect (waitsForConnectivity stalled for
+        //     20 s before failing) doesn't then add another long sleep
+        //     on top.
+        let exponential = min(pow(2.0, Double(attempt)), Self.maxRetryDelay)
+        let sinceLast = Date().timeIntervalSince(lastConnectAttemptAt)
+        let delay = max(Self.minRetryDelay, exponential - sinceLast)
         reconnectTask = Task { [weak self] in
             guard let self else { return }
-            let delay = min(pow(2.0, Double(retryCount)), Self.maxRetryDelay)
-            retryCount += 1
-            AppLogger.remoteViewer.info("WebSocket reconnecting in \(delay, privacy: .public)s")
+            AppLogger.remoteViewer.info("WebSocket reconnecting in \(delay, privacy: .public)s (attempt=\(attempt, privacy: .public))")
             try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled, !halted else { return }
             // Re-check the path right before connecting — the path may
