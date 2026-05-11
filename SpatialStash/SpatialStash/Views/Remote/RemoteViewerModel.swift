@@ -87,6 +87,11 @@ class RemoteViewerModel: SlideshowEngine {
         self.showSensors = config.showSensors
 
         super.init(
+            // In remote mode the channel's `interval` arrives in the first
+            // `playback` frame after WS connect and overrides this. The
+            // config value is only authoritative for gallery mode (no
+            // apiEndpoint) and during the brief window before the first
+            // playback frame in remote mode.
             delay: config.delay,
             enableKenBurns: config.enableKenBurns,
             useAspectRatio: config.useAspectRatio,
@@ -294,10 +299,20 @@ class RemoteViewerModel: SlideshowEngine {
     var displayDelay: TimeInterval {
         get { delay }
         set {
+            // Optimistic local update for slider responsiveness.
             delay = newValue
-            if config.delay != newValue {
-                config.delay = newValue
-                onConfigChanged?(config)
+            if config.apiEndpoint.isEmpty {
+                // Gallery mode — no server to defer to, so persist locally.
+                if config.delay != newValue {
+                    config.delay = newValue
+                    onConfigChanged?(config)
+                }
+            } else {
+                // Remote mode — interval is server-managed. Push to the
+                // orchestrator; its clamped echo (2000–3600000 ms) lands
+                // on the next playback frame and overwrites `delay`.
+                // config.delay is stale here and not re-persisted.
+                sendSlideshowConfigToServer()
             }
         }
     }
@@ -453,7 +468,7 @@ class RemoteViewerModel: SlideshowEngine {
     /// setModTags. Called once on initial connect and again from
     /// `onConnected` after every auto-reconnect.
     private func sendSlideshowConfigToServer() {
-        let intervalMs = max(2000, Int(config.delay * 1000))
+        let intervalMs = max(2000, Int(delay * 1000))
         wsSession?.sendSlideshowConfig(
             deviceId: config.wsDeviceId,
             interval: intervalMs,
