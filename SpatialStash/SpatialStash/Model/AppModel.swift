@@ -422,6 +422,39 @@ class AppModel {
         activeRemoteViewerModels.removeValue(forKey: ObjectIdentifier(model))
     }
 
+    // MARK: - Remote History Stores
+    //
+    // One store per (endpoint, token) pair. All viewer windows pointed at
+    // the same RoboFrame instance share the same store so the history
+    // grid reflects what's actually been shown across the room, not just
+    // what this window has seen.
+
+    private var remoteHistoryStores: [String: RemoteHistoryStore] = [:]
+    private let sharedRemoteAPIClient = RemoteAPIClient()
+
+    private func historyStoreKey(endpoint: String, accessToken: String) -> String {
+        "\(endpoint)\u{1}\(accessToken)"
+    }
+
+    func remoteHistoryStore(for endpoint: String, accessToken: String) -> RemoteHistoryStore? {
+        guard !endpoint.isEmpty else { return nil }
+        let key = historyStoreKey(endpoint: endpoint, accessToken: accessToken)
+        if let existing = remoteHistoryStores[key] { return existing }
+        let store = RemoteHistoryStore(endpoint: endpoint, accessToken: accessToken, apiClient: sharedRemoteAPIClient)
+        remoteHistoryStores[key] = store
+        return store
+    }
+
+    /// Eagerly prime history stores for every saved Remote config that has
+    /// an API endpoint. Called once after init so the grid renders
+    /// instantly the first time a viewer's history button is pressed.
+    func refreshAllRemoteHistoryStores() {
+        for config in savedRemoteConfigs where !config.apiEndpoint.isEmpty {
+            guard let store = remoteHistoryStore(for: config.apiEndpoint, accessToken: config.accessToken) else { continue }
+            Task { await store.refresh() }
+        }
+    }
+
     // MARK: - Remote Viewer Window Summon
 
     enum ExistingRemoteViewerWindowState {
@@ -1294,6 +1327,7 @@ class AppModel {
            let configs = try? JSONDecoder().decode([RemoteViewerConfig].self, from: data) {
             savedRemoteConfigs = configs
             AppLogger.remoteViewer.info("Loaded \(configs.count, privacy: .public) saved remote configs")
+            refreshAllRemoteHistoryStores()
         }
     }
 

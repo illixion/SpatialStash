@@ -65,8 +65,30 @@ actor RemoteAPIClient {
         _ = try await session.data(from: url)
     }
 
+    /// Fetch the server-side rolling history (most recent first). The
+    /// server's RAM-resident buffer (~50 entries) is the single source of
+    /// truth across all kiosks/clients, so this lets multiple viewers share
+    /// the same view of "what has been shown lately" instead of each
+    /// accumulating its own local list.
+    func fetchHistory(baseURL: String, accessToken: String) async throws -> [RemoteHistoryEntry] {
+        guard let url = URL(string: withToken("\(normalize(baseURL))/history.json", token: accessToken)) else {
+            throw RemoteAPIError.invalidURL
+        }
+        let (data, response) = try await session.data(from: url)
+        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+            throw RemoteAPIError.serverError
+        }
+        struct Payload: Decodable { let history: [RemoteHistoryEntry] }
+        return try JSONDecoder().decode(Payload.self, from: data).history
+    }
+
     // Tag lists used to be fetched from /tags.json. They now arrive over the WebSocket
     // as a `tagLists` server→client frame on connect; see RemoteWebSocketClient.
+}
+
+struct RemoteHistoryEntry: Decodable, Identifiable, Hashable {
+    let id: Int
+    let ext: String
 }
 
 enum RemoteAPIError: LocalizedError {

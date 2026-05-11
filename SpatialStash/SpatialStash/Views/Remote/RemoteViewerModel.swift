@@ -72,6 +72,13 @@ class RemoteViewerModel: SlideshowEngine {
     /// feedback loops while this model is applying an incoming sync.
     private var isApplyingIncomingSync: Bool = false
 
+    /// While set to a future date, incoming `playback` frames are dropped
+    /// on the floor. Stamped when the user picks a post from the history
+    /// grid so the room's tick doesn't yank them away from the manually
+    /// chosen image before they've finished looking at it. Suppression is
+    /// per-window/local — other devices keep advancing.
+    private var playbackSuppressedUntil: Date?
+
     // MARK: - Init
 
     init(config: RemoteViewerConfig) {
@@ -519,6 +526,13 @@ class RemoteViewerModel: SlideshowEngine {
     /// list, merge-driver status, and feeds the engine's queue with the
     /// server's `current` / `next` posts.
     private func handlePlaybackFrame(_ payload: [String: Any]) {
+        if let until = playbackSuppressedUntil {
+            if Date() < until {
+                AppLogger.remoteViewer.info("playback: suppressed (history jump active)")
+                return
+            }
+            playbackSuppressedUntil = nil
+        }
         // Interval — the channel timer source of truth. Convert ms → seconds.
         if let intervalMs = payload["interval"] as? Int, intervalMs > 0 {
             let newDelay = TimeInterval(intervalMs) / 1000.0
@@ -585,6 +599,20 @@ class RemoteViewerModel: SlideshowEngine {
             provider?.enqueueFromPlayback([n])
             triggerPrefetch()
         }
+    }
+
+    /// Jump to a post chosen from the shared history grid and suppress
+    /// incoming `playback` frames for one full interval so the room's tick
+    /// doesn't immediately overwrite the user's selection.
+    func jumpToHistoryEntry(_ entry: RemoteHistoryEntry) {
+        let post = RemotePost(
+            _id: entry.id, file_ext: entry.ext, tags: [],
+            rating: nil, image_width: nil, image_height: nil,
+            fav_count: nil, md5: nil, parent_id: nil, score: nil,
+            ratio: nil, path: nil, duration: nil
+        )
+        playbackSuppressedUntil = Date().addingTimeInterval(delay)
+        jumpToHistoryPost(post)
     }
 
     private func postFromPlaybackEntry(_ raw: Any?) -> RemotePost? {

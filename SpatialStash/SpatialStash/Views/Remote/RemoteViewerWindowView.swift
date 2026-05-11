@@ -106,12 +106,12 @@ struct RemoteViewerWindowView: View {
                 }
 
                 // History overlay
-                if showHistory, let model = viewerModel {
+                if showHistory, let model = viewerModel,
+                   let store = appModel.remoteHistoryStore(for: model.config.apiEndpoint, accessToken: model.config.accessToken) {
                     RemoteHistoryView(
-                        history: model.postHistory,
-                        imageURLs: model.historyImageURLs,
-                        onPostSelected: { post in
-                            model.jumpToHistoryPost(post)
+                        store: store,
+                        onEntrySelected: { entry in
+                            model.jumpToHistoryEntry(entry)
                             showHistory = false
                         }
                     )
@@ -181,6 +181,12 @@ struct RemoteViewerWindowView: View {
             } else {
                 resetAutoHideTimer()
             }
+        }
+        .onChange(of: showHistory) { _, isOpen in
+            guard isOpen, let model = viewerModel,
+                  let store = appModel.remoteHistoryStore(for: model.config.apiEndpoint, accessToken: model.config.accessToken)
+            else { return }
+            Task { await store.refresh() }
         }
         .onTapGesture {
             controlsVisible.toggle()
