@@ -247,6 +247,7 @@ struct RemoteViewerWindowView: View {
                 let dioramaVisible = model.enableDiorama
                     && !model.showAdjustmentsPopover
                     && !model.isAnyOrnamentMenuOpen
+                    && !showHistory
 
                 // Wrapped so a single .animation modifier drives the
                 // fade-in when the diorama layers materialize after
