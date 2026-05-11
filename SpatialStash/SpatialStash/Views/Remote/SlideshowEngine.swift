@@ -202,6 +202,13 @@ class SlideshowEngine {
     /// in-flight work when navigating away or disabling diorama.
     private var dioramaTasks: [Int: Task<Void, Never>] = [:]
 
+    /// Cache of completed diorama pairs keyed by post id. Generation may
+    /// finish before the post is promoted into the current/next slot
+    /// (especially during prefetch), so results land here first and the
+    /// transition pulls from this cache when wiring up the slots. Cleared
+    /// alongside the slots in `clearDioramaForegrounds`.
+    private var dioramaCache: [Int: (foreground: UIImage?, backdrop: UIImage?)] = [:]
+
     // MARK: - Content Provider & Tag List Manager
 
     var contentProvider: SlideshowContentProvider?
@@ -284,6 +291,11 @@ class SlideshowEngine {
             do {
                 let pair = try await BackgroundRemover.shared.generateDioramaPair(from: image)
                 guard !Task.isCancelled, let self else { return }
+                // Cache by id first — the post may not be in any slot yet
+                // (typical during prefetch), and discarding the result here
+                // is what caused the foreground to pop in after the
+                // crossfade completed.
+                self.dioramaCache[postId] = pair
                 if isCurrent, self.currentPost?.id == postId {
                     self.currentForegroundImage = pair.foreground
                     self.currentBackdropImage = pair.backdrop
@@ -298,10 +310,36 @@ class SlideshowEngine {
         dioramaTasks[postId] = task
     }
 
+    /// Ensure the diorama pair for `post` is generated and stored in the
+    /// `next` slot, then await its completion. Called right before the
+    /// crossfade so foreground/backdrop layers materialize in lock-step with
+    /// the base image instead of popping in afterwards. Strict timing is
+    /// sacrificed here: the crossfade may start late if generation is slow.
+    func awaitNextDioramaReady(post: RemotePost, image: UIImage) async {
+        guard enableDiorama else { return }
+        if let cached = dioramaCache[post.id] {
+            nextForegroundImage = cached.foreground
+            nextBackdropImage = cached.backdrop
+            return
+        }
+        // Reuse in-flight prefetch task if present; otherwise kick one off.
+        if dioramaTasks[post.id] == nil {
+            generateDioramaForeground(post: post, image: image, isCurrent: false)
+        }
+        if let task = dioramaTasks[post.id] {
+            _ = await task.value
+        }
+        if let cached = dioramaCache[post.id] {
+            nextForegroundImage = cached.foreground
+            nextBackdropImage = cached.backdrop
+        }
+    }
+
     /// Drop all in-flight diorama work and clear cached foregrounds + backdrops.
     func clearDioramaForegrounds() {
         for (_, task) in dioramaTasks { task.cancel() }
         dioramaTasks.removeAll()
+        dioramaCache.removeAll()
         currentForegroundImage = nil
         currentBackdropImage = nil
         nextForegroundImage = nil
@@ -939,6 +977,15 @@ class SlideshowEngine {
         if mediaType == .image {
             gifConversionTask?.cancel()
             gifConversionTask = nil
+        }
+
+        // Wait for diorama pair before starting the crossfade so the
+        // backdrop/foreground layers fade in alongside the base image
+        // instead of popping in after the transition completes.
+        if enableDiorama && mediaType == .image {
+            await awaitNextDioramaReady(post: post, image: image)
+            // State may have changed while awaiting (e.g. navigation away).
+            guard state == .loading || state == .displaying else { return }
         }
 
         // Crossfade transition (skipped under reduce motion — instant switch)
