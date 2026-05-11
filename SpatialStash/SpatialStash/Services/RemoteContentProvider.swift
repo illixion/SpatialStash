@@ -23,6 +23,14 @@ class RemoteContentProvider: SlideshowContentProvider {
     /// engine's prefetch loop on each `fetchMoreContent` call.
     private var pending: [RemotePost] = []
 
+    /// IDs already enqueued via `playback`. Used to suppress duplicate
+    /// frames the server sometimes emits at session start — without this
+    /// the engine would prefetch and visibly display the same pair twice
+    /// (A → B → A → B …) before catching up to the next push. Cleared on
+    /// `resetPagination` so a tag-list / remote jump can resurface the
+    /// same ids legitimately.
+    private var seenIds: Set<Int> = []
+
     init(apiClient: RemoteAPIClient, baseURL: String, accessToken: String) {
         self.apiClient = apiClient
         self.baseURL = baseURL
@@ -34,7 +42,10 @@ class RemoteContentProvider: SlideshowContentProvider {
     /// payload (just id + ext; other fields are nil — the engine only uses
     /// `_id`, `file_ext`, and `tags` for routing).
     func enqueueFromPlayback(_ posts: [RemotePost]) {
-        pending.append(contentsOf: posts)
+        for post in posts where !seenIds.contains(post._id) {
+            pending.append(post)
+            seenIds.insert(post._id)
+        }
     }
 
     func fetchMoreContent(
@@ -101,7 +112,10 @@ class RemoteContentProvider: SlideshowContentProvider {
 
     func resetPagination() {
         // The orchestrator manages pagination; locally we just drop any
-        // server-pushed posts that haven't been consumed yet.
+        // server-pushed posts that haven't been consumed yet, and forget
+        // which ids we've seen so a legitimate replay (e.g. tag-list
+        // change) can resurface the same post.
         pending.removeAll()
+        seenIds.removeAll()
     }
 }

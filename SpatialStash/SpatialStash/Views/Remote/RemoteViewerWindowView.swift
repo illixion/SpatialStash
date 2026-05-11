@@ -276,17 +276,7 @@ struct RemoteViewerWindowView: View {
                 .animation(appModel.effectiveReduceMotion ? nil : .easeInOut(duration: 0.5), value: model.currentBackdropImage != nil)
             }
 
-            // Failure placeholder — shown when the auto-advance couldn't produce
-            // an image (prefetch empty or download failed). Keeps the slideshow
-            // cycling on schedule instead of freezing on a stale image.
-            if model.showFailurePlaceholder && model.currentImage == nil {
-                Image(systemName: "exclamationmark.triangle")
-                    .font(.system(size: 80, weight: .light))
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-
-            // Next image (fading in during transition)
+// Next image (fading in during transition)
             if let image = model.nextImage, model.isTransitioning {
                 Image(uiImage: image)
                     .resizable()

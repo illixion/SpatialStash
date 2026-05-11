@@ -74,19 +74,12 @@ class SlideshowEngine {
     var isRoomActive: Bool = true
     var isTransitioning: Bool = false
     var isLoading: Bool = false
-    /// True when the auto-advance couldn't produce an image (prefetch empty or
-    /// download failed). The UI shows a warning icon placeholder. Cleared when
-    /// a real image is displayed.
-    var showFailurePlaceholder: Bool = false
 
     /// True once the slideshow has shown a real image at least once. Used to
     /// distinguish the cold-start case (allow a bounded wait for the first
     /// image, show spinner) from steady state (show placeholder immediately on
     /// missing prefetch).
     private var hasDisplayedFirstMedia: Bool = false
-    /// How long runLoadingPhase will wait for the first prefetch to populate
-    /// on cold start before falling through to the placeholder.
-    private static let firstLoadTimeout: TimeInterval = 20
 
     /// In steady state, when the auto-advance can't produce a prefetched
     /// image, we keep the current image displayed and re-check after this
@@ -711,14 +704,14 @@ class SlideshowEngine {
             return
         }
 
-        // Cold start: no prefetch yet because nothing has been fetched. Kick
-        // prefetch and wait up to `firstLoadTimeout` seconds for it to
-        // populate before falling through to the placeholder. `isLoading`
-        // stays true, so the view shows the progress spinner during the wait.
+        // Cold start: no prefetch yet because nothing has been fetched.
+        // Kick prefetch and wait — no timeout. `isLoading` stays true so the
+        // view shows the progress spinner. Queueing rather than failing-fast
+        // avoids the previous A → B → A → "No images available" → C
+        // sequence when a transient miss tripped the cold-start path.
         if !hasDisplayedFirstMedia {
             triggerPrefetch()
-            let waitUntil = Date().addingTimeInterval(Self.firstLoadTimeout)
-            while prefetchedImages.isEmpty && Date() < waitUntil && state == .loading {
+            while prefetchedImages.isEmpty && state == .loading {
                 try? await Task.sleep(for: .milliseconds(250))
             }
             if let prefetched = prefetchedImages.first {
@@ -730,10 +723,8 @@ class SlideshowEngine {
                     transition(to: .displaying)
                 }
                 triggerPrefetch()
-                return
             }
-            // Timed out waiting for first image — fall through to placeholder.
-            // Only the cold-start path ever shows the warning icon now.
+            return
         }
 
         // Steady-state miss: keep the current image on screen, re-arm a
@@ -741,51 +732,10 @@ class SlideshowEngine {
         // visibly stalls for a few seconds rather than flashing the warning
         // icon — much less disruptive when the cause is a transient network
         // hiccup or a momentarily slow server.
-        if hasDisplayedFirstMedia {
-            triggerPrefetch()
-            displayDeadline = Date().addingTimeInterval(Self.steadyStateRetryInterval)
-            if state == .loading {
-                transition(to: .displaying)
-            }
-            return
-        }
-
-        // Cold start with no first image yet AND wait timed out: there's
-        // genuinely nothing to show, so the placeholder is appropriate.
-        displayFailurePlaceholder(toast: "No images available")
         triggerPrefetch()
+        displayDeadline = Date().addingTimeInterval(Self.steadyStateRetryInterval)
         if state == .loading {
             transition(to: .displaying)
-        }
-    }
-
-    /// Switch the display to a warning-icon placeholder. Advances the deadline
-    /// so the slideshow continues cycling on schedule. Used when the automatic
-    /// path can't produce an image (prefetch empty or download failed).
-    /// The toast is only shown on the first failure in a streak so it doesn't
-    /// re-appear every tick while the slideshow is waiting on prefetch.
-    private func displayFailurePlaceholder(toast: String?) {
-        let wasAlreadyPlaceholder = showFailurePlaceholder
-        trackPreviousPost()
-        gifConversionTask?.cancel()
-        gifConversionTask = nil
-        currentImage = nil
-        nextImage = nil
-        currentForegroundImage = nil
-        currentBackdropImage = nil
-        nextForegroundImage = nil
-        nextBackdropImage = nil
-        currentPost = nil
-        currentMediaType = .image
-        isCurrentPostAnimatedGIF = false
-        isTransitioning = false
-        showFailurePlaceholder = true
-        autoBrightnessAdjustment = 0
-        autoContrastAdjustment = 1.0
-        lastAdvanceTime = Date()
-        advanceDisplayDeadline()
-        if !wasAlreadyPlaceholder, let toast {
-            showToast(toast, isError: true)
         }
     }
 
@@ -920,7 +870,6 @@ class SlideshowEngine {
         gifConversionTask = nil
 
         isCurrentPostAnimatedGIF = false
-        showFailurePlaceholder = false
         hasDisplayedFirstMedia = true
         currentImage = nil
         nextImage = nil
@@ -1013,7 +962,6 @@ class SlideshowEngine {
         currentMediaType = mediaType
         nextImage = nil
         isTransitioning = false
-        showFailurePlaceholder = false
         hasDisplayedFirstMedia = true
         lastAdvanceTime = Date()
         advanceDisplayDeadline()
