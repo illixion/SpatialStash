@@ -33,6 +33,13 @@ struct RemoteViewerWindowView: View {
 
     var body: some View {
         GeometryReader { geo in
+            // When diorama is on, the foreground plane is popped forward by
+            // dioramaDistance in Z. Overlays anchored at z=0 would be occluded,
+            // so lift them in front of the foreground plane. Match the
+            // ornament's +30pt clearance on top of the foreground offset.
+            let overlayZ: CGFloat = (viewerModel?.enableDiorama ?? false)
+                ? appModel.dioramaDistance + 30
+                : 0
             ZStack {
                 // Background
                 if !(viewerModel?.config.transparentBackground ?? false) {
@@ -51,17 +58,20 @@ struct RemoteViewerWindowView: View {
                 // Clock overlay
                 if let model = viewerModel, model.showClock {
                     clockOverlay(model: model)
+                        .offset(z: overlayZ)
                 }
 
                 // Sensor overlay
                 if let model = viewerModel, model.showSensors, !model.sortedSensors.isEmpty {
                     sensorOverlay(model: model)
+                        .offset(z: overlayZ)
                 }
 
                 // Loading indicator
                 if viewerModel?.isLoading == true && viewerModel?.currentImage == nil {
                     ProgressView()
                         .scaleEffect(2)
+                        .offset(z: overlayZ)
                 }
 
                 // Toast notification
@@ -85,6 +95,7 @@ struct RemoteViewerWindowView: View {
                     }
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
                     .animation(.easeInOut, value: model.toastMessage)
+                    .offset(z: overlayZ)
                 }
 
                 // Home Assistant WebView overlay
