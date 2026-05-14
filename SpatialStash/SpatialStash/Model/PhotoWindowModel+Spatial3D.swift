@@ -471,8 +471,14 @@ extension PhotoWindowModel {
             return
         }
 
-        // Respect the user's last-used mode for this image
-        if let lastMode = await ImageEnhancementTracker.shared.lastViewingMode(url: imageURL), lastMode == .mono {
+        // Respect the user's last-used mode for this image — unless the user's
+        // default viewing mode is 3D, in which case a remembered `.mono` is
+        // ignored so the default still wins for previously-toggled images.
+        let defaultIs3D = appModel.defaultImageViewingMode == .spatial3D
+            || appModel.defaultImageViewingMode == .spatial3DImmersive
+        if !defaultIs3D,
+           let lastMode = await ImageEnhancementTracker.shared.lastViewingMode(url: imageURL),
+           lastMode == .mono {
             AppLogger.photoWindow.debug("Skipping auto-generation; last mode was 2D")
             return
         }

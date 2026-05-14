@@ -261,17 +261,21 @@ class PhotoWindowModel {
         guard !showAutoRestorePrompt else { return }
         guard !isDioramaMode else { return }
 
-        // If the user has a remembered mode for this image, respect it instead
-        // of overriding with the default.
+        // If the user has a remembered non-2D mode for this image, respect it
+        // instead of overriding with the default. A remembered `.mono` is
+        // treated the same as no remembered mode — the default viewing mode
+        // setting is authoritative when the last state was plain 2D, even if
+        // the image was previously toggled to 3D and back.
         if appModel.rememberImageEnhancements,
-           let lastMode = await ImageEnhancementTracker.shared.lastViewingMode(url: imageURL) {
+           let lastMode = await ImageEnhancementTracker.shared.lastViewingMode(url: imageURL),
+           lastMode != .mono {
             if lastMode == .diorama {
                 await setDioramaMode(true)
                 return
             }
             // Other modes are handled by autoRestorePreviousEnhancement; don't
             // override them here.
-            if lastMode != .mono { return }
+            return
         }
 
         isApplyingDefaultViewingMode = true
