@@ -34,6 +34,11 @@
 				<string>public.jpeg</string>
 				<string>public.png</string>
 				<string>public.heic</string>
+				<string>public.heif</string>
+				<string>public.jpeg-xl</string>
+				<string>org.webmproject.webp</string>
+				<string>public.tiff</string>
+				<string>com.microsoft.bmp</string>
 				<string>com.compuserve.gif</string>
 			</array>
 		</dict>

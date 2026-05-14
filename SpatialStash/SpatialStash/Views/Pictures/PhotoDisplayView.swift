@@ -21,9 +21,13 @@ struct PhotoDisplayView: View {
     /// Whether swipe navigation between gallery images is enabled
     let enableSwipeNavigation: Bool
 
-    /// Effective swipe navigation state: disabled when window is snapped to a surface
+    /// Effective swipe navigation state: disabled when window is snapped to a surface,
+    /// and only active while the viewer's UI chrome is visible so swipes don't fire
+    /// during the hidden-chrome immersive state.
     private var isSwipeEnabled: Bool {
-        enableSwipeNavigation && !snappingInfo.isSnapped
+        enableSwipeNavigation
+            && !snappingInfo.isSnapped
+            && !windowModel.isUIHidden
     }
 
     /// Tracks the viewer window's current size (updated live via GeometryReader)

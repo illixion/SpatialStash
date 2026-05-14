@@ -146,6 +146,16 @@ private struct MainWindowView: View {
                     await handleIncomingURL(url)
                 }
             }
+            // Belt-and-suspenders: when a custom UIWindowSceneDelegate is
+            // installed (as we have for windowScene tracking), SwiftUI's
+            // .onOpenURL can miss share-sheet handoffs. SceneDelegate
+            // forwards via this notification.
+            .onReceive(NotificationCenter.default.publisher(for: SceneDelegate.sharedURLNotification)) { notif in
+                guard let url = notif.object as? URL else { return }
+                Task { @MainActor in
+                    await handleIncomingURL(url)
+                }
+            }
     }
 
     private func handleIncomingURL(_ url: URL) async {
