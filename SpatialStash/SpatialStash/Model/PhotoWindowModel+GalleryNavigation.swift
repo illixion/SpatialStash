@@ -62,6 +62,8 @@ extension PhotoWindowModel {
         desiredViewingMode = .mono
         isImageFlipped = false
         resolutionOverride = nil
+        spatial3DResolutionOverride = nil
+        currentSpatial3DSourceDimension = 0
         currentAdjustments = VisualAdjustments()
         isShowingAdjustmentPreview = false
         adjustments3DReloadTask?.cancel()
@@ -74,6 +76,10 @@ extension PhotoWindowModel {
             let savedOverride = await ImageEnhancementTracker.shared.resolutionOverride(url: newImage.fullSizeURL)
             if savedOverride != nil {
                 resolutionOverride = savedOverride
+            }
+            let savedS3DOverride = await ImageEnhancementTracker.shared.spatial3DResolutionOverride(url: newImage.fullSizeURL)
+            if savedS3DOverride != nil {
+                spatial3DResolutionOverride = savedS3DOverride
             }
             let savedSize = await ImageEnhancementTracker.shared.windowSize(url: newImage.fullSizeURL)
             savedWindowSize = savedSize

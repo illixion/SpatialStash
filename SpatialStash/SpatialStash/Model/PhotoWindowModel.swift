@@ -70,6 +70,16 @@ class PhotoWindowModel {
     /// even when the global setting is Off. nil = use global setting.
     var resolutionOverride: Int? = nil
 
+    /// Per-window spatial 3D source resolution override. When non-nil, this
+    /// overrides the global spatial3DMaxResolution from AppModel for the source
+    /// image fed into RealityKit's Spatial3DImage. nil = use global setting.
+    var spatial3DResolutionOverride: Int? = nil
+
+    /// Last source-image max dimension actually used when generating the
+    /// current spatial 3D image. 0 when no 3D image has been generated yet.
+    /// Used by the ornament resolution menu to display the effective value.
+    var currentSpatial3DSourceDimension: Int = 0
+
     /// Last known window size for resize-triggered reloads
     var lastWindowSize: CGSize?
 
@@ -213,6 +223,12 @@ class PhotoWindowModel {
     func trackResolutionOverride() async {
         guard appModel.rememberImageEnhancements else { return }
         await ImageEnhancementTracker.shared.setResolutionOverride(url: imageURL, resolution: resolutionOverride)
+    }
+
+    /// Persist the current spatial 3D resolution override to the enhancement tracker.
+    func trackSpatial3DResolutionOverride() async {
+        guard appModel.rememberImageEnhancements else { return }
+        await ImageEnhancementTracker.shared.setSpatial3DResolutionOverride(url: imageURL, resolution: spatial3DResolutionOverride)
     }
 
     /// Persist the current window size to the enhancement tracker.
@@ -447,6 +463,12 @@ class PhotoWindowModel {
         resolutionOverride ?? appModel.maxImageResolution
     }
 
+    /// The effective spatial 3D source resolution, considering per-window override.
+    /// 0 means "no extra cap beyond `effectiveMaxResolution`".
+    var effectiveSpatial3DMaxResolution: Int {
+        spatial3DResolutionOverride ?? appModel.spatial3DMaxResolution
+    }
+
     /// The current display resolution in pixels (longest edge of the displayed image).
     /// Returns 0 when no display image is loaded (e.g., in 3D mode or loading).
     var currentDisplayResolution: Int {
@@ -530,6 +552,10 @@ class PhotoWindowModel {
                 let savedOverride = await ImageEnhancementTracker.shared.resolutionOverride(url: self.imageURL)
                 if savedOverride != nil {
                     self.resolutionOverride = savedOverride
+                }
+                let savedS3DOverride = await ImageEnhancementTracker.shared.spatial3DResolutionOverride(url: self.imageURL)
+                if savedS3DOverride != nil {
+                    self.spatial3DResolutionOverride = savedS3DOverride
                 }
                 let savedSize = await ImageEnhancementTracker.shared.windowSize(url: self.imageURL)
                 if let savedSize {

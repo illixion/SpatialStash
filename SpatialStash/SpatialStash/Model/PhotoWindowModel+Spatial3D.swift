@@ -164,7 +164,7 @@ extension PhotoWindowModel {
             // path keeps its full resolution while the depth/parallax mesh works
             // off a smaller source.
             let globalRes = effectiveMaxResolution
-            let s3dRes = appModel.spatial3DMaxResolution
+            let s3dRes = effectiveSpatial3DMaxResolution
             let effectiveRes: Int
             switch (globalRes, s3dRes) {
             case (0, 0): effectiveRes = 0
@@ -177,8 +177,10 @@ extension PhotoWindowModel {
                let downsampledSource = CGImageSourceCreateWithData(downsampledData as CFData, nil) {
                 AppLogger.photoWindow.debug("3D conversion using downsampled source (max \(effectiveRes, privacy: .public)px)")
                 spatial3DImage = try await ImagePresentationComponent.Spatial3DImage(imageSource: downsampledSource)
+                currentSpatial3DSourceDimension = effectiveRes
             } else {
                 spatial3DImage = try await ImagePresentationComponent.Spatial3DImage(contentsOf: sourceURL)
+                currentSpatial3DSourceDimension = Int(max(nativeImageDimensions?.width ?? 0, nativeImageDimensions?.height ?? 0))
             }
         } catch {
             AppLogger.photoWindow.error("Unable to initialize spatial 3D image: \(error.localizedDescription, privacy: .public)")
@@ -410,6 +412,33 @@ extension PhotoWindowModel {
         currentDisplayMaxDimension = 0
         let windowSize = lastWindowSize ?? appModel.mainWindowSize
         await loadDisplayImage(for: windowSize)
+    }
+
+    /// Apply a per-window spatial 3D source resolution override and re-create
+    /// the Spatial3DImage at the new resolution. Pass nil to clear and revert
+    /// to the global `spatial3DMaxResolution` setting.
+    func applySpatial3DResolutionOverride(_ resolution: Int?) async {
+        recordInteraction()
+        spatial3DResolutionOverride = resolution
+        await trackSpatial3DResolutionOverride()
+        guard is3DMode, !isAnimatedImage else { return }
+
+        // Cancel any in-flight generation before tearing down the component —
+        // generate() ignores cancellation and crashes if its target is removed.
+        if let task = generateTask {
+            task.cancel()
+            await task.value
+            generateTask = nil
+        }
+
+        // Tear down current 3D state and re-build at the new source resolution.
+        contentEntity.components.remove(ImagePresentationComponent.self)
+        spatial3DImage = nil
+        spatial3DImageState = .notGenerated
+        currentSpatial3DSourceDimension = 0
+
+        await createImagePresentationComponent()
+        await generateSpatial3DImage()
     }
 
     // MARK: - Viewing Mode Switching

@@ -1518,6 +1518,7 @@ class AppModel {
             imageEnhancementLastViewingModes: imageEnhancementData.lastViewingModes,
             imageEnhancementFlippedURLs: imageEnhancementData.flippedURLs,
             imageEnhancementResolutionOverrides: imageEnhancementData.resolutionOverrides,
+            imageEnhancementSpatial3DResolutionOverrides: imageEnhancementData.spatial3DResolutionOverrides,
             imageEnhancementWindowSizes: imageEnhancementData.windowSizes,
             globalVisualAdjustments: try? JSONEncoder().encode(globalVisualAdjustments),
             imageEnhancementAdjustments: imageEnhancementData.adjustments
@@ -1582,6 +1583,7 @@ class AppModel {
                 lastViewingModes: modes,
                 flippedURLs: backup.imageEnhancementFlippedURLs,
                 resolutionOverrides: backup.imageEnhancementResolutionOverrides,
+                spatial3DResolutionOverrides: backup.imageEnhancementSpatial3DResolutionOverrides,
                 windowSizes: backup.imageEnhancementWindowSizes,
                 adjustments: backup.imageEnhancementAdjustments
             )

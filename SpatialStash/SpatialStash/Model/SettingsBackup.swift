@@ -59,6 +59,7 @@ struct SettingsBackup: Codable {
     var imageEnhancementLastViewingModes: [String: String]?
     var imageEnhancementFlippedURLs: [String]?
     var imageEnhancementResolutionOverrides: [String: Int]?
+    var imageEnhancementSpatial3DResolutionOverrides: [String: Int]?
     var imageEnhancementWindowSizes: [String: [Double]]?
 
     // Visual adjustments

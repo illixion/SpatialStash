@@ -26,12 +26,14 @@ actor ImageEnhancementTracker {
     private let lastModeKey = "spatial3DLastViewingMode"
     private let flippedKey = "imageFlippedState"
     private let resolutionOverrideKey = "imageResolutionOverride"
+    private let spatial3DResolutionOverrideKey = "imageSpatial3DResolutionOverride"
     private let windowSizeKey = "imageWindowSize"
     private let adjustmentsKey = "imageVisualAdjustments"
     private var convertedImageURLs: Set<String>
     private var lastViewingModeByURL: [String: String]
     private var flippedByURL: Set<String>
     private var resolutionOverrideByURL: [String: Int]
+    private var spatial3DResolutionOverrideByURL: [String: Int]
     private var windowSizeByURL: [String: [Double]]
     private var adjustmentsByURL: [String: Data]
 
@@ -60,6 +62,12 @@ actor ImageEnhancementTracker {
             resolutionOverrideByURL = dict
         } else {
             resolutionOverrideByURL = [:]
+        }
+
+        if let dict = UserDefaults.standard.dictionary(forKey: spatial3DResolutionOverrideKey) as? [String: Int] {
+            spatial3DResolutionOverrideByURL = dict
+        } else {
+            spatial3DResolutionOverrideByURL = [:]
         }
 
         if let dict = UserDefaults.standard.dictionary(forKey: windowSizeKey) as? [String: [Double]] {
@@ -99,6 +107,7 @@ actor ImageEnhancementTracker {
         lastViewingModeByURL.removeAll()
         flippedByURL.removeAll()
         resolutionOverrideByURL.removeAll()
+        spatial3DResolutionOverrideByURL.removeAll()
         windowSizeByURL.removeAll()
         adjustmentsByURL.removeAll()
         save()
@@ -114,6 +123,7 @@ actor ImageEnhancementTracker {
         UserDefaults.standard.set(lastViewingModeByURL, forKey: lastModeKey)
         UserDefaults.standard.set(Array(flippedByURL), forKey: flippedKey)
         UserDefaults.standard.set(resolutionOverrideByURL, forKey: resolutionOverrideKey)
+        UserDefaults.standard.set(spatial3DResolutionOverrideByURL, forKey: spatial3DResolutionOverrideKey)
         UserDefaults.standard.set(windowSizeByURL, forKey: windowSizeKey)
         UserDefaults.standard.set(adjustmentsByURL, forKey: adjustmentsKey)
     }
@@ -121,12 +131,12 @@ actor ImageEnhancementTracker {
     // MARK: - Backup Export / Import
 
     /// Export all tracking data for backup
-    func exportData() -> (convertedURLs: [String], lastViewingModes: [String: String], flippedURLs: [String], resolutionOverrides: [String: Int], windowSizes: [String: [Double]], adjustments: [String: Data]) {
-        return (Array(convertedImageURLs), lastViewingModeByURL, Array(flippedByURL), resolutionOverrideByURL, windowSizeByURL, adjustmentsByURL)
+    func exportData() -> (convertedURLs: [String], lastViewingModes: [String: String], flippedURLs: [String], resolutionOverrides: [String: Int], spatial3DResolutionOverrides: [String: Int], windowSizes: [String: [Double]], adjustments: [String: Data]) {
+        return (Array(convertedImageURLs), lastViewingModeByURL, Array(flippedByURL), resolutionOverrideByURL, spatial3DResolutionOverrideByURL, windowSizeByURL, adjustmentsByURL)
     }
 
     /// Import tracking data from backup, replacing current data
-    func importData(convertedURLs: [String], lastViewingModes: [String: String], flippedURLs: [String]? = nil, resolutionOverrides: [String: Int]? = nil, windowSizes: [String: [Double]]? = nil, adjustments: [String: Data]? = nil) {
+    func importData(convertedURLs: [String], lastViewingModes: [String: String], flippedURLs: [String]? = nil, resolutionOverrides: [String: Int]? = nil, spatial3DResolutionOverrides: [String: Int]? = nil, windowSizes: [String: [Double]]? = nil, adjustments: [String: Data]? = nil) {
         convertedImageURLs = Set(convertedURLs)
         lastViewingModeByURL = lastViewingModes
         if let flippedURLs {
@@ -134,6 +144,9 @@ actor ImageEnhancementTracker {
         }
         if let resolutionOverrides {
             resolutionOverrideByURL = resolutionOverrides
+        }
+        if let spatial3DResolutionOverrides {
+            spatial3DResolutionOverrideByURL = spatial3DResolutionOverrides
         }
         if let windowSizes {
             windowSizeByURL = windowSizes
@@ -186,6 +199,22 @@ actor ImageEnhancementTracker {
 
     func resolutionOverride(url: URL) -> Int? {
         resolutionOverrideByURL[url.absoluteString]
+    }
+
+    // MARK: - Spatial 3D Resolution Override Tracking
+
+    func setSpatial3DResolutionOverride(url: URL, resolution: Int?) {
+        let urlString = url.absoluteString
+        if let resolution {
+            spatial3DResolutionOverrideByURL[urlString] = resolution
+        } else {
+            spatial3DResolutionOverrideByURL.removeValue(forKey: urlString)
+        }
+        save()
+    }
+
+    func spatial3DResolutionOverride(url: URL) -> Int? {
+        spatial3DResolutionOverrideByURL[url.absoluteString]
     }
 
     // MARK: - Window Size Tracking

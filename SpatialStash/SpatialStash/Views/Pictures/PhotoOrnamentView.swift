@@ -73,8 +73,14 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
 
             moreMenu
 
-            // Resolution indicator (only in lightweight 2D mode with a loaded image)
-            if !windowModel.isRealityKitDisplay, !windowModel.isAnimatedImage, windowModel.displayTexture != nil || windowModel.displayImage != nil {
+            // Resolution indicator: in 3D mode controls the spatial 3D source
+            // resolution; otherwise controls the 2D display resolution.
+            if windowModel.is3DMode {
+                if !windowModel.isAnimatedImage, windowModel.currentSpatial3DSourceDimension > 0 {
+                    resolutionMenu
+                }
+            } else if !windowModel.isRealityKitDisplay, !windowModel.isAnimatedImage,
+                      windowModel.displayTexture != nil || windowModel.displayImage != nil {
                 resolutionMenu
             }
         }
@@ -291,17 +297,22 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
     @State private var showResolutionPopover = false
 
     private var resolutionMenu: some View {
-        Button {
+        let is3D = windowModel.is3DMode
+        let activeOverride = is3D ? windowModel.spatial3DResolutionOverride : windowModel.resolutionOverride
+        let displayResolution = is3D ? windowModel.currentSpatial3DSourceDimension : windowModel.currentDisplayResolution
+        let helpPrefix = is3D ? "3D Source Resolution" : "Image Resolution"
+
+        return Button {
             showResolutionPopover.toggle()
         } label: {
-            Text("\(windowModel.currentDisplayResolution)px")
+            Text("\(displayResolution)px")
                 .font(.caption)
                 .monospacedDigit()
-                .foregroundColor(windowModel.resolutionOverride != nil ? .accentColor : .secondary)
+                .foregroundColor(activeOverride != nil ? .accentColor : .secondary)
         }
         .buttonStyle(.borderless)
         .disabled(windowModel.isLoadingDetailImage)
-        .help(windowModel.resolutionOverride != nil ? "Resolution Override: \(resolutionOverrideLabel)" : "Image Resolution")
+        .help(activeOverride != nil ? "\(helpPrefix) Override: \(resolutionOverrideLabel)" : helpPrefix)
         .onChange(of: showResolutionPopover) { _, isOpen in
             updateOrnamentMenuCount(opened: isOpen)
         }
@@ -309,10 +320,16 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
             VStack(spacing: 4) {
                 popoverMenuButton(
                     title: "Auto",
-                    isChecked: windowModel.resolutionOverride == nil
+                    isChecked: activeOverride == nil
                 ) {
                     showResolutionPopover = false
-                    Task { await windowModel.applyResolutionOverride(nil) }
+                    Task {
+                        if is3D {
+                            await windowModel.applySpatial3DResolutionOverride(nil)
+                        } else {
+                            await windowModel.applyResolutionOverride(nil)
+                        }
+                    }
                 }
 
                 Divider()
@@ -320,10 +337,16 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
                 ForEach(AppModel.maxImageResolutionOptions, id: \.value) { option in
                     popoverMenuButton(
                         title: option.label,
-                        isChecked: windowModel.resolutionOverride == option.value
+                        isChecked: activeOverride == option.value
                     ) {
                         showResolutionPopover = false
-                        Task { await windowModel.applyResolutionOverride(option.value) }
+                        Task {
+                            if is3D {
+                                await windowModel.applySpatial3DResolutionOverride(option.value)
+                            } else {
+                                await windowModel.applyResolutionOverride(option.value)
+                            }
+                        }
                     }
                 }
             }
@@ -333,7 +356,8 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
 
     /// Label for the current resolution override setting
     private var resolutionOverrideLabel: String {
-        guard let override = windowModel.resolutionOverride else { return "Auto" }
+        let override = windowModel.is3DMode ? windowModel.spatial3DResolutionOverride : windowModel.resolutionOverride
+        guard let override else { return "Auto" }
         return AppModel.maxImageResolutionOptions.first { $0.value == override }?.label ?? "\(override)px"
     }
 
