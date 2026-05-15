@@ -718,17 +718,19 @@ private struct SwipeGestureModifier: ViewModifier {
     let enabled: Bool
     let onEnded: (CGFloat, CGFloat) -> Void
 
+    // Keep view identity stable across `enabled` flips: an if/else here
+    // produces a _ConditionalContent whose branch swap reroots the wrapped
+    // view. On the RealityKit 3D path that tears down the
+    // ImagePresentationComponent and the immersive window vanishes when the
+    // ornament auto-hides.
     func body(content: Content) -> some View {
-        if enabled {
-            content.gesture(
-                DragGesture(minimumDistance: 20)
-                    .onEnded { value in
-                        onEnded(value.translation.width, value.predictedEndTranslation.width)
-                    }
-            )
-        } else {
-            content
-        }
+        content.gesture(
+            DragGesture(minimumDistance: 20)
+                .onEnded { value in
+                    guard enabled else { return }
+                    onEnded(value.translation.width, value.predictedEndTranslation.width)
+                }
+        )
     }
 }
 
@@ -739,16 +741,13 @@ private struct EntitySwipeGestureModifier: ViewModifier {
     let onEnded: (CGFloat, CGFloat) -> Void
 
     func body(content: Content) -> some View {
-        if enabled {
-            content.gesture(
-                DragGesture(minimumDistance: 20)
-                    .targetedToAnyEntity()
-                    .onEnded { value in
-                        onEnded(value.translation.width, value.predictedEndTranslation.width)
-                    }
-            )
-        } else {
-            content
-        }
+        content.gesture(
+            DragGesture(minimumDistance: 20)
+                .targetedToAnyEntity()
+                .onEnded { value in
+                    guard enabled else { return }
+                    onEnded(value.translation.width, value.predictedEndTranslation.width)
+                }
+        )
     }
 }
