@@ -8,6 +8,7 @@
  */
 
 import SwiftUI
+import UIKit
 
 // MARK: - Media Type Abstraction
 
@@ -148,33 +149,33 @@ struct MediaDetailSheet: View {
             // File section
             Section("File") {
                 if let path = filePath {
-                    LabeledContent("Path", value: path)
+                    copyableLabeledRow("Path", value: path)
                 }
                 if let w = fileWidth, let h = fileHeight {
-                    LabeledContent("Dimensions", value: "\(w) x \(h)")
+                    copyableLabeledRow("Dimensions", value: "\(w) x \(h)")
                 }
                 if let size = fileSize {
-                    LabeledContent("Size", value: ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
+                    copyableLabeledRow("Size", value: ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
                 }
                 if let format = fileFormat {
-                    LabeledContent("Format", value: format)
+                    copyableLabeledRow("Format", value: format)
                 }
                 // Video-specific
                 if let detail = sceneDetail {
                     if let codec = detail.videoCodec {
-                        LabeledContent("Video Codec", value: codec)
+                        copyableLabeledRow("Video Codec", value: codec)
                     }
                     if let codec = detail.audioCodec {
-                        LabeledContent("Audio Codec", value: codec)
+                        copyableLabeledRow("Audio Codec", value: codec)
                     }
                     if let fps = detail.frameRate {
-                        LabeledContent("Frame Rate", value: String(format: "%.2f fps", fps))
+                        copyableLabeledRow("Frame Rate", value: String(format: "%.2f fps", fps))
                     }
                     if let br = detail.bitrate {
-                        LabeledContent("Bitrate", value: formatBitrate(br))
+                        copyableLabeledRow("Bitrate", value: formatBitrate(br))
                     }
                     if let dur = detail.duration {
-                        LabeledContent("Duration", value: formatDuration(dur))
+                        copyableLabeledRow("Duration", value: formatDuration(dur))
                     }
                 }
             }
@@ -182,16 +183,16 @@ struct MediaDetailSheet: View {
             // Details section
             Section("Details") {
                 if let title = currentTitle, !title.isEmpty {
-                    LabeledContent("Title", value: title)
+                    copyableLabeledRow("Title", value: title)
                 }
                 if let code = currentCode, !code.isEmpty {
-                    LabeledContent("Code", value: code)
+                    copyableLabeledRow("Code", value: code)
                 }
                 if let date = currentDate, !date.isEmpty {
-                    LabeledContent("Date", value: date)
+                    copyableLabeledRow("Date", value: date)
                 }
                 if let creator = currentCreator, !creator.isEmpty {
-                    LabeledContent(creatorLabel, value: creator)
+                    copyableLabeledRow(creatorLabel, value: creator)
                 }
                 if let details = currentDetails, !details.isEmpty {
                     VStack(alignment: .leading, spacing: 4) {
@@ -199,6 +200,7 @@ struct MediaDetailSheet: View {
                             .font(.subheadline)
                             .foregroundColor(.secondary)
                         Text(details)
+                            .copyOnHold(details)
                     }
                 }
             }
@@ -206,7 +208,7 @@ struct MediaDetailSheet: View {
             // Associations section
             Section("Associations") {
                 if let studio = currentStudio {
-                    LabeledContent("Studio", value: studio.name)
+                    copyableLabeledRow("Studio", value: studio.name)
                 }
                 if !currentPerformers.isEmpty {
                     VStack(alignment: .leading, spacing: 4) {
@@ -220,6 +222,7 @@ struct MediaDetailSheet: View {
                                     .padding(.horizontal, 10)
                                     .padding(.vertical, 4)
                                     .background(.ultraThinMaterial, in: Capsule())
+                                    .copyOnHold(performer.name)
                             }
                         }
                     }
@@ -236,6 +239,7 @@ struct MediaDetailSheet: View {
                                     .padding(.horizontal, 10)
                                     .padding(.vertical, 4)
                                     .background(.ultraThinMaterial, in: Capsule())
+                                    .copyOnHold(tag.name)
                             }
                         }
                     }
@@ -246,8 +250,10 @@ struct MediaDetailSheet: View {
                             .font(.subheadline)
                             .foregroundColor(.secondary)
                         ForEach(currentGalleries) { gallery in
-                            Text(gallery.title ?? "Gallery \(gallery.id)")
+                            let title = gallery.title ?? "Gallery \(gallery.id)"
+                            Text(title)
                                 .font(.callout)
+                                .copyOnHold(title)
                         }
                     }
                 }
@@ -259,6 +265,7 @@ struct MediaDetailSheet: View {
                         ForEach(groups) { group in
                             Text(group.name)
                                 .font(.callout)
+                                .copyOnHold(group.name)
                         }
                     }
                 }
@@ -270,10 +277,10 @@ struct MediaDetailSheet: View {
                 oCounterDisplay
                 if let detail = sceneDetail {
                     if let count = detail.playCount {
-                        LabeledContent("Play Count", value: "\(count)")
+                        copyableLabeledRow("Play Count", value: "\(count)")
                     }
                     if let dur = detail.playDuration, dur > 0 {
-                        LabeledContent("Play Duration", value: formatDuration(dur))
+                        copyableLabeledRow("Play Duration", value: formatDuration(dur))
                     }
                 }
                 LabeledContent("Organized", value: currentOrganized ? "Yes" : "No")
@@ -286,10 +293,21 @@ struct MediaDetailSheet: View {
                         Text(url)
                             .font(.callout)
                             .lineLimit(2)
+                            .copyOnHold(url)
                     }
                 }
             }
         }
+    }
+
+    // MARK: - Copy helpers
+
+    /// LabeledContent row with a context menu offering Copy of the value.
+    /// On visionOS, pinch-and-hold opens the context menu via gaze focus,
+    /// which avoids the tap-location issues caused by gaze drift.
+    private func copyableLabeledRow(_ label: String, value: String) -> some View {
+        LabeledContent(label, value: value)
+            .copyOnHold(value)
     }
 
     // MARK: - Edit Tab
@@ -955,6 +973,23 @@ struct MediaDetailSheet: View {
             return String(format: "%d:%02d:%02d", hours, minutes, secs)
         }
         return String(format: "%d:%02d", minutes, secs)
+    }
+}
+
+// MARK: - Copy-on-hold modifier
+
+private extension View {
+    /// Attaches a context menu with a "Copy" action that copies `value` to the pasteboard.
+    /// On visionOS, the context menu is triggered by pinch-and-hold on the gaze-focused
+    /// element, so we don't need to read tap coordinates (which drift with gaze).
+    func copyOnHold(_ value: String) -> some View {
+        contextMenu {
+            Button {
+                UIPasteboard.general.string = value
+            } label: {
+                Label("Copy", systemImage: "doc.on.doc")
+            }
+        }
     }
 }
 
