@@ -182,6 +182,13 @@ struct RemoteViewerWindowView: View {
                 resetAutoHideTimer()
             }
         }
+        .onChange(of: viewerModel?.isAnyOrnamentMenuOpen) { _, isOpen in
+            if isOpen == true {
+                autoHideTimer?.cancel()
+            } else {
+                resetAutoHideTimer()
+            }
+        }
         .onChange(of: showHistory) { _, isOpen in
             guard isOpen, let model = viewerModel,
                   let store = appModel.remoteHistoryStore(for: model.config.apiEndpoint, accessToken: model.config.accessToken)

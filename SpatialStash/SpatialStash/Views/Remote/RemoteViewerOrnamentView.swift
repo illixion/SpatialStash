@@ -268,6 +268,8 @@ struct RemoteViewerOrnamentView: View {
             }
         }
         .padding(20)
+        .onAppear { updateOrnamentMenuCount(opened: true) }
+        .onDisappear { updateOrnamentMenuCount(opened: false) }
     }
 
     private var parsedNewPresetTags: [String] {
