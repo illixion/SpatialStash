@@ -211,69 +211,19 @@ struct MediaDetailSheet: View {
                     copyableLabeledRow("Studio", value: studio.name)
                 }
                 if !currentPerformers.isEmpty {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Performers")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                        FlowLayout(spacing: 8) {
-                            ForEach(currentPerformers) { performer in
-                                Text(performer.name)
-                                    .font(.callout)
-                                    .padding(.horizontal, 14)
-                                    .padding(.vertical, 8)
-                                    .background(.ultraThinMaterial, in: Capsule())
-                                    .contentShape(.hoverEffect, Capsule())
-                                    .contentShape(.contextMenuPreview, Capsule())
-                                    .hoverEffect()
-                                    .copyOnHold(performer.name)
-                            }
-                        }
-                    }
+                    associationGroup(label: "Performers", items: currentPerformers.map(\.name))
                 }
                 if !currentTags.isEmpty {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Tags")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                        FlowLayout(spacing: 8) {
-                            ForEach(currentTags) { tag in
-                                Text(tag.name)
-                                    .font(.callout)
-                                    .padding(.horizontal, 14)
-                                    .padding(.vertical, 8)
-                                    .background(.ultraThinMaterial, in: Capsule())
-                                    .contentShape(.hoverEffect, Capsule())
-                                    .contentShape(.contextMenuPreview, Capsule())
-                                    .hoverEffect()
-                                    .copyOnHold(tag.name)
-                            }
-                        }
-                    }
+                    associationGroup(label: "Tags", items: currentTags.map(\.name))
                 }
                 if !currentGalleries.isEmpty {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Galleries")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                        ForEach(currentGalleries) { gallery in
-                            let title = gallery.title ?? "Gallery \(gallery.id)"
-                            Text(title)
-                                .font(.callout)
-                                .copyOnHold(title)
-                        }
-                    }
+                    associationGroup(
+                        label: "Galleries",
+                        items: currentGalleries.map { $0.title ?? "Gallery \($0.id)" }
+                    )
                 }
                 if let groups = currentGroups, !groups.isEmpty {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Groups")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                        ForEach(groups) { group in
-                            Text(group.name)
-                                .font(.callout)
-                                .copyOnHold(group.name)
-                        }
-                    }
+                    associationGroup(label: "Groups", items: groups.map(\.name))
                 }
             }
 
@@ -314,6 +264,34 @@ struct MediaDetailSheet: View {
     private func copyableLabeledRow(_ label: String, value: String) -> some View {
         LabeledContent(label, value: value)
             .copyOnHold(value)
+    }
+
+    /// Collapsible association group: shows a comma-separated inline summary by default,
+    /// expands to a flat list of individually copyable rows on tap. Using a list-row layout
+    /// avoids the chip/hover-shape problems where the system highlight wrapped the whole
+    /// section instead of an individual badge.
+    @ViewBuilder
+    private func associationGroup(label: String, items: [String]) -> some View {
+        let cleaned = items.filter { !$0.isEmpty }
+        if !cleaned.isEmpty {
+            DisclosureGroup {
+                ForEach(Array(cleaned.enumerated()), id: \.offset) { _, item in
+                    Text(item)
+                        .font(.callout)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                        .copyOnHold(item)
+                }
+            } label: {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(label)
+                        .foregroundColor(.secondary)
+                    Text(cleaned.joined(separator: ", "))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
     }
 
     // MARK: - Edit Tab
