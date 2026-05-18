@@ -546,10 +546,10 @@ class AppModel {
         ("Off", 0),
     ]
 
-    /// Maximum resolution passed to RealityKit's `Spatial3DImage`. Independent
-    /// of `maxImageResolution` so the 2D path can stay full-res while the 3D
-    /// depth/parallax mesh uses a smaller source. Capped at min(this, maxImageResolution)
-    /// when the latter is non-zero. 0 = no extra cap (defer to maxImageResolution).
+    /// Maximum resolution passed to RealityKit's `Spatial3DImage`. Fully
+    /// independent of `maxImageResolution` — the 2D cap governs the on-screen
+    /// MTLTexture, this one governs the source fed into the depth/parallax
+    /// mesh. 0 = no cap (use native resolution).
     var spatial3DMaxResolution: Int {
         didSet {
             if spatial3DMaxResolution != oldValue {

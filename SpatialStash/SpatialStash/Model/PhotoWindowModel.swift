@@ -468,7 +468,7 @@ class PhotoWindowModel {
     }
 
     /// The effective spatial 3D source resolution, considering per-window override.
-    /// 0 means "no extra cap beyond `effectiveMaxResolution`".
+    /// 0 means "no cap" (use native resolution).
     var effectiveSpatial3DMaxResolution: Int {
         spatial3DResolutionOverride ?? appModel.spatial3DMaxResolution
     }
