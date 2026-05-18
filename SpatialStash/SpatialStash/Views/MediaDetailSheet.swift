@@ -215,13 +215,16 @@ struct MediaDetailSheet: View {
                         Text("Performers")
                             .font(.subheadline)
                             .foregroundColor(.secondary)
-                        FlowLayout(spacing: 6) {
+                        FlowLayout(spacing: 8) {
                             ForEach(currentPerformers) { performer in
                                 Text(performer.name)
                                     .font(.callout)
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 4)
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 8)
                                     .background(.ultraThinMaterial, in: Capsule())
+                                    .contentShape(.hoverEffect, Capsule())
+                                    .contentShape(.contextMenuPreview, Capsule())
+                                    .hoverEffect()
                                     .copyOnHold(performer.name)
                             }
                         }
@@ -232,13 +235,16 @@ struct MediaDetailSheet: View {
                         Text("Tags")
                             .font(.subheadline)
                             .foregroundColor(.secondary)
-                        FlowLayout(spacing: 6) {
+                        FlowLayout(spacing: 8) {
                             ForEach(currentTags) { tag in
                                 Text(tag.name)
                                     .font(.callout)
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 4)
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 8)
                                     .background(.ultraThinMaterial, in: Capsule())
+                                    .contentShape(.hoverEffect, Capsule())
+                                    .contentShape(.contextMenuPreview, Capsule())
+                                    .hoverEffect()
                                     .copyOnHold(tag.name)
                             }
                         }
