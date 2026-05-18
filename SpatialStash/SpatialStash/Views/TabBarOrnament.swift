@@ -25,41 +25,79 @@ struct TabBarOrnament: View {
     }
 
     var body: some View {
-        HStack(spacing: 24) {
+        HStack(spacing: 8) {
             ForEach(visibleTabs) { tab in
-                Button {
-                    // Track last content tab for filter context
-                    if tab == .pictures || tab == .videos {
-                        windowModel.lastContentTab = tab
-                    }
-
-                    // Special handling for Local tab re-selection
-                    if tab == .local && windowModel.selectedTab == .local {
-                        windowModel.localTabReselected += 1
-                    } else {
-                        windowModel.selectedTab = tab
-                    }
-                } label: {
-                    VStack(spacing: 4) {
-                        Image(systemName: tab.systemImage)
-                            .font(.title2)
-                        Text(tab.rawValue)
-                            .font(.caption)
-                    }
-                    .foregroundColor(windowModel.selectedTab == tab ? .white : .secondary)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .background(
-                        windowModel.selectedTab == tab
-                            ? Color.accentColor.opacity(0.3)
-                            : Color.clear
-                    )
-                    .cornerRadius(8)
-                }
-                .buttonStyle(.plain)
+                TabBarButton(
+                    tab: tab,
+                    isSelected: windowModel.selectedTab == tab,
+                    action: { select(tab) }
+                )
             }
         }
-        .padding()
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
         .glassBackgroundEffect()
+        // Sit below the window's bottom edge so a protruding diorama
+        // foreground layer doesn't visually clip the tab bar.
+        .padding(.top, 20)
+    }
+
+    private func select(_ tab: Tab) {
+        if tab == .pictures || tab == .videos {
+            windowModel.lastContentTab = tab
+        }
+        if tab == .local && windowModel.selectedTab == .local {
+            windowModel.localTabReselected += 1
+        } else {
+            windowModel.selectedTab = tab
+        }
+    }
+}
+
+private struct TabBarButton: View {
+    let tab: Tab
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: tab.systemImage)
+                    .font(.title3)
+                if isSelected {
+                    Text(tab.rawValue)
+                        .font(.callout)
+                        .fontWeight(.medium)
+                        .transition(.opacity)
+                }
+            }
+            .frame(minWidth: 44, minHeight: 32)
+            .padding(.horizontal, isSelected ? 14 : 10)
+            .padding(.vertical, 8)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(TabBarButtonStyle(isSelected: isSelected))
+        .hoverEffect(.highlight)
+        .help(tab.rawValue)
+        .animation(.smooth(duration: 0.22), value: isSelected)
+    }
+}
+
+private struct TabBarButtonStyle: ButtonStyle {
+    let isSelected: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(isSelected ? .primary : .secondary)
+            .background {
+                if isSelected {
+                    Capsule()
+                        .fill(.thinMaterial)
+                        .overlay(
+                            Capsule()
+                                .strokeBorder(.white.opacity(0.18), lineWidth: 0.5)
+                        )
+                }
+            }
     }
 }

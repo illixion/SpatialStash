@@ -13,24 +13,29 @@ struct ContentView: View {
     @State private var windowModel = MainWindowModel()
 
     var body: some View {
-        Group {
-            switch windowModel.selectedTab {
-            case .pictures:
-                PicturesTabView()
-            case .videos:
-                VideosTabView()
-            case .local:
-                LocalTabView()
-            case .filters:
-                FiltersTabView()
-            case .settings:
-                SettingsTabView()
-            case .remote:
-                RemoteTabView()
-            case .console:
-                DebugConsoleView()
+        ZStack {
+            Group {
+                switch windowModel.selectedTab {
+                case .pictures:
+                    PicturesTabView()
+                case .videos:
+                    VideosTabView()
+                case .local:
+                    LocalTabView()
+                case .filters:
+                    FiltersTabView()
+                case .settings:
+                    SettingsTabView()
+                case .remote:
+                    RemoteTabView()
+                case .console:
+                    DebugConsoleView()
+                }
             }
+            .id(windowModel.selectedTab)
+            .transition(.opacity)
         }
+        .animation(.smooth(duration: 0.25), value: windowModel.selectedTab)
         .environment(appModel)
         .environment(windowModel)
         .ornament(
