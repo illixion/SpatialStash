@@ -296,10 +296,11 @@ class RemoteWebSocketClient {
         sendJSON(["sessionId": sessionId, "action": "setModTags", "payload": ["tags": tags]])
     }
 
-    /// Switch the active tag list catalog index. Server is authoritative
-    /// and connection-wide — no sessionId required.
-    func sendSetTagList(listNumber: Int) {
-        sendJSON(["action": "setTagList", "payload": ["listNumber": listNumber]])
+    /// Switch the active tag list catalog index for the sender's channel.
+    /// Per-channel — the server scopes the change to the deviceId behind
+    /// this session, so peer channels keep their own list.
+    func sendSetTagList(sessionId: String, listNumber: Int) {
+        sendJSON(["sessionId": sessionId, "action": "setTagList", "payload": ["listNumber": listNumber]])
     }
 
     /// Ask the server to advance the channel. Any session may call this;

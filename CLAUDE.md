@@ -144,8 +144,8 @@ A slideshow viewer that fetches images from a [RoboFrame](https://github.com/ill
 - There is no `/search` endpoint — the RoboFrame server is the single DuckDB reader. Posts arrive via the WebSocket `playback` channel.
 
 **WebSocket Protocol (JSON, `{ action, payload }`):**
-- **Outgoing:** `slideshowConfig {deviceId, interval, width, height, bright, convert, ratio?}` (sent on connect), `visibility {deviceId, visible}`, `block {id}`, `displaySync {enabled}` (claim/release primary), `setModTags {tags}`, `requestNext`, `setTagList {listNumber}`
-- **Incoming:** `tagLists [[String]]` (server-pushed catalog), `blocked {blockedPosts, blockedTags}`, `currentTagList {listNumber}`, `playback {primary, enabled, interval, currentList, modTags, current: {id, ext}, next: {id, ext}}`, `playVideo {url}`, `stopVideo`, `showText {text, bgColorHex, imageUrl}`, `dismissText`, `update {entity, state, attributes}` (HA sensors), `refresh`
+- **Outgoing:** `slideshowConfig {sessionId, deviceId, interval, width, height, bright, convert, ratio?}` (sent on connect), `visibility {deviceId, visible}`, `block {id}`, `displaySync {sessionId, enabled}` (claim/release primary), `setModTags {sessionId, tags}`, `requestNext {sessionId}`, `setTagList {sessionId, listNumber}` (per-channel — only the sender's deviceId switches list)
+- **Incoming:** `tagLists [[String]]` (server-pushed catalog), `playback {primary, enabled, interval, currentList, modTags, current: {id, ext}, next: {id, ext}}` (active list index lives in `currentList`; there is no standalone `currentTagList` frame any more), `playVideo {url}`, `stopVideo`, `showText {text, bgColorHex, imageUrl}`, `dismissText`, `update {entity, state, attributes}` (HA sensors), `refresh`
 - `playVideo`/`showText` open new windows via `openWindow()`; `stopVideo`/`dismissText` dismiss them
 
 **Key implementation details:**

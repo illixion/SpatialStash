@@ -60,8 +60,9 @@ final class RemoteWSSession {
     }
 
     func sendSetTagList(listNumber: Int) {
-        // setTagList is a global server-state change, not session-scoped.
-        client?.sendSetTagList(listNumber: listNumber)
+        // setTagList is per-channel — the server uses the sessionId to
+        // resolve the deviceId and scopes the change to that channel.
+        client?.sendSetTagList(sessionId: sessionId, listNumber: listNumber)
     }
 
     func sendRequestNext() {
