@@ -129,9 +129,23 @@ struct PhotoDisplayView: View {
                     HStack(spacing: 12) {
                         Image(systemName: "view.3d")
                             .font(.body)
-                        Text("This image was previously viewed in 3D")
+                        Text("Switch to \(windowModel.autoRestoreImmersive ? "immersive 3D" : "3D")?")
                             .font(.callout)
                             .lineLimit(1)
+
+                        Button {
+                            let url = windowModel.imageURL
+                            windowModel.dismissAutoRestorePrompt()
+                            Task {
+                                await ImageEnhancementTracker.shared.setLastViewingMode(url: url, mode: .mono)
+                            }
+                        } label: {
+                            Text("Never")
+                                .font(.callout)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                        }
+                        .buttonStyle(.borderless)
 
                         Button {
                             windowModel.dismissAutoRestorePrompt()
@@ -140,7 +154,7 @@ struct PhotoDisplayView: View {
                                 await windowModel.switchToViewingMode(mode)
                             }
                         } label: {
-                            Text("Restore")
+                            Text("Yes")
                                 .font(.callout.weight(.semibold))
                                 .padding(.horizontal, 16)
                                 .padding(.vertical, 8)
