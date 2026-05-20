@@ -62,19 +62,21 @@ struct SlideshowSpatial3DLayer: View {
             // hidden slot with the engine's next peek.
             handleCommit()
         }
-        .onChange(of: identity(model.peekedNextImage)) { _, _ in
-            // Cold-start fill only: the hidden slot is empty and a peek
-            // just arrived, so kick generation now. Once the hidden slot
-            // holds something, we deliberately ignore peek shifts — the
-            // engine pops `prefetchedImages.first` *before* it sets
-            // `isTransitioning`, so a manual-next press flips peek from
-            // the image about to display to the one after it. Reacting
-            // there would overwrite the fully-generated incoming image
-            // and force a regen mid-crossfade. The next `handleCommit`
-            // refreshes the hidden slot from the post-advance peek.
+        .onChange(of: identity(model.peekedNextImage)) { oldId, _ in
+            // The engine pops `prefetchedImages.first` *before* it sets
+            // `isTransitioning`, so an advance flips peek from the image
+            // about to display (already loaded in our hidden slot) to
+            // the one after it. Reacting to that shift would overwrite
+            // the fully-generated incoming image and force a regen
+            // mid-crossfade. Detect that case via "hidden currently
+            // holds the old peek" and skip — `handleCommit` will refresh
+            // hidden once the new current is known. All other peek
+            // changes (cold-start fill, prefetch refill after a stall)
+            // fall through and load normally.
             let hiddenSlot = 1 - visibleSlot
             let hiddenImage = hiddenSlot == 0 ? slotA : slotB
-            guard hiddenImage == nil else { return }
+            let hiddenId = identity(hiddenImage)
+            if hiddenId != nil, hiddenId == oldId { return }
             loadPeekIntoHiddenSlot()
         }
     }
