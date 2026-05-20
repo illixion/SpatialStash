@@ -161,11 +161,18 @@ struct RemoteViewerWindowView: View {
             viewerModel?.stop()
             autoHideTimer?.cancel()
         }
-        .onChange(of: viewerModel?.currentPost?._id) { _, _ in
-            // Refresh IPC's off-axis blur calibration after each crossfade
-            // — same workaround as PhotoDisplayView. No-op unless slideshow
-            // 3D is active.
-            if viewerModel?.isSlideshow3DActive == true {
+        .onChange(of: viewerModel?.isTransitioning) { _, isTransitioning in
+            // Refresh IPC's off-axis blur calibration mid-crossfade so
+            // the window's 1pt size flicker is masked by the fade
+            // itself instead of popping in once the new image is fully
+            // visible. Crossfade is 1s; halfway is the visual quietest
+            // point (both slots at ~0.5 opacity). No-op unless
+            // slideshow 3D is active.
+            guard isTransitioning == true,
+                  viewerModel?.isSlideshow3DActive == true else { return }
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(500))
+                guard viewerModel?.isSlideshow3DActive == true else { return }
                 nudgeWindowSizeForCalibration()
             }
         }
