@@ -174,6 +174,7 @@ struct PhotoDisplayView: View {
                         }
                         .buttonStyle(.borderless)
                     }
+                    .fixedSize(horizontal: true, vertical: false)
                     .padding(.horizontal, 20)
                     .padding(.vertical, 12)
                     .glassBackgroundEffect(in: Capsule())
