@@ -29,6 +29,8 @@ struct SettingsBackup: Codable {
     var slideshowEnableDiorama: Bool?
     var slideshowTransparentBackground: Bool?
     var slideshowTextSize: Double?
+    var slideshowMaxImageResolution2D: Int?
+    var slideshowMaxImageResolution3D: Int?
     var maxImageResolution: Int?
     var spatial3DMaxResolution: Int?
     var dioramaDistance: Double?

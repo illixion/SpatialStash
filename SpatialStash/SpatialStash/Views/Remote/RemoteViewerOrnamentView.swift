@@ -117,6 +117,12 @@ struct RemoteViewerOrnamentView: View {
                 .help(model.enableDisplaySync ? "Display Sync On" : "Display Sync Off")
             }
 
+            // 3D Mode Menu
+            slideshow3DMenu
+
+            // Max Image Resolution Menu (per current mode: 2D or 3D)
+            resolutionMenu
+
             // Visual Adjustments
             adjustmentsButton
 
@@ -327,6 +333,94 @@ struct RemoteViewerOrnamentView: View {
                 remoteViewerModel: model
             )
         }
+    }
+
+    private var slideshow3DMenu: some View {
+        Menu {
+            Group {
+                ForEach(Slideshow3DMode.allCases) { mode in
+                    Button {
+                        applySlideshow3DMode(mode)
+                    } label: {
+                        HStack {
+                            Text(mode.label)
+                            if model.config.slideshow3DMode == mode {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            }
+            .onAppear { updateOrnamentMenuCount(opened: true) }
+            .onDisappear { updateOrnamentMenuCount(opened: false) }
+        } label: {
+            Image(systemName: model.config.slideshow3DMode.systemImage)
+                .font(.title3)
+                .padding(6)
+                .background(model.config.slideshow3DMode != .off ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
+        }
+        .menuStyle(.button)
+        .buttonStyle(.borderless)
+        .help("Slideshow 3D Mode")
+    }
+
+    private func applySlideshow3DMode(_ mode: Slideshow3DMode) {
+        var updated = model.config
+        updated.slideshow3DMode = mode
+        model.config = updated
+        model.slideshow3DMode = mode
+        model.onConfigChanged?(updated)
+    }
+
+    private var resolutionMenu: some View {
+        let is3D = model.config.slideshow3DMode != .off
+        let currentValue: Int = is3D
+            ? (model.config.maxImageResolution3D ?? appModel.slideshowMaxImageResolution3D)
+            : (model.config.maxImageResolution2D ?? appModel.slideshowMaxImageResolution2D)
+        let currentLabel = AppModel.maxImageResolutionOptions.first(where: { $0.value == currentValue })?.label ?? "Off"
+
+        return Menu {
+            Group {
+                ForEach(AppModel.maxImageResolutionOptions, id: \.value) { option in
+                    Button {
+                        applyResolution(option.value, is3D: is3D)
+                    } label: {
+                        HStack {
+                            Text(option.label)
+                            if option.value == currentValue {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            }
+            .onAppear { updateOrnamentMenuCount(opened: true) }
+            .onDisappear { updateOrnamentMenuCount(opened: false) }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "photo")
+                    .font(.title3)
+                Text(currentLabel)
+                    .font(.callout)
+                    .foregroundColor(.secondary)
+            }
+        }
+        .menuStyle(.button)
+        .buttonStyle(.borderless)
+        .help(is3D ? "Max Image Resolution (3D)" : "Max Image Resolution (2D)")
+    }
+
+    private func applyResolution(_ value: Int, is3D: Bool) {
+        var updated = model.config
+        if is3D {
+            updated.maxImageResolution3D = value
+            model.maxImageResolution3D = value
+        } else {
+            updated.maxImageResolution2D = value
+            model.maxImageResolution = value
+        }
+        model.config = updated
+        model.onConfigChanged?(updated)
     }
 
     /// Increment / decrement the model's open-menu counter. Clamped at zero

@@ -162,7 +162,48 @@ class SlideshowEngine {
     var enableKenBurns: Bool
     var useAspectRatio: Bool
     var enableDynamicBrightness: Bool
+    /// Cap used by the 2D download/prefetch pipeline. The window view uses
+    /// `maxImageResolution3D` when slideshow 3D is enabled to derive the
+    /// RealityKit `Spatial3DImage` source from the original disk file.
     var maxImageResolution: Int = 0
+    var maxImageResolution3D: Int = 0
+
+    /// When non-`.off`, the window view should render via RealityKit
+    /// `ImagePresentationComponent` instead of a SwiftUI `Image`. Engine
+    /// keeps generating UIImage previews so the gallery overlays + Ken
+    /// Burns code paths stay unchanged for `.off` consumers; the 3D
+    /// path is opt-in per-window.
+    var slideshow3DMode: Slideshow3DMode = .off {
+        didSet {
+            if slideshow3DMode != .off {
+                // Ken Burns + diorama don't apply to the RealityKit pipeline.
+                if enableKenBurns { enableKenBurns = false }
+                if enableDiorama { enableDiorama = false }
+            }
+        }
+    }
+
+    /// True when the engine is rendering through RealityKit. View layer
+    /// reads this to suppress Ken Burns + diorama overlays.
+    var isSlideshow3DActive: Bool { slideshow3DMode != .off }
+
+    /// Resolution passed to `downloadImage` — uses the 3D cap while
+    /// slideshow 3D is active, otherwise the regular 2D cap. The same image
+    /// data feeds both the SwiftUI preview and RealityKit's Spatial3DImage,
+    /// so a single download per post is enough.
+    var effectiveDownloadResolution: Int {
+        isSlideshow3DActive ? maxImageResolution3D : maxImageResolution
+    }
+
+    /// First image queued for the next crossfade. Exposed so the 3D
+    /// renderer can mount a hidden RealityKit entity ahead of time and
+    /// finish depth-map generation before `displayImage` flips the
+    /// transition flag — without this peek the hidden view only sees the
+    /// image at the start of the crossfade and generation visibly runs
+    /// twice (once in each slot).
+    var peekedNextImage: UIImage? {
+        prefetchedImages.first?.image
+    }
 
     /// Diorama mode — when enabled, the engine generates an uncropped
     /// foreground (background-removed) for each loaded image so the view
@@ -828,7 +869,7 @@ class SlideshowEngine {
             return true
         }
 
-        guard let result = await contentProvider?.downloadImage(for: post, maxResolution: maxImageResolution) else { return false }
+        guard let result = await contentProvider?.downloadImage(for: post, maxResolution: effectiveDownloadResolution) else { return false }
         guard state == .loading else { return true }
 
         // Animated GIF
@@ -1054,7 +1095,7 @@ class SlideshowEngine {
             var result: (image: UIImage, data: Data)?
             for attempt in 0..<3 {
                 if Task.isCancelled { break }
-                if let r = await contentProvider?.downloadImage(for: post, maxResolution: maxImageResolution) {
+                if let r = await contentProvider?.downloadImage(for: post, maxResolution: effectiveDownloadResolution) {
                     result = r
                     break
                 }

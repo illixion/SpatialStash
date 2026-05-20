@@ -798,6 +798,27 @@ class AppModel {
     var slideshowTransparentBackground: Bool { didSet { if slideshowTransparentBackground != oldValue { UserDefaults.standard.set(slideshowTransparentBackground, forKey: "slideshowTransparentBackground") } } }
     var slideshowTextSize: Double { didSet { if slideshowTextSize != oldValue { UserDefaults.standard.set(slideshowTextSize, forKey: "slideshowTextSize") } } }
 
+    /// Default 2D upper resolution cap for slideshow images (mirrors the
+    /// regular viewer's `maxImageResolution` setting). 0 = Off (native).
+    var slideshowMaxImageResolution2D: Int {
+        didSet {
+            if slideshowMaxImageResolution2D != oldValue {
+                UserDefaults.standard.set(slideshowMaxImageResolution2D, forKey: "slideshowMaxImageResolution2D")
+            }
+        }
+    }
+
+    /// Default 3D upper resolution cap for slideshow images, used when a
+    /// slideshow's `slideshow3DMode` is non-`.off`. Fed into RealityKit's
+    /// `Spatial3DImage`. 0 = Off (native).
+    var slideshowMaxImageResolution3D: Int {
+        didSet {
+            if slideshowMaxImageResolution3D != oldValue {
+                UserDefaults.standard.set(slideshowMaxImageResolution3D, forKey: "slideshowMaxImageResolution3D")
+            }
+        }
+    }
+
     /// Apply the current slideshow defaults to a `RemoteViewerConfig`. Used
     /// when creating a new gallery/local/video slideshow config and when
     /// initializing a fresh profile in the Remote tab editor.
@@ -811,6 +832,14 @@ class AppModel {
         config.enableDiorama = slideshowEnableDiorama
         config.transparentBackground = slideshowTransparentBackground
         config.textSize = slideshowTextSize
+        // Resolution caps inherit from the app-level defaults unless the
+        // profile has already overridden them.
+        if config.maxImageResolution2D == nil {
+            config.maxImageResolution2D = slideshowMaxImageResolution2D
+        }
+        if config.maxImageResolution3D == nil {
+            config.maxImageResolution3D = slideshowMaxImageResolution3D
+        }
     }
 
     // MARK: - Initialization
@@ -848,6 +877,15 @@ class AppModel {
         let loadedSlideshowTextSize: Double = UserDefaults.standard.object(forKey: "slideshowTextSize") != nil
             ? UserDefaults.standard.double(forKey: "slideshowTextSize")
             : 1.0
+
+        // Slideshow per-mode resolution caps. Default to the same 4096 cap
+        // used elsewhere so first-launch behavior matches the regular viewer.
+        let loadedSlideshowMaxImageResolution2D: Int = UserDefaults.standard.object(forKey: "slideshowMaxImageResolution2D") != nil
+            ? UserDefaults.standard.integer(forKey: "slideshowMaxImageResolution2D")
+            : 4096
+        let loadedSlideshowMaxImageResolution3D: Int = UserDefaults.standard.object(forKey: "slideshowMaxImageResolution3D") != nil
+            ? UserDefaults.standard.integer(forKey: "slideshowMaxImageResolution3D")
+            : 4096
 
         // Load max image resolution (default: 4096, migrate from old bool key if needed)
         let loadedMaxImageResolution: Int
@@ -963,6 +1001,8 @@ class AppModel {
         self.slideshowEnableDiorama = loadedSlideshowEnableDiorama
         self.slideshowTransparentBackground = loadedSlideshowTransparentBackground
         self.slideshowTextSize = loadedSlideshowTextSize
+        self.slideshowMaxImageResolution2D = loadedSlideshowMaxImageResolution2D
+        self.slideshowMaxImageResolution3D = loadedSlideshowMaxImageResolution3D
         self.maxImageResolution = loadedMaxImageResolution
         self.spatial3DMaxResolution = loadedSpatial3DMaxResolution
         self.dioramaDistance = loadedDioramaDistance
@@ -1496,6 +1536,8 @@ class AppModel {
             slideshowEnableDiorama: slideshowEnableDiorama,
             slideshowTransparentBackground: slideshowTransparentBackground,
             slideshowTextSize: slideshowTextSize,
+            slideshowMaxImageResolution2D: slideshowMaxImageResolution2D,
+            slideshowMaxImageResolution3D: slideshowMaxImageResolution3D,
             maxImageResolution: maxImageResolution,
             spatial3DMaxResolution: spatial3DMaxResolution,
             dioramaDistance: dioramaDistance,
@@ -1539,6 +1581,8 @@ class AppModel {
         if let v = backup.slideshowEnableDiorama { slideshowEnableDiorama = v }
         if let v = backup.slideshowTransparentBackground { slideshowTransparentBackground = v }
         if let v = backup.slideshowTextSize { slideshowTextSize = v }
+        if let v = backup.slideshowMaxImageResolution2D { slideshowMaxImageResolution2D = v }
+        if let v = backup.slideshowMaxImageResolution3D { slideshowMaxImageResolution3D = v }
         if let v = backup.maxImageResolution { maxImageResolution = v }
         if let v = backup.spatial3DMaxResolution { spatial3DMaxResolution = v }
         if let v = backup.dioramaDistance { dioramaDistance = v }

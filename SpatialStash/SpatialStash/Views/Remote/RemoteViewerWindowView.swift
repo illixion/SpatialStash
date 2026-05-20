@@ -29,6 +29,12 @@ struct RemoteViewerWindowView: View {
     @State private var kenBurnsScale: CGFloat = 1.0
     @State private var kenBurnsOffset: CGSize = .zero
 
+    /// Alternates the ±1pt direction of the slideshow's IPC calibration
+    /// nudge so the visible motion stays symmetric over time. Mirrors the
+    /// fix in PhotoDisplayView — IPC drops its off-axis blur calibration
+    /// across image swaps and only a real geometry change reasserts it.
+    @State private var nudgeAlternator: Bool = false
+
     private let clockTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -155,8 +161,19 @@ struct RemoteViewerWindowView: View {
             viewerModel?.stop()
             autoHideTimer?.cancel()
         }
+        .onChange(of: viewerModel?.currentPost?._id) { _, _ in
+            // Refresh IPC's off-axis blur calibration after each crossfade
+            // — same workaround as PhotoDisplayView. No-op unless slideshow
+            // 3D is active.
+            if viewerModel?.isSlideshow3DActive == true {
+                nudgeWindowSizeForCalibration()
+            }
+        }
         .onChange(of: scenePhase) { oldPhase, newPhase in
             viewerModel?.handleScenePhaseChange(from: oldPhase, to: newPhase)
+            if newPhase == .active && oldPhase != .active, viewerModel?.isSlideshow3DActive == true {
+                nudgeWindowSizeForCalibration()
+            }
             // Restart Ken Burns animation on return to foreground — the SwiftUI
             // animation is time-based and continues running while backgrounded,
             // so the remaining duration would be too short without a restart.
@@ -235,8 +252,17 @@ struct RemoteViewerWindowView: View {
                 EmptyView()
             }
 
+            // Slideshow 3D path (RealityKit) — replaces the SwiftUI image
+            // pipeline when the profile selects 3D / Immersive 3D. The
+            // layer owns two slot entities and pre-generates the next
+            // image while the current is on screen, then crossfades by
+            // swapping which slot is visible.
+            if model.currentMediaType == .image && model.isSlideshow3DActive {
+                SlideshowSpatial3DLayer(model: model)
+            }
+
             // Current image (shown for .image type, or as static first frame while GIF converts)
-            if model.currentMediaType == .image, let image = model.currentImage {
+            if model.currentMediaType == .image && !model.isSlideshow3DActive, let image = model.currentImage {
                 let useKenBurns = model.enableKenBurns && !model.isCurrentPostAnimatedGIF
                 Image(uiImage: image)
                     .resizable()
@@ -290,8 +316,9 @@ struct RemoteViewerWindowView: View {
                 .animation(appModel.effectiveReduceMotion ? nil : .easeInOut(duration: 0.5), value: model.currentBackdropImage != nil)
             }
 
-// Next image (fading in during transition)
-            if let image = model.nextImage, model.isTransitioning {
+// Next image (fading in during transition) — skipped when slideshow 3D
+            // owns the rendering since that path stacks two RealityViews.
+            if !model.isSlideshow3DActive, let image = model.nextImage, model.isTransitioning {
                 Image(uiImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
@@ -431,7 +458,13 @@ struct RemoteViewerWindowView: View {
 
         let model = RemoteViewerModel(config: config)
         model.globalAdjustments = appModel.globalVisualAdjustments
-        model.maxImageResolution = appModel.maxImageResolution
+        // Per-profile slideshow resolution caps fall back to the slideshow
+        // defaults, which themselves default to 4096px.
+        let resolved2D = config.maxImageResolution2D ?? appModel.slideshowMaxImageResolution2D
+        let resolved3D = config.maxImageResolution3D ?? appModel.slideshowMaxImageResolution3D
+        model.maxImageResolution = resolved2D
+        model.maxImageResolution3D = resolved3D
+        model.slideshow3DMode = config.slideshow3DMode
         model.updateWindowAspectRatio(windowSize)
 
         // Set up shared tag list manager + mod tag manager
@@ -501,6 +534,33 @@ struct RemoteViewerWindowView: View {
         withTransaction(transaction) {
             kenBurnsScale = 1.0
             kenBurnsOffset = .zero
+        }
+    }
+
+    /// Resolve the window scene hosting this viewer so we can request a
+    /// 1pt geometry update — IPC re-anchors its off-axis blur calibration
+    /// only on a real size change, and there is no public API for it.
+    private var resolvedWindowScene: UIWindowScene? {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive }
+    }
+
+    private func nudgeWindowSizeForCalibration() {
+        guard let windowScene = resolvedWindowScene else { return }
+        let base = windowSize
+        guard base.width > 2, base.height > 2 else { return }
+        let delta: CGFloat = nudgeAlternator ? 1 : -1
+        nudgeAlternator.toggle()
+        let nudged = CGSize(width: base.width + delta, height: base.height + delta)
+        Task { @MainActor in
+            UIView.performWithoutAnimation {
+                windowScene.requestGeometryUpdate(.Vision(size: nudged))
+            }
+            try? await Task.sleep(for: .milliseconds(150))
+            UIView.performWithoutAnimation {
+                windowScene.requestGeometryUpdate(.Vision(size: base))
+            }
         }
     }
 

@@ -133,6 +133,20 @@ struct SettingsTabView: View {
                     Toggle("Diorama Layers", isOn: $appModel.slideshowEnableDiorama)
                     Toggle("Transparent Background", isOn: $appModel.slideshowTransparentBackground)
 
+                    Picker("Max Image Resolution (2D)", selection: $appModel.slideshowMaxImageResolution2D) {
+                        ForEach(AppModel.maxImageResolutionOptions, id: \.value) { option in
+                            Text(option.label).tag(option.value)
+                        }
+                    }
+                    .pickerStyle(.menu)
+
+                    Picker("Max Image Resolution (3D)", selection: $appModel.slideshowMaxImageResolution3D) {
+                        ForEach(AppModel.maxImageResolutionOptions, id: \.value) { option in
+                            Text(option.label).tag(option.value)
+                        }
+                    }
+                    .pickerStyle(.menu)
+
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
                             Text("Text Size")

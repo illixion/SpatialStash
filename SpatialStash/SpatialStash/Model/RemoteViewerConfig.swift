@@ -11,6 +11,34 @@
 
 import Foundation
 
+/// Per-slideshow 3D rendering mode. When non-`.off`, each image is loaded
+/// into a RealityKit `ImagePresentationComponent` instead of a 2D SwiftUI
+/// `Image`, and Ken Burns + Diorama are bypassed (RealityKit owns the
+/// rendered geometry, so the SwiftUI transforms don't apply).
+enum Slideshow3DMode: String, Codable, CaseIterable, Identifiable {
+    case off
+    case spatial3D
+    case immersive3D
+
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .off: return "2D"
+        case .spatial3D: return "3D"
+        case .immersive3D: return "Immersive 3D"
+        }
+    }
+    var systemImage: String {
+        // Match the icons used by the regular picture viewer's 3D menu so
+        // the slideshow ornament is visually consistent.
+        switch self {
+        case .off: return "view.3d"
+        case .spatial3D: return "spatial.capture.fill"
+        case .immersive3D: return "inset.filled.pano"
+        }
+    }
+}
+
 struct RemoteViewerConfig: Codable, Identifiable {
     let id: UUID
     var name: String
@@ -31,6 +59,19 @@ struct RemoteViewerConfig: Codable, Identifiable {
     var enableDiorama: Bool = false
     var transparentBackground: Bool = false
     var textSize: Double = 1.0
+
+    /// Slideshow 3D rendering mode. `.off` uses the regular 2D SwiftUI image
+    /// pipeline. `.spatial3D`/`.immersive3D` load each image into a RealityKit
+    /// `ImagePresentationComponent` and override Ken Burns + Diorama.
+    var slideshow3DMode: Slideshow3DMode = .off
+
+    /// Per-profile cap for the 2D slideshow image pipeline. `nil` = inherit
+    /// `AppModel.slideshowMaxImageResolution2D`.
+    var maxImageResolution2D: Int?
+
+    /// Per-profile cap fed into RealityKit when slideshow 3D is enabled.
+    /// `nil` = inherit `AppModel.slideshowMaxImageResolution3D`.
+    var maxImageResolution3D: Int?
 
     // Home Assistant
     var homeAssistantURL: String = ""
@@ -73,6 +114,7 @@ struct RemoteViewerConfig: Codable, Identifiable {
         case delay, showClock, showSensors, useAspectRatio, enableKenBurns
         case enableDynamicBrightness, enableDiorama
         case transparentBackground, textSize
+        case slideshow3DMode, maxImageResolution2D, maxImageResolution3D
         case homeAssistantURL
         // Decoded silently from older saved configs and never re-encoded.
         case wsEndpoint
@@ -99,6 +141,9 @@ struct RemoteViewerConfig: Codable, Identifiable {
         enableDiorama = try container.decodeIfPresent(Bool.self, forKey: .enableDiorama) ?? false
         transparentBackground = try container.decodeIfPresent(Bool.self, forKey: .transparentBackground) ?? false
         textSize = try container.decodeIfPresent(Double.self, forKey: .textSize) ?? 1.0
+        slideshow3DMode = try container.decodeIfPresent(Slideshow3DMode.self, forKey: .slideshow3DMode) ?? .off
+        maxImageResolution2D = try container.decodeIfPresent(Int.self, forKey: .maxImageResolution2D)
+        maxImageResolution3D = try container.decodeIfPresent(Int.self, forKey: .maxImageResolution3D)
 
         homeAssistantURL = try container.decodeIfPresent(String.self, forKey: .homeAssistantURL) ?? ""
 
@@ -133,6 +178,9 @@ struct RemoteViewerConfig: Codable, Identifiable {
         try container.encode(enableDiorama, forKey: .enableDiorama)
         try container.encode(transparentBackground, forKey: .transparentBackground)
         try container.encode(textSize, forKey: .textSize)
+        try container.encode(slideshow3DMode, forKey: .slideshow3DMode)
+        try container.encodeIfPresent(maxImageResolution2D, forKey: .maxImageResolution2D)
+        try container.encodeIfPresent(maxImageResolution3D, forKey: .maxImageResolution3D)
 
         try container.encode(homeAssistantURL, forKey: .homeAssistantURL)
     }
