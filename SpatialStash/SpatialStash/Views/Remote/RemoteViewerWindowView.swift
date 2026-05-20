@@ -219,6 +219,13 @@ struct RemoteViewerWindowView: View {
             } else {
                 autoHideTimer?.cancel()
             }
+            // Manual IPC blur recovery, matching the regular 3D photo
+            // viewer's tap behaviour. The per-crossfade nudge already
+            // covers steady-state, but a stray tap is the user's
+            // expected escape hatch when calibration has drifted.
+            if viewerModel?.isSlideshow3DActive == true {
+                nudgeWindowSizeForCalibration()
+            }
         }
         .persistentSystemOverlays(controlsVisible ? .automatic : .hidden)
     }
@@ -259,6 +266,11 @@ struct RemoteViewerWindowView: View {
             // swapping which slot is visible.
             if model.currentMediaType == .image && model.isSlideshow3DActive {
                 SlideshowSpatial3DLayer(model: model)
+                    // RealityView would otherwise swallow taps on the IPC
+                    // entity and the parent ZStack's `.onTapGesture`
+                    // (toggle ornaments + nudge) would never fire — same
+                    // pass-through we use for diorama/backdrop layers.
+                    .allowsHitTesting(false)
             }
 
             // Current image (shown for .image type, or as static first frame while GIF converts)
