@@ -442,13 +442,21 @@ extension PhotoWindowModel {
 
     /// Switch directly to a specific viewing mode without cycling.
     /// If the image is still loading, the mode is queued and applied once loading finishes.
-    func switchToViewingMode(_ mode: ImagePresentationComponent.ViewingMode) async {
+    /// - Parameter trackChange: When false, `ImageEnhancementTracker` is not
+    ///   updated. Used by gallery navigation to keep the user inside an
+    ///   active Fully Immersive session without writing immersive as the
+    ///   remembered viewing mode for every image they tap through.
+    func switchToViewingMode(_ mode: ImagePresentationComponent.ViewingMode, trackChange: Bool = true) async {
         if isLoadingDetailImage {
             pendingViewingMode = mode
             desiredViewingMode = mode
             return
         }
         pendingViewingMode = nil
+        // Any exit from .spatial3DImmersive (or fully-immersive routing)
+        // releases the dedicated ImmersiveSpace so the PhotoDisplayView
+        // observer dismisses it.
+        if mode != .spatial3DImmersive { hostFullyImmersiveSpace = false }
         if mode == .mono {
             await deactivate3DMode()
         } else if mode == .spatial3D {
@@ -468,6 +476,43 @@ extension PhotoWindowModel {
                 Task { await self.trackViewingMode(.spatial3D) }
             }
         } else if mode == .spatial3DImmersive {
+            if appModel.fullyImmersive3DMode {
+                // Only one Fully Immersive session at a time — the
+                // ImmersiveSpace, the loan entity, and the head-pose
+                // tracker are all singletons. Refuse silent activation
+                // from a second photo window so the existing session
+                // (and its placement / sticky-nav state) isn't clobbered.
+                if let owner = appModel.immersiveLoanOwner, owner !== self {
+                    AppLogger.photoWindow.info("Refusing Fully Immersive entry — another window already owns the immersive space")
+                    desiredViewingMode = .spatial3D
+                    return
+                }
+                // Route into the dedicated ImmersiveSpace instead of
+                // expanding the windowed IPC. Keep the windowed entity at
+                // .spatial3D (generating if needed) so the photo viewer
+                // stays usable while the immersive presentation is open.
+                if spatial3DImageState == .notGenerated {
+                    desiredViewingMode = .spatial3D
+                    await generateSpatial3DImage()
+                }
+                desiredViewingMode = .spatial3DImmersive
+                // Flip the IPC component itself to immersive so the
+                // ImmersiveSpace renders the new image at the immersive
+                // viewing mode. The Spatial3DImmersiveView only applies
+                // this on its initial make pass; gallery navigation
+                // rebuilds the IPC underneath it and would otherwise
+                // render the new image at .spatial3D until the user
+                // closed and reopened the space.
+                if var ipc = contentEntity.components[ImagePresentationComponent.self] {
+                    ipc.desiredViewingMode = .spatial3DImmersive
+                    contentEntity.components.set(ipc)
+                }
+                hostFullyImmersiveSpace = true
+                if trackChange {
+                    Task { await self.trackViewingMode(.spatial3DImmersive) }
+                }
+                return
+            }
             if spatial3DImageState == .notGenerated {
                 desiredViewingMode = .spatial3DImmersive
                 await generateSpatial3DImage()

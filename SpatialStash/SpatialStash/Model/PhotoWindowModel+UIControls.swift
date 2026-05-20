@@ -56,6 +56,10 @@ extension PhotoWindowModel {
 
         guard appModel.autoHideDelay > 0 else { return }
         guard !hasOpenPopover else { return }
+        // While the Fully Immersive space is hosted, the photo window is
+        // the user's only controls surface — keep its ornament pinned so
+        // the Exit affordance never auto-hides out of reach.
+        guard !hostFullyImmersiveSpace else { return }
 
         autoHideTask = Task {
             try? await Task.sleep(for: .seconds(appModel.autoHideDelay))

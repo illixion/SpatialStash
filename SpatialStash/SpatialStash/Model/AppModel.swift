@@ -136,6 +136,21 @@ class AppModel {
     /// the app-wide Stash source. Cleared once consumed.
     var pendingGallerySlideshowSource: GallerySlideshowSourceOverride?
 
+    /// The photo viewer's `contentEntity` while it is on loan to the
+    /// Spatial 3D ImmersiveSpace. The IPC + generated `Spatial3DImage` are
+    /// reparented across scenes rather than rebuilt — one copy of the GPU
+    /// resources, no second `generate()` pass. Cleared after the immersive
+    /// space hands the entity back on exit.
+    var immersiveLoanEntity: Entity?
+
+    /// The PhotoWindowModel that currently owns the immersive presentation.
+    /// Tracked separately from the loaned entity so the immersive view can
+    /// reach back into the model on Digital Crown dismissal (where the
+    /// space disappears without PhotoDisplayView noticing) and so other
+    /// photo windows can refuse a second Immersive 3D entry while one is
+    /// already in flight.
+    weak var immersiveLoanOwner: PhotoWindowModel?
+
     // MARK: - Video Source (stored, always Stash server)
 
     private(set) var videoSource: any VideoSource
@@ -666,6 +681,18 @@ class AppModel {
         }
     }
 
+    /// When true, entering Immersive 3D opens a dedicated mixed
+    /// `ImmersiveSpace` (and dismisses the windowed IPC presentation)
+    /// instead of expanding the image within the window. Off by default —
+    /// the original Photos-style windowed immersive behavior is preserved.
+    var fullyImmersive3DMode: Bool {
+        didSet {
+            if fullyImmersive3DMode != oldValue {
+                UserDefaults.standard.set(fullyImmersive3DMode, forKey: "fullyImmersive3DMode")
+            }
+        }
+    }
+
     /// Clears all remembered image enhancement data.
     func clearImageEnhancementData() async {
         await ImageEnhancementTracker.shared.clearAll()
@@ -959,6 +986,14 @@ class AppModel {
         }
 
         // Load 3D auto-restore (default: true)
+        // Migrate from the prior "constrainImmersive3DToWindow" key (portal
+        // attempt that never shipped enabled — drop its value on read).
+        if UserDefaults.standard.object(forKey: "constrainImmersive3DToWindow") != nil {
+            UserDefaults.standard.removeObject(forKey: "constrainImmersive3DToWindow")
+        }
+        let loadedFullyImmersive3DMode = UserDefaults.standard.object(forKey: "fullyImmersive3DMode") != nil
+            ? UserDefaults.standard.bool(forKey: "fullyImmersive3DMode")
+            : false
         let loadedAutoRestoreSpatial3D = UserDefaults.standard.object(forKey: "autoRestoreSpatial3D") != nil
             ? UserDefaults.standard.bool(forKey: "autoRestoreSpatial3D")
             : true
@@ -1012,6 +1047,7 @@ class AppModel {
         self.openMediaInNewWindows = loadedOpenMediaInNewWindows
         self.rememberImageEnhancements = loadedRememberImageEnhancements
         self.autoRestoreSpatial3D = loadedAutoRestoreSpatial3D
+        self.fullyImmersive3DMode = loadedFullyImmersive3DMode
         self.defaultImageViewingMode = loadedDefaultImageViewingMode
         self.enableRemoteViewer = loadedEnableRemoteViewer
         self.showDebugConsole = loadedShowDebugConsole
@@ -1545,6 +1581,7 @@ class AppModel {
             openMediaInNewWindows: openMediaInNewWindows,
             rememberImageEnhancements: rememberImageEnhancements,
             autoRestoreSpatial3D: autoRestoreSpatial3D,
+            fullyImmersive3DMode: fullyImmersive3DMode,
             showDebugConsole: showDebugConsole,
             respectMemoryAlerts: respectMemoryAlerts,
             enableRemoteViewer: enableRemoteViewer,
@@ -1590,6 +1627,7 @@ class AppModel {
         if let v = backup.openMediaInNewWindows ?? backup.openImagesInSeparateWindows { openMediaInNewWindows = v }
         if let v = backup.rememberImageEnhancements { rememberImageEnhancements = v }
         if let v = backup.autoRestoreSpatial3D { autoRestoreSpatial3D = v }
+        if let v = backup.fullyImmersive3DMode { fullyImmersive3DMode = v }
         if let v = backup.showDebugConsole { showDebugConsole = v }
         if let v = backup.respectMemoryAlerts { respectMemoryAlerts = v }
         if let v = backup.enableRemoteViewer { enableRemoteViewer = v }

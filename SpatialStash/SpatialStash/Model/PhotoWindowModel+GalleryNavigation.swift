@@ -15,6 +15,11 @@ extension PhotoWindowModel {
     /// Switch to displaying a different image, releasing previous resources and loading new ones.
     func switchToImage(_ newImage: GalleryImage) async {
         let oldImageURL = imageURL
+        // Capture whether the user is currently inside a Fully Immersive
+        // session so we can drop them back into immersive on the new
+        // image without writing it into ImageEnhancementTracker — the
+        // immersive preference shouldn't follow every image they tap.
+        let wasHostingFullyImmersive = hostFullyImmersiveSpace
         image = newImage
         imageURL = newImage.fullSizeURL
         isLoadingDetailImage = true
@@ -107,6 +112,13 @@ extension PhotoWindowModel {
         await applyPendingViewingMode()
 
         await applyDefaultViewingModeIfNeeded()
+
+        // Re-enter Fully Immersive 3D for the new image if the previous
+        // image was being viewed that way. Skip tracking so the user's
+        // per-image last-viewing-mode preference is left untouched.
+        if wasHostingFullyImmersive && appModel.fullyImmersive3DMode && !isAnimatedImage {
+            await switchToViewingMode(.spatial3DImmersive, trackChange: false)
+        }
     }
 
     /// Navigate to next image in gallery

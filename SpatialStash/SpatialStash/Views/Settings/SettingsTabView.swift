@@ -95,6 +95,8 @@ struct SettingsTabView: View {
                     }
                     .pickerStyle(.menu)
 
+                    Toggle("Fully Immersive 3D Mode", isOn: $appModel.fullyImmersive3DMode)
+
                     Picker("Diorama Layer Distance", selection: $appModel.dioramaDistance) {
                         ForEach(AppModel.dioramaDistanceOptions, id: \.value) { option in
                             Text(option.label).tag(option.value)

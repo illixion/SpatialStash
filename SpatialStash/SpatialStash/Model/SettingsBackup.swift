@@ -40,6 +40,7 @@ struct SettingsBackup: Codable {
     var openImagesInSeparateWindows: Bool?
     var rememberImageEnhancements: Bool?
     var autoRestoreSpatial3D: Bool?
+    var fullyImmersive3DMode: Bool?
     var showDebugConsole: Bool?
     var respectMemoryAlerts: Bool?
     var enableRemoteViewer: Bool?

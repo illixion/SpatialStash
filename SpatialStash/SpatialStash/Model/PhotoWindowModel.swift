@@ -39,6 +39,14 @@ class PhotoWindowModel {
     var isLoadingDetailImage: Bool = false
     var inputPlaneEntity: Entity = Entity()
 
+    /// True while this window owns the Spatial3D ImmersiveSpace presentation.
+    /// Set by the view-mode switch when `AppModel.fullyImmersive3DMode` is on
+    /// and the user picks Immersive 3D; PhotoDisplayView observes this and
+    /// drives `openImmersiveSpace` / `dismissImmersiveSpace`. The windowed
+    /// IPC stays in `.spatial3D` (or mono) while immersive is hosted
+    /// elsewhere — only one presentation runs at a time.
+    var hostFullyImmersiveSpace: Bool = false
+
     // MARK: - 2D Display Image State
 
     /// GPU-private texture for lightweight 2D display (nil when in 3D mode).

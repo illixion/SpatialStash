@@ -17,6 +17,8 @@ struct PhotoDisplayView: View {
     @Environment(SceneDelegate.self) private var sceneDelegate: SceneDelegate?
     @Environment(\.surfaceSnappingInfo) private var snappingInfo: SurfaceSnappingInfo
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.openImmersiveSpace) private var openImmersiveSpace
+    @Environment(\.dismissImmersiveSpace) private var dismissImmersiveSpace
 
     /// Whether swipe navigation between gallery images is enabled
     let enableSwipeNavigation: Bool
@@ -230,6 +232,58 @@ struct PhotoDisplayView: View {
                 }
             }
         }
+        .onChange(of: windowModel.hostFullyImmersiveSpace) { _, isOpen in
+            // The photo window stays open and doubles as the controls
+            // anchor — its RealityView content is hidden by an opacity
+            // gate so the user only sees the ornament + immersive scene.
+            Task {
+                if isOpen {
+                    // Loan the windowed IPC entity to the immersive scene
+                    // so RealityKit reuses the already-generated
+                    // Spatial3DImage instead of regenerating + double-
+                    // allocating GPU resources.
+                    appModel.immersiveLoanEntity = windowModel.contentEntity
+                    appModel.immersiveLoanOwner = windowModel
+                    let value = Spatial3DImmersiveValue(imageURL: windowModel.imageURL)
+                    _ = await openImmersiveSpace(value: value)
+                    windowModel.cancelAutoHideTimer()
+                    windowModel.isUIHidden = false
+                } else {
+                    await dismissImmersiveSpace()
+                    // Flip the IPC back to windowed spatial3D so the
+                    // photo window's RealityView re-adopts the entity at
+                    // the correct viewing mode (the update closure's
+                    // `parent == nil` guard handles the re-attach).
+                    if var ipc = windowModel.contentEntity.components[ImagePresentationComponent.self] {
+                        ipc.desiredViewingMode = .spatial3D
+                        windowModel.desiredViewingMode = .spatial3D
+                        windowModel.contentEntity.components.set(ipc)
+                    }
+                    // Reset the transform — it was carrying the
+                    // immersive world pose (eye-height Y, ~2m -Z) which,
+                    // applied as window-local on re-adoption, slid the
+                    // entity up and out of the window's visible bounds.
+                    // The windowed update closure recomputes scale +
+                    // position correctly on its next pass.
+                    windowModel.contentEntity.transform = Transform()
+                    appModel.immersiveLoanEntity = nil
+                    if appModel.immersiveLoanOwner === windowModel {
+                        appModel.immersiveLoanOwner = nil
+                    }
+                    windowModel.startAutoHideTimer()
+                }
+            }
+        }
+        .onDisappear {
+            if windowModel.hostFullyImmersiveSpace {
+                windowModel.hostFullyImmersiveSpace = false
+                appModel.immersiveLoanEntity = nil
+                if appModel.immersiveLoanOwner === windowModel {
+                    appModel.immersiveLoanOwner = nil
+                }
+                Task { await dismissImmersiveSpace() }
+            }
+        }
         // MARK: - Scene Phase Idle Downscale
         .onChange(of: scenePhase) { oldPhase, newPhase in
             windowModel.handleScenePhaseChange(from: oldPhase, to: newPhase)
@@ -343,7 +397,9 @@ struct PhotoDisplayView: View {
                     await windowModel.createImagePresentationComponent()
                     let availableBounds = content.convert(geometry.frame(in: .local), from: .local, to: .scene)
                     scaleImagePresentationToFit(in: availableBounds)
-                    content.add(windowModel.contentEntity)
+                    if windowModel.contentEntity.parent == nil {
+                        content.add(windowModel.contentEntity)
+                    }
                     windowModel.ensureInputPlaneReady()
                     updateInputPlane(in: availableBounds)
                     if windowModel.inputPlaneEntity.parent == nil {
@@ -361,6 +417,12 @@ struct PhotoDisplayView: View {
                         }
                     }
                 } update: { content in
+                    // While Fully Immersive 3D owns the entity, the
+                    // immersive scene is the one mutating its transform —
+                    // any setPosition/scale here would clobber the
+                    // placement every frame and snap the IPC back to the
+                    // (hidden) photo window's pose.
+                    guard !windowModel.hostFullyImmersiveSpace else { return }
                     guard let presentationScreenSize = windowModel
                         .contentEntity
                         .observable
@@ -378,6 +440,9 @@ struct PhotoDisplayView: View {
                     windowModel.contentEntity.setPosition(SIMD3<Float>(originalPosition.x, originalPosition.y, experimentalZ), relativeTo: nil)
                     let availableBounds = content.convert(geometry.frame(in: .local), from: .local, to: .scene)
                     scaleImagePresentationToFit(in: availableBounds)
+                    if windowModel.contentEntity.parent == nil {
+                        content.add(windowModel.contentEntity)
+                    }
                     windowModel.ensureInputPlaneReady()
                     updateInputPlane(in: availableBounds)
                     if windowModel.inputPlaneEntity.parent == nil {
@@ -438,7 +503,11 @@ struct PhotoDisplayView: View {
                 }
             }
             .aspectRatio(windowModel.imageAspectRatio, contentMode: .fit)
-            .opacity(windowModel.effectiveAdjustments.opacity)
+            // Hide the windowed RealityKit presentation while the Fully
+            // Immersive space is hosting the IPC — the photo window stays
+            // as a controls anchor (ornament + chrome) but doesn't double
+            // up the spatial scene.
+            .opacity(windowModel.hostFullyImmersiveSpace ? 0 : windowModel.effectiveAdjustments.opacity)
             .clipShape(RoundedRectangle(
                 cornerRadius: (appModel.roundedCorners && !windowModel.isViewingSpatial3DImmersive) ? 50 : 0,
                 style: .continuous

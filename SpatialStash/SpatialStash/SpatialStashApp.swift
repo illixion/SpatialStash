@@ -122,6 +122,18 @@ struct SpatialStashApp: App {
                 .environment(appModel)
         }
         .immersionStyle(selection: .constant(.full), in: .full)
+
+        // Mixed immersive space for the "Fully Immersive 3D" photo viewer mode.
+        // Opened by PhotoDisplayView when AppModel.fullyImmersive3DMode is on
+        // and the user enters Immersive 3D; passes the source image URL via
+        // the standard ImmersiveSpace value channel.
+        ImmersiveSpace(id: "Spatial3DImmersiveSpace", for: Spatial3DImmersiveValue.self) { value in
+            if let value = value.wrappedValue {
+                Spatial3DImmersiveView(value: value)
+                    .environment(appModel)
+            }
+        }
+        .immersionStyle(selection: .constant(.mixed), in: .mixed)
     }
 }
 
