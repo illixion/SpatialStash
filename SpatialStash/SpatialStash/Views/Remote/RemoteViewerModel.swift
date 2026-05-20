@@ -10,6 +10,7 @@ import os
 import SwiftUI
 
 @MainActor
+@Observable
 class RemoteViewerModel: SlideshowEngine {
     // MARK: - Configuration
 
