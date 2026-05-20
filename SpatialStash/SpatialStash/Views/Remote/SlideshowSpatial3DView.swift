@@ -198,6 +198,15 @@ struct SlideshowSpatial3DSlotView: View {
         .task(id: cacheKey) {
             await reload()
         }
+        .onChange(of: immersive) { _, newValue in
+            // Mode flip without regeneration: mirrors the regular photo
+            // viewer, which mutates the existing IPC component instead
+            // of rebuilding the Spatial3DImage. The depth map already
+            // generated for this slot stays valid across the toggle.
+            guard var ipc = entity.components[ImagePresentationComponent.self] else { return }
+            ipc.desiredViewingMode = newValue ? .spatial3DImmersive : .spatial3D
+            entity.components.set(ipc)
+        }
     }
 
     /// Adds the `InputTargetComponent` + `CollisionComponent` pair that
@@ -236,12 +245,13 @@ struct SlideshowSpatial3DSlotView: View {
         entity.scale = SIMD3<Float>(scale, scale, 1.0)
     }
 
-    /// Cache key combines the image identity and the immersive flag so a
-    /// mode flip re-derives the component (the viewing-mode toggle is set
-    /// on the component itself).
+    /// Cache key intentionally excludes the immersive flag — that's a
+    /// runtime mode toggle on the existing IPC, not a reason to rebuild
+    /// the Spatial3DImage. Re-derives only on a new image or a
+    /// resolution-cap change.
     private var cacheKey: String {
         guard let image else { return "nil" }
-        return "\(ObjectIdentifier(image).hashValue):\(immersive ? "imm" : "win"):\(maxResolution)"
+        return "\(ObjectIdentifier(image).hashValue):\(maxResolution)"
     }
 
     @MainActor
