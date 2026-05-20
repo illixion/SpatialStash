@@ -103,6 +103,11 @@ class PhotoWindowModel {
     /// Trigger for immersive window resize (incremented when entering/exiting immersive)
     var immersiveResizeTrigger: Int = 0
 
+    /// Trigger for a tiny window-size nudge to force IPC to re-anchor its
+    /// off-axis blur calibration. Driven by Spatial3DRefreshHub when the user
+    /// drifts past a head-pose threshold while viewing windowed spatial3D.
+    var calibrationNudgeTrigger: Int = 0
+
     /// Window size before entering immersive mode (for restoration)
     var preImmersiveWindowSize: CGSize? = nil
 

@@ -404,6 +404,7 @@ extension PhotoWindowModel {
                     if let aspectRatio = ipc.aspectRatio(for: .mono) {
                         self.imageAspectRatio = CGFloat(aspectRatio)
                     }
+                    self.updateExperimentalSpatial3DTuning()
                 } catch {
                     AppLogger.visualAdjustments.error("Failed to reload ImagePresentationComponent: \(error.localizedDescription, privacy: .public)")
                     return

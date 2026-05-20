@@ -33,6 +33,11 @@ struct PhotoDisplayView: View {
     /// Tracks the viewer window's current size (updated live via GeometryReader)
     @State private var viewerWindowSize: CGSize?
 
+    /// Parity flag for the IPC calibration nudge — each call toggles this and
+    /// uses it to pick a +1pt or -1pt nudge direction, so the visible motion
+    /// alternates and doesn't drift in one direction over many invocations.
+    @State private var nudgeAlternator: Bool = false
+
     // MARK: - Swipe Gesture State
 
     /// Horizontal drag offset during swipe gesture
@@ -227,6 +232,12 @@ struct PhotoDisplayView: View {
         // MARK: - Scene Phase Idle Downscale
         .onChange(of: scenePhase) { oldPhase, newPhase in
             windowModel.handleScenePhaseChange(from: oldPhase, to: newPhase)
+            // When the window comes back to the foreground, IPC's off-axis
+            // calibration is likely stale — kick a nudge to clear any blur.
+            // No-op unless the photo is currently in windowed spatial3D.
+            if newPhase == .active && oldPhase != .active {
+                windowModel.refreshSpatial3DCalibration()
+            }
         }
     }
 
@@ -357,7 +368,13 @@ struct PhotoDisplayView: View {
                             return
                     }
                     let originalPosition = windowModel.contentEntity.position(relativeTo: nil)
-                    windowModel.contentEntity.setPosition(SIMD3<Float>(originalPosition.x, originalPosition.y, 0.0), relativeTo: nil)
+                    // Experimental: recess the spatial3D scene slightly behind the
+                    // window glass to mask the off-axis comfort-cone falloff. Pairs
+                    // with the soft BillboardComponent set by updateExperimentalSpatial3DTuning().
+                    let experimentalZ: Float = windowModel.shouldApplyExperimentalSpatial3DTuning
+                        ? PhotoWindowModel.experimentalSpatial3DZInset
+                        : 0.0
+                    windowModel.contentEntity.setPosition(SIMD3<Float>(originalPosition.x, originalPosition.y, experimentalZ), relativeTo: nil)
                     let availableBounds = content.convert(geometry.frame(in: .local), from: .local, to: .scene)
                     scaleImagePresentationToFit(in: availableBounds)
                     windowModel.ensureInputPlaneReady()
@@ -372,6 +389,10 @@ struct PhotoDisplayView: View {
                         .targetedToAnyEntity()
                         .onEnded { _ in
                             windowModel.toggleUIVisibility()
+                            // Refresh IPC's off-axis calibration on every tap
+                            // — cheap and matches the manual-resize fix the
+                            // user would otherwise need to do themselves.
+                            windowModel.refreshSpatial3DCalibration()
                         }
                 )
                 .onAppear {
@@ -410,6 +431,9 @@ struct PhotoDisplayView: View {
                         resizeWindowToFit(windowModel.imageAspectRatio, within: currentBounds)
                         scheduleWindowSizeVerification()
                     }
+                }
+                .onChange(of: windowModel.calibrationNudgeTrigger) { _, _ in
+                    nudgeWindowSizeForCalibration()
                 }
             }
             .aspectRatio(windowModel.imageAspectRatio, contentMode: .fit)
@@ -635,6 +659,29 @@ struct PhotoDisplayView: View {
         let size = windowSize(for: aspectRatio, within: bounds)
         UIView.performWithoutAnimation {
             windowScene.requestGeometryUpdate(.Vision(size: size, resizingRestrictions: .uniform))
+        }
+    }
+
+    /// Alternating 1pt nudge: each call moves the window by -1pt OR +1pt
+    /// (alternating between calls), then reverts to the base size. Halves
+    /// the visible motion of the previous shrink-then-grow round-trip since
+    /// only one transition is visible per call. Direction alternates so the
+    /// nudge looks symmetric over time and doesn't drift in one direction.
+    private func nudgeWindowSizeForCalibration() {
+        guard let windowScene = resolvedWindowScene else { return }
+        let base = viewerWindowSize ?? currentBounds
+        guard base.width > 2, base.height > 2 else { return }
+        let delta: CGFloat = nudgeAlternator ? 1 : -1
+        nudgeAlternator.toggle()
+        let nudged = CGSize(width: base.width + delta, height: base.height + delta)
+        Task { @MainActor in
+            UIView.performWithoutAnimation {
+                windowScene.requestGeometryUpdate(.Vision(size: nudged))
+            }
+            try? await Task.sleep(for: .milliseconds(150))
+            UIView.performWithoutAnimation {
+                windowScene.requestGeometryUpdate(.Vision(size: base))
+            }
         }
     }
 

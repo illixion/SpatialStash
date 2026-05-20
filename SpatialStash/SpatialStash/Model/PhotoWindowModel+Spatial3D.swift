@@ -81,6 +81,7 @@ extension PhotoWindowModel {
             contentEntity.components.set(ipc)
             if let ar = ipc.aspectRatio(for: .mono) { imageAspectRatio = CGFloat(ar) }
             immersiveResizeTrigger += 1
+            updateExperimentalSpatial3DTuning()
             await trackViewingMode(.mono)
             return
         }
@@ -102,6 +103,7 @@ extension PhotoWindowModel {
         contentEntity.components.remove(ImagePresentationComponent.self)
         is3DMode = false
         desiredViewingMode = .mono  // Reset to mono when exiting 3D entirely
+        updateExperimentalSpatial3DTuning()
         isShowingAdjustmentPreview = false
         adjustments3DReloadTask?.cancel()
 
@@ -130,6 +132,7 @@ extension PhotoWindowModel {
             if desiredViewingMode != .spatial3DImmersive {
                 desiredViewingMode = .mono
             }
+            updateExperimentalSpatial3DTuning()
             displayTexture = nil
             displayImage = nil
             isLoadingDetailImage = false
@@ -208,6 +211,7 @@ extension PhotoWindowModel {
         if let aspectRatio = imagePresentationComponent.aspectRatio(for: .mono) {
             imageAspectRatio = CGFloat(aspectRatio)
         }
+        updateExperimentalSpatial3DTuning()
 
         // Release CPU-side resources since RealityKit owns the GPU texture now.
         // The raw data can be reloaded from disk cache if needed (e.g. switching
@@ -303,6 +307,7 @@ extension PhotoWindowModel {
             desiredViewingMode = .spatial3D
         }
         contentEntity.components.set(imagePresentationComponent)
+        updateExperimentalSpatial3DTuning()
 
         spatial3DImageState = .generating
 
@@ -341,6 +346,7 @@ extension PhotoWindowModel {
                     if let aspectRatio = imagePresentationComponent.aspectRatio(for: .spatial3D) {
                         self.imageAspectRatio = CGFloat(aspectRatio)
                     }
+                    self.updateExperimentalSpatial3DTuning()
                     await self.trackViewingMode(.spatial3D)
                 }
             } catch {
@@ -458,6 +464,7 @@ extension PhotoWindowModel {
                 contentEntity.components.set(ipc)
                 if let ar = ipc.aspectRatio(for: .spatial3D) { imageAspectRatio = CGFloat(ar) }
                 if wasImmersive { immersiveResizeTrigger += 1 }
+                updateExperimentalSpatial3DTuning()
                 Task { await self.trackViewingMode(.spatial3D) }
             }
         } else if mode == .spatial3DImmersive {
@@ -473,6 +480,67 @@ extension PhotoWindowModel {
                 Task { await self.trackViewingMode(.spatial3DImmersive) }
             }
         }
+    }
+
+    // MARK: - Experimental: Widen spatial3D viewing angle
+    //
+    // The Photos widget keeps the spatial scene readable from off-axis by
+    // soft-tracking the user's head and recessing the image behind the glass.
+    // We approximate that here by adding a low-blend BillboardComponent and a
+    // small -Z offset, applied only in windowed .spatial3D mode. Tweak the
+    // constants below if the rotation feels too aggressive or too subtle, or
+    // if the inset makes the IPC clip oddly against the SwiftUI glass.
+    //
+    // Tradeoff: BillboardComponent rotates the entity that IPC renders into,
+    // which may partially flatten IPC's view-dependent parallax. We need
+    // hands-on evaluation to decide if the wider comfort cone is worth it.
+
+    /// Blend factor for the experimental soft billboard (0 = no rotation, 1 = full).
+    /// Applied only in windowed .spatial3D viewing mode.
+    /// Disabled (0): rotation caused the image to clip into real-world walls at
+    /// oblique angles and didn't actually clear IPC's off-axis blur.
+    static let experimentalSpatial3DBillboardBlend: Float = 0.0
+
+    /// Z offset (meters) applied behind the window glass for the spatial3D scene.
+    /// Negative pushes the image away from the viewer. Disabled (0) for now.
+    static let experimentalSpatial3DZInset: Float = 0.0
+
+    /// Whether the experimental tuning should be active given the current state.
+    /// Active only when there's an IPC present and we're in (or transitioning to)
+    /// windowed spatial3D — not mono, not immersive.
+    var shouldApplyExperimentalSpatial3DTuning: Bool {
+        guard contentEntity.components[ImagePresentationComponent.self] != nil else { return false }
+        return desiredViewingMode == .spatial3D
+    }
+
+    /// Apply or remove the experimental BillboardComponent on contentEntity
+    /// based on the current viewing mode. The Z-inset is applied in the
+    /// RealityView update closure (PhotoDisplayView) since that closure
+    /// re-asserts contentEntity.position every frame. Both billboard and
+    /// inset are currently disabled (constants set to 0) but the structure
+    /// remains in case future tuning re-enables them.
+    func updateExperimentalSpatial3DTuning() {
+        if shouldApplyExperimentalSpatial3DTuning {
+            var billboard = BillboardComponent()
+            billboard.blendFactor = Self.experimentalSpatial3DBillboardBlend
+            contentEntity.components.set(billboard)
+        } else {
+            contentEntity.components.remove(BillboardComponent.self)
+        }
+    }
+
+    /// Ask the view layer to nudge the window's geometry so IPC re-anchors
+    /// its off-axis blur calibration. Confirmed empirically as the only
+    /// mechanism that clears the blur — IPC re-publishing alone doesn't
+    /// trigger it, and head-pose tracking isn't available in the Shared
+    /// Space (ARKit data providers require a Full Space on visionOS). The
+    /// view layer fires this on tap and on scenePhase → .active. Skipped
+    /// if IPC isn't actually in a spatial 3D viewing mode so we don't
+    /// disrupt mono playback.
+    func refreshSpatial3DCalibration() {
+        guard let ipc = contentEntity.components[ImagePresentationComponent.self] else { return }
+        guard ipc.viewingMode == .spatial3D || ipc.viewingMode == .spatial3DImmersive else { return }
+        calibrationNudgeTrigger &+= 1
     }
 
     /// Apply a viewing mode that was queued while the image was loading.
@@ -526,5 +594,6 @@ extension PhotoWindowModel {
         contentEntity.components.set(ipc)
         if let ar = ipc.aspectRatio(for: mode) { imageAspectRatio = CGFloat(ar) }
         if mode == .spatial3DImmersive { immersiveResizeTrigger += 1 }
+        updateExperimentalSpatial3DTuning()
     }
 }
