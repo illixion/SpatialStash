@@ -28,6 +28,12 @@ import SwiftUI
 /// the conversion animation.
 struct SlideshowSpatial3DLayer: View {
     @Bindable var model: RemoteViewerModel
+    /// Fired when a tap lands on either slot's IPC entity. visionOS hit-
+    /// tests RealityKit entities in 3D space ahead of SwiftUI's z-order,
+    /// so taps over the image can't be caught by an overlay at the
+    /// SwiftUI layer — they have to be picked up via a targeted-entity
+    /// gesture on the RealityView itself and bubbled back up.
+    var onTap: () -> Void = {}
 
     /// Which slot currently holds the visible image (0 = A, 1 = B). Flipped
     /// after each crossfade so the hidden slot — which has been generating
@@ -47,11 +53,11 @@ struct SlideshowSpatial3DLayer: View {
         let transitioning = model.isTransitioning
 
         ZStack {
-            SlideshowSpatial3DSlotView(image: slotA, immersive: immersive, maxResolution: res)
+            SlideshowSpatial3DSlotView(image: slotA, immersive: immersive, maxResolution: res, onTap: onTap)
                 .opacity(opacity(forSlot: 0, transitioning: transitioning))
                 .animation(.easeInOut(duration: model.reduceMotion ? 0 : 1.0), value: transitioning)
 
-            SlideshowSpatial3DSlotView(image: slotB, immersive: immersive, maxResolution: res)
+            SlideshowSpatial3DSlotView(image: slotB, immersive: immersive, maxResolution: res, onTap: onTap)
                 .opacity(opacity(forSlot: 1, transitioning: transitioning))
                 .animation(.easeInOut(duration: model.reduceMotion ? 0 : 1.0), value: transitioning)
         }
@@ -163,6 +169,7 @@ struct SlideshowSpatial3DSlotView: View {
     let image: UIImage?
     let immersive: Bool
     let maxResolution: Int
+    var onTap: () -> Void = {}
 
     @State private var entity = Entity()
     @State private var loadedKey: String?
@@ -176,15 +183,41 @@ struct SlideshowSpatial3DSlotView: View {
         // RealityView's bounds are the immersive space itself.
         GeometryReader3D { geometry in
             RealityView { content in
+                installTapTarget(on: entity)
                 content.add(entity)
                 scaleEntityToFit(content: content, geometry: geometry)
             } update: { content in
                 scaleEntityToFit(content: content, geometry: geometry)
             }
+            .gesture(
+                TapGesture()
+                    .targetedToAnyEntity()
+                    .onEnded { _ in onTap() }
+            )
         }
         .task(id: cacheKey) {
             await reload()
         }
+    }
+
+    /// Adds the `InputTargetComponent` + `CollisionComponent` pair that
+    /// makes the slot entity tappable via SwiftUI's targeted-entity tap
+    /// gesture — same trick as the photo viewer's `inputPlaneEntity`,
+    /// but applied directly to the IPC-bearing entity since the slot
+    /// only has the one. Collision box is 1×1×0.01m and gets scaled by
+    /// `entity.scale` along with the IPC, so the hit region stays
+    /// aligned with the visible image.
+    @MainActor
+    private func installTapTarget(on entity: Entity) {
+        guard entity.components[InputTargetComponent.self] == nil else { return }
+        entity.components.set(InputTargetComponent())
+        entity.components.set(
+            CollisionComponent(
+                shapes: [.generateBox(size: SIMD3<Float>(1.0, 1.0, 0.01))],
+                mode: .default,
+                filter: .default
+            )
+        )
     }
 
     private func scaleEntityToFit(content: RealityViewContent, geometry: GeometryProxy3D) {

@@ -266,12 +266,20 @@ struct RemoteViewerWindowView: View {
             // image while the current is on screen, then crossfades by
             // swapping which slot is visible.
             if model.currentMediaType == .image && model.isSlideshow3DActive {
-                SlideshowSpatial3DLayer(model: model)
-                    // RealityView would otherwise swallow taps on the IPC
-                    // entity and the parent ZStack's `.onTapGesture`
-                    // (toggle ornaments + nudge) would never fire — same
-                    // pass-through we use for diorama/backdrop layers.
-                    .allowsHitTesting(false)
+                // Tap callback fires from a targeted-entity gesture
+                // wired inside each slot's RealityView — visionOS hit-
+                // tests RealityKit entities in 3D space ahead of SwiftUI
+                // overlays, so SwiftUI .onTapGesture / Color.clear
+                // overlays in this region never see the tap.
+                SlideshowSpatial3DLayer(model: model) {
+                    controlsVisible.toggle()
+                    if controlsVisible {
+                        resetAutoHideTimer()
+                    } else {
+                        autoHideTimer?.cancel()
+                    }
+                    nudgeWindowSizeForCalibration()
+                }
             }
 
             // Current image (shown for .image type, or as static first frame while GIF converts)
