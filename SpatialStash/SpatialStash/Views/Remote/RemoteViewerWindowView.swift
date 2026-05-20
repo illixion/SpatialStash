@@ -212,6 +212,7 @@ struct RemoteViewerWindowView: View {
             else { return }
             Task { await store.refresh() }
         }
+        .contentShape(.rect)
         .onTapGesture {
             controlsVisible.toggle()
             if controlsVisible {
