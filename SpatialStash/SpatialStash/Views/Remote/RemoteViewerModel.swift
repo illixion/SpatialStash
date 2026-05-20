@@ -79,6 +79,12 @@ class RemoteViewerModel: SlideshowEngine {
     /// per-window/local — other devices keep advancing.
     private var playbackSuppressedUntil: Date?
 
+    /// Timestamp of the last `playback` frame received from the server.
+    /// Used by `onBecameActive` to decide whether the channel looks stuck
+    /// and needs an active recovery (re-register + requestNext) rather
+    /// than the cheap ping-probe.
+    private var lastPlaybackReceivedAt: Date?
+
     // MARK: - Init
 
     init(config: RemoteViewerConfig) {
@@ -166,6 +172,25 @@ class RemoteViewerModel: SlideshowEngine {
         // broker emit displayDisconnect frames to peer kiosks.
         wsSession?.probeOrReconnect()
         wsSession?.sendVisibilityChange(deviceId: config.wsDeviceId, visible: true)
+
+        // After sleep/wake the WS may auto-reconnect successfully but the
+        // server-side channel can be left paused — visibility may not have
+        // flipped value (so `notifyVisibility` no-ops) or our session may
+        // still be alive in the orchestrator with a stopped dwell timer.
+        // If we have no current post, or the last `playback` frame is
+        // stale, actively re-register the channel and ask for the next
+        // frame instead of waiting passively. Cheap probes (gaze blinks)
+        // skip this path because `lastPlaybackReceivedAt` will be recent.
+        let staleThreshold = max(30.0, delay * 2.0)
+        let isStale: Bool = {
+            guard let last = lastPlaybackReceivedAt else { return true }
+            return Date().timeIntervalSince(last) > staleThreshold
+        }()
+        if currentPost == nil || isStale {
+            AppLogger.remoteViewer.info("onBecameActive: recovering channel (currentPost=\(self.currentPost?._id ?? -1, privacy: .public), stale=\(isStale, privacy: .public))")
+            sendSlideshowConfigToServer()
+            wsSession?.sendRequestNext()
+        }
     }
 
     override func onEnteredBackground() {
@@ -541,6 +566,7 @@ class RemoteViewerModel: SlideshowEngine {
     /// list, merge-driver status, and feeds the engine's queue with the
     /// server's `current` / `next` posts.
     private func handlePlaybackFrame(_ payload: [String: Any]) {
+        lastPlaybackReceivedAt = Date()
         if let until = playbackSuppressedUntil {
             if Date() < until {
                 AppLogger.remoteViewer.info("playback: suppressed (history jump active)")
