@@ -34,6 +34,12 @@ struct SlideshowSpatial3DLayer: View {
     /// SwiftUI layer — they have to be picked up via a targeted-entity
     /// gesture on the RealityView itself and bubbled back up.
     var onTap: () -> Void = {}
+    /// Fired with the source `UIImage` each time a slot finishes
+    /// generating its depth map. The viewer model uses this to gate the
+    /// outgoing `imageReady` WS event so the server doesn't advance the
+    /// channel before RealityKit has actually caught up — matters at
+    /// short channel intervals (6 s, etc.) where pre-gen can't keep up.
+    var onSpatial3DGenerated: (UIImage) -> Void = { _ in }
 
     /// Which slot currently holds the visible image (0 = A, 1 = B). Flipped
     /// after each crossfade so the hidden slot — which has been generating
@@ -53,11 +59,11 @@ struct SlideshowSpatial3DLayer: View {
         let transitioning = model.isTransitioning
 
         ZStack {
-            SlideshowSpatial3DSlotView(image: slotA, immersive: immersive, maxResolution: res, onTap: onTap)
+            SlideshowSpatial3DSlotView(image: slotA, immersive: immersive, maxResolution: res, onTap: onTap, onSpatial3DGenerated: onSpatial3DGenerated)
                 .opacity(opacity(forSlot: 0, transitioning: transitioning))
                 .animation(.easeInOut(duration: model.reduceMotion ? 0 : 1.0), value: transitioning)
 
-            SlideshowSpatial3DSlotView(image: slotB, immersive: immersive, maxResolution: res, onTap: onTap)
+            SlideshowSpatial3DSlotView(image: slotB, immersive: immersive, maxResolution: res, onTap: onTap, onSpatial3DGenerated: onSpatial3DGenerated)
                 .opacity(opacity(forSlot: 1, transitioning: transitioning))
                 .animation(.easeInOut(duration: model.reduceMotion ? 0 : 1.0), value: transitioning)
         }
@@ -170,6 +176,7 @@ struct SlideshowSpatial3DSlotView: View {
     let immersive: Bool
     let maxResolution: Int
     var onTap: () -> Void = {}
+    var onSpatial3DGenerated: (UIImage) -> Void = { _ in }
 
     @State private var entity = Entity()
     @State private var loadedKey: String?
@@ -279,6 +286,9 @@ struct SlideshowSpatial3DSlotView: View {
             // next image's 3D conversion is ready in the hidden instance
             // by the time it gets promoted to current.
             try await spatial.generate()
+            // Notify the model so the WS `imageReady` gate can release
+            // if it was waiting on this generation to finish.
+            onSpatial3DGenerated(image)
         } catch {
             AppLogger.remoteViewer.warning("SlideshowSpatial3DView: Spatial3DImage init failed: \(error.localizedDescription, privacy: .public)")
         }

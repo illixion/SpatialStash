@@ -86,6 +86,18 @@ class RemoteViewerModel: SlideshowEngine {
     /// than the cheap ping-probe.
     private var lastPlaybackReceivedAt: Date?
 
+    /// Post that's transitioned visually but is still waiting on the
+    /// RealityKit slot to finish generating its depth map before we tell
+    /// the server we're ready. Without this gate, a short channel
+    /// interval (6 s, etc.) advances the room ahead of the slowest 3D
+    /// client and the user sees the IPC conversion animation play during
+    /// the next crossfade. Cleared when we actually send `imageReady`.
+    private var pendingImageReadyPost: RemotePost?
+    /// Object identities of images whose 3D depth-map generation has
+    /// completed. Two-slot pipeline means at most two are live at once,
+    /// so we cap the set rather than letting it grow unbounded.
+    private var generatedImageIds: Set<ObjectIdentifier> = []
+
     // MARK: - Init
 
     init(config: RemoteViewerConfig) {
@@ -356,7 +368,17 @@ class RemoteViewerModel: SlideshowEngine {
         // transition was driven by another window, not by our own engine
         // ticking, and that window already reported.)
         if !isApplyingIncomingSync {
-            wsSession?.sendImageReady(postId: post._id)
+            if isSlideshow3DActive,
+               let image = currentImage,
+               !generatedImageIds.contains(ObjectIdentifier(image)) {
+                // Defer until the slot reports generation complete. The
+                // server's readiness barrier will hold the channel open
+                // until we (or the bad-network fallback) report.
+                pendingImageReadyPost = post
+            } else {
+                pendingImageReadyPost = nil
+                wsSession?.sendImageReady(postId: post._id)
+            }
         }
 
         // Local broadcast — gallery mode only. In remote mode each window
@@ -378,6 +400,28 @@ class RemoteViewerModel: SlideshowEngine {
             delay: delay
         )
         SlideshowSyncHub.shared.broadcastLocalSync(from: self, payload: payload)
+    }
+
+    // MARK: - Slideshow 3D Generation Gate
+
+    /// Called by `SlideshowSpatial3DLayer` whenever a slot finishes
+    /// generating its IPC depth map. If the visible image is the one
+    /// the engine just transitioned to and we were holding an
+    /// `imageReady` event waiting on this generation, send it now.
+    @MainActor
+    func notifySpatial3DGenerated(image: UIImage) {
+        let id = ObjectIdentifier(image)
+        generatedImageIds.insert(id)
+        // Cap at 4 — covers both slots plus a small backlog from a fast
+        // re-cycle without growing unbounded across a long session.
+        if generatedImageIds.count > 4 {
+            generatedImageIds.removeFirst()
+        }
+        guard let pending = pendingImageReadyPost,
+              let current = currentImage,
+              ObjectIdentifier(current) == id else { return }
+        pendingImageReadyPost = nil
+        wsSession?.sendImageReady(postId: pending._id)
     }
 
     // MARK: - Local Display Sync (receiver)

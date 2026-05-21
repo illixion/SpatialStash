@@ -278,15 +278,21 @@ struct RemoteViewerWindowView: View {
                 // tests RealityKit entities in 3D space ahead of SwiftUI
                 // overlays, so SwiftUI .onTapGesture / Color.clear
                 // overlays in this region never see the tap.
-                SlideshowSpatial3DLayer(model: model) {
-                    controlsVisible.toggle()
-                    if controlsVisible {
-                        resetAutoHideTimer()
-                    } else {
-                        autoHideTimer?.cancel()
+                SlideshowSpatial3DLayer(
+                    model: model,
+                    onTap: {
+                        controlsVisible.toggle()
+                        if controlsVisible {
+                            resetAutoHideTimer()
+                        } else {
+                            autoHideTimer?.cancel()
+                        }
+                        nudgeWindowSizeForCalibration()
+                    },
+                    onSpatial3DGenerated: { image in
+                        model.notifySpatial3DGenerated(image: image)
                     }
-                    nudgeWindowSizeForCalibration()
-                }
+                )
             }
 
             // Current image (shown for .image type, or as static first frame while GIF converts)
