@@ -22,10 +22,10 @@ final class GraphQLVideoSource: VideoSource, @unchecked Sendable {
     func fetchVideos(page: Int, pageSize: Int, filter: SceneFilterCriteria?) async throws -> VideoFetchResult {
         // Stash uses 1-indexed pages
         let stashPage = page + 1
-        AppLogger.graphQLVideo.debug("Fetching videos page \(stashPage, privacy: .public), pageSize \(pageSize, privacy: .public), hasFilter: \(filter != nil, privacy: .public)")
+        AppLogger.graphQLVideo.log(level: AppLogger.effectiveDebugLevel, "Fetching videos page \(stashPage, privacy: .public), pageSize \(pageSize, privacy: .public), hasFilter: \(filter != nil, privacy: .public)")
 
         let result = try await apiClient.findScenes(page: stashPage, perPage: pageSize, filter: filter)
-        AppLogger.graphQLVideo.debug("Got \(result.scenes.count, privacy: .public) scenes, total: \(result.count, privacy: .public)")
+        AppLogger.graphQLVideo.log(level: AppLogger.effectiveDebugLevel, "Got \(result.scenes.count, privacy: .public) scenes, total: \(result.count, privacy: .public)")
 
         let videos = result.scenes.compactMap { scene -> GalleryVideo? in
             guard let streamURLString = scene.paths.stream,

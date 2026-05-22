@@ -22,10 +22,10 @@ final class GraphQLImageSource: ImageSource, @unchecked Sendable {
     func fetchImages(page: Int, pageSize: Int, filter: ImageFilterCriteria?) async throws -> ImageFetchResult {
         // Stash uses 1-indexed pages
         let stashPage = page + 1
-        AppLogger.graphQLImage.debug("Fetching images page \(stashPage, privacy: .public), pageSize \(pageSize, privacy: .public), hasFilter: \(filter != nil, privacy: .public)")
+        AppLogger.graphQLImage.log(level: AppLogger.effectiveDebugLevel, "Fetching images page \(stashPage, privacy: .public), pageSize \(pageSize, privacy: .public), hasFilter: \(filter != nil, privacy: .public)")
 
         let result = try await apiClient.findImages(page: stashPage, perPage: pageSize, filter: filter)
-        AppLogger.graphQLImage.debug("Got \(result.images.count, privacy: .public) images, total: \(result.count, privacy: .public)")
+        AppLogger.graphQLImage.log(level: AppLogger.effectiveDebugLevel, "Got \(result.images.count, privacy: .public) images, total: \(result.count, privacy: .public)")
 
         let images = result.images.compactMap { stashImage -> GalleryImage? in
             guard let imageURLString = stashImage.paths.image,

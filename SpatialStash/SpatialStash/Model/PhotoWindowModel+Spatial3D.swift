@@ -169,7 +169,7 @@ extension PhotoWindowModel {
             if effectiveRes > 0,
                let downsampledData = Self.createDownsampledImageData(from: sourceURL, maxDimension: CGFloat(effectiveRes)),
                let downsampledSource = CGImageSourceCreateWithData(downsampledData as CFData, nil) {
-                AppLogger.photoWindow.debug("3D conversion using downsampled source (max \(effectiveRes, privacy: .public)px)")
+                AppLogger.photoWindow.log(level: AppLogger.effectiveDebugLevel, "3D conversion using downsampled source (max \(effectiveRes, privacy: .public)px)")
                 spatial3DImage = try await ImagePresentationComponent.Spatial3DImage(imageSource: downsampledSource)
                 currentSpatial3DSourceDimension = effectiveRes
             } else {
@@ -612,7 +612,7 @@ extension PhotoWindowModel {
         if !defaultIs3D,
            let lastMode = await ImageEnhancementTracker.shared.lastViewingMode(url: imageURL),
            lastMode == .mono {
-            AppLogger.photoWindow.debug("Skipping auto-generation; last mode was 2D")
+            AppLogger.photoWindow.log(level: AppLogger.effectiveDebugLevel, "Skipping auto-generation; last mode was 2D")
             return
         }
 
@@ -623,7 +623,7 @@ extension PhotoWindowModel {
             if lastMode == .spatial3DImmersive {
                 desiredViewingMode = .spatial3DImmersive
             }
-            AppLogger.photoWindow.debug("Auto-generating spatial 3D for previously converted image")
+            AppLogger.photoWindow.log(level: AppLogger.effectiveDebugLevel, "Auto-generating spatial 3D for previously converted image")
             await generateSpatial3DImage()
         }
     }

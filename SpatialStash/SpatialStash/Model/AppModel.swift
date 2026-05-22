@@ -1736,7 +1736,7 @@ class AppModel {
         galleryLoadGeneration += 1
 
         let sourceType = String(describing: type(of: imageSource))
-        AppLogger.appModel.debug("loadInitialGallery called, source: \(sourceType, privacy: .public)")
+        AppLogger.appModel.log(level: AppLogger.effectiveDebugLevel, "loadInitialGallery called, source: \(sourceType, privacy: .public)")
         // Demo source is gated behind an explicit user opt-in to avoid silently
         // fetching from external sample URLs on launch.
         if imageSource is StaticURLImageSource && !demoImagesConfirmed {
@@ -1763,14 +1763,14 @@ class AppModel {
         guard !isLoadingGallery && hasMorePages else {
             let loading = isLoadingGallery
             let hasMore = hasMorePages
-            AppLogger.appModel.debug("loadNextPage skipped - isLoading: \(loading, privacy: .public), hasMore: \(hasMore, privacy: .public)")
+            AppLogger.appModel.log(level: AppLogger.effectiveDebugLevel, "loadNextPage skipped - isLoading: \(loading, privacy: .public), hasMore: \(hasMore, privacy: .public)")
             return
         }
 
         let generation = galleryLoadGeneration
         let page = currentPage
         let sourceTypeName = String(describing: type(of: imageSource))
-        AppLogger.appModel.debug("loadNextPage starting, page: \(page, privacy: .public), source: \(sourceTypeName, privacy: .public)")
+        AppLogger.appModel.log(level: AppLogger.effectiveDebugLevel, "loadNextPage starting, page: \(page, privacy: .public), source: \(sourceTypeName, privacy: .public)")
         isLoadingGallery = true
         defer {
             if generation == galleryLoadGeneration {
@@ -1783,10 +1783,10 @@ class AppModel {
             let result = try await imageSource.fetchImages(page: currentPage, pageSize: pageSize, filter: currentFilter)
             // Discard results if a new loadInitialGallery was called while fetching
             guard generation == galleryLoadGeneration else {
-                AppLogger.appModel.debug("loadNextPage discarding stale results (generation \(generation, privacy: .public) != \(self.galleryLoadGeneration, privacy: .public))")
+                AppLogger.appModel.log(level: AppLogger.effectiveDebugLevel, "loadNextPage discarding stale results (generation \(generation, privacy: .public) != \(self.galleryLoadGeneration, privacy: .public))")
                 return
             }
-            AppLogger.appModel.debug("loadNextPage got \(result.images.count, privacy: .public) images, hasMore: \(result.hasMore, privacy: .public)")
+            AppLogger.appModel.log(level: AppLogger.effectiveDebugLevel, "loadNextPage got \(result.images.count, privacy: .public) images, hasMore: \(result.hasMore, privacy: .public)")
             galleryImages.append(contentsOf: result.images)
             hasMorePages = result.hasMore
             currentPage += 1
@@ -1876,7 +1876,7 @@ class AppModel {
                 }
             }
             let galleriesCount = availableGalleries.count
-            AppLogger.appModel.debug("Loaded \(galleriesCount, privacy: .public) galleries for autocomplete")
+            AppLogger.appModel.log(level: AppLogger.effectiveDebugLevel, "Loaded \(galleriesCount, privacy: .public) galleries for autocomplete")
         } catch {
             AppLogger.appModel.error("Failed to search galleries: \(error.localizedDescription, privacy: .public)")
         }
@@ -2077,7 +2077,7 @@ class AppModel {
         // Bump generation so any in-flight loadNextVideoPage discards its results
         videoLoadGeneration += 1
 
-        AppLogger.appModel.debug("loadInitialVideos called")
+        AppLogger.appModel.log(level: AppLogger.effectiveDebugLevel, "loadInitialVideos called")
         // Ensure random sort has a seed for consistent pagination
         if currentVideoFilter.sortField == .random && currentVideoFilter.randomSeed == nil {
             currentVideoFilter.shuffleRandomSort()
@@ -2096,13 +2096,13 @@ class AppModel {
         guard !isLoadingVideos && !isLoadingVideoViewerPage && hasMoreVideoPages else {
             let loadingVideos = isLoadingVideos
             let hasMoreVideo = hasMoreVideoPages
-            AppLogger.appModel.debug("loadNextVideoPage skipped - isLoading: \(loadingVideos, privacy: .public), hasMore: \(hasMoreVideo, privacy: .public)")
+            AppLogger.appModel.log(level: AppLogger.effectiveDebugLevel, "loadNextVideoPage skipped - isLoading: \(loadingVideos, privacy: .public), hasMore: \(hasMoreVideo, privacy: .public)")
             return
         }
 
         let generation = videoLoadGeneration
         let videoPage = currentVideoPage
-        AppLogger.appModel.debug("loadNextVideoPage starting, page: \(videoPage, privacy: .public)")
+        AppLogger.appModel.log(level: AppLogger.effectiveDebugLevel, "loadNextVideoPage starting, page: \(videoPage, privacy: .public)")
         isLoadingVideos = true
         defer {
             if generation == videoLoadGeneration {
@@ -2115,10 +2115,10 @@ class AppModel {
             let result = try await videoSource.fetchVideos(page: currentVideoPage, pageSize: pageSize, filter: currentVideoFilter)
             // Discard results if a new loadInitialVideos was called while fetching
             guard generation == videoLoadGeneration else {
-                AppLogger.appModel.debug("loadNextVideoPage discarding stale results")
+                AppLogger.appModel.log(level: AppLogger.effectiveDebugLevel, "loadNextVideoPage discarding stale results")
                 return
             }
-            AppLogger.appModel.debug("loadNextVideoPage got \(result.videos.count, privacy: .public) videos, hasMore: \(result.hasMore, privacy: .public)")
+            AppLogger.appModel.log(level: AppLogger.effectiveDebugLevel, "loadNextVideoPage got \(result.videos.count, privacy: .public) videos, hasMore: \(result.hasMore, privacy: .public)")
             galleryVideos.append(contentsOf: result.videos)
             hasMoreVideoPages = result.hasMore
             currentVideoPage += 1
@@ -2142,7 +2142,7 @@ class AppModel {
         do {
             let result = try await videoSource.fetchVideos(page: currentVideoPage, pageSize: pageSize, filter: viewerVideoFilter)
             guard generation == videoLoadGeneration else { return }
-            AppLogger.appModel.debug("Viewer loaded \(result.videos.count, privacy: .public) more videos")
+            AppLogger.appModel.log(level: AppLogger.effectiveDebugLevel, "Viewer loaded \(result.videos.count, privacy: .public) more videos")
             galleryVideos.append(contentsOf: result.videos)
             hasMoreVideoPages = result.hasMore
             currentVideoPage += 1

@@ -121,14 +121,14 @@ actor SharedMediaCache {
             let isTooOld = now.timeIntervalSince(entry.cachedDate) > maxAge
 
             if !fileExists {
-                AppLogger.sharedMedia.debug("Removing manifest entry for missing file: \(entry.cachedFileName, privacy: .public)")
+                AppLogger.sharedMedia.log(level: AppLogger.effectiveDebugLevel, "Removing manifest entry for missing file: \(entry.cachedFileName, privacy: .public)")
                 removedCount += 1
                 return true
             }
 
             if isTooOld {
                 try? fileManager.removeItem(at: fileURL)
-                AppLogger.sharedMedia.debug("Removing expired cache entry: \(entry.cachedFileName, privacy: .public)")
+                AppLogger.sharedMedia.log(level: AppLogger.effectiveDebugLevel, "Removing expired cache entry: \(entry.cachedFileName, privacy: .public)")
                 removedCount += 1
                 return true
             }
@@ -145,7 +145,7 @@ actor SharedMediaCache {
                 if !trackedFileNames.contains(fileName) {
                     let fileURL = cacheDirectory.appendingPathComponent(fileName)
                     try? fileManager.removeItem(at: fileURL)
-                    AppLogger.sharedMedia.debug("Deleted untracked cache file: \(fileName, privacy: .public)")
+                    AppLogger.sharedMedia.log(level: AppLogger.effectiveDebugLevel, "Deleted untracked cache file: \(fileName, privacy: .public)")
                     removedCount += 1
                 }
             }

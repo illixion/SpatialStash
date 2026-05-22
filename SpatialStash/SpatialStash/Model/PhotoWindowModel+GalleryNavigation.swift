@@ -205,7 +205,7 @@ extension PhotoWindowModel {
             galleryImages.append(contentsOf: result.images)
             hasMorePages = result.hasMore
             currentPage += 1
-            AppLogger.photoWindow.debug("Loaded \(result.images.count, privacy: .public) more images for window, total: \(self.galleryImages.count, privacy: .public)")
+            AppLogger.photoWindow.log(level: AppLogger.effectiveDebugLevel, "Loaded \(result.images.count, privacy: .public) more images for window, total: \(self.galleryImages.count, privacy: .public)")
         } catch {
             AppLogger.photoWindow.error("Failed to load more images for window: \(error.localizedDescription, privacy: .public)")
         }

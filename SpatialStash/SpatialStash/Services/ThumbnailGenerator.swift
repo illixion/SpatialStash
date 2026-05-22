@@ -93,7 +93,7 @@ actor ThumbnailGenerator {
             }
         }
 
-        AppLogger.imageLoader.debug("Failed to create video thumbnail for: \(url.lastPathComponent, privacy: .private)")
+        AppLogger.imageLoader.log(level: AppLogger.effectiveDebugLevel, "Failed to create video thumbnail for: \(url.lastPathComponent, privacy: .private)")
         return nil
     }
 

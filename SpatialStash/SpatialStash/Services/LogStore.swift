@@ -6,6 +6,7 @@
  */
 
 import Foundation
+import os
 import OSLog
 
 /// Log severity level for in-app console display
@@ -80,6 +81,16 @@ final class LogStore {
     /// looking.
     private var viewerCount: Int = 0
 
+    /// Nonisolated mirror of `viewerCount > 0` so `AppLogger` can cheaply
+    /// check from any thread whether to promote `.debug` calls to `.info`
+    /// (the unified log drops `.debug` from the persistent store by default,
+    /// hiding them from OSLogStore polling and the in-app console).
+    nonisolated static var hasActiveViewers: Bool {
+        activeViewersFlag.withLock { $0 }
+    }
+
+    nonisolated private static let activeViewersFlag = OSAllocatedUnfairLock<Bool>(initialState: false)
+
     private init() {}
 
     /// Register a console view/window as active. Starts polling on first
@@ -87,6 +98,7 @@ final class LogStore {
     func addViewer() {
         viewerCount += 1
         if viewerCount == 1 {
+            Self.activeViewersFlag.withLock { $0 = true }
             startPolling()
         }
     }
@@ -97,6 +109,7 @@ final class LogStore {
         guard viewerCount > 0 else { return }
         viewerCount -= 1
         if viewerCount == 0 {
+            Self.activeViewersFlag.withLock { $0 = false }
             stopPolling()
             entries.removeAll()
             categoriesSet.removeAll()

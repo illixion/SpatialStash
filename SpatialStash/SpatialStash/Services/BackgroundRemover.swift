@@ -80,7 +80,7 @@ actor BackgroundRemover {
         // already-cut-out subject. Skip diorama for these — callers fall
         // back to the plain image display.
         if Self.hasSignificantTransparency(sourceCG) {
-            AppLogger.backgroundRemover.debug("Skipping diorama: source has transparent background")
+            AppLogger.backgroundRemover.log(level: AppLogger.effectiveDebugLevel, "Skipping diorama: source has transparent background")
             return (nil, nil)
         }
 
@@ -136,7 +136,7 @@ actor BackgroundRemover {
                 AppLogger.backgroundRemover.warning("Failed to render diorama foreground CGImage")
                 return nil
             }
-            AppLogger.backgroundRemover.debug(
+            AppLogger.backgroundRemover.log(level: AppLogger.effectiveDebugLevel, 
                 "Generated diorama foreground: \(outputCGImage.width, privacy: .public)×\(outputCGImage.height, privacy: .public), alphaInfo=\(String(describing: outputCGImage.alphaInfo), privacy: .public)"
             )
             return UIImage(cgImage: outputCGImage, scale: image.scale, orientation: image.imageOrientation)

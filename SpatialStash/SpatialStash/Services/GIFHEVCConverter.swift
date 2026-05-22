@@ -47,7 +47,7 @@ actor GIFHEVCConverter {
     func convert(gifData: Data, sourceURL: URL) async throws -> URL {
         // Check cache first
         if let cachedURL = await DiskGIFHEVCCache.shared.cachedFileURL(for: sourceURL) {
-            AppLogger.gifConverter.debug("Cache hit for GIF HEVC: \(sourceURL.lastPathComponent, privacy: .public)")
+            AppLogger.gifConverter.log(level: AppLogger.effectiveDebugLevel, "Cache hit for GIF HEVC: \(sourceURL.lastPathComponent, privacy: .public)")
             return cachedURL
         }
 

@@ -2,10 +2,36 @@ import Foundation
 import os
 
 /// Centralized logging facility for SpatialStash
-/// Uses Apple's os.Logger API for structured, performant logging
+/// Uses Apple's os.Logger API for structured, performant logging.
+///
+/// **Debug visibility note:** `os.Logger.debug(...)` entries are not
+/// preserved by OSLogStore on visionOS — they live only in the in-memory
+/// ring buffer, so they don't show up in the in-app debug console even
+/// when the level filter is set to Debug. Call sites that want their
+/// entries visible in the console should use `Logger.log(level:_:)` with
+/// `effectiveDebugLevel` so the level is promoted to `.info` while a
+/// console window is open and stays `.debug` otherwise.
+///
+/// Example:
+/// ```
+/// AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel,
+///                            "post \(id, privacy: .public)")
+/// ```
+///
+/// `OSLogMessage` is a compiler-special type that cannot be passed
+/// through wrapper functions, which forces this call-site pattern rather
+/// than a custom Logger subtype.
 enum AppLogger {
     /// App bundle identifier used as the logging subsystem
     private static let subsystem = Bundle.main.bundleIdentifier ?? "com.illixion.spatial-stash"
+
+    /// `.info` while at least one console viewer is registered, `.debug`
+    /// otherwise. Cheap to read (single unfair-lock-protected Bool).
+    /// Pass this to `Logger.log(level:_:)` for entries that should be
+    /// visible in the in-app debug console.
+    static var effectiveDebugLevel: OSLogType {
+        LogStore.hasActiveViewers ? .info : .debug
+    }
 
     // MARK: - Logger Categories
 
