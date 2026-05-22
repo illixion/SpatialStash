@@ -49,6 +49,10 @@ enum RemoteWSMessage {
     /// Server rejected the upgrade with close code 1008 (policy violation).
     /// Emitted once; reconnects are halted until the next explicit connect.
     case fatalAuthError(reason: String)
+    /// Channel-scoped notification fired when a refill returned zero rows
+    /// for a non-empty tag query (typo'd `setModTags`, unsatisfiable combo).
+    /// Informational only — the slideshow stays on its current image.
+    case searchEmpty(query: String)
 }
 
 /// One logical viewer session multiplexed onto a shared connection.
@@ -458,12 +462,12 @@ class RemoteWebSocketClient {
         guard let data = text.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let action = json["action"] as? String else {
-            AppLogger.remoteViewer.debug("WS rx (unparseable): \(text.prefix(200), privacy: .public)")
+            AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "WS rx (unparseable): \(text.prefix(200), privacy: .public)")
             return
         }
 
         let payload = json["payload"]
-        AppLogger.remoteViewer.debug("WS rx action=\(action, privacy: .public)")
+        AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "WS rx action=\(action, privacy: .public)")
 
         switch action {
         case "tagLists":
@@ -549,6 +553,10 @@ class RemoteWebSocketClient {
                 }
             }
 
+        case "searchEmpty":
+            let query = (payload as? [String: Any])?["query"] as? String ?? ""
+            broadcastToSessions(.searchEmpty(query: query))
+
         case "ping":
             // Server-initiated liveness probe. Reply immediately so it
             // doesn't decide we're a dead client.
@@ -560,7 +568,7 @@ class RemoteWebSocketClient {
             break
 
         default:
-            AppLogger.remoteViewer.debug("Unknown WS action: \(action, privacy: .public)")
+            AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "Unknown WS action: \(action, privacy: .public)")
         }
     }
 
@@ -589,7 +597,7 @@ class RemoteWebSocketClient {
             if Task.isCancelled { return }
             guard webSocketTask != nil else { return }
             let sentAt = Date()
-            AppLogger.remoteViewer.debug("WebSocket sending keepalive ping")
+            AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "WebSocket sending keepalive ping")
             sendJSON(["action": "ping"])
             try? await Task.sleep(for: .seconds(Self.pongTimeout))
             if Task.isCancelled { return }

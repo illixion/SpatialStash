@@ -375,10 +375,18 @@ class RemoteViewerModel: SlideshowEngine {
                 // server's readiness barrier will hold the channel open
                 // until we (or the bad-network fallback) report.
                 pendingImageReadyPost = post
+                AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "imageReady deferred for post \(post._id, privacy: .public) — waiting on 3D generation")
             } else {
                 pendingImageReadyPost = nil
-                wsSession?.sendImageReady(postId: post._id)
+                if wsSession == nil {
+                    AppLogger.remoteViewer.warning("imageReady not sent for post \(post._id, privacy: .public) — wsSession is nil")
+                } else {
+                    AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "imageReady sent for post \(post._id, privacy: .public)")
+                    wsSession?.sendImageReady(postId: post._id)
+                }
             }
+        } else {
+            AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "imageReady suppressed for post \(post._id, privacy: .public) — applying incoming local sync")
         }
 
         // Local broadcast — gallery mode only. In remote mode each window
@@ -421,6 +429,7 @@ class RemoteViewerModel: SlideshowEngine {
               let current = currentImage,
               ObjectIdentifier(current) == id else { return }
         pendingImageReadyPost = nil
+        AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "imageReady released for post \(pending._id, privacy: .public) — 3D generation completed")
         wsSession?.sendImageReady(postId: pending._id)
     }
 
@@ -470,6 +479,17 @@ class RemoteViewerModel: SlideshowEngine {
             currentPost = newPost
             currentMediaType = payload.currentMediaType
             isCurrentPostAnimatedGIF = payload.isCurrentPostAnimatedGIF
+            // Rebuild the Metal texture to match the swapped image so the
+            // window view doesn't keep rendering the previous post's texture.
+            Task { [weak self] in
+                guard let self else { return }
+                let tex = await Self.makeTexture(from: newImage)
+                // Only apply if the image is still the displayed one — a
+                // navigation/sync may have moved on in the meantime.
+                if self.currentImage === newImage {
+                    self.currentTexture = tex
+                }
+            }
             return
         }
 
@@ -597,6 +617,9 @@ class RemoteViewerModel: SlideshowEngine {
         case .playback(let payload):
             handlePlaybackFrame(payload)
 
+        case .searchEmpty(let query):
+            AppLogger.remoteViewer.warning("WS searchEmpty: refill returned zero rows for query \"\(query, privacy: .public)\"")
+
         case .fatalAuthError(let reason):
             // Server closed the upgrade with 1008. The WS client has
             // already halted reconnects; surface the reason so the user
@@ -670,6 +693,15 @@ class RemoteViewerModel: SlideshowEngine {
                 // cold-start wait so the next loading phase blocks on
                 // the fresh prefetch instead of flashing the failure
                 // placeholder.
+                //
+                // Reset the provider FIRST so its `seenIds` dedup set
+                // doesn't reject re-enqueued ids — channels that cycle
+                // through a small post pool (e.g. two animated WebPs
+                // ping-ponging) would otherwise starve here forever:
+                // every force-advance re-enqueues already-seen ids that
+                // the provider silently drops, leaving the engine in
+                // .loading with an empty prefetch queue.
+                provider?.resetPagination()
                 provider?.enqueueFromPlayback([cur] + (next.map { [$0] } ?? []))
                 AppLogger.remoteViewer.info("playback: force-advancing to \(cur._id, privacy: .public) (was \(self.currentPost?._id ?? -1, privacy: .public))")
                 prepareForRemoteJump()

@@ -18,6 +18,14 @@ struct AnimatedImageWebView: UIViewRepresentable {
     var elementType: ElementType = .image
     var apiKey: String?
     var authorizationToken: String?
+    /// Optional pre-downloaded bytes. When supplied, the WebView decodes
+    /// them inline via a `data:` URL instead of re-fetching `imageURL` —
+    /// avoids a multi-second re-download for animated WebP/GIF where the
+    /// slideshow already holds the bytes from the prefetch step.
+    var imageData: Data?
+    /// MIME type for `imageData`. Defaults to `image/webp` (the only
+    /// caller today); video elements should pass an appropriate type.
+    var imageDataMimeType: String = "image/webp"
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -38,6 +46,7 @@ struct AnimatedImageWebView: UIViewRepresentable {
             ^ elementType.rawValue.hashValue
             ^ (apiKey ?? "").hashValue
             ^ (authorizationToken ?? "").hashValue
+            ^ (imageData?.count ?? 0)
         guard context.coordinator.loadedDigest != digest else { return }
         context.coordinator.loadedDigest = digest
 
@@ -45,6 +54,17 @@ struct AnimatedImageWebView: UIViewRepresentable {
     }
 
     private func loadMedia(webView: WKWebView) {
+        // Inline-bytes fast path: skip the network entirely by embedding
+        // a `data:` URL. WebKit decodes from memory and the animation
+        // starts as soon as the document parses.
+        if let data = imageData {
+            let base64 = data.base64EncodedString()
+            let source = "data:\(imageDataMimeType);base64,\(base64)"
+            let html = sharedHTML(body: mediaElementMarkup(source: source, isObjectURL: false))
+            webView.loadHTMLString(html, baseURL: nil)
+            return
+        }
+
         if imageURL.isFileURL {
             let htmlFile = imageURL.deletingLastPathComponent().appendingPathComponent(".spatialstash_animated_asset.html")
             try? htmlForLocalFile(relativePath: imageURL.lastPathComponent).write(to: htmlFile, atomically: true, encoding: .utf8)

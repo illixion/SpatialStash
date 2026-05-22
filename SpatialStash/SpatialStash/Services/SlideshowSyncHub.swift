@@ -25,7 +25,7 @@ struct LocalDisplaySyncPayload {
     let currentImageURL: URL?
     let currentMediaType: SlideshowEngine.SlideshowMediaType
     let isCurrentPostAnimatedGIF: Bool
-    let prefetched: [(post: RemotePost, image: UIImage, url: URL)]
+    let prefetched: [(post: RemotePost, image: UIImage, url: URL, data: Data)]
     let cachedPosts: [RemotePost]
     let delay: TimeInterval
 }

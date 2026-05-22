@@ -13,6 +13,7 @@
  */
 
 import CoreGraphics
+import Metal
 import os
 import SwiftUI
 import UIKit
@@ -57,6 +58,10 @@ class SlideshowEngine {
         case image
         case video(URL)
         case animatedGIF(URL)
+        /// Animated WebP rendered via WKWebView (browser-native animation).
+        /// The URL is the original image URL — WebKit decodes/animates the
+        /// WebP directly, no HEVC conversion needed.
+        case animatedWebP(URL)
     }
 
     static let videoExtensions: Set<String> = [
@@ -67,6 +72,18 @@ class SlideshowEngine {
 
     var currentImage: UIImage?
     var nextImage: UIImage?
+    /// GPU-private texture mirrors of `currentImage` / `nextImage`. Set
+    /// alongside the UIImages so the window view can render via Metal
+    /// (matching the photo viewer's pipeline) while UIImages remain
+    /// available for diorama / focus analysis / display sync.
+    var currentTexture: MTLTexture?
+    var nextTexture: MTLTexture?
+    /// Raw bytes for the current post when its mediaType is animated
+    /// (.animatedWebP, etc.). Passed to `AnimatedImageWebView` so WebKit
+    /// decodes from memory via a `data:` URL instead of re-fetching the
+    /// URL — startup time for an animated WebP drops from several
+    /// seconds to near-instant. Cleared on every non-animated commit.
+    var currentAnimatedData: Data?
     var currentPost: RemotePost?
     var nextPost: RemotePost?
     var currentMediaType: SlideshowMediaType = .image
@@ -284,7 +301,7 @@ class SlideshowEngine {
     private static let watchdogStuckThreshold: TimeInterval = 60
     var windowAspectRatio: Double = 16.0 / 9.0
 
-    var prefetchedImages: [(post: RemotePost, image: UIImage, url: URL)] = []
+    var prefetchedImages: [(post: RemotePost, image: UIImage, url: URL, data: Data)] = []
     private static let prefetchTarget = 3
     /// Tracks whether the prefetch task is actively running. A completed
     /// `Task` reports `isCancelled == false`, so we can't tell from the
@@ -424,7 +441,7 @@ class SlideshowEngine {
         state = newState
         stateVersion += 1
 
-        AppLogger.remoteViewer.debug("State: \(oldState.description, privacy: .public) → \(newState.description, privacy: .public)")
+        AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "State: \(oldState.description, privacy: .public) → \(newState.description, privacy: .public)")
     }
 
     // MARK: - Lifecycle
@@ -694,7 +711,7 @@ class SlideshowEngine {
                 }
             }
 
-            AppLogger.remoteViewer.debug("Run loop exited (state: \(self.state.description, privacy: .public))")
+            AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "Run loop exited (state: \(self.state.description, privacy: .public))")
         }
     }
 
@@ -736,8 +753,13 @@ class SlideshowEngine {
         if let prefetched = prefetchedImages.first {
             prefetchedImages.removeFirst()
             guard state == .loading else { return }
-            isCurrentPostAnimatedGIF = false
-            await displayImage(prefetched.image, post: prefetched.post, url: prefetched.url)
+            await displayDownloadedPost(
+                post: prefetched.post,
+                image: prefetched.image,
+                data: prefetched.data,
+                url: prefetched.url,
+                ext: prefetched.post.file_ext.lowercased()
+            )
             if state == .loading {
                 transition(to: .displaying)
             }
@@ -758,8 +780,13 @@ class SlideshowEngine {
             if let prefetched = prefetchedImages.first {
                 prefetchedImages.removeFirst()
                 guard state == .loading else { return }
-                isCurrentPostAnimatedGIF = false
-                await displayImage(prefetched.image, post: prefetched.post, url: prefetched.url)
+                await displayDownloadedPost(
+                    post: prefetched.post,
+                    image: prefetched.image,
+                    data: prefetched.data,
+                    url: prefetched.url,
+                    ext: prefetched.post.file_ext.lowercased()
+                )
                 if state == .loading {
                     transition(to: .displaying)
                 }
@@ -872,15 +899,26 @@ class SlideshowEngine {
         guard let result = await contentProvider?.downloadImage(for: post, maxResolution: effectiveDownloadResolution) else { return false }
         guard state == .loading else { return true }
 
+        await displayDownloadedPost(post: post, image: result.image, data: result.data, url: imageURL, ext: ext)
+        return true
+    }
+
+    /// Animation-aware display dispatch. Shared by `fetchAndDisplayPost`
+    /// (manual nav) and the prefetched fast-path so byte-level animation
+    /// detection (`isAnimatedGIF` / `isAnimatedWebP`) runs for every post,
+    /// not just the manual-nav case. Without this, prefetched animated
+    /// WebP / GIF would always be displayed as static via `.image`.
+    func displayDownloadedPost(post: RemotePost, image: UIImage, data: Data, url: URL, ext: String) async {
         // Animated GIF
-        if ext == "gif" && result.data.isAnimatedGIF {
+        if ext == "gif" && data.isAnimatedGIF {
             isCurrentPostAnimatedGIF = true
-            await displayImage(result.image, post: post, url: imageURL, mediaType: .image)
-            let data = result.data
+            currentAnimatedData = nil
+            await displayImage(image, post: post, url: url, mediaType: .image)
+            let bytes = data
             gifConversionTask?.cancel()
             gifConversionTask = Task { [weak self] in
                 do {
-                    let hevcURL = try await GIFHEVCConverter.shared.convert(gifData: data, sourceURL: imageURL)
+                    let hevcURL = try await GIFHEVCConverter.shared.convert(gifData: bytes, sourceURL: url)
                     guard !Task.isCancelled else { return }
                     if self?.currentPost?._id == post._id {
                         self?.currentMediaType = .animatedGIF(hevcURL)
@@ -889,12 +927,25 @@ class SlideshowEngine {
                     AppLogger.remoteViewer.warning("GIF HEVC conversion failed: \(error.localizedDescription, privacy: .public)")
                 }
             }
-            return true
+            return
+        }
+
+        // Animated WebP — WKWebView animates these natively, no conversion
+        // needed. Mark as animated so Ken Burns / 3D gates are bypassed.
+        let isAnimatedWebP = data.isAnimatedWebP
+        AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "Post \(post._id, privacy: .public) ext=\(ext, privacy: .public) isAnimatedWebP=\(isAnimatedWebP, privacy: .public) bytes=\(data.count, privacy: .public)")
+        if isAnimatedWebP {
+            isCurrentPostAnimatedGIF = true
+            // Stash the bytes so the view can hand them to WKWebView
+            // inline; cleared in the non-animated branches below.
+            currentAnimatedData = data
+            await displayImage(image, post: post, url: url, mediaType: .animatedWebP(url))
+            return
         }
 
         isCurrentPostAnimatedGIF = false
-        await displayImage(result.image, post: post, url: imageURL)
-        return true
+        currentAnimatedData = nil
+        await displayImage(image, post: post, url: url)
     }
 
     // MARK: - Display
@@ -914,6 +965,9 @@ class SlideshowEngine {
         hasDisplayedFirstMedia = true
         currentImage = nil
         nextImage = nil
+        currentTexture = nil
+        nextTexture = nil
+        currentAnimatedData = nil
         currentForegroundImage = nil
         currentBackdropImage = nil
         nextForegroundImage = nil
@@ -975,7 +1029,19 @@ class SlideshowEngine {
         if enableDiorama && mediaType == .image {
             await awaitNextDioramaReady(post: post, image: image)
             // State may have changed while awaiting (e.g. navigation away).
-            guard state == .loading || state == .displaying else { return }
+            guard state == .loading || state == .displaying else {
+                AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "displayImage post-diorama guard bailed for post \(post._id, privacy: .public) in state \(self.state.description, privacy: .public) — onPostTransitioned will not fire")
+                return
+            }
+        }
+
+        // Build the GPU-private texture for the new image in parallel with
+        // any other async work above. Falls back to nil — the window view
+        // will keep showing the UIImage path if texture creation fails.
+        let newTexture = await Self.makeTexture(from: image)
+        guard state == .loading || state == .displaying else {
+            AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "displayImage post-texture guard bailed for post \(post._id, privacy: .public) in state \(self.state.description, privacy: .public) — onPostTransitioned will not fire")
+            return
         }
 
         // Crossfade transition (skipped under reduce motion — instant switch)
@@ -984,12 +1050,14 @@ class SlideshowEngine {
             var t = Transaction(); t.disablesAnimations = true
             withTransaction(t) {
                 nextImage = image
+                nextTexture = newTexture
                 nextPost = post
                 isTransitioning = true
             }
         } else {
             withAnimation(.easeInOut(duration: 1.0)) {
                 nextImage = image
+                nextTexture = newTexture
                 nextPost = post
                 isTransitioning = true
             }
@@ -999,9 +1067,11 @@ class SlideshowEngine {
         // Commit the transition using local parameters (not nextImage/nextPost)
         // to avoid races with interleaved calls
         currentImage = image
+        currentTexture = newTexture
         currentPost = post
         currentMediaType = mediaType
         nextImage = nil
+        nextTexture = nil
         isTransitioning = false
         hasDisplayedFirstMedia = true
         lastAdvanceTime = Date()
@@ -1105,8 +1175,8 @@ class SlideshowEngine {
                 }
             }
             guard let result, !Task.isCancelled else { continue }
-            prefetchedImages.append((post: post, image: result.image, url: imageURL))
-            AppLogger.remoteViewer.debug("Prefetched post \(post._id, privacy: .public) (\(self.prefetchedImages.count, privacy: .public)/\(Self.prefetchTarget, privacy: .public))")
+            prefetchedImages.append((post: post, image: result.image, url: imageURL, data: result.data))
+            AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "Prefetched post \(post._id, privacy: .public) (\(self.prefetchedImages.count, privacy: .public)/\(Self.prefetchTarget, privacy: .public))")
 
             // Pre-process diorama foreground for the upcoming post so the
             // overlay is ready the moment it transitions in.
@@ -1118,6 +1188,20 @@ class SlideshowEngine {
         if cachedPosts.count < 5 && !isFetching {
             await fetchMorePosts()
         }
+    }
+
+    // MARK: - Texture helpers
+
+    /// Build a GPU-private MTLTexture for `image` off the main actor. The
+    /// CGImage extraction happens on the caller (main); the Metal upload
+    /// itself runs in a detached task so display setup isn't blocked.
+    nonisolated static func makeTexture(from image: UIImage) async -> MTLTexture? {
+        guard let cg = image.cgImage else { return nil }
+        let sendable: SendableTexture? = await Task.detached {
+            guard let tex = MetalImageRenderer.shared?.createTexture(from: cg) else { return nil }
+            return SendableTexture(texture: tex)
+        }.value
+        return sendable?.texture
     }
 
     // MARK: - Fetching

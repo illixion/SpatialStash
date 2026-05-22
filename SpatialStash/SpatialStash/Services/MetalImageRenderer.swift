@@ -196,6 +196,56 @@ final class MetalImageRenderer: Sendable {
         return createTexture(from: cgImage, useLossyCompression: useLossyCompression)
     }
 
+    /// Downsample image data using the same CGImageSource logic as the URL path.
+    /// Used by slideshow content providers which already hold the raw bytes from
+    /// the network (and need to keep them around for GIF / file-type detection).
+    /// - Parameters:
+    ///   - data: Encoded image bytes.
+    ///   - maxDimension: Maximum dimension for downsampling. 0 = no limit (full decode).
+    /// - Returns: Decoded UIImage, or nil on failure.
+    static func downsampledImage(from data: Data, maxDimension: CGFloat) -> UIImage? {
+        autoreleasepool {
+            guard let imageSource = CGImageSourceCreateWithData(data as CFData, nil) else {
+                return nil
+            }
+
+            let cgImage: CGImage?
+            if maxDimension <= 0 {
+                let fullOptions: [CFString: Any] = [
+                    kCGImageSourceShouldCacheImmediately: true
+                ]
+                cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, fullOptions as CFDictionary)
+            } else {
+                let nativeMaxDim: CGFloat
+                if let properties = CGImageSourceCopyPropertiesAtIndex(imageSource, 0, nil) as? [CFString: Any],
+                   let pw = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.doubleValue,
+                   let ph = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.doubleValue {
+                    nativeMaxDim = max(CGFloat(pw), CGFloat(ph))
+                } else {
+                    nativeMaxDim = 0
+                }
+
+                if nativeMaxDim > 0 && maxDimension >= nativeMaxDim {
+                    let fullOptions: [CFString: Any] = [
+                        kCGImageSourceShouldCacheImmediately: true
+                    ]
+                    cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, fullOptions as CFDictionary)
+                } else {
+                    let thumbOptions: [CFString: Any] = [
+                        kCGImageSourceThumbnailMaxPixelSize: maxDimension,
+                        kCGImageSourceCreateThumbnailFromImageAlways: true,
+                        kCGImageSourceCreateThumbnailWithTransform: true,
+                        kCGImageSourceShouldCacheImmediately: true
+                    ]
+                    cgImage = CGImageSourceCreateThumbnailAtIndex(imageSource, 0, thumbOptions as CFDictionary)
+                }
+            }
+
+            guard let cgImage else { return nil }
+            return UIImage(cgImage: cgImage)
+        }
+    }
+
     /// Downsample an image from a URL and upload directly to a GPU-private texture.
     /// Uses CGImageSource for memory-efficient decoding without loading the full image.
     /// When `forceFullDecode` is true or `maxDimension` >= native size, uses

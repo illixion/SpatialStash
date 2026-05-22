@@ -241,6 +241,21 @@ struct RemoteViewerWindowView: View {
     @ViewBuilder
     private func imageLayer(model: RemoteViewerModel) -> some View {
         ZStack {
+            // Static first-frame fallback for .animatedWebP. WKWebView
+            // takes a few hundred ms to spin up on first creation, so
+            // without this the slideshow briefly goes blank when
+            // transitioning from a static image to the first animated
+            // WebP of a session. Rendered behind the WKWebView in the
+            // ZStack so it shows through until WebKit paints, then is
+            // visually covered by the live animation.
+            if case .animatedWebP = model.currentMediaType,
+               let image = model.currentImage {
+                currentImageRenderer(model: model, image: image)
+                    .aspectRatio(image.size, contentMode: .fit)
+                    .opacity(model.isTransitioning ? 0 : 1)
+                    .clipped()
+            }
+
             // Video / animated GIF layer (WebVideoPlayerView)
             switch model.currentMediaType {
             case .video(let url):
@@ -261,6 +276,20 @@ struct RemoteViewerWindowView: View {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 // Also show the static image underneath during transition
+                .opacity(model.isTransitioning ? 0 : 1)
+
+            case .animatedWebP(let url):
+                AnimatedImageWebView(
+                    imageURL: url,
+                    elementType: .image,
+                    apiKey: nil,
+                    authorizationToken: nil,
+                    imageData: model.currentAnimatedData,
+                    imageDataMimeType: "image/webp"
+                )
+                .aspectRatio(model.currentImage?.size ?? CGSize(width: 1, height: 1), contentMode: .fit)
+                // Fade out during crossfade so the next image's static
+                // texture (or its own WebKit layer) takes over cleanly.
                 .opacity(model.isTransitioning ? 0 : 1)
 
             case .image:
@@ -298,9 +327,8 @@ struct RemoteViewerWindowView: View {
             // Current image (shown for .image type, or as static first frame while GIF converts)
             if model.currentMediaType == .image && !model.isSlideshow3DActive, let image = model.currentImage {
                 let useKenBurns = model.enableKenBurns && !model.isCurrentPostAnimatedGIF
-                Image(uiImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
+                currentImageRenderer(model: model, image: image)
+                    .aspectRatio(image.size, contentMode: .fit)
                     .scaleEffect(useKenBurns ? kenBurnsScale : 1.0)
                     .offset(useKenBurns ? kenBurnsOffset : .zero)
                     .opacity(model.isTransitioning ? 0 : 1)
@@ -353,9 +381,8 @@ struct RemoteViewerWindowView: View {
 // Next image (fading in during transition) — skipped when slideshow 3D
             // owns the rendering since that path stacks two RealityViews.
             if !model.isSlideshow3DActive, let image = model.nextImage, model.isTransitioning {
-                Image(uiImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
+                nextImageRenderer(model: model, image: image)
+                    .aspectRatio(image.size, contentMode: .fit)
                     .opacity(1)
                     .clipped()
 
@@ -390,6 +417,29 @@ struct RemoteViewerWindowView: View {
             if newType != .image {
                 resetKenBurns()
             }
+        }
+    }
+
+    /// Renders the current image via Metal when a GPU texture is available,
+    /// otherwise falls back to a SwiftUI `Image` so the slideshow never
+    /// goes blank if texture creation lags or fails.
+    @ViewBuilder
+    private func currentImageRenderer(model: RemoteViewerModel, image: UIImage) -> some View {
+        if let texture = model.currentTexture {
+            MetalImageView(texture: texture, brightness: 0, contrast: 1, saturation: 1, sharpen: 0)
+        } else {
+            Image(uiImage: image)
+                .resizable()
+        }
+    }
+
+    @ViewBuilder
+    private func nextImageRenderer(model: RemoteViewerModel, image: UIImage) -> some View {
+        if let texture = model.nextTexture {
+            MetalImageView(texture: texture, brightness: 0, contrast: 1, saturation: 1, sharpen: 0)
+        } else {
+            Image(uiImage: image)
+                .resizable()
         }
     }
 
