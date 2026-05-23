@@ -110,11 +110,17 @@ extension PhotoWindowModel {
     /// Build a GPU-private MTLTexture from a diorama UIImage off the main
     /// actor. Uses lossy compression — diorama layers are decorative, not
     /// the primary view of the image, so the GPU memory savings beat the
-    /// imperceptible color delta from compression.
+    /// imperceptible color delta from compression. Transparent-edge
+    /// auto-crop is disabled: the foreground holds the masked subject
+    /// inside a full-source-frame canvas, and cropping its transparent
+    /// margins shifts the subject so it no longer registers with the
+    /// backdrop at the same window aspect. The backdrop has no
+    /// transparent margins to begin with, so skipping the crop there is
+    /// a safe no-op.
     nonisolated static func uploadDioramaTexture(_ image: UIImage) async -> MTLTexture? {
         guard let cg = image.cgImage else { return nil }
         let sendable: SendableTexture? = await Task.detached {
-            guard let tex = MetalImageRenderer.shared?.createTexture(from: cg, useLossyCompression: true) else { return nil }
+            guard let tex = MetalImageRenderer.shared?.createTexture(from: cg, useLossyCompression: true, autoCropTransparentEdges: false) else { return nil }
             return SendableTexture(texture: tex)
         }.value
         return sendable?.texture

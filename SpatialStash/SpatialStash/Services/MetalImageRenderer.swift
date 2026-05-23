@@ -102,8 +102,13 @@ final class MetalImageRenderer: Sendable {
     /// Auto-crops fully transparent margins from the source so PNG / HEIC /
     /// JXL / WebP images with empty alpha borders display at their visible
     /// extents rather than at the raw image extents.
-    func createTexture(from cgImage: CGImage, useLossyCompression: Bool = false) -> MTLTexture? {
-        let cgImage = TransparentEdgeCropper.crop(cgImage)
+    /// Pass `autoCropTransparentEdges: false` for images where transparent
+    /// borders are load-bearing — notably the diorama foreground, which
+    /// holds the masked subject inside a full-source-frame canvas; cropping
+    /// shifts and shrinks the subject so it no longer registers with the
+    /// backdrop layer at the same window aspect.
+    func createTexture(from cgImage: CGImage, useLossyCompression: Bool = false, autoCropTransparentEdges: Bool = true) -> MTLTexture? {
+        let cgImage = autoCropTransparentEdges ? TransparentEdgeCropper.crop(cgImage) : cgImage
         let width = cgImage.width
         let height = cgImage.height
         guard width > 0, height > 0 else { return nil }

@@ -411,11 +411,14 @@ class SlideshowEngine {
     /// Upload a diorama UIImage to a GPU-private MTLTexture off the main
     /// actor. Uses lossy compression — diorama is a decorative overlay,
     /// the small color delta from lossy texture compression is invisible
-    /// next to the base layer's rendering.
+    /// next to the base layer's rendering. Transparent-edge auto-crop is
+    /// disabled so the foreground stays at the full source frame size —
+    /// see PhotoWindowModel+Diorama.uploadDioramaTexture for the
+    /// rationale.
     nonisolated static func uploadDioramaTexture(_ image: UIImage?) async -> MTLTexture? {
         guard let image, let cg = image.cgImage else { return nil }
         let sendable: SendableTexture? = await Task.detached {
-            guard let tex = MetalImageRenderer.shared?.createTexture(from: cg, useLossyCompression: true) else { return nil }
+            guard let tex = MetalImageRenderer.shared?.createTexture(from: cg, useLossyCompression: true, autoCropTransparentEdges: false) else { return nil }
             return SendableTexture(texture: tex)
         }.value
         return sendable?.texture
