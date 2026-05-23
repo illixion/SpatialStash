@@ -345,13 +345,38 @@ struct SlideshowSpatial3DSlotView: View {
             ipc.desiredViewingMode = immersive ? .spatial3DImmersive : .spatial3D
             entity.components.set(ipc)
             loadedKey = key
-            // Kick off the depth-map generation in the background so the
-            // next image's 3D conversion is ready in the hidden instance
-            // by the time it gets promoted to current.
-            try await spatial.generate()
-            // Notify the model so the WS `imageReady` gate can release
-            // if it was waiting on this generation to finish.
-            onSpatial3DGenerated(image)
+            // Kick off the depth-map generation in a detached task that
+            // captures the entity and Spatial3DImage strongly. RealityKit's
+            // generate() ignores Swift cooperative cancellation and crashes
+            // inside REImagePresentationComponentNotifySpatial3DImageGenerationProgress
+            // if the entity (and thus the IPC component slot) is freed
+            // before the progress callbacks finish firing — which is
+            // exactly what happens when the slideshow window closes while
+            // generation is still in flight. Holding strong refs through
+            // the detached task keeps the IPC alive past the SwiftUI
+            // teardown so the callbacks land on valid memory.
+            let heldEntity = entity
+            let heldSpatial = spatial
+            let onGenerated = onSpatial3DGenerated
+            let generatedImage = image
+            // Unstructured Task (not Task.detached) so it inherits the
+            // main actor without crossing the Sendable boundary, and not
+            // a child of the SwiftUI .task body so it isn't cancelled
+            // when this view goes away. We deliberately do NOT cancel it
+            // on dismissal — generate() ignores cooperative cancellation
+            // anyway, and letting it run to completion is what keeps the
+            // IPC alive through the progress callbacks.
+            Task { @MainActor in
+                do {
+                    try await heldSpatial.generate()
+                } catch {
+                    AppLogger.remoteViewer.warning("SlideshowSpatial3DView: spatial.generate() failed: \(error.localizedDescription, privacy: .public)")
+                }
+                onGenerated(generatedImage)
+                // Explicit reference so the optimizer doesn't release the
+                // entity before generate's progress callbacks complete.
+                _ = heldEntity
+            }
         } catch {
             AppLogger.remoteViewer.warning("SlideshowSpatial3DView: Spatial3DImage init failed: \(error.localizedDescription, privacy: .public)")
         }
