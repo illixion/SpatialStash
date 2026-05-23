@@ -26,6 +26,11 @@ struct VideoOrnamentsView: View {
     var onGalleryButtonTap: () -> Void
     /// Custom pop-out action (used by pushed windows to open a new window and dismiss self)
     var onPopOut: (() -> Void)? = nil
+    /// Called with `true` when a Menu drop-down, popover, or sheet opens
+    /// and `false` when it closes. The host uses this to pause its
+    /// auto-hide timer so the ornament doesn't vanish out from under
+    /// the user's selection.
+    var onChromeBlockingChange: ((Bool) -> Void)? = nil
     @State private var showMediaInfo = false
     @State private var showAdjustmentsPopover = false
 
@@ -217,46 +222,55 @@ struct VideoOrnamentsView: View {
 
     private var moreMenu: some View {
         Menu {
-            // Visual Adjustments
-            Button {
-                showAdjustmentsPopover.toggle()
-            } label: {
-                Label("Adjustments", systemImage: "slider.horizontal.3")
-            }
-
-            // Flip video
-            Button {
-                withAnimation(.easeInOut(duration: 0.3)) {
-                    appModel.isVideoFlipped.toggle()
-                }
-            } label: {
-                Label(
-                    appModel.isVideoFlipped ? "Unflip" : "Flip",
-                    systemImage: "arrow.left.and.right.righttriangle.left.righttriangle.right"
-                )
-            }
-
-            // Slideshow
-            Button {
-                launchGallerySlideshow()
-            } label: {
-                Label("Slideshow", systemImage: "play.fill")
-            }
-
-            // Pop out (only for pushed windows)
-            if wasPushed {
-                Divider()
-
+            // Tracker fires onAppear when the Menu's content panel
+            // appears (i.e. the menu opens) and onDisappear when it
+            // closes — lets us pause the host's auto-hide timer so the
+            // ornament doesn't vanish while the user is browsing the
+            // menu. Same pattern as PhotoOrnamentView.moreMenu.
+            Group {
+                // Visual Adjustments
                 Button {
-                    if let onPopOut {
-                        onPopOut()
-                    } else {
-                        popOutVideo()
+                    showAdjustmentsPopover.toggle()
+                } label: {
+                    Label("Adjustments", systemImage: "slider.horizontal.3")
+                }
+
+                // Flip video
+                Button {
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        appModel.isVideoFlipped.toggle()
                     }
                 } label: {
-                    Label("Pop Out", systemImage: "rectangle.portrait.and.arrow.forward")
+                    Label(
+                        appModel.isVideoFlipped ? "Unflip" : "Flip",
+                        systemImage: "arrow.left.and.right.righttriangle.left.righttriangle.right"
+                    )
+                }
+
+                // Slideshow
+                Button {
+                    launchGallerySlideshow()
+                } label: {
+                    Label("Slideshow", systemImage: "play.fill")
+                }
+
+                // Pop out (only for pushed windows)
+                if wasPushed {
+                    Divider()
+
+                    Button {
+                        if let onPopOut {
+                            onPopOut()
+                        } else {
+                            popOutVideo()
+                        }
+                    } label: {
+                        Label("Pop Out", systemImage: "rectangle.portrait.and.arrow.forward")
+                    }
                 }
             }
+            .onAppear { onChromeBlockingChange?(true) }
+            .onDisappear { onChromeBlockingChange?(false) }
         } label: {
             Image(systemName: "ellipsis.circle")
                 .font(.title3)
@@ -278,6 +292,9 @@ struct VideoOrnamentsView: View {
                 ),
                 showAutoEnhance: false
             )
+        }
+        .onChange(of: showAdjustmentsPopover) { _, isOpen in
+            onChromeBlockingChange?(isOpen)
         }
     }
 

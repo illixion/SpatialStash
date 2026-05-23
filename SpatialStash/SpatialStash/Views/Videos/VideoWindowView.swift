@@ -23,6 +23,11 @@ struct VideoWindowView: View {
     @State private var isWindowControlsHidden = false
     @State private var autoHideTask: Task<Void, Never>?
     @State private var windowControlsHideTask: Task<Void, Never>?
+    /// Counts open ornament menus / popovers (More menu, Adjustments).
+    /// `>0` pauses the auto-hide timer so the ornament doesn't vanish
+    /// out from under the user mid-selection. Same approach as
+    /// PhotoWindowModel.openOrnamentMenuCount.
+    @State private var chromeBlockCount: Int = 0
     @State private var stereoscopicOverride: Bool?
     @State private var video3DSettings: Video3DSettings?
     /// Prevents onDisappear from clearing selectedVideo when popping out to a standalone window
@@ -212,7 +217,18 @@ struct VideoWindowView: View {
                 )
                 openWindow(id: "video-detail", value: windowValue)
                 dismissWindow()
-            } : nil
+            } : nil,
+            onChromeBlockingChange: { opened in
+                if opened {
+                    chromeBlockCount += 1
+                    cancelAutoHideTimer()
+                } else {
+                    chromeBlockCount = max(0, chromeBlockCount - 1)
+                    if chromeBlockCount == 0 {
+                        startAutoHideTimer()
+                    }
+                }
+            }
         )
     }
 
