@@ -357,10 +357,15 @@ struct RemoteViewerWindowView: View {
                 // fade-in when the diorama layers materialize after
                 // fire-and-forget generation, instead of snapping in.
                 Group {
-                    if dioramaVisible, let backdrop = model.currentBackdropImage {
-                        Image(uiImage: backdrop)
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
+                    if dioramaVisible, let backdrop = model.currentBackdropTexture {
+                        MetalImageView(
+                            texture: backdrop,
+                            brightness: Float(model.effectiveBrightness),
+                            contrast: Float(model.effectiveContrast),
+                            saturation: Float(model.effectiveSaturation),
+                            sharpen: 0
+                        )
+                            .aspectRatio(CGFloat(backdrop.width) / CGFloat(backdrop.height), contentMode: .fit)
                             .scaleEffect(useKenBurns ? kenBurnsScale : 1.0)
                             .offset(useKenBurns ? kenBurnsOffset : .zero)
                             .opacity(model.isTransitioning ? 0 : 1)
@@ -369,10 +374,15 @@ struct RemoteViewerWindowView: View {
                             .transition(.opacity)
                     }
 
-                    if dioramaVisible, let foreground = model.currentForegroundImage {
-                        Image(uiImage: foreground)
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
+                    if dioramaVisible, let foreground = model.currentForegroundTexture {
+                        MetalImageView(
+                            texture: foreground,
+                            brightness: Float(model.effectiveBrightness),
+                            contrast: Float(model.effectiveContrast),
+                            saturation: Float(model.effectiveSaturation),
+                            sharpen: 0
+                        )
+                            .aspectRatio(CGFloat(foreground.width) / CGFloat(foreground.height), contentMode: .fit)
                             .scaleEffect(useKenBurns ? kenBurnsScale : 1.0)
                             .offset(useKenBurns ? kenBurnsOffset : .zero)
                             .opacity(model.isTransitioning ? 0 : 1)
@@ -382,12 +392,9 @@ struct RemoteViewerWindowView: View {
                             .transition(.opacity)
                     }
                 }
-                .brightness(model.effectiveBrightness)
-                .contrast(model.effectiveContrast)
-                .saturation(model.effectiveSaturation)
                 .animation(appModel.effectiveReduceMotion ? nil : .easeInOut(duration: 0.5), value: dioramaVisible)
-                .animation(appModel.effectiveReduceMotion ? nil : .easeInOut(duration: 0.5), value: model.currentForegroundImage != nil)
-                .animation(appModel.effectiveReduceMotion ? nil : .easeInOut(duration: 0.5), value: model.currentBackdropImage != nil)
+                .animation(appModel.effectiveReduceMotion ? nil : .easeInOut(duration: 0.5), value: model.currentForegroundTexture != nil)
+                .animation(appModel.effectiveReduceMotion ? nil : .easeInOut(duration: 0.5), value: model.currentBackdropTexture != nil)
             }
 
 // Next image (fading in during transition) — skipped when slideshow 3D
@@ -398,26 +405,30 @@ struct RemoteViewerWindowView: View {
                     .opacity(1)
                     .clipped()
 
-                if model.enableDiorama, let backdrop = model.nextBackdropImage {
-                    Image(uiImage: backdrop)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
+                if model.enableDiorama, let backdrop = model.nextBackdropTexture {
+                    MetalImageView(
+                        texture: backdrop,
+                        brightness: Float(model.effectiveBrightness),
+                        contrast: Float(model.effectiveContrast),
+                        saturation: Float(model.effectiveSaturation),
+                        sharpen: 0
+                    )
+                        .aspectRatio(CGFloat(backdrop.width) / CGFloat(backdrop.height), contentMode: .fit)
                         .clipped()
                         .allowsHitTesting(false)
-                        .brightness(model.effectiveBrightness)
-                        .contrast(model.effectiveContrast)
-                        .saturation(model.effectiveSaturation)
                 }
-                if model.enableDiorama, let foreground = model.nextForegroundImage {
-                    Image(uiImage: foreground)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
+                if model.enableDiorama, let foreground = model.nextForegroundTexture {
+                    MetalImageView(
+                        texture: foreground,
+                        brightness: Float(model.effectiveBrightness),
+                        contrast: Float(model.effectiveContrast),
+                        saturation: Float(model.effectiveSaturation),
+                        sharpen: 0
+                    )
+                        .aspectRatio(CGFloat(foreground.width) / CGFloat(foreground.height), contentMode: .fit)
                         .clipped()
                         .offset(z: appModel.dioramaDistance)
                         .allowsHitTesting(false)
-                        .brightness(model.effectiveBrightness)
-                        .contrast(model.effectiveContrast)
-                        .saturation(model.effectiveSaturation)
                 }
             }
         }

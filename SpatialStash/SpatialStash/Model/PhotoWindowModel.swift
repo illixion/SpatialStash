@@ -146,13 +146,17 @@ class PhotoWindowModel {
     // MARK: - Diorama State
 
     /// Uncropped foreground (full source frame, transparent background) used
-    /// for the diorama overlay. Loaded from cache or generated on demand.
-    var dioramaForegroundImage: UIImage? = nil
+    /// for the diorama overlay. Stored as a GPU-private MTLTexture so its
+    /// pixels live in GPU memory (not dirty CPU pages) — escapes jetsam
+    /// accounting and benefits from Apple Silicon lossless compression.
+    /// Deep-color sources (>8-bit) ride an rgba16Float texture all the way
+    /// through, matching the base image's color fidelity.
+    var dioramaForegroundTexture: MTLTexture? = nil
 
     /// Subject-blurred backdrop. The original image with the subject region
     /// gaussian-blurred so the floating foreground doesn't reveal a doubled
     /// silhouette behind it when viewed off-axis. Same dimensions as source.
-    var dioramaBackdropImage: UIImage? = nil
+    var dioramaBackdropTexture: MTLTexture? = nil
 
     /// Whether diorama foreground generation is currently running.
     var isProcessingDiorama: Bool = false

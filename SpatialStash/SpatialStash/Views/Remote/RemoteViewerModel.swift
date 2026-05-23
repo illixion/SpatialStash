@@ -307,7 +307,7 @@ class RemoteViewerModel: SlideshowEngine {
             // When toggled on while a post is already displayed, kick off
             // foreground generation so the overlay appears without waiting
             // for the next slide to advance.
-            if newValue, let post = currentPost, let image = currentImage, currentForegroundImage == nil {
+            if newValue, let post = currentPost, let image = currentImage, currentForegroundTexture == nil {
                 generateDioramaForeground(post: post, image: image, isCurrent: true)
             }
         }

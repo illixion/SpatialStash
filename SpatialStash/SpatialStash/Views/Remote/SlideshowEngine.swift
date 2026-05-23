@@ -235,19 +235,23 @@ class SlideshowEngine {
     var reduceMotion: Bool = false
 
     /// Uncropped foreground for the currently displayed post, when diorama
-    /// is enabled. Nil while still being generated or when diorama is off.
-    var currentForegroundImage: UIImage?
+    /// is enabled. GPU-private MTLTexture so the pixels live in GPU
+    /// memory and don't count toward jetsam-tracked dirty CPU pages;
+    /// rgba16Float when the source is deep color so the diorama matches
+    /// the base image's color fidelity. Nil while still being generated
+    /// or when diorama is off.
+    var currentForegroundTexture: MTLTexture?
 
     /// Subject-blurred backdrop for the currently displayed post — replaces
     /// the original as the base layer when diorama is on so the floating
     /// foreground doesn't expose a doubled silhouette.
-    var currentBackdropImage: UIImage?
+    var currentBackdropTexture: MTLTexture?
 
     /// Uncropped foreground for the prefetched next post.
-    var nextForegroundImage: UIImage?
+    var nextForegroundTexture: MTLTexture?
 
     /// Subject-blurred backdrop for the prefetched next post.
-    var nextBackdropImage: UIImage?
+    var nextBackdropTexture: MTLTexture?
 
     /// Tracks foreground generation tasks keyed by post id so we can cancel
     /// in-flight work when navigating away or disabling diorama.
@@ -258,7 +262,7 @@ class SlideshowEngine {
     /// (especially during prefetch), so results land here first and the
     /// transition pulls from this cache when wiring up the slots. Cleared
     /// alongside the slots in `clearDioramaForegrounds`.
-    private var dioramaCache: [Int: (foreground: UIImage?, backdrop: UIImage?)] = [:]
+    private var dioramaCache: [Int: (foreground: MTLTexture?, backdrop: MTLTexture?)] = [:]
 
     // MARK: - Content Provider & Tag List Manager
 
@@ -342,17 +346,24 @@ class SlideshowEngine {
             do {
                 let pair = try await BackgroundRemover.shared.generateDioramaPair(from: image)
                 guard !Task.isCancelled, let self else { return }
+                // Upload to GPU-private textures so the diorama layers
+                // ride the same memory path as the base image (escape
+                // jetsam-tracked dirty pages, get OS purging). Deep-color
+                // sources stay rgba16Float end-to-end.
+                let foregroundTexture: MTLTexture? = await Self.uploadDioramaTexture(pair.foreground)
+                let backdropTexture: MTLTexture? = await Self.uploadDioramaTexture(pair.backdrop)
+                guard !Task.isCancelled else { return }
                 // Cache by id first — the post may not be in any slot yet
                 // (typical during prefetch), and discarding the result here
                 // is what caused the foreground to pop in after the
                 // crossfade completed.
-                self.dioramaCache[postId] = pair
+                self.dioramaCache[postId] = (foreground: foregroundTexture, backdrop: backdropTexture)
                 if isCurrent, self.currentPost?.id == postId {
-                    self.currentForegroundImage = pair.foreground
-                    self.currentBackdropImage = pair.backdrop
+                    self.currentForegroundTexture = foregroundTexture
+                    self.currentBackdropTexture = backdropTexture
                 } else if self.nextPost?.id == postId {
-                    self.nextForegroundImage = pair.foreground
-                    self.nextBackdropImage = pair.backdrop
+                    self.nextForegroundTexture = foregroundTexture
+                    self.nextBackdropTexture = backdropTexture
                 }
             } catch {
                 // Generation can fail on unsupported formats; silently skip.
@@ -369,8 +380,8 @@ class SlideshowEngine {
     func awaitNextDioramaReady(post: RemotePost, image: UIImage) async {
         guard enableDiorama else { return }
         if let cached = dioramaCache[post.id] {
-            nextForegroundImage = cached.foreground
-            nextBackdropImage = cached.backdrop
+            nextForegroundTexture = cached.foreground
+            nextBackdropTexture = cached.backdrop
             return
         }
         // Reuse in-flight prefetch task if present; otherwise kick one off.
@@ -381,8 +392,8 @@ class SlideshowEngine {
             _ = await task.value
         }
         if let cached = dioramaCache[post.id] {
-            nextForegroundImage = cached.foreground
-            nextBackdropImage = cached.backdrop
+            nextForegroundTexture = cached.foreground
+            nextBackdropTexture = cached.backdrop
         }
     }
 
@@ -391,10 +402,23 @@ class SlideshowEngine {
         for (_, task) in dioramaTasks { task.cancel() }
         dioramaTasks.removeAll()
         dioramaCache.removeAll()
-        currentForegroundImage = nil
-        currentBackdropImage = nil
-        nextForegroundImage = nil
-        nextBackdropImage = nil
+        currentForegroundTexture = nil
+        currentBackdropTexture = nil
+        nextForegroundTexture = nil
+        nextBackdropTexture = nil
+    }
+
+    /// Upload a diorama UIImage to a GPU-private MTLTexture off the main
+    /// actor. Uses lossy compression — diorama is a decorative overlay,
+    /// the small color delta from lossy texture compression is invisible
+    /// next to the base layer's rendering.
+    nonisolated static func uploadDioramaTexture(_ image: UIImage?) async -> MTLTexture? {
+        guard let image, let cg = image.cgImage else { return nil }
+        let sendable: SendableTexture? = await Task.detached {
+            guard let tex = MetalImageRenderer.shared?.createTexture(from: cg, useLossyCompression: true) else { return nil }
+            return SendableTexture(texture: tex)
+        }.value
+        return sendable?.texture
     }
 
     // MARK: - State Transitions
@@ -967,8 +991,8 @@ class SlideshowEngine {
         }
         // The visible diorama (currentForeground/Backdrop) stays; only
         // the next slot and the generation cache are released.
-        nextForegroundImage = nil
-        nextBackdropImage = nil
+        nextForegroundTexture = nil
+        nextBackdropTexture = nil
         dioramaCache.removeAll(keepingCapacity: false)
         if droppedPrefetch + droppedDiorama > 0 {
             AppLogger.remoteViewer.info("Slideshow trim for memory pressure: dropped \(droppedPrefetch, privacy: .public) prefetched, \(droppedDiorama, privacy: .public) diorama entries")
@@ -995,10 +1019,10 @@ class SlideshowEngine {
         currentTexture = nil
         nextTexture = nil
         currentAnimatedData = nil
-        currentForegroundImage = nil
-        currentBackdropImage = nil
-        nextForegroundImage = nil
-        nextBackdropImage = nil
+        currentForegroundTexture = nil
+        currentBackdropTexture = nil
+        nextForegroundTexture = nil
+        nextBackdropTexture = nil
         isTransitioning = false
         currentPost = post
         currentMediaType = .video(url)
@@ -1107,18 +1131,18 @@ class SlideshowEngine {
         // Promote prefetched diorama pair (if any) to current; if not ready,
         // kick off generation. The next slot is cleared on promotion.
         if enableDiorama && mediaType == .image {
-            currentForegroundImage = nextForegroundImage
-            currentBackdropImage = nextBackdropImage
-            nextForegroundImage = nil
-            nextBackdropImage = nil
-            if currentForegroundImage == nil {
+            currentForegroundTexture = nextForegroundTexture
+            currentBackdropTexture = nextBackdropTexture
+            nextForegroundTexture = nil
+            nextBackdropTexture = nil
+            if currentForegroundTexture == nil {
                 generateDioramaForeground(post: post, image: image, isCurrent: true)
             }
         } else {
-            currentForegroundImage = nil
-            currentBackdropImage = nil
-            nextForegroundImage = nil
-            nextBackdropImage = nil
+            currentForegroundTexture = nil
+            currentBackdropTexture = nil
+            nextForegroundTexture = nil
+            nextBackdropTexture = nil
         }
 
         // If still transitioning (nobody interrupted), move to displaying.

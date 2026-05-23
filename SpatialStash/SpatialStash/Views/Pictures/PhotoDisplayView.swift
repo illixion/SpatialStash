@@ -97,26 +97,30 @@ struct PhotoDisplayView: View {
                !windowModel.is3DMode,
                !windowModel.isViewingSpatial3DImmersive,
                !windowModel.isAnimatedGIF {
-                if let backdrop = windowModel.dioramaBackdropImage {
-                    Image(uiImage: backdrop)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .brightness(windowModel.effectiveAdjustments.brightness)
-                        .contrast(windowModel.effectiveAdjustments.contrast)
-                        .saturation(windowModel.effectiveAdjustments.saturation)
+                if let backdrop = windowModel.dioramaBackdropTexture {
+                    MetalImageView(
+                        texture: backdrop,
+                        brightness: Float(windowModel.effectiveAdjustments.brightness),
+                        contrast: Float(windowModel.effectiveAdjustments.contrast),
+                        saturation: Float(windowModel.effectiveAdjustments.saturation),
+                        sharpen: 0
+                    )
+                        .aspectRatio(CGFloat(backdrop.width) / CGFloat(backdrop.height), contentMode: .fit)
                         .opacity(windowModel.effectiveAdjustments.opacity)
                         .scaleEffect(x: windowModel.isImageFlipped ? -1 : 1, y: 1)
                         .offset(x: dragOffset)
                         .allowsHitTesting(false)
                         .transition(.opacity)
                 }
-                if let foreground = windowModel.dioramaForegroundImage {
-                    Image(uiImage: foreground)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .brightness(windowModel.effectiveAdjustments.brightness)
-                        .contrast(windowModel.effectiveAdjustments.contrast)
-                        .saturation(windowModel.effectiveAdjustments.saturation)
+                if let foreground = windowModel.dioramaForegroundTexture {
+                    MetalImageView(
+                        texture: foreground,
+                        brightness: Float(windowModel.effectiveAdjustments.brightness),
+                        contrast: Float(windowModel.effectiveAdjustments.contrast),
+                        saturation: Float(windowModel.effectiveAdjustments.saturation),
+                        sharpen: 0
+                    )
+                        .aspectRatio(CGFloat(foreground.width) / CGFloat(foreground.height), contentMode: .fit)
                         .opacity(windowModel.effectiveAdjustments.opacity)
                         .scaleEffect(x: windowModel.isImageFlipped ? -1 : 1, y: 1)
                         .offset(x: dragOffset)
@@ -127,7 +131,7 @@ struct PhotoDisplayView: View {
             }
             }
             .animation(appModel.effectiveReduceMotion ? nil : .easeInOut(duration: 0.5), value: windowModel.isDioramaMode)
-            .animation(appModel.effectiveReduceMotion ? nil : .easeInOut(duration: 0.5), value: windowModel.dioramaForegroundImage != nil)
+            .animation(appModel.effectiveReduceMotion ? nil : .easeInOut(duration: 0.5), value: windowModel.dioramaForegroundTexture != nil)
 
             // 3D restore prompt pill at the bottom
             if windowModel.showAutoRestorePrompt {

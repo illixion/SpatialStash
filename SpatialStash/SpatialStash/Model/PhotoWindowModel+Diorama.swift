@@ -12,6 +12,7 @@
  */
 
 import Foundation
+import Metal
 import os
 import RealityKit
 import SwiftUI
@@ -55,9 +56,11 @@ extension PhotoWindowModel {
     }
 
     /// Load the diorama foreground + backdrop pair from cache, or generate and
-    /// cache it. No-op if already loaded for the current image.
+    /// cache it. No-op if already loaded for the current image. Output is
+    /// uploaded to a GPU-private MTLTexture for display; the source UIImage
+    /// is released after the upload so only GPU memory holds the pixels.
     func ensureDioramaForegroundLoaded() async {
-        if dioramaForegroundImage != nil && dioramaBackdropImage != nil { return }
+        if dioramaForegroundTexture != nil && dioramaBackdropTexture != nil { return }
         if isProcessingDiorama { return }
 
         // Disk cache hit (need both variants — partial hit falls through to regen)
@@ -65,8 +68,8 @@ extension PhotoWindowModel {
            let bgData = await BackgroundRemovalCache.shared.loadDioramaBackdropData(for: imageURL),
            let fg = UIImage(data: fgData),
            let bg = UIImage(data: bgData) {
-            dioramaForegroundImage = fg
-            dioramaBackdropImage = bg
+            dioramaForegroundTexture = await Self.uploadDioramaTexture(fg)
+            dioramaBackdropTexture = await Self.uploadDioramaTexture(bg)
             return
         }
 
@@ -86,12 +89,14 @@ extension PhotoWindowModel {
                 guard !Task.isCancelled, let self else { return }
                 guard self.imageURL == url else { return }
                 if let fg = pair.foreground {
-                    self.dioramaForegroundImage = fg
+                    // Save the source UIImage to disk first so deep-color
+                    // (HEIC 10-bit) survives the round-trip on cache reload.
                     await BackgroundRemovalCache.shared.saveDioramaForeground(fg, for: url)
+                    self.dioramaForegroundTexture = await Self.uploadDioramaTexture(fg)
                 }
                 if let bg = pair.backdrop {
-                    self.dioramaBackdropImage = bg
                     await BackgroundRemovalCache.shared.saveDioramaBackdrop(bg, for: url)
+                    self.dioramaBackdropTexture = await Self.uploadDioramaTexture(bg)
                 }
             } catch {
                 AppLogger.photoWindow.error("Diorama generation failed: \(error.localizedDescription, privacy: .public)")
@@ -102,12 +107,25 @@ extension PhotoWindowModel {
         dioramaTask = nil
     }
 
+    /// Build a GPU-private MTLTexture from a diorama UIImage off the main
+    /// actor. Uses lossy compression — diorama layers are decorative, not
+    /// the primary view of the image, so the GPU memory savings beat the
+    /// imperceptible color delta from compression.
+    nonisolated static func uploadDioramaTexture(_ image: UIImage) async -> MTLTexture? {
+        guard let cg = image.cgImage else { return nil }
+        let sendable: SendableTexture? = await Task.detached {
+            guard let tex = MetalImageRenderer.shared?.createTexture(from: cg, useLossyCompression: true) else { return nil }
+            return SendableTexture(texture: tex)
+        }.value
+        return sendable?.texture
+    }
+
     /// Clear the in-memory diorama state. Called when switching to a different image.
     func clearDioramaState() {
         dioramaTask?.cancel()
         dioramaTask = nil
-        dioramaForegroundImage = nil
-        dioramaBackdropImage = nil
+        dioramaForegroundTexture = nil
+        dioramaBackdropTexture = nil
         isProcessingDiorama = false
         isDioramaMode = false
     }

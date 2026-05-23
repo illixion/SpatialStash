@@ -88,6 +88,17 @@ actor BackgroundRemover {
         let (maskCIImage, originalCIImage) = try generateForegroundMask(cgImage: cgImage)
         let extent = originalCIImage.extent
 
+        // Match output bit depth + color space to the source so deep-color
+        // sources (16-bit JXL upscales, etc.) stay deep through the
+        // diorama pipeline. The downstream MTLTexture pipeline picks
+        // rgba16Float automatically for these, so the foreground and
+        // backdrop layers preserve the same color fidelity as the base.
+        let isDeepSource = cgImage.bitsPerComponent > 8
+        let outputFormat: CIFormat = isDeepSource ? .RGBA16 : .RGBA8
+        let outputColorSpace: CGColorSpace = isDeepSource
+            ? (CGColorSpace(name: CGColorSpace.extendedLinearSRGB) ?? CGColorSpaceCreateDeviceRGB())
+            : (CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB())
+
         // Foreground with color decontamination via subject color extension.
         //
         // Silhouette pixels carry the contamination `α·F + (1-α)·B` from the
@@ -123,15 +134,12 @@ actor BackgroundRemover {
             blendFilter.backgroundImage = CIImage.empty()
             blendFilter.maskImage = maskCIImage
 
-            guard let outputCIImage = blendFilter.outputImage,
-                  let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) else {
-                return nil
-            }
+            guard let outputCIImage = blendFilter.outputImage else { return nil }
             guard let outputCGImage = ciContext.createCGImage(
                 outputCIImage,
                 from: extent,
-                format: .RGBA8,
-                colorSpace: colorSpace
+                format: outputFormat,
+                colorSpace: outputColorSpace
             ) else {
                 AppLogger.backgroundRemover.warning("Failed to render diorama foreground CGImage")
                 return nil
@@ -203,7 +211,12 @@ actor BackgroundRemover {
 
         let backdropImage: UIImage? = {
             guard let outputCIImage = bgFilter.outputImage,
-                  let outputCGImage = ciContext.createCGImage(outputCIImage, from: extent) else {
+                  let outputCGImage = ciContext.createCGImage(
+                    outputCIImage,
+                    from: extent,
+                    format: outputFormat,
+                    colorSpace: outputColorSpace
+                  ) else {
                 return nil
             }
             return UIImage(cgImage: outputCGImage, scale: image.scale, orientation: image.imageOrientation)
