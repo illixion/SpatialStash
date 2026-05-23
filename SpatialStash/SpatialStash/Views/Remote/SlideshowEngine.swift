@@ -948,6 +948,33 @@ class SlideshowEngine {
         await displayImage(image, post: post, url: url)
     }
 
+    // MARK: - Memory Pressure
+
+    /// Drop the prefetch look-ahead and diorama working sets in response
+    /// to a system memory warning. The currently-displayed image and the
+    /// single next-up prefetched slot are kept intact so the natural
+    /// cycle continues; everything beyond that is released and will be
+    /// re-fetched on demand. The photo viewer's full LRU idle-downscale
+    /// is intentionally skipped — GPU-private MTLTextures are OS-managed
+    /// for purging, and aggressive eviction here would fight the prefetch
+    /// loop and visibly stall the slideshow.
+    @MainActor
+    func trimForMemoryPressure() {
+        let droppedPrefetch = max(0, prefetchedImages.count - 1)
+        let droppedDiorama = dioramaCache.count
+        if droppedPrefetch > 0 {
+            prefetchedImages = Array(prefetchedImages.prefix(1))
+        }
+        // The visible diorama (currentForeground/Backdrop) stays; only
+        // the next slot and the generation cache are released.
+        nextForegroundImage = nil
+        nextBackdropImage = nil
+        dioramaCache.removeAll(keepingCapacity: false)
+        if droppedPrefetch + droppedDiorama > 0 {
+            AppLogger.remoteViewer.info("Slideshow trim for memory pressure: dropped \(droppedPrefetch, privacy: .public) prefetched, \(droppedDiorama, privacy: .public) diorama entries")
+        }
+    }
+
     // MARK: - Display
 
     func displayVideo(url: URL, post: RemotePost) async {

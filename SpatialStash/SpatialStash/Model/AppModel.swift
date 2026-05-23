@@ -1123,6 +1123,14 @@ class AppModel {
 
                     await ImageLoader.shared.clearMemoryCache()
                     await self.downscaleLongBackgroundedWindows()
+                    // Light-touch slideshow trim: drop look-ahead +
+                    // diorama working sets. Slideshow engines don't
+                    // participate in the photo-viewer LRU idle-downscale
+                    // because their continuous cycling naturally bounds
+                    // memory.
+                    for model in self.activeRemoteViewerModels.values {
+                        model.trimForMemoryPressure()
+                    }
                 } else {
                     AppLogger.appModel.warning("Memory warning received — ignored (Respect System Memory Alerts is off)")
                 }
