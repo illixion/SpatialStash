@@ -53,7 +53,6 @@ struct RemoteTabView: View {
                                     copy.enableKenBurns = config.enableKenBurns
                                     copy.transparentBackground = config.transparentBackground
                                     copy.textSize = config.textSize
-                                    copy.homeAssistantURL = config.homeAssistantURL
                                     appModel.saveRemoteConfig(copy)
                                 }
                                 .buttonStyle(.borderless)
@@ -117,13 +116,6 @@ struct RemoteTabView: View {
                 defaultListSection
 
                 modTagPresetsSection
-
-                Section("Home Assistant") {
-                    TextField("Home Assistant URL", text: $editingConfig.homeAssistantURL)
-                        .textContentType(.URL)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-                }
 
                 Section {
                     Button("Save Configuration") {

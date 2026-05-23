@@ -73,9 +73,6 @@ struct RemoteViewerConfig: Codable, Identifiable {
     /// `nil` = inherit `AppModel.slideshowMaxImageResolution3D`.
     var maxImageResolution3D: Int?
 
-    // Home Assistant
-    var homeAssistantURL: String = ""
-
     init(name: String) {
         self.id = UUID()
         self.name = name
@@ -115,9 +112,9 @@ struct RemoteViewerConfig: Codable, Identifiable {
         case enableDynamicBrightness, enableDiorama
         case transparentBackground, textSize
         case slideshow3DMode, maxImageResolution2D, maxImageResolution3D
-        case homeAssistantURL
         // Decoded silently from older saved configs and never re-encoded.
         case wsEndpoint
+        case homeAssistantURL
         case blockedPosts, blockedTags
         case tagLists, defaultTagListIndex, lastActiveTagListIndex
     }
@@ -145,13 +142,13 @@ struct RemoteViewerConfig: Codable, Identifiable {
         maxImageResolution2D = try container.decodeIfPresent(Int.self, forKey: .maxImageResolution2D)
         maxImageResolution3D = try container.decodeIfPresent(Int.self, forKey: .maxImageResolution3D)
 
-        homeAssistantURL = try container.decodeIfPresent(String.self, forKey: .homeAssistantURL) ?? ""
-
         // Older saved configs may carry these fields. Swallow them so the
         // decode succeeds and they're dropped on next save — the server
-        // is now authoritative on tag and blocked lists, and the WS URL
-        // is always derived from `apiEndpoint`.
+        // is now authoritative on tag and blocked lists, the WS URL is
+        // always derived from `apiEndpoint`, and the Home Assistant
+        // overlay was removed.
         _ = try container.decodeIfPresent(String.self, forKey: .wsEndpoint)
+        _ = try container.decodeIfPresent(String.self, forKey: .homeAssistantURL)
         _ = try container.decodeIfPresent([Int].self, forKey: .blockedPosts)
         _ = try container.decodeIfPresent([String].self, forKey: .blockedTags)
         _ = try container.decodeIfPresent([[String]].self, forKey: .tagLists)
@@ -181,7 +178,5 @@ struct RemoteViewerConfig: Codable, Identifiable {
         try container.encode(slideshow3DMode, forKey: .slideshow3DMode)
         try container.encodeIfPresent(maxImageResolution2D, forKey: .maxImageResolution2D)
         try container.encodeIfPresent(maxImageResolution3D, forKey: .maxImageResolution3D)
-
-        try container.encode(homeAssistantURL, forKey: .homeAssistantURL)
     }
 }

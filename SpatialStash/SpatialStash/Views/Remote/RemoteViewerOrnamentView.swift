@@ -13,7 +13,6 @@ struct RemoteViewerOrnamentView: View {
     @Bindable var model: RemoteViewerModel
     var tagListManager: TagListManager
     var modTagManager: ModTagManager
-    @Binding var showHomeAssistant: Bool
     @Binding var showHistory: Bool
 
     /// Local UI state for the in-ornament "Add Preset…" popover. Lives here
@@ -37,7 +36,6 @@ struct RemoteViewerOrnamentView: View {
             // History
             Button {
                 withAnimation { showHistory.toggle() }
-                if showHomeAssistant { showHomeAssistant = false }
             } label: {
                 Image(systemName: showHistory ? "clock.arrow.circlepath" : "clock.arrow.circlepath")
                     .font(.title3)
@@ -85,18 +83,6 @@ struct RemoteViewerOrnamentView: View {
                 .buttonStyle(.borderless)
                 .disabled(model.saveablePost == nil)
                 .help("Save Image")
-
-                // Home Assistant
-                Button {
-                    withAnimation { showHomeAssistant.toggle() }
-                    if showHistory { showHistory = false }
-                } label: {
-                    Image(systemName: showHomeAssistant ? "house.fill" : "house")
-                        .font(.title3)
-                }
-                .buttonStyle(.borderless)
-                .disabled(model.config.homeAssistantURL.isEmpty)
-                .help("Home Assistant")
 
                 // Tag List Selector (spinner while loading, warning if empty)
                 tagListMenu

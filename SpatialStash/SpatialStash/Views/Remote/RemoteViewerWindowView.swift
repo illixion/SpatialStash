@@ -18,7 +18,6 @@ struct RemoteViewerWindowView: View {
     @Environment(\.dismissWindow) private var dismissWindow
 
     @State private var viewerModel: RemoteViewerModel?
-    @State private var showHomeAssistant = false
     @State private var showHistory = false
     @State private var windowSize: CGSize = .zero
     @State private var currentTime = Date()
@@ -106,13 +105,6 @@ struct RemoteViewerWindowView: View {
                     .offset(z: overlayZ)
                 }
 
-                // Home Assistant WebView overlay
-                if showHomeAssistant, let url = homeAssistantURL {
-                    HomeAssistantWebView(url: url)
-                        .ignoresSafeArea()
-                        .transition(.opacity)
-                }
-
                 // History overlay
                 if showHistory, let model = viewerModel,
                    let store = appModel.remoteHistoryStore(for: model.config.apiEndpoint, accessToken: model.config.accessToken) {
@@ -144,7 +136,6 @@ struct RemoteViewerWindowView: View {
                         model: model,
                         tagListManager: appModel.tagListManager,
                         modTagManager: appModel.modTagManager,
-                        showHomeAssistant: $showHomeAssistant,
                         showHistory: $showHistory
                     )
                     .offset(z: model.enableDiorama ? 30 : 0)
@@ -565,12 +556,6 @@ struct RemoteViewerWindowView: View {
         let formatter = DateFormatter()
         formatter.dateFormat = "EEE, MMM d"
         return formatter.string(from: currentTime)
-    }
-
-    private var homeAssistantURL: URL? {
-        guard let model = viewerModel,
-              !model.config.homeAssistantURL.isEmpty else { return nil }
-        return URL(string: model.config.homeAssistantURL)
     }
 
     private func setupModel() {
