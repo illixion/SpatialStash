@@ -52,12 +52,14 @@ struct RemoteViewerWindowView: View {
                     Color.black.ignoresSafeArea()
                 }
 
-                // Image layers
+                // Image layers — brightness/contrast/saturation are
+                // pushed into MetalImageView's fragment shader for the
+                // base texture and applied as SwiftUI modifiers inside
+                // imageLayer for the diorama / WKWebView / video paths
+                // (which aren't Metal-backed). Opacity stays at the top
+                // level so it composites the whole stack uniformly.
                 if let model = viewerModel {
                     imageLayer(model: model)
-                        .brightness(model.effectiveBrightness)
-                        .contrast(model.effectiveContrast)
-                        .saturation(model.effectiveSaturation)
                         .opacity(model.effectiveOpacity)
                 }
 
@@ -266,6 +268,9 @@ struct RemoteViewerWindowView: View {
                     isRoomActive: model.isRoomActive
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .brightness(model.effectiveBrightness)
+                .contrast(model.effectiveContrast)
+                .saturation(model.effectiveSaturation)
 
             case .animatedGIF(let hevcURL):
                 WebVideoPlayerView(
@@ -277,6 +282,9 @@ struct RemoteViewerWindowView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 // Also show the static image underneath during transition
                 .opacity(model.isTransitioning ? 0 : 1)
+                .brightness(model.effectiveBrightness)
+                .contrast(model.effectiveContrast)
+                .saturation(model.effectiveSaturation)
 
             case .animatedWebP(let url):
                 AnimatedImageWebView(
@@ -291,6 +299,9 @@ struct RemoteViewerWindowView: View {
                 // Fade out during crossfade so the next image's static
                 // texture (or its own WebKit layer) takes over cleanly.
                 .opacity(model.isTransitioning ? 0 : 1)
+                .brightness(model.effectiveBrightness)
+                .contrast(model.effectiveContrast)
+                .saturation(model.effectiveSaturation)
 
             case .image:
                 EmptyView()
@@ -307,6 +318,13 @@ struct RemoteViewerWindowView: View {
                 // tests RealityKit entities in 3D space ahead of SwiftUI
                 // overlays, so SwiftUI .onTapGesture / Color.clear
                 // overlays in this region never see the tap.
+                // Adjustments are baked into the Spatial3DImage's source
+                // bytes inside SlideshowSpatial3DSlotView — RealityKit
+                // content on visionOS doesn't honor SwiftUI compositing
+                // modifiers like `.brightness`, so applying them here is
+                // a no-op. Cache-key-keyed regeneration in the slot view
+                // handles applying new values to future images and the
+                // hidden pre-generated slot.
                 SlideshowSpatial3DLayer(
                     model: model,
                     onTap: {
@@ -373,6 +391,9 @@ struct RemoteViewerWindowView: View {
                             .transition(.opacity)
                     }
                 }
+                .brightness(model.effectiveBrightness)
+                .contrast(model.effectiveContrast)
+                .saturation(model.effectiveSaturation)
                 .animation(appModel.effectiveReduceMotion ? nil : .easeInOut(duration: 0.5), value: dioramaVisible)
                 .animation(appModel.effectiveReduceMotion ? nil : .easeInOut(duration: 0.5), value: model.currentForegroundImage != nil)
                 .animation(appModel.effectiveReduceMotion ? nil : .easeInOut(duration: 0.5), value: model.currentBackdropImage != nil)
@@ -392,6 +413,9 @@ struct RemoteViewerWindowView: View {
                         .aspectRatio(contentMode: .fit)
                         .clipped()
                         .allowsHitTesting(false)
+                        .brightness(model.effectiveBrightness)
+                        .contrast(model.effectiveContrast)
+                        .saturation(model.effectiveSaturation)
                 }
                 if model.enableDiorama, let foreground = model.nextForegroundImage {
                     Image(uiImage: foreground)
@@ -400,6 +424,9 @@ struct RemoteViewerWindowView: View {
                         .clipped()
                         .offset(z: appModel.dioramaDistance)
                         .allowsHitTesting(false)
+                        .brightness(model.effectiveBrightness)
+                        .contrast(model.effectiveContrast)
+                        .saturation(model.effectiveSaturation)
                 }
             }
         }
@@ -422,24 +449,44 @@ struct RemoteViewerWindowView: View {
 
     /// Renders the current image via Metal when a GPU texture is available,
     /// otherwise falls back to a SwiftUI `Image` so the slideshow never
-    /// goes blank if texture creation lags or fails.
+    /// goes blank if texture creation lags or fails. Adjustments ride the
+    /// fragment-shader uniforms on the Metal path; the UIImage fallback
+    /// uses SwiftUI modifiers so its output matches.
     @ViewBuilder
     private func currentImageRenderer(model: RemoteViewerModel, image: UIImage) -> some View {
         if let texture = model.currentTexture {
-            MetalImageView(texture: texture, brightness: 0, contrast: 1, saturation: 1, sharpen: 0)
+            MetalImageView(
+                texture: texture,
+                brightness: Float(model.effectiveBrightness),
+                contrast: Float(model.effectiveContrast),
+                saturation: Float(model.effectiveSaturation),
+                sharpen: 0
+            )
         } else {
             Image(uiImage: image)
                 .resizable()
+                .brightness(model.effectiveBrightness)
+                .contrast(model.effectiveContrast)
+                .saturation(model.effectiveSaturation)
         }
     }
 
     @ViewBuilder
     private func nextImageRenderer(model: RemoteViewerModel, image: UIImage) -> some View {
         if let texture = model.nextTexture {
-            MetalImageView(texture: texture, brightness: 0, contrast: 1, saturation: 1, sharpen: 0)
+            MetalImageView(
+                texture: texture,
+                brightness: Float(model.effectiveBrightness),
+                contrast: Float(model.effectiveContrast),
+                saturation: Float(model.effectiveSaturation),
+                sharpen: 0
+            )
         } else {
             Image(uiImage: image)
                 .resizable()
+                .brightness(model.effectiveBrightness)
+                .contrast(model.effectiveContrast)
+                .saturation(model.effectiveSaturation)
         }
     }
 

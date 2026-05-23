@@ -15,10 +15,12 @@
  image) just becomes visible instead of regenerating from scratch.
  */
 
+import CoreImage
 import ImageIO
 import os
 import RealityKit
 import SwiftUI
+import UIKit
 
 /// Two-slot host that orchestrates pre-generation + crossfade. Slot A and
 /// Slot B alternate which one is "currently visible" — whichever slot is
@@ -57,13 +59,40 @@ struct SlideshowSpatial3DLayer: View {
         let immersive = model.slideshow3DMode == .immersive3D
         let res = model.maxImageResolution3D
         let transitioning = model.isTransitioning
+        // RealityKit on visionOS doesn't honor SwiftUI compositing
+        // modifiers (`.brightness`/etc.) on spatial scene content, so
+        // adjustments are baked into the Spatial3DImage's source bytes
+        // via CIFilter inside the slot. Including them in the slot's
+        // cache key triggers a regenerate on change — affects future
+        // images and re-bakes the hidden pre-generated slot.
+        let brightness = model.effectiveBrightness
+        let contrast = model.effectiveContrast
+        let saturation = model.effectiveSaturation
 
         ZStack {
-            SlideshowSpatial3DSlotView(image: slotA, immersive: immersive, maxResolution: res, onTap: onTap, onSpatial3DGenerated: onSpatial3DGenerated)
+            SlideshowSpatial3DSlotView(
+                image: slotA,
+                immersive: immersive,
+                maxResolution: res,
+                brightness: brightness,
+                contrast: contrast,
+                saturation: saturation,
+                onTap: onTap,
+                onSpatial3DGenerated: onSpatial3DGenerated
+            )
                 .opacity(opacity(forSlot: 0, transitioning: transitioning))
                 .animation(.easeInOut(duration: model.reduceMotion ? 0 : 1.0), value: transitioning)
 
-            SlideshowSpatial3DSlotView(image: slotB, immersive: immersive, maxResolution: res, onTap: onTap, onSpatial3DGenerated: onSpatial3DGenerated)
+            SlideshowSpatial3DSlotView(
+                image: slotB,
+                immersive: immersive,
+                maxResolution: res,
+                brightness: brightness,
+                contrast: contrast,
+                saturation: saturation,
+                onTap: onTap,
+                onSpatial3DGenerated: onSpatial3DGenerated
+            )
                 .opacity(opacity(forSlot: 1, transitioning: transitioning))
                 .animation(.easeInOut(duration: model.reduceMotion ? 0 : 1.0), value: transitioning)
         }
@@ -175,6 +204,14 @@ struct SlideshowSpatial3DSlotView: View {
     let image: UIImage?
     let immersive: Bool
     let maxResolution: Int
+    /// Visual adjustments to bake into the Spatial3DImage source via
+    /// CIFilter. Photo-viewer-style runtime regeneration (see
+    /// `PhotoWindowModel.reloadImagePresentationWithAdjustments`) — values
+    /// match SwiftUI's `.brightness/.contrast/.saturation` semantics so
+    /// the contrast input is remapped before reaching CIColorControls.
+    let brightness: Double
+    let contrast: Double
+    let saturation: Double
     var onTap: () -> Void = {}
     var onSpatial3DGenerated: (UIImage) -> Void = { _ in }
 
@@ -254,11 +291,21 @@ struct SlideshowSpatial3DSlotView: View {
 
     /// Cache key intentionally excludes the immersive flag — that's a
     /// runtime mode toggle on the existing IPC, not a reason to rebuild
-    /// the Spatial3DImage. Re-derives only on a new image or a
-    /// resolution-cap change.
+    /// the Spatial3DImage. Re-derives on a new image, resolution-cap
+    /// change, or adjustments change (so the hidden slot's pre-generated
+    /// depth map gets re-derived against the latest adjustments).
     private var cacheKey: String {
         guard let image else { return "nil" }
-        return "\(ObjectIdentifier(image).hashValue):\(maxResolution)"
+        return String(
+            format: "%d:%d:%.3f:%.3f:%.3f",
+            ObjectIdentifier(image).hashValue,
+            maxResolution,
+            brightness, contrast, saturation
+        )
+    }
+
+    private var hasAdjustments: Bool {
+        brightness != 0 || contrast != 1 || saturation != 1
     }
 
     @MainActor
@@ -276,8 +323,24 @@ struct SlideshowSpatial3DSlotView: View {
             return
         }
 
+        // Bake adjustments into the source bytes when sliders are not at
+        // identity. Skipping the CIFilter pass for default values avoids
+        // an unnecessary round-trip through CoreImage on every image.
+        let sourceData: Data
+        if hasAdjustments {
+            let adj = Adjustments(brightness: brightness, contrast: contrast, saturation: saturation)
+            if let baked = await Task.detached(operation: { Self.applyAdjustments(to: data, adjustments: adj) }).value {
+                sourceData = baked
+            } else {
+                AppLogger.remoteViewer.warning("SlideshowSpatial3DView: adjustment bake failed, using raw bytes")
+                sourceData = data
+            }
+        } else {
+            sourceData = data
+        }
+
         do {
-            let spatial = try await Self.makeSpatial3DImage(from: data)
+            let spatial = try await Self.makeSpatial3DImage(from: sourceData)
             var ipc = ImagePresentationComponent(spatial3DImage: spatial)
             ipc.desiredViewingMode = immersive ? .spatial3DImmersive : .spatial3D
             entity.components.set(ipc)
@@ -303,5 +366,33 @@ struct SlideshowSpatial3DSlotView: View {
             throw CocoaError(.fileReadCorruptFile)
         }
         return try await ImagePresentationComponent.Spatial3DImage(imageSource: source)
+    }
+
+    /// Sendable adjustments wrapper so the detached task can capture by value.
+    private struct Adjustments: Sendable {
+        let brightness: Double
+        let contrast: Double
+        let saturation: Double
+    }
+
+    /// Apply brightness/contrast/saturation through CIColorControls and
+    /// re-encode to JPEG. CIColorControls' contrast scale is empirically
+    /// ~8× more aggressive than SwiftUI's `.contrast()` for the same
+    /// deviation from 1.0, so the deviation is scaled by 0.12 to match —
+    /// mirrors the remapping in PhotoWindowModel's 3D adjustment regen.
+    private nonisolated static func applyAdjustments(to data: Data, adjustments adj: Adjustments) -> Data? {
+        guard let ciImage = CIImage(data: data) else { return nil }
+        let remappedContrast = 1.0 + (adj.contrast - 1.0) * 0.12
+
+        guard let filter = CIFilter(name: "CIColorControls") else { return nil }
+        filter.setValue(ciImage, forKey: kCIInputImageKey)
+        filter.setValue(adj.brightness, forKey: kCIInputBrightnessKey)
+        filter.setValue(remappedContrast, forKey: kCIInputContrastKey)
+        filter.setValue(adj.saturation, forKey: kCIInputSaturationKey)
+        guard let output = filter.outputImage else { return nil }
+
+        let context = CIContext(options: [.useSoftwareRenderer: false])
+        guard let cgImage = context.createCGImage(output, from: output.extent) else { return nil }
+        return UIImage(cgImage: cgImage).jpegData(compressionQuality: 0.95)
     }
 }
