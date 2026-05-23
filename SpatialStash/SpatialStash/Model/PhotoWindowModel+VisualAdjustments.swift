@@ -311,24 +311,23 @@ extension PhotoWindowModel {
             prePreviewSpatial3DState = spatial3DImageState
             isShowingAdjustmentPreview = true
 
-            // Remove RealityKit resources
-            contentEntity.components.remove(ImagePresentationComponent.self)
-            spatial3DImage = nil
-            spatial3DImageState = .notGenerated
-
-            // Switch to 2D branch
-            is3DMode = false
-
-            // Load a thumbnail as displayImage for the 2D branch.
-            // Try cached thumbnail first; fall back to generating from in-memory data.
+            // Stage the preview thumbnail *before* flipping is3DMode so
+            // the 2D branch has something to render the instant the
+            // RealityView disappears — otherwise displayImage stays nil
+            // for the duration of the thumbnail load and the window goes
+            // blank, which is what the user sees on the first slider
+            // change against a 3D image that hasn't been viewed in 2D
+            // yet (no displayTexture on hand).
             let url = imageURL
             let imageData = currentImageData
             Task { @MainActor [weak self] in
                 guard let self, self.isShowingAdjustmentPreview else { return }
-                if let thumbnail = await ThumbnailCache.shared.loadThumbnail(for: url) {
-                    self.displayImage = thumbnail
+
+                let thumbnail: UIImage?
+                if let cached = await ThumbnailCache.shared.loadThumbnail(for: url) {
+                    thumbnail = cached
                 } else if let imageData {
-                    let thumbnail = await Task.detached {
+                    thumbnail = await Task.detached {
                         guard let source = CGImageSourceCreateWithData(imageData as CFData, nil) else { return nil as UIImage? }
                         let options: [CFString: Any] = [
                             kCGImageSourceThumbnailMaxPixelSize: 400,
@@ -339,18 +338,32 @@ extension PhotoWindowModel {
                         guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil as UIImage? }
                         return UIImage(cgImage: cgImage)
                     }.value
-                    if self.isShowingAdjustmentPreview {
-                        self.displayImage = thumbnail
-                    }
+                } else {
+                    thumbnail = nil
                 }
+
+                guard self.isShowingAdjustmentPreview else { return }
+
+                // Commit the transition atomically: 2D thumbnail in
+                // place first, then tear down RealityKit and flip the
+                // mode so PhotoDisplayView re-evaluates with the
+                // fallback already populated.
+                self.displayImage = thumbnail
+                self.contentEntity.components.remove(ImagePresentationComponent.self)
+                self.spatial3DImage = nil
+                self.spatial3DImageState = .notGenerated
+                self.is3DMode = false
             }
         }
 
         // Cancel any pending 3D reload and start a new debounce
         adjustments3DReloadTask?.cancel()
         adjustments3DReloadTask = Task { @MainActor [weak self] in
-            // Wait for sliders to settle before expensive 3D recalculation.
-            try? await Task.sleep(for: .seconds(2))
+            // Wait for sliders to settle before the expensive 3D
+            // recalculation. 0.5s is short enough to feel responsive
+            // after the user lets go of a slider but long enough that
+            // a continuous drag still coalesces into one regen.
+            try? await Task.sleep(for: .milliseconds(500))
             guard !Task.isCancelled, let self, self.isShowingAdjustmentPreview else { return }
 
             let adj = self.effectiveAdjustments
@@ -360,8 +373,24 @@ extension PhotoWindowModel {
                 // Pre-create the adjusted ImagePresentationComponent BEFORE switching
                 // back to 3D mode, so the RealityView init finds it already set on the
                 // entity and doesn't race with a second creation.
-                guard let imageData = self.currentImageData,
-                      let ciImage = CIImage(data: imageData) else {
+                //
+                // Entering 3D mode releases `currentImageData` to free CPU
+                // memory (see PhotoWindowModel+Spatial3D.swift). The regen
+                // path needs the raw bytes to feed CIFilter, so reload
+                // from the disk-cached file if the in-memory copy is gone.
+                // Without this fallback, every adjustment in 3D mode falls
+                // through to the RealityView's else branch which generates
+                // a fresh Spatial3DImage from the original source URL —
+                // wiping the adjustments and making further edits no-ops.
+                let imageData: Data?
+                if let cached = self.currentImageData {
+                    imageData = cached
+                } else if let sourceURL = await self.resolveSourceFileURL() {
+                    imageData = try? Data(contentsOf: sourceURL, options: .mappedIfSafe)
+                } else {
+                    imageData = nil
+                }
+                guard let imageData, let ciImage = CIImage(data: imageData) else {
                     AppLogger.visualAdjustments.warning("No image data available for 3D adjustment reload")
                     return
                 }
