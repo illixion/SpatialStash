@@ -96,6 +96,12 @@ struct RemoteTabView: View {
                         Slider(value: $editingConfig.delay, in: 3...120, step: 1)
                     }
 
+                    Picker("3D Mode", selection: $editingConfig.slideshow3DMode) {
+                        ForEach(Slideshow3DMode.allCases) { mode in
+                            Label(mode.label, systemImage: mode.systemImage).tag(mode)
+                        }
+                    }
+
                     Toggle("Show Clock", isOn: $editingConfig.showClock)
                     Toggle("Show Sensors", isOn: $editingConfig.showSensors)
                     Toggle("Fit to Window Aspect Ratio", isOn: $editingConfig.useAspectRatio)
