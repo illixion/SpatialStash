@@ -288,6 +288,10 @@ class RemoteWebSocketClient {
             "height": height,
             "bright": bright,
             "convert": convert,
+            // Spatialstash never uses lowmem (visionOS doesn't have a JPEG
+            // hardware-decode constraint), but the field is sent so the
+            // server's variant fingerprint matches what we'll request.
+            "lowmem": false,
             "modTags": modTags,
         ]
         if let ratio { payload["ratio"] = ratio }
