@@ -535,16 +535,24 @@ struct PhotoDisplayView: View {
             }
             .modifier(SwipeGestureModifier(enabled: isSwipeEnabled, onEnded: handleDragEnded))
             .onAppear {
+                // The 3D-adjustment 2D preview re-mounts this branch
+                // every time is3DMode flips false. Re-running the
+                // initial-size resize would shrink the window back to
+                // its saved 2D bounds (often much smaller than the
+                // current 3D window) and the geometry change would
+                // also instantly dismiss the open adjustments popover.
+                // Leave the window alone during the preview.
+                guard !windowModel.isShowingAdjustmentPreview else { return }
                 setUniformResizing()
                 let initialBounds = windowModel.savedWindowSize ?? appModel.mainWindowSize
                 resizeWindowToFit(windowModel.imageAspectRatio, within: initialBounds)
             }
             .onChange(of: windowModel.imageAspectRatio) { _, newAspectRatio in
-                guard !suppressWindowResize else { return }
+                guard !suppressWindowResize, !windowModel.isShowingAdjustmentPreview else { return }
                 resizeWindowToFit(newAspectRatio, within: currentBounds)
             }
             .onChange(of: windowModel.isLoadingDetailImage) { wasLoading, isLoading in
-                if wasLoading && !isLoading {
+                if wasLoading && !isLoading, !windowModel.isShowingAdjustmentPreview {
                     resizeWindowToFit(windowModel.imageAspectRatio, within: currentBounds)
                     scheduleWindowSizeVerification()
                 }
@@ -566,16 +574,21 @@ struct PhotoDisplayView: View {
                 }
                 .modifier(SwipeGestureModifier(enabled: isSwipeEnabled, onEnded: handleDragEnded))
                 .onAppear {
+                    // Same rationale as the MetalImageView branch above —
+                    // the adjustments preview re-mounts this branch, and
+                    // resizing here would both shrink the window and
+                    // instantly dismiss the open popover.
+                    guard !windowModel.isShowingAdjustmentPreview else { return }
                     setUniformResizing()
                     let initialBounds = windowModel.savedWindowSize ?? appModel.mainWindowSize
                     resizeWindowToFit(windowModel.imageAspectRatio, within: initialBounds)
                 }
                 .onChange(of: windowModel.imageAspectRatio) { _, newAspectRatio in
-                    guard !suppressWindowResize else { return }
+                    guard !suppressWindowResize, !windowModel.isShowingAdjustmentPreview else { return }
                     resizeWindowToFit(newAspectRatio, within: currentBounds)
                 }
                 .onChange(of: windowModel.isLoadingDetailImage) { wasLoading, isLoading in
-                    if wasLoading && !isLoading {
+                    if wasLoading && !isLoading, !windowModel.isShowingAdjustmentPreview {
                         resizeWindowToFit(windowModel.imageAspectRatio, within: currentBounds)
                         scheduleWindowSizeVerification()
                     }
