@@ -294,6 +294,64 @@ extension PhotoWindowModel {
         isProcessingAutoEnhance = false
     }
 
+    // MARK: - 3D Adjustment Preview Pre-warm
+
+    /// Pre-load a low-res thumbnail into `displayImage` while the
+    /// adjustments popover is opening, before the user moves a slider.
+    /// `reloadImagePresentationWithAdjustments` then has a populated
+    /// fallback ready and can flip is3DMode synchronously on the first
+    /// slider tick — without this, the async thumbnail load got starved
+    /// of MainActor time during continuous slider drag and the live 2D
+    /// preview only appeared after the user paused. No-op when 3D mode
+    /// isn't active or the fallback is already set.
+    func prewarmAdjustmentPreview() async {
+        guard is3DMode, !isShowingAdjustmentPreview, displayImage == nil else { return }
+        let url = imageURL
+        let inMemory = currentImageData
+
+        let sourceData: Data?
+        if let inMemory {
+            sourceData = inMemory
+        } else if let sourceURL = await resolveSourceFileURL() {
+            sourceData = try? Data(contentsOf: sourceURL, options: .mappedIfSafe)
+        } else {
+            sourceData = nil
+        }
+
+        let thumbnail: UIImage?
+        if let cached = await ThumbnailCache.shared.loadThumbnail(for: url) {
+            thumbnail = cached
+        } else if let sourceData {
+            thumbnail = await Task.detached {
+                guard let source = CGImageSourceCreateWithData(sourceData as CFData, nil) else { return nil as UIImage? }
+                let options: [CFString: Any] = [
+                    kCGImageSourceThumbnailMaxPixelSize: 400,
+                    kCGImageSourceCreateThumbnailFromImageAlways: true,
+                    kCGImageSourceCreateThumbnailWithTransform: true,
+                    kCGImageSourceShouldCacheImmediately: true
+                ]
+                guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil as UIImage? }
+                return UIImage(cgImage: cgImage)
+            }.value
+        } else {
+            thumbnail = nil
+        }
+
+        // Bail if the user closed the popover or moved into 2D preview
+        // while we were loading.
+        guard is3DMode, !isShowingAdjustmentPreview else { return }
+        displayImage = thumbnail
+    }
+
+    /// Drop the pre-warmed thumbnail when the popover closes without
+    /// ever transitioning into the 2D preview phase. Once
+    /// `isShowingAdjustmentPreview` has gone true the displayImage is
+    /// owned by the regen path; don't touch it.
+    func clearAdjustmentPreviewIfUnused() {
+        guard is3DMode, !isShowingAdjustmentPreview else { return }
+        displayImage = nil
+    }
+
     // MARK: - 3D Adjustment Preview
 
     /// Reload the ImagePresentationComponent with visual adjustments applied via CIFilter.
@@ -322,6 +380,19 @@ extension PhotoWindowModel {
         if !isShowingAdjustmentPreview {
             prePreviewSpatial3DState = spatial3DImageState
             isShowingAdjustmentPreview = true
+
+            // Fast path: the popover-open prewarm has already populated
+            // displayImage with a thumbnail. Flip into 2D mode
+            // synchronously on this actor tick so the live preview
+            // shows immediately — no async Task to be starved by the
+            // continuous-drag MainActor traffic. The debounce + regen
+            // setup below this block still runs.
+            if displayImage != nil {
+                contentEntity.components.remove(ImagePresentationComponent.self)
+                spatial3DImage = nil
+                spatial3DImageState = .notGenerated
+                is3DMode = false
+            } else {
 
             // Stage the preview thumbnail *before* flipping is3DMode so
             // the 2D branch has something to render the instant the
@@ -383,6 +454,7 @@ extension PhotoWindowModel {
                 self.spatial3DImageState = .notGenerated
                 self.is3DMode = false
             }
+            } // close else (no pre-warmed thumbnail)
         }
 
         // Cancel any pending 3D reload and start a new debounce

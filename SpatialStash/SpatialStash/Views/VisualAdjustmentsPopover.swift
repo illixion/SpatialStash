@@ -27,6 +27,13 @@ struct VisualAdjustmentsPopover: View {
     /// Whether auto-enhance is available (true for photos, false for videos/GIFs)
     let showAutoEnhance: Bool
 
+    /// Whether the per-image Sharpen slider is meaningful. RealityKit's
+    /// ImagePresentationComponent ignores compositing-time sharpening on
+    /// visionOS, so showing the slider while a 3D image is on screen is
+    /// just misleading. The global Sharpen control on the Default tab
+    /// stays available — it still affects 2D windows elsewhere.
+    var showSharpen: Bool = true
+
     /// Whether auto-enhance is currently processing
     var isProcessingAutoEnhance: Bool = false
 
@@ -163,13 +170,15 @@ struct VisualAdjustmentsPopover: View {
                 defaultValue: 1.0
             )
 
-            adjustmentSlider(
-                label: "Sharpen",
-                value: $currentAdjustments.sharpen,
-                range: 0.0...1.0,
-                defaultValue: 0.0,
-                linear: true
-            )
+            if showSharpen {
+                adjustmentSlider(
+                    label: "Sharpen",
+                    value: $currentAdjustments.sharpen,
+                    range: 0.0...1.0,
+                    defaultValue: 0.0,
+                    linear: true
+                )
+            }
 
             adjustmentSlider(
                 label: "Opacity",

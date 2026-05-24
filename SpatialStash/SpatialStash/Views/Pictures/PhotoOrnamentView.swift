@@ -92,8 +92,21 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
             else { windowModel.startAutoHideTimer() }
         }
         .onChange(of: windowModel.showAdjustmentsPopover) { _, isOpen in
-            if isOpen { windowModel.cancelAutoHideTimer() }
-            else { windowModel.startAutoHideTimer() }
+            if isOpen {
+                windowModel.cancelAutoHideTimer()
+                // Pre-load the preview thumbnail while the user is
+                // reaching for the slider so the first slider tick can
+                // flip into the 2D preview synchronously. Loading on
+                // first slider tick was lossy: continuous drag kept the
+                // MainActor busy and the async thumbnail Task's
+                // continuation didn't get a chance to run until the
+                // drag paused, making the live preview feel like it
+                // appeared a beat too late.
+                Task { await windowModel.prewarmAdjustmentPreview() }
+            } else {
+                windowModel.startAutoHideTimer()
+                windowModel.clearAdjustmentPreviewIfUnused()
+            }
         }
         .onChange(of: show3DPopover) { _, isOpen in
             if isOpen { windowModel.cancelAutoHideTimer() }
@@ -450,6 +463,11 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
                     }
                 ),
                 showAutoEnhance: !windowModel.isAnimatedImage,
+                // RealityKit's IPC doesn't honor compositing-time
+                // sharpen, so hide the per-image slider while a 3D
+                // image is on screen (animated images don't use the
+                // sharpen shader path either).
+                showSharpen: !windowModel.is3DMode && !windowModel.isAnimatedImage,
                 isProcessingAutoEnhance: windowModel.isProcessingAutoEnhance,
                 onToggleAutoEnhance: {
                     Task {
