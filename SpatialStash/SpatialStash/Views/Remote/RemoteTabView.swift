@@ -185,8 +185,12 @@ struct RemoteTabView: View {
                     TextField(
                         "Tags (space-separated)",
                         text: Binding(
-                            get: { mtm.modTagLists[index].joined(separator: " ") },
+                            get: {
+                                guard index < mtm.modTagLists.count else { return "" }
+                                return mtm.modTagLists[index].joined(separator: " ")
+                            },
                             set: { newValue in
+                                guard index < bindable.wrappedValue.count else { return }
                                 bindable.wrappedValue[index] = newValue
                                     .components(separatedBy: " ")
                                     .filter { !$0.isEmpty }
@@ -226,7 +230,7 @@ struct RemoteTabView: View {
             )) {
                 Text("None").tag(-1)
                 ForEach(mtm.modTagLists.indices, id: \.self) { index in
-                    Text("Preset \(index + 1): \(mtm.modTagLists[index].first ?? "")").tag(index)
+                    Text("Preset \(index + 1): \(index < mtm.modTagLists.count ? (mtm.modTagLists[index].first ?? "") : "")").tag(index)
                 }
             }
             .pickerStyle(.menu)
