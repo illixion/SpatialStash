@@ -335,12 +335,29 @@ extension PhotoWindowModel {
             Task { @MainActor [weak self] in
                 guard let self, self.isShowingAdjustmentPreview else { return }
 
+                // Resolve a byte source for the thumbnail. Entering 3D
+                // mode clears `currentImageData` to free CPU memory, so
+                // mid-3D adjustment changes can't rely on the in-memory
+                // path — fall back to the disk-cached source file the
+                // same way the regen task below does. Without this
+                // fallback the preview branch ended up with a nil
+                // thumbnail and the window went blank for the duration
+                // of the 2D preview phase.
+                let sourceData: Data?
+                if let inMemory = imageData {
+                    sourceData = inMemory
+                } else if let sourceURL = await self.resolveSourceFileURL() {
+                    sourceData = try? Data(contentsOf: sourceURL, options: .mappedIfSafe)
+                } else {
+                    sourceData = nil
+                }
+
                 let thumbnail: UIImage?
                 if let cached = await ThumbnailCache.shared.loadThumbnail(for: url) {
                     thumbnail = cached
-                } else if let imageData {
+                } else if let sourceData {
                     thumbnail = await Task.detached {
-                        guard let source = CGImageSourceCreateWithData(imageData as CFData, nil) else { return nil as UIImage? }
+                        guard let source = CGImageSourceCreateWithData(sourceData as CFData, nil) else { return nil as UIImage? }
                         let options: [CFString: Any] = [
                             kCGImageSourceThumbnailMaxPixelSize: 400,
                             kCGImageSourceCreateThumbnailFromImageAlways: true,

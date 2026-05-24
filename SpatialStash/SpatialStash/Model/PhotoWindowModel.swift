@@ -183,12 +183,24 @@ class PhotoWindowModel {
     /// Whether auto-enhance is currently being processed
     var isProcessingAutoEnhance: Bool = false
 
-    /// The effective adjustments to apply (per-image if modified, otherwise global defaults)
+    /// The effective adjustments to apply, combining per-image overrides
+    /// with global defaults so a per-image slider movement doesn't wipe
+    /// out a separately-configured global setting on another axis. Same
+    /// composition semantics as the slideshow's effective* properties:
+    /// brightness/sharpen add, contrast/saturation/opacity multiply,
+    /// isAutoEnhanced ORs. Neutral per-image values compose to identity
+    /// against global, so dragging opacity on an image with a global
+    /// saturation boost preserves that boost on the bake-relevant axes.
     var effectiveAdjustments: VisualAdjustments {
-        if currentAdjustments.isModified {
-            return currentAdjustments
-        }
-        return appModel.globalVisualAdjustments
+        let global = appModel.globalVisualAdjustments
+        var combined = VisualAdjustments()
+        combined.brightness = currentAdjustments.brightness + global.brightness
+        combined.contrast = currentAdjustments.contrast * global.contrast
+        combined.saturation = currentAdjustments.saturation * global.saturation
+        combined.opacity = currentAdjustments.opacity * global.opacity
+        combined.sharpen = currentAdjustments.sharpen + global.sharpen
+        combined.isAutoEnhanced = currentAdjustments.isAutoEnhanced || global.isAutoEnhanced
+        return combined
     }
 
     /// Whether to show the adjustments popover (driven from ornament button)
