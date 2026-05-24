@@ -10,14 +10,14 @@
 
 # --- Project ---
 # Path to .xcodeproj or .xcworkspace, relative to repo root (or absolute).
-PROJECT_PATH="YourApp/YourApp.xcodeproj"
-SCHEME_NAME="YourApp"
-TARGET_NAME="YourApp"        # used for IPA/Payload naming
-PLATFORM="visionOS"          # passed as generic/platform=$PLATFORM (e.g. iOS, visionOS)
+PROJECT_PATH="SpatialStash/SpatialStash.xcodeproj"
+SCHEME_NAME="SpatialStash"
+TARGET_NAME="SpatialStash"   # used for IPA/Payload naming
+PLATFORM="visionOS"          # passed as generic/platform=$PLATFORM
 
 # --- Identity ---
-TEAM_ID="YOUR_TEAM_ID"
-BUILD_BUNDLE_ID="your.build.bundle.identifier"
+TEAM_ID="9T5F88VJFL"
+BUILD_BUNDLE_ID="com.illixion.spatialstash"
 
 # --- Signing certificates (.p12 files) ---
 DEV_P12_PATH="$HOME/Downloads/Development.p12"
@@ -38,4 +38,4 @@ DEVICE_NAME="Apple Vision Pro"
 
 # --- Optional pre-build hook ---
 # Script executed before xcodebuild (relative to repo root). Leave empty to skip.
-PRE_BUILD_HOOK=""
+PRE_BUILD_HOOK="./scripts/set-build-info.sh"
