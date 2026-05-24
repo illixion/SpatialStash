@@ -6,8 +6,7 @@
 # any login-keychain setup. Nothing needs to be pre-installed on the machine.
 #
 # BUILD_BUNDLE_ID overrides PRODUCT_BUNDLE_IDENTIFIER at build time — this
-# is the app's identity on device. BUNDLE_ID is the provisioning profile's
-# app ID (used for device authorization only).
+# is the app's identity on device.
 
 # --- Project ---
 # Path to .xcodeproj or .xcworkspace, relative to repo root (or absolute).
@@ -19,7 +18,6 @@ PLATFORM="visionOS"          # passed as generic/platform=$PLATFORM (e.g. iOS, v
 # --- Identity ---
 TEAM_ID="YOUR_TEAM_ID"
 BUILD_BUNDLE_ID="your.build.bundle.identifier"
-BUNDLE_ID="your.signing.bundle.identifier"
 
 # --- Signing certificates (.p12 files) ---
 DEV_P12_PATH="$HOME/Downloads/Development.p12"
