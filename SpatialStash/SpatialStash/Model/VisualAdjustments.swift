@@ -50,6 +50,18 @@ struct VisualAdjustments: Codable, Equatable {
         brightness != 0.0 || contrast != 1.0 || saturation != 1.0 || opacity != 1.0 || sharpen != 0.0 || isAutoEnhanced
     }
 
+    /// Whether two adjustment sets are equal on the fields that need to be
+    /// baked into the image source (CIColorControls + auto-enhance). Used
+    /// by the 3D regen path to skip rebuilds when only opacity / sharpen
+    /// change, since those are applied at composition / shader time and
+    /// don't require regenerating the Spatial3DImage.
+    func bakeRelevantEquals(_ other: VisualAdjustments) -> Bool {
+        brightness == other.brightness &&
+            contrast == other.contrast &&
+            saturation == other.saturation &&
+            isAutoEnhanced == other.isAutoEnhanced
+    }
+
     /// Reset all values to their neutral defaults
     mutating func reset() {
         brightness = 0.0

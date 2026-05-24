@@ -209,6 +209,14 @@ class PhotoWindowModel {
     /// Debounce task for reloading ImagePresentationComponent with adjustments
     var adjustments3DReloadTask: Task<Void, Never>?
 
+    /// Snapshot of the adjustments that were last baked into the current
+    /// `spatial3DImage`. `reloadImagePresentationWithAdjustments` consults
+    /// this to skip the regen dance when only render-time fields (opacity,
+    /// sharpen) changed — those don't need to be re-baked. Reset to
+    /// `VisualAdjustments()` on each fresh IPC creation (raw bytes go in,
+    /// so the implicit baseline is "neutral") and to nil on 3D exit.
+    var lastBakedAdjustments: VisualAdjustments?
+
     /// Whether any popover is currently open (used to suppress auto-hide timer)
     var hasOpenPopover: Bool {
         showAdjustmentsPopover || showMediaInfoPopover || openOrnamentMenuCount > 0

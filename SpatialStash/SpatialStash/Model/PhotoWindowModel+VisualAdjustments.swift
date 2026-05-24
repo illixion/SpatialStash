@@ -303,6 +303,18 @@ extension PhotoWindowModel {
     func reloadImagePresentationWithAdjustments() {
         guard is3DMode || isShowingAdjustmentPreview else { return }
 
+        // Opacity (and sharpen) don't get baked into the Spatial3DImage —
+        // composition / shader time handles them on top of the rendered
+        // RealityKit output. Skip the 2D-preview-then-regenerate dance
+        // when nothing bake-relevant changed since the last commit so
+        // dragging the opacity slider doesn't rebuild the depth map.
+        let currentEffective = effectiveAdjustments
+        if let lastBaked = lastBakedAdjustments,
+           lastBaked.bakeRelevantEquals(currentEffective),
+           !isShowingAdjustmentPreview {
+            return
+        }
+
         // Switch from 3D to 2D preview mode on first call.
         // This sets is3DMode = false so PhotoDisplayView renders the SwiftUI Image branch
         // (which already has .brightness/.contrast/.saturation modifiers) at the correct
@@ -451,6 +463,10 @@ extension PhotoWindowModel {
             self.isShowingAdjustmentPreview = false
             self.is3DMode = true
             self.pendingGenerate3D = shouldRegenerate3D
+            // Record what was baked so subsequent opacity-only slider
+            // movements short-circuit at the guard in
+            // reloadImagePresentationWithAdjustments.
+            self.lastBakedAdjustments = self.effectiveAdjustments
         }
     }
 

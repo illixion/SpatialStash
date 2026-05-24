@@ -106,6 +106,7 @@ extension PhotoWindowModel {
         updateExperimentalSpatial3DTuning()
         isShowingAdjustmentPreview = false
         adjustments3DReloadTask?.cancel()
+        lastBakedAdjustments = nil
 
         // Record that the user explicitly exited 3D so auto-restore doesn't re-enable it
         await trackViewingMode(.mono)
@@ -212,6 +213,11 @@ extension PhotoWindowModel {
             imageAspectRatio = CGFloat(aspectRatio)
         }
         updateExperimentalSpatial3DTuning()
+        // Fresh Spatial3DImage from raw bytes — nothing has been baked
+        // yet, so the implicit baseline is neutral. Opacity-only slider
+        // movements before any other adjustment can short-circuit at the
+        // regen guard.
+        lastBakedAdjustments = VisualAdjustments()
 
         // Release CPU-side resources since RealityKit owns the GPU texture now.
         // The raw data can be reloaded from disk cache if needed (e.g. switching
