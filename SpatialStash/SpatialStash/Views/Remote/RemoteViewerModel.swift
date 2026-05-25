@@ -80,7 +80,7 @@ class RemoteViewerModel: SlideshowEngine {
     /// per-window/local — other devices keep advancing.
     private var playbackSuppressedUntil: Date?
 
-/// Post that's transitioned visually but is still waiting on the
+    /// Post that's transitioned visually but is still waiting on the
     /// RealityKit slot to finish generating its depth map before we tell
     /// the server we're ready. Without this gate, a short channel
     /// interval (6 s, etc.) advances the room ahead of the slowest 3D
@@ -169,6 +169,8 @@ class RemoteViewerModel: SlideshowEngine {
         tagListManager?.removeSendHandler(id: engineId)
         wsSession = nil
         playbackSuppressedUntil = nil
+        ratioResendTask?.cancel()
+        ratioResendTask = nil
     }
 
     override func onBecameActive() {
@@ -566,6 +568,10 @@ class RemoteViewerModel: SlideshowEngine {
     /// `slideshowConfig` on a meaningfully different aspect (avoids a refill
     /// storm during interactive window resize).
     private var lastSentRatio: Double?
+    /// Debounce timer for resize-driven slideshowConfig re-sends. A slow
+    /// drag through several ±8% threshold crossings would otherwise fire
+    /// one clearAndRefill per crossing on the server.
+    private var ratioResendTask: Task<Void, Never>?
 
     override func updateWindowAspectRatio(_ size: CGSize) {
         let prev = windowAspectRatio
@@ -583,10 +589,17 @@ class RemoteViewerModel: SlideshowEngine {
             return
         }
         // 8% threshold mirrors a step the server's ±15% range would actually
-        // shift the candidate set.
-        if abs(newRatio - anchor) / anchor > 0.08 {
-            lastSentRatio = newRatio
-            sendSlideshowConfigToServer()
+        // shift the candidate set. Debounce so an interactive drag through
+        // multiple crossings only sends once when the user settles.
+        guard abs(newRatio - anchor) / anchor > 0.08 else { return }
+        ratioResendTask?.cancel()
+        ratioResendTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled, let self else { return }
+            let r = self.windowAspectRatio
+            guard r.isFinite, r > 0 else { return }
+            self.lastSentRatio = r
+            self.sendSlideshowConfigToServer()
         }
     }
 
