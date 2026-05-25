@@ -80,13 +80,7 @@ class RemoteViewerModel: SlideshowEngine {
     /// per-window/local — other devices keep advancing.
     private var playbackSuppressedUntil: Date?
 
-    /// Timestamp of the last `playback` frame received from the server.
-    /// Used by `onBecameActive` to decide whether the channel looks stuck
-    /// and needs an active recovery (re-register + requestNext) rather
-    /// than the cheap ping-probe.
-    private var lastPlaybackReceivedAt: Date?
-
-    /// Post that's transitioned visually but is still waiting on the
+/// Post that's transitioned visually but is still waiting on the
     /// RealityKit slot to finish generating its depth map before we tell
     /// the server we're ready. Without this gate, a short channel
     /// interval (6 s, etc.) advances the room ahead of the slowest 3D
@@ -174,36 +168,22 @@ class RemoteViewerModel: SlideshowEngine {
         modTagManager?.removeSendHandler(id: engineId)
         tagListManager?.removeSendHandler(id: engineId)
         wsSession = nil
+        playbackSuppressedUntil = nil
     }
 
     override func onBecameActive() {
         // visionOS flips scenePhase on gaze shifts and minor system
         // interruptions, not just true sleep/wake. Probing with a ping
         // lets a healthy socket prove itself; only a missing pong
-        // forces a reconnect. Unconditionally reconnecting here was
-        // dropping the server session on every blip, which made the
-        // broker emit displayDisconnect frames to peer kiosks.
+        // forces a reconnect.
         wsSession?.probeOrReconnect()
         wsSession?.sendVisibilityChange(deviceId: config.wsDeviceId, visible: true)
-
-        // After sleep/wake the WS may auto-reconnect successfully but the
-        // server-side channel can be left paused — visibility may not have
-        // flipped value (so `notifyVisibility` no-ops) or our session may
-        // still be alive in the orchestrator with a stopped dwell timer.
-        // If we have no current post, or the last `playback` frame is
-        // stale, actively re-register the channel and ask for the next
-        // frame instead of waiting passively. Cheap probes (gaze blinks)
-        // skip this path because `lastPlaybackReceivedAt` will be recent.
-        let staleThreshold = max(30.0, delay * 2.0)
-        let isStale: Bool = {
-            guard let last = lastPlaybackReceivedAt else { return true }
-            return Date().timeIntervalSince(last) > staleThreshold
-        }()
-        if currentPost == nil || isStale {
-            AppLogger.remoteViewer.info("onBecameActive: recovering channel (currentPost=\(self.currentPost?._id ?? -1, privacy: .public), stale=\(isStale, privacy: .public))")
-            sendSlideshowConfigToServer()
-            wsSession?.sendRequestNext()
-        }
+        // Per protocol §"Visibility never resets the timer": the server
+        // resumes the channel's wall-clock dwell on visibility=true.
+        // No client-side wake-advance (requestNext on stale playback) —
+        // that races the server's resume and is explicitly forbidden.
+        // If a reconnect happens, the channel-rejoin path will re-send
+        // slideshowConfig on its own.
     }
 
     override func onEnteredBackground() {
@@ -566,9 +546,48 @@ class RemoteViewerModel: SlideshowEngine {
             height: 1080,
             bright: false,
             convert: false,
-            ratio: nil,
+            ratio: currentRatioRangeString(),
             modTags: modTagManager?.activeTags ?? []
         )
+    }
+
+    /// Mirrors the web kiosk's `calculateDisplayRatioRange` (public/modules/config.js):
+    /// emits a `±15%` numeric range string like `"1.32..1.79"` that the server
+    /// can plug into its `ratio:lo..hi` query clause. Returns nil if the window
+    /// hasn't reported a usable size yet.
+    private func currentRatioRangeString() -> String? {
+        let ratio = windowAspectRatio
+        guard ratio.isFinite, ratio > 0 else { return nil }
+        let range = ratio * 0.15
+        return String(format: "%.2f..%.2f", ratio - range, ratio + range)
+    }
+
+    /// Tracks the ratio we last advertised to the server, so we only re-send
+    /// `slideshowConfig` on a meaningfully different aspect (avoids a refill
+    /// storm during interactive window resize).
+    private var lastSentRatio: Double?
+
+    override func updateWindowAspectRatio(_ size: CGSize) {
+        let prev = windowAspectRatio
+        super.updateWindowAspectRatio(size)
+        guard !isGalleryMode else { return }
+        let newRatio = windowAspectRatio
+        guard newRatio.isFinite, newRatio > 0 else { return }
+        // Anchor for comparison: prefer the last value we actually sent, fall
+        // back to the previous aspect so the first change after start still
+        // triggers a send.
+        let anchor = lastSentRatio ?? prev
+        guard anchor > 0 else {
+            lastSentRatio = newRatio
+            sendSlideshowConfigToServer()
+            return
+        }
+        // 8% threshold mirrors a step the server's ±15% range would actually
+        // shift the candidate set.
+        if abs(newRatio - anchor) / anchor > 0.08 {
+            lastSentRatio = newRatio
+            sendSlideshowConfigToServer()
+        }
     }
 
     private func handleWSMessage(_ message: RemoteWSMessage) {
@@ -619,6 +638,7 @@ class RemoteViewerModel: SlideshowEngine {
 
         case .searchEmpty(let query):
             AppLogger.remoteViewer.warning("WS searchEmpty: refill returned zero rows for query \"\(query, privacy: .public)\"")
+            showToast("No images match: \(query)", isError: true)
 
         case .fatalAuthError(let reason):
             // Server closed the upgrade with 1008. The WS client has
@@ -634,7 +654,6 @@ class RemoteViewerModel: SlideshowEngine {
     /// list, merge-driver status, and feeds the engine's queue with the
     /// server's `current` / `next` posts.
     private func handlePlaybackFrame(_ payload: [String: Any]) {
-        lastPlaybackReceivedAt = Date()
         if let until = playbackSuppressedUntil {
             if Date() < until {
                 AppLogger.remoteViewer.info("playback: suppressed (history jump active)")
