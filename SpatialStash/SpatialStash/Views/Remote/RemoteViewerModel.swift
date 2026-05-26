@@ -171,6 +171,9 @@ class RemoteViewerModel: SlideshowEngine {
         playbackSuppressedUntil = nil
         ratioResendTask?.cancel()
         ratioResendTask = nil
+        visibilityDebounce?.cancel()
+        visibilityDebounce = nil
+        lastSentVisibility = nil
     }
 
     override func onBecameActive() {
@@ -179,7 +182,7 @@ class RemoteViewerModel: SlideshowEngine {
         // lets a healthy socket prove itself; only a missing pong
         // forces a reconnect.
         wsSession?.probeOrReconnect()
-        wsSession?.sendVisibilityChange(deviceId: config.wsDeviceId, visible: true)
+        scheduleVisibilityReport(true)
         // Per protocol §"Visibility never resets the timer": the server
         // resumes the channel's wall-clock dwell on visibility=true.
         // No client-side wake-advance (requestNext on stale playback) —
@@ -189,7 +192,28 @@ class RemoteViewerModel: SlideshowEngine {
     }
 
     override func onEnteredBackground() {
-        wsSession?.sendVisibilityChange(deviceId: config.wsDeviceId, visible: false)
+        scheduleVisibilityReport(false)
+    }
+
+    /// Last visibility value we actually told the server about. Used to
+    /// suppress duplicate sends across visionOS scenePhase flutter
+    /// (active→inactive→background→inactive→active cycles can fire in
+    /// rapid succession around a window dismiss/gaze shift).
+    private var lastSentVisibility: Bool?
+    /// Coalesces visibility changes so a transient flutter doesn't fire
+    /// a dozen WS frames before settling.
+    private var visibilityDebounce: Task<Void, Never>?
+
+    private func scheduleVisibilityReport(_ visible: Bool) {
+        visibilityDebounce?.cancel()
+        visibilityDebounce = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled, let self else { return }
+            guard self.lastSentVisibility != visible else { return }
+            self.lastSentVisibility = visible
+            AppLogger.remoteViewer.info("WS tx visibility deviceId=\(self.config.wsDeviceId, privacy: .public) visible=\(visible, privacy: .public)")
+            self.wsSession?.sendVisibilityChange(deviceId: self.config.wsDeviceId, visible: visible)
+        }
     }
 
     // MARK: - Remote Actions
@@ -503,8 +527,21 @@ class RemoteViewerModel: SlideshowEngine {
         // protocol level but never receives another `playback` frame
         // and the slideshow gets stuck on the last image.
         session.onConnected = { [weak self] in
-            self?.sendSlideshowConfigToServer()
-            self?.wsSession?.sendVisibilityChange(deviceId: self?.config.wsDeviceId ?? "", visible: true)
+            guard let self else { return }
+            self.sendSlideshowConfigToServer()
+            // Report the actual current scene state, not a blanket `true`.
+            // If the WS reconnects while the window is backgrounded (e.g.
+            // server-killed connection during sleep), an unconditional
+            // visibility=true here overwrites the prior false and the
+            // orchestrator resumes the dwell timer for a window the user
+            // can't see — playback frames keep arriving and the channel
+            // effectively never pauses.
+            //
+            // Clear lastSentVisibility so the post-reconnect send is not
+            // suppressed by the debouncer: the server forgot our prior
+            // report when the ws died, so we have to re-state it.
+            self.lastSentVisibility = nil
+            self.scheduleVisibilityReport(self.state != .backgrounded)
         }
         wsSession = session
 
@@ -514,7 +551,8 @@ class RemoteViewerModel: SlideshowEngine {
         // gets our slideshowConfig immediately.
         if session.isConnected {
             sendSlideshowConfigToServer()
-            session.sendVisibilityChange(deviceId: config.wsDeviceId, visible: true)
+            lastSentVisibility = nil
+            scheduleVisibilityReport(state != .backgrounded)
         }
 
         // Push later switches from the shared ModTagManager out to this
