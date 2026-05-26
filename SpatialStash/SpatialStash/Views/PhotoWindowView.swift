@@ -12,6 +12,7 @@ import SwiftUI
 
 struct PhotoWindowView: View {
     let wasPushed: Bool
+    private let popOutWindowID: UUID?
     @State private var windowModel: PhotoWindowModel
     @Environment(AppModel.self) private var appModel
     @Environment(\.openWindow) private var openWindow
@@ -22,6 +23,7 @@ struct PhotoWindowView: View {
 
     init(windowValue: PhotoWindowValue, appModel: AppModel) {
         self.wasPushed = windowValue.wasPushed
+        self.popOutWindowID = windowValue.wasPushed ? nil : windowValue.id
         // Re-resolve local file URLs in case this is a visionOS scene restoration
         // where the sandbox container UUID has changed since the window was saved.
         let resolvedImage = windowValue.image.resolvingLocalFileURL()
@@ -78,7 +80,19 @@ struct PhotoWindowView: View {
         .onAppear {
             appModel.lastViewedImageId = windowModel.image.id
             windowModel.start()
-            windowModel.startAutoHideTimer()
+            // Wall-snapped pop-outs restored by visionOS after a reboot come
+            // back with the same Codable windowValue UUID. Treat repeat
+            // appearances of the same UUID as system-restored and start with
+            // ornaments hidden so the user isn't greeted by chrome they have
+            // to dismiss.
+            if let id = popOutWindowID, RestoredWindowTracker.isRestored(id) {
+                windowModel.isUIHidden = true
+            } else {
+                if let id = popOutWindowID {
+                    RestoredWindowTracker.markSeen(id)
+                }
+                windowModel.startAutoHideTimer()
+            }
         }
         .onDisappear {
             windowModel.cleanup()

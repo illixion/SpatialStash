@@ -161,7 +161,19 @@ struct VideoWindowView: View {
         .onAppear {
             stereoscopicOverride = windowValue.stereoscopicOverride
             video3DSettings = windowValue.video3DSettings
-            startAutoHideTimer()
+            // Wall-snapped pop-outs restored by visionOS after a reboot come
+            // back with the same windowValue UUID. Repeat appearances of the
+            // same UUID are treated as system-restored — start with ornaments
+            // hidden instead of arming the reveal timer.
+            if !windowValue.wasPushed, RestoredWindowTracker.isRestored(windowValue.id) {
+                isUIHidden = true
+                isWindowControlsHidden = true
+            } else {
+                if !windowValue.wasPushed {
+                    RestoredWindowTracker.markSeen(windowValue.id)
+                }
+                startAutoHideTimer()
+            }
             // Set AppModel video state so VideoOrnamentsView works for both contexts
             appModel.selectVideoForDetail(video)
         }

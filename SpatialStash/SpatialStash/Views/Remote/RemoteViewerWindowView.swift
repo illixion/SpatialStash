@@ -144,7 +144,15 @@ struct RemoteViewerWindowView: View {
         )
         .onAppear {
             setupModel()
-            resetAutoHideTimer()
+            // Wall-snapped slideshow windows restored by visionOS after a
+            // reboot come back with the same windowValue UUID. Skip the
+            // initial ornament reveal for restored windows.
+            if RestoredWindowTracker.isRestored(windowValue.id) {
+                controlsVisible = false
+            } else {
+                RestoredWindowTracker.markSeen(windowValue.id)
+                resetAutoHideTimer()
+            }
         }
         .onDisappear {
             if let model = viewerModel {
