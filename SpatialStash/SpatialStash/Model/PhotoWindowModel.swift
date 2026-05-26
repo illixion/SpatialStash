@@ -287,6 +287,12 @@ class PhotoWindowModel {
     /// is in flight. No-op for animated images, in-progress 3D modes, or when
     /// any enhancement / remembered mode is already active.
     func applyDefaultViewingModeIfNeeded() async {
+        // Pop-outs restored after a visionOS reboot must not honor the global
+        // default viewing mode — if the user switched the default to 3D and
+        // has many windows snapped, applying it on every restored window
+        // would generate spatial 3D for all of them at once. The user can
+        // still opt in per window via the ornament.
+        guard !isRestoredPopOut else { return }
         guard !isAnimatedImage else { return }
         guard backgroundRemovalState == .original else { return }
         guard !is3DMode, desiredViewingMode == .mono else { return }
@@ -445,6 +451,12 @@ class PhotoWindowModel {
 
     var isUIHidden: Bool = false
     var isWindowControlsHidden: Bool = false
+
+    /// When true, the window was restored by visionOS (wall-snapped pop-out
+    /// reappearing after a reboot) rather than freshly opened by the user.
+    /// Suppresses global viewing-mode defaults that could otherwise switch
+    /// many restored windows into 3D at once and blow the memory budget.
+    var isRestoredPopOut: Bool = false
     var autoHideTask: Task<Void, Never>?
     var windowControlsHideTask: Task<Void, Never>?
     /// Auto-dismiss timer for the 3D restore prompt pill
