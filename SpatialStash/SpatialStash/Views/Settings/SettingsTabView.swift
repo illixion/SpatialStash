@@ -52,7 +52,12 @@ struct SettingsTabView: View {
                     }
 
                     if !appModel.effectiveReduceMotion {
-                        Toggle("Diorama Thumbnails", isOn: $appModel.thumbnailDiorama)
+                        Picker("Thumbnail Style", selection: $appModel.thumbnailStyle) {
+                            ForEach(ThumbnailStyle.allCases) { style in
+                                Text(style.label).tag(style)
+                            }
+                        }
+                        .pickerStyle(.menu)
                     }
 
                     Toggle("Rounded Corners", isOn: $appModel.roundedCorners)

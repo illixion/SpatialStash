@@ -615,21 +615,30 @@ class AppModel {
         reduceMotion || systemReduceMotion
     }
 
-    /// When true, gallery thumbnails render the two-layer diorama with the
-    /// foreground popped forward in z. Independent from Reduce Motion: a
-    /// user may want the parallax-free look without disabling other motion.
-    /// Forced off when `effectiveReduceMotion` is true — read
-    /// `effectiveThumbnailDiorama` at use sites.
-    var thumbnailDiorama: Bool {
+    /// Gallery thumbnail rendering style. `.flat` is a regular 2D
+    /// thumbnail; `.diorama` overlays a foreground-popped subject layer
+    /// for Apple TV-style parallax; `.spatial3D` runs each thumbnail
+    /// through RealityKit's 2D→3D converter at low resolution.
+    /// Forced to `.flat` when `effectiveReduceMotion` is true — read
+    /// `effectiveThumbnailStyle` at use sites.
+    var thumbnailStyle: ThumbnailStyle {
         didSet {
-            if thumbnailDiorama != oldValue {
-                UserDefaults.standard.set(thumbnailDiorama, forKey: "thumbnailDiorama")
+            if thumbnailStyle != oldValue {
+                UserDefaults.standard.set(thumbnailStyle.rawValue, forKey: "thumbnailStyle")
             }
         }
     }
 
+    var effectiveThumbnailStyle: ThumbnailStyle {
+        effectiveReduceMotion ? .flat : thumbnailStyle
+    }
+
     var effectiveThumbnailDiorama: Bool {
-        thumbnailDiorama && !effectiveReduceMotion
+        effectiveThumbnailStyle == .diorama
+    }
+
+    var effectiveThumbnailSpatial3D: Bool {
+        effectiveThumbnailStyle == .spatial3D
     }
 
     /// When true, image viewer windows have rounded corners.
@@ -947,10 +956,19 @@ class AppModel {
         // Accessibility setting overrides via effectiveReduceMotion)
         let loadedReduceMotion = UserDefaults.standard.bool(forKey: "reduceMotion")
 
-        // Load thumbnail diorama preference (default: true)
-        let loadedThumbnailDiorama = UserDefaults.standard.object(forKey: "thumbnailDiorama") != nil
-            ? UserDefaults.standard.bool(forKey: "thumbnailDiorama")
-            : true
+        // Load thumbnail style. Migrates from legacy `thumbnailDiorama`
+        // bool: true → .diorama, false → .flat. Default for fresh
+        // installs is .diorama to preserve the prior look.
+        let loadedThumbnailStyle: ThumbnailStyle = {
+            if let raw = UserDefaults.standard.string(forKey: "thumbnailStyle"),
+               let style = ThumbnailStyle(rawValue: raw) {
+                return style
+            }
+            if UserDefaults.standard.object(forKey: "thumbnailDiorama") != nil {
+                return UserDefaults.standard.bool(forKey: "thumbnailDiorama") ? .diorama : .flat
+            }
+            return .diorama
+        }()
 
         // Load rounded corners (default: true)
         let loadedRoundedCorners = UserDefaults.standard.object(forKey: "roundedCorners") != nil
@@ -1042,7 +1060,7 @@ class AppModel {
         self.spatial3DMaxResolution = loadedSpatial3DMaxResolution
         self.dioramaDistance = loadedDioramaDistance
         self.reduceMotion = loadedReduceMotion
-        self.thumbnailDiorama = loadedThumbnailDiorama
+        self.thumbnailStyle = loadedThumbnailStyle
         self.roundedCorners = loadedRoundedCorners
         self.openMediaInNewWindows = loadedOpenMediaInNewWindows
         self.rememberImageEnhancements = loadedRememberImageEnhancements

@@ -36,6 +36,13 @@ struct GalleryThumbnailView: View {
                 Image(uiImage: loadedImage)
                     .resizable()
                     .scaledToFill()
+                if appModel.effectiveThumbnailSpatial3D {
+                    // RealityKit 2D→3D conversion runs on a 128px
+                    // downsample. The base 2D image stays visible until
+                    // generate() finishes, then the spatial layer
+                    // crossfades in on top.
+                    GalleryThumbnailSpatial3DView(baseImage: loadedImage)
+                }
             } else if isLoading {
                 ProgressView()
             } else {
