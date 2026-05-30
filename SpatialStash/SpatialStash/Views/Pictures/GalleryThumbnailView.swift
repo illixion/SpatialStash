@@ -12,6 +12,9 @@ struct GalleryThumbnailView: View {
     @Environment(AppModel.self) private var appModel
     let image: GalleryImage
     var onTap: (() -> Void)? = nil
+    var onLongPress: (() -> Void)? = nil
+    var quickLookNamespace: Namespace.ID? = nil
+    var quickLookActive: Bool = false
     @State private var loadedImage: UIImage?
     @State private var isLoading = true
     @State private var loadFailed = false
@@ -36,13 +39,6 @@ struct GalleryThumbnailView: View {
                 Image(uiImage: loadedImage)
                     .resizable()
                     .scaledToFill()
-                if appModel.effectiveThumbnailSpatial3D {
-                    // RealityKit 2D→3D conversion runs on a 128px
-                    // downsample. The base 2D image stays visible until
-                    // generate() finishes, then the spatial layer
-                    // crossfades in on top.
-                    GalleryThumbnailSpatial3DView(baseImage: loadedImage)
-                }
             } else if isLoading {
                 ProgressView()
             } else {
@@ -64,8 +60,13 @@ struct GalleryThumbnailView: View {
         .clipped()
         .contentShape(Rectangle())
         .modifier(ThumbnailHoverModifier(reduceMotion: appModel.effectiveReduceMotion))
+        .matchedGeometryEffectIfAvailable(id: image.id, namespace: quickLookNamespace, isSource: !quickLookActive)
+        .opacity(quickLookActive ? 0 : 1)
         .onTapGesture {
             onTap?()
+        }
+        .onLongPressGesture(minimumDuration: 0.4) {
+            onLongPress?()
         }
         .task {
             // Load base thumbnail and any cached diorama in parallel so a
@@ -161,5 +162,19 @@ struct GalleryThumbnailView: View {
         }
         
         return UIImage(cgImage: cgImage, scale: image.scale, orientation: image.imageOrientation)
+    }
+}
+
+private extension View {
+    /// Applies `matchedGeometryEffect` only when a namespace is supplied,
+    /// so cells outside of a Quick Look–enabled grid don't try to bind to
+    /// a missing namespace.
+    @ViewBuilder
+    func matchedGeometryEffectIfAvailable(id: some Hashable, namespace: Namespace.ID?, isSource: Bool) -> some View {
+        if let namespace {
+            self.matchedGeometryEffect(id: id, in: namespace, isSource: isSource)
+        } else {
+            self
+        }
     }
 }

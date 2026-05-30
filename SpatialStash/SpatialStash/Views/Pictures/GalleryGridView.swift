@@ -14,6 +14,8 @@ struct GalleryGridView: View {
     var onImageSelected: ((GalleryImage) -> Void)? = nil
 
     @State private var showBulkDeleteConfirmation = false
+    @State private var quickLookImage: GalleryImage?
+    @Namespace private var quickLookNamespace
 
     let columns = [
         GridItem(.adaptive(minimum: 200, maximum: 300), spacing: 16)
@@ -85,6 +87,21 @@ struct GalleryGridView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .overlay {
+            if let quickLookImage {
+                QuickLook3DView(
+                    image: quickLookImage,
+                    namespace: quickLookNamespace,
+                    onDismiss: {
+                        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+                            self.quickLookImage = nil
+                        }
+                    }
+                )
+                .transition(.opacity)
+                .zIndex(10)
+            }
+        }
         .safeAreaInset(edge: .bottom) {
             if appModel.isSelectingImages {
                 selectionToolbar
@@ -173,10 +190,20 @@ struct GalleryGridView: View {
                     }
                 }
         } else {
-            GalleryThumbnailView(image: image) {
-                appModel.lastViewedImageId = image.id
-                onImageSelected?(image)
-            }
+            GalleryThumbnailView(
+                image: image,
+                onTap: {
+                    appModel.lastViewedImageId = image.id
+                    onImageSelected?(image)
+                },
+                onLongPress: {
+                    withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
+                        quickLookImage = image
+                    }
+                },
+                quickLookNamespace: quickLookNamespace,
+                quickLookActive: quickLookImage?.id == image.id
+            )
         }
     }
 

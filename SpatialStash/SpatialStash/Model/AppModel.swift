@@ -637,10 +637,6 @@ class AppModel {
         effectiveThumbnailStyle == .diorama
     }
 
-    var effectiveThumbnailSpatial3D: Bool {
-        effectiveThumbnailStyle == .spatial3D
-    }
-
     /// When true, image viewer windows have rounded corners.
     var roundedCorners: Bool {
         didSet {

@@ -10,7 +10,6 @@ import Foundation
 enum ThumbnailStyle: String, CaseIterable, Identifiable {
     case flat
     case diorama
-    case spatial3D
 
     var id: String { rawValue }
 
@@ -18,7 +17,6 @@ enum ThumbnailStyle: String, CaseIterable, Identifiable {
         switch self {
         case .flat: return "Flat"
         case .diorama: return "Diorama"
-        case .spatial3D: return "Spatial 3D"
         }
     }
 }
