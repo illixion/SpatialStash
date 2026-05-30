@@ -2,22 +2,31 @@
  Spatial Stash - Quick Look 3D Preview
 
  Tap-and-hold "Quick Look" preview presented over the gallery grid.
- The source cell's frame is matched via `matchedGeometryEffect` so the
- preview scales out of the cell (and animates back into it on
- dismiss), mirroring iOS 3D Touch's photo pop. A side context menu
- next to the preview offers a "View in 3D" toggle that triggers the
- RealityKit 2D→3D conversion in the same view — the preview opens in
- 2D so we don't pay the depth-map cost unless the user asks for it,
- which also matches iOS Quick Look's progressive-reveal feel.
 
- Z-stacking: an `.offset(z:)` lifts both the preview and the side
- menu well in front of diorama-thumbnail foreground layers (which
- sit at z: 24 inside the grid) so the popped-out preview can't be
- visually intersected by a thumbnail's diorama pop.
+ Animation: SwiftUI `.transition()` only fires when the view it's on
+ is conditionally inserted/removed, so wrapping sub-views in their
+ own transitions inside an always-mounted parent gives no animation.
+ Instead this view drives the pop entirely from internal `@State`:
+ on appear it animates a `presented` flag from false → true, which
+ the preview reads to interpolate scale + offset between (cellSize,
+ cellCenter) and (fullSize, naturalCenter). Dismiss reverses the
+ animation and only nils the parent state after the spring settles.
+ The side menu has its own slightly-delayed fade/slide so it doesn't
+ visually grow out of the cell alongside the preview.
 
- Reduce-motion: when on, the host grid passes a `nil` namespace and
- `useMatchedGeometry: false`, so the pop animation is replaced with
- a plain opacity fade.
+ Progressive load:
+   1. Memory-cached thumbnail (instant, often warm from the grid).
+   2. Disk-cached or downloaded full file, decoded at the user's
+      `maxImageResolution` cap from Settings.
+   3. RealityKit Spatial3DImage at the user's `spatial3DMaxResolution`,
+      only when the "View in 3D" side-menu button is pressed.
+
+ Z-stacking: `.offset(z:)` lifts the preview and side menu well in
+ front of diorama-thumbnail foreground layers (z: 24) so the popped
+ preview can't be visually intersected by a thumbnail's diorama pop.
+
+ Reduce Motion: the host grid passes `useScalePop: false`, which
+ collapses the scale/translate animation into a plain opacity fade.
 
  Only one preview is alive at a time — RealityKit enforces a hard
  cap on concurrent ImagePresentationComponent instances on visionOS.
@@ -33,13 +42,40 @@ import UIKit
 /// the underlying grid.
 private let quickLookZOffset: CGFloat = 80
 
+private let sideMenuWidth: CGFloat = 220
+private let previewMenuSpacing: CGFloat = 24
+
 struct QuickLook3DView: View {
     @Environment(AppModel.self) private var appModel
     let image: GalleryImage
-    let namespace: Namespace.ID?
-    let useMatchedGeometry: Bool
+    /// Source cell frame in the gallery coordinate space. Drives the
+    /// scale-from-cell animation. `nil` falls back to a center pop.
+    let sourceFrame: CGRect?
+    /// Container size resolved by the host's outer `GeometryReader`.
+    /// Passed in (rather than read via a local GeometryReader) so the
+    /// first paint already has correct geometry — otherwise the first
+    /// frame may render with a stale/default size before layout
+    /// settles, which is visible as a brief flicker on entry.
+    let containerSize: CGSize
+    let useScalePop: Bool
+    /// Seed bitmap from the source cell. Used as the very first paint
+    /// so the entry animation never starts on an empty/loading frame
+    /// — eliminates the gray placeholder flash and the "zoomed-crop"
+    /// artifact caused by the image arriving mid-animation.
+    let initialImage: UIImage?
+    /// Invoked AFTER the dismiss animation has settled, so the host
+    /// can finally nil-out the optional that drives this view's
+    /// presence in the hierarchy.
     let onDismiss: () -> Void
 
+    @State private var presented = false
+    /// Gesture grace period after the view appears. The pinch that
+    /// completed the long-press tends to register as a tap on the
+    /// freshly-presented backdrop on visionOS, immediately firing
+    /// `animateDismiss()` — you see the entry animation but the view
+    /// vanishes before settling. Tap targets are inert until this
+    /// flips true.
+    @State private var dismissEnabled = false
     @State private var entity = Entity()
     @State private var aspectRatio: CGFloat = 1
     @State private var spatialReady = false
@@ -48,33 +84,97 @@ struct QuickLook3DView: View {
     @State private var spatialFailed = false
     @State private var loadFailed = false
     @State private var loadedImage: UIImage?
+    @State private var hasHighResImage = false
     @State private var localURL: URL?
 
+    init(
+        image: GalleryImage,
+        sourceFrame: CGRect?,
+        containerSize: CGSize,
+        useScalePop: Bool,
+        initialImage: UIImage?,
+        onDismiss: @escaping () -> Void
+    ) {
+        self.image = image
+        self.sourceFrame = sourceFrame
+        self.containerSize = containerSize
+        self.useScalePop = useScalePop
+        self.initialImage = initialImage
+        self.onDismiss = onDismiss
+        // Seed @State from the cell's bitmap so the first paint is
+        // the actual thumbnail, not a placeholder. aspectRatio also
+        // seeds from it so `fitted` is correct on frame 0.
+        _loadedImage = State(initialValue: initialImage)
+        if let initialImage, initialImage.size.height > 0 {
+            _aspectRatio = State(initialValue: initialImage.size.width / initialImage.size.height)
+        }
+    }
+
     var body: some View {
+        let menuReserve = sideMenuWidth + previewMenuSpacing
+        let maxW = max(containerSize.width * 0.92 - menuReserve, 200)
+        let maxH = containerSize.height * 0.92
+        let fitted = fittedSize(in: CGSize(width: maxW, height: maxH))
+        let cellSide = sourceFrame?.width ?? 200
+        // Animating the preview's *frame* between (cellSide × cellSide)
+        // and (fitted.width × fitted.height) makes the inner
+        // `.scaledToFill().clipped()` produce a continuous crop
+        // transition — at the collapsed end, the image fills a square
+        // and crops top/bottom (or left/right) exactly like the cell;
+        // at the expanded end it fills the natural aspect. No sudden
+        // aspect snap when the cell takes over.
+        let previewSize = (useScalePop && !presented)
+            ? CGSize(width: cellSide, height: cellSide)
+            : fitted
+        let cornerR: CGFloat = (useScalePop && !presented) ? 12 : 20
+        let offsetVec = popOffset(containerSize: containerSize)
+
         ZStack {
-            Color.black.opacity(0.55)
+            Color.black
+                .opacity(presented ? 0.55 : 0)
                 .ignoresSafeArea()
                 .contentShape(Rectangle())
-                .onTapGesture { onDismiss() }
+                .onTapGesture { animateDismiss() }
 
-            GeometryReader { geo in
-                // Reserve space for the side menu next to the preview.
-                let menuReserve: CGFloat = 260
-                let maxW = max(geo.size.width * 0.92 - menuReserve, 200)
-                let maxH = geo.size.height * 0.92
-                let fitted = fittedSize(in: CGSize(width: maxW, height: maxH))
+            HStack(alignment: .center, spacing: previewMenuSpacing) {
+                previewContent(size: previewSize, cornerRadius: cornerR)
+                    .offset(x: presented ? 0 : offsetVec.dx, y: presented ? 0 : offsetVec.dy)
+                    // Animate z from the lifted-forward position back
+                    // to the cell's z (0) on dismiss. Without this the
+                    // preview ends the spring at z=80 and then snaps
+                    // backwards to where the cell sits, which reads as
+                    // a sudden depth pop on no-diorama thumbnails.
+                    .offset(z: presented ? quickLookZOffset : 0)
+                    // Reduce-motion path uses opacity for the fade.
+                    // Scale-pop path keeps opacity at 1 throughout so
+                    // the cell→preview handoff is invisible: the
+                    // preview is born at the cell's exact position
+                    // and size with full opacity, then animates out.
+                    .opacity(useScalePop ? 1 : (presented ? 1 : 0))
 
-                HStack(alignment: .center, spacing: 24) {
-                    previewContent(size: fitted)
-                    sideMenu
-                        .frame(width: 220)
-                        .offset(z: quickLookZOffset)
-                }
-                .frame(width: geo.size.width, height: geo.size.height, alignment: .center)
+                sideMenu
+                    .frame(width: sideMenuWidth)
+                    .opacity(presented ? 1 : 0)
+                    .scaleEffect(useScalePop ? (presented ? 1 : 0.85) : 1, anchor: .leading)
+                    .offset(x: useScalePop ? (presented ? 0 : -30) : 0)
+                    .offset(z: quickLookZOffset)
+            }
+            .frame(width: containerSize.width, height: containerSize.height, alignment: .center)
+        }
+        .onAppear {
+            // Defer one runloop so SwiftUI commits the initial
+            // `presented == false` frame before the animation
+            // begins — otherwise the change is coalesced into the
+            // first paint and the spring snaps instead of running.
+            DispatchQueue.main.async {
+                withAnimation(presentAnim) { presented = true }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                dismissEnabled = true
             }
         }
         .task(id: image.id) {
-            await loadBase()
+            await loadProgressive()
         }
         .onChange(of: spatialRequested) { _, requested in
             guard requested else { return }
@@ -82,22 +182,47 @@ struct QuickLook3DView: View {
         }
     }
 
+    private var presentAnim: Animation {
+        useScalePop
+            ? .spring(response: 0.5, dampingFraction: 0.78)
+            : .easeOut(duration: 0.25)
+    }
+
+    private var dismissAnim: Animation {
+        useScalePop
+            ? .spring(response: 0.4, dampingFraction: 0.86)
+            : .easeIn(duration: 0.2)
+    }
+
+    /// Approximate duration the dismiss animation runs for. Spring
+    /// `response` is roughly the perceptual settling time on visionOS;
+    /// we add a small slack so onDismiss fires after the spring has
+    /// visually finished, never before.
+    private var dismissCompletionDelay: TimeInterval {
+        useScalePop ? 0.55 : 0.25
+    }
+
+    private func animateDismiss() {
+        guard dismissEnabled else { return }
+        withAnimation(dismissAnim) { presented = false }
+        DispatchQueue.main.asyncAfter(deadline: .now() + dismissCompletionDelay) {
+            onDismiss()
+        }
+    }
+
     // MARK: - Preview
 
     @ViewBuilder
-    private func previewContent(size: CGSize) -> some View {
+    private func previewContent(size: CGSize, cornerRadius: CGFloat) -> some View {
         ZStack {
-            if let loadedImage {
-                Image(uiImage: loadedImage)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: size.width, height: size.height)
-                    .clipped()
-            } else {
-                Color.secondary.opacity(0.2)
-            }
-
             if spatialReady {
+                // Hand the visible surface entirely to RealityKit once
+                // the depth map is ready. Leaving the 2D image stacked
+                // beneath caused the spatial scene to look "missing"
+                // on visionOS — the RealityView's container can mask
+                // SwiftUI compositing in ways that hide the 2D layer
+                // anyway, so swapping is both more correct and avoids
+                // wasted bandwidth.
                 GeometryReader3D { geometry3D in
                     RealityView { content in
                         content.add(entity)
@@ -106,7 +231,16 @@ struct QuickLook3DView: View {
                         scaleEntityToFit(content: content, geometry: geometry3D)
                     }
                 }
-                .transition(.opacity)
+                .frame(width: size.width, height: size.height)
+            } else if let loadedImage {
+                Image(uiImage: loadedImage)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: size.width, height: size.height)
+                    .clipped()
+            } else {
+                Color.secondary.opacity(0.2)
+                    .frame(width: size.width, height: size.height)
             }
 
             if (loadedImage == nil && !loadFailed) || spatialLoading {
@@ -115,22 +249,46 @@ struct QuickLook3DView: View {
             }
         }
         .frame(width: size.width, height: size.height)
-        .cornerRadius(20)
-        .matchedGeometryEffectIfActive(
-            id: image.id,
-            namespace: namespace,
-            active: useMatchedGeometry
-        )
-        .offset(z: quickLookZOffset)
+        .cornerRadius(cornerRadius)
         .contentShape(Rectangle())
-        .onTapGesture { onDismiss() }
+        .onTapGesture { animateDismiss() }
         .gesture(
             DragGesture(minimumDistance: 30)
                 .onEnded { value in
                     if abs(value.translation.height) > 60 || abs(value.translation.width) > 60 {
-                        onDismiss()
+                        animateDismiss()
                     }
                 }
+        )
+    }
+
+    // MARK: - Pop offset
+
+    private struct PopOffset {
+        let dx: CGFloat
+        let dy: CGFloat
+    }
+
+    /// Offset that translates the HStack-centered preview to sit on
+    /// top of the source cell. The HStack always centers (preview +
+    /// spacing + menu) as a unit, so the preview's natural center is
+    /// fixed at `containerWidth/2 - (menu + spacing)/2`, regardless
+    /// of the preview's own width — so the offset is independent of
+    /// the animated frame size. With the preview's frame shrunk to
+    /// `cellSide × cellSide`, applying this offset lands its rendered
+    /// box exactly on the cell.
+    private func popOffset(containerSize: CGSize) -> PopOffset {
+        guard useScalePop, let frame = sourceFrame else {
+            return PopOffset(dx: 0, dy: 0)
+        }
+        let previewCenter = CGPoint(
+            x: containerSize.width / 2 - (sideMenuWidth + previewMenuSpacing) / 2,
+            y: containerSize.height / 2
+        )
+        let cellCenter = CGPoint(x: frame.midX, y: frame.midY)
+        return PopOffset(
+            dx: cellCenter.x - previewCenter.x,
+            dy: cellCenter.y - previewCenter.y
         )
     }
 
@@ -155,7 +313,7 @@ struct QuickLook3DView: View {
                 tinted: false,
                 disabled: false
             ) {
-                onDismiss()
+                animateDismiss()
             }
         }
         .padding(.vertical, 6)
@@ -206,24 +364,55 @@ struct QuickLook3DView: View {
         entity.scale = SIMD3<Float>(scale, scale, 1.0)
     }
 
-    // MARK: - Loading
+    // MARK: - Progressive load
 
-    /// First-stage load: resolve the source to a local file and show
-    /// the 2D image immediately. No depth-map work runs here — that
-    /// only happens when the user picks "View in 3D" from the side
-    /// menu.
+    /// Three-stage progressive load:
+    ///   1. Memory-cached gallery thumbnail (instant for already-
+    ///      scrolled cells).
+    ///   2. Disk-cached or just-downloaded source file, decoded at
+    ///      the user's `maxImageResolution` cap.
+    /// Spatial 3D is *not* eagerly loaded — it waits for the side
+    /// menu's "View in 3D" press.
     @MainActor
-    private func loadBase() async {
+    private func loadProgressive() async {
+        // Note: `presented` is NOT reset here. The view is conditionally
+        // rendered by the host, so each invocation gets a fresh @State
+        // with `presented == false` already. Resetting it here would
+        // race with `.onAppear`'s withAnimation and could slam the view
+        // back to invisible after the present animation has started.
         spatialReady = false
         spatialRequested = false
         spatialLoading = false
         spatialFailed = false
         loadFailed = false
-        loadedImage = nil
+        // Note: loadedImage is NOT reset to nil — it's seeded from
+        // the cell's bitmap in init so the first paint is correct.
+        // Resetting here would blank the view at the start of the
+        // task and the entry animation would still be empty for a
+        // moment.
+        hasHighResImage = false
         localURL = nil
 
-        let sourceURL = image.fullSizeURL
+        // Stage 1: thumbnail-cached image as a fast first paint.
+        if let thumb = await ImageLoader.shared.loadRemoteThumbnailCached(from: image.thumbnailURL) {
+            if !Task.isCancelled, !hasHighResImage {
+                // Suppress animation on aspectRatio so an arriving
+                // thumbnail with a non-1:1 ratio doesn't ride the
+                // still-settling present spring — that produced the
+                // "accordion expand" on wide images.
+                var t = Transaction()
+                t.disablesAnimations = true
+                withTransaction(t) {
+                    loadedImage = thumb
+                    if thumb.size.height > 0 {
+                        aspectRatio = thumb.size.width / thumb.size.height
+                    }
+                }
+            }
+        }
 
+        // Stage 2: full source file.
+        let sourceURL = image.fullSizeURL
         let resolved: URL
         if sourceURL.isFileURL {
             resolved = sourceURL
@@ -245,20 +434,39 @@ struct QuickLook3DView: View {
                 return
             }
         }
-
         if Task.isCancelled { return }
         localURL = resolved
 
-        if let preview = UIImage(contentsOfFile: resolved.path) {
-            loadedImage = preview
-            if preview.size.height > 0 {
-                aspectRatio = preview.size.width / preview.size.height
+        // Decode at the user's `maxImageResolution` cap (0 = native).
+        let maxRes = appModel.maxImageResolution
+        let downsampledData: Data? = (maxRes > 0)
+            ? PhotoWindowModel.createDownsampledImageData(from: resolved, maxDimension: CGFloat(maxRes))
+            : nil
+        let decoded: UIImage? = await Task.detached(priority: .userInitiated) {
+            if let downsampledData {
+                return UIImage(data: downsampledData)
+            }
+            return UIImage(contentsOfFile: resolved.path)
+        }.value
+        if Task.isCancelled { return }
+        if let decoded {
+            // Cross-fade the image swap but never animate aspectRatio
+            // — a layout-affecting change rides any in-flight spring
+            // and warps the preview's bounds.
+            withAnimation(.easeInOut(duration: 0.2)) {
+                loadedImage = decoded
+            }
+            hasHighResImage = true
+            if decoded.size.height > 0 {
+                var t = Transaction()
+                t.disablesAnimations = true
+                withTransaction(t) {
+                    aspectRatio = decoded.size.width / decoded.size.height
+                }
             }
         }
     }
 
-    /// Second-stage load: build the `Spatial3DImage` and run `generate()`.
-    /// Triggered by the side menu's "View in 3D" button.
     @MainActor
     private func loadSpatial() async {
         guard !spatialLoading, !spatialReady, let localURL else { return }
@@ -309,17 +517,6 @@ struct QuickLook3DView: View {
             }
             spatialLoading = false
             _ = heldEntity
-        }
-    }
-}
-
-private extension View {
-    @ViewBuilder
-    func matchedGeometryEffectIfActive(id: some Hashable, namespace: Namespace.ID?, active: Bool) -> some View {
-        if active, let namespace {
-            self.matchedGeometryEffect(id: id, in: namespace, isSource: false)
-        } else {
-            self
         }
     }
 }

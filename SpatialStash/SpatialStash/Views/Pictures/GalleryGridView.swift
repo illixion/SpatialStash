@@ -15,7 +15,12 @@ struct GalleryGridView: View {
 
     @State private var showBulkDeleteConfirmation = false
     @State private var quickLookImage: GalleryImage?
-    @Namespace private var quickLookNamespace
+    /// Snapshot of the source cell's loaded thumbnail at long-press
+    /// time. Seeds the QL view's initial paint so we never show the
+    /// gray loading state during the pop animation.
+    @State private var quickLookSeedImage: UIImage?
+    @State private var cellFrames: [UUID: CGRect] = [:]
+    private let gallerySpace = "gallery"
 
     let columns = [
         GridItem(.adaptive(minimum: 200, maximum: 300), spacing: 16)
@@ -87,24 +92,41 @@ struct GalleryGridView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .coordinateSpace(name: gallerySpace)
+        .onPreferenceChange(CellFramePreferenceKey.self) { cellFrames = $0 }
         .overlay {
-            if let quickLookImage {
-                let useGeometry = !appModel.effectiveReduceMotion
-                QuickLook3DView(
-                    image: quickLookImage,
-                    namespace: useGeometry ? quickLookNamespace : nil,
-                    useMatchedGeometry: useGeometry,
-                    onDismiss: {
-                        let anim: Animation = useGeometry
-                            ? .spring(response: 0.4, dampingFraction: 0.85)
-                            : .easeInOut(duration: 0.2)
-                        withAnimation(anim) {
-                            self.quickLookImage = nil
+            // Outer GeometryReader resolves container size on the SAME
+            // render commit that the QL view is inserted — feeding it
+            // in as a parameter means the QL's first paint already has
+            // correct geometry (no flicker from a layout-settle pass).
+            GeometryReader { geo in
+                if let quickLookImage {
+                    let useScalePop = !appModel.effectiveReduceMotion
+                    let sourceFrame = cellFrames[quickLookImage.id]
+                    QuickLook3DView(
+                        image: quickLookImage,
+                        sourceFrame: sourceFrame,
+                        containerSize: geo.size,
+                        useScalePop: useScalePop,
+                        initialImage: quickLookSeedImage,
+                        onDismiss: {
+                            // Suppress any inherited animation context
+                            // (visionOS occasionally leaves one behind
+                            // after gesture recognition, especially
+                            // post-swipe-dismiss). Without this, the
+                            // cell's opacity flip back to 1 rides the
+                            // ambient transaction and the thumbnail
+                            // "flies in" instead of snapping into place.
+                            var t = Transaction()
+                            t.disablesAnimations = true
+                            withTransaction(t) {
+                                self.quickLookImage = nil
+                                self.quickLookSeedImage = nil
+                            }
                         }
-                    }
-                )
-                .transition(.opacity)
-                .zIndex(10)
+                    )
+                    .zIndex(10)
+                }
             }
         }
         .safeAreaInset(edge: .bottom) {
@@ -195,23 +217,23 @@ struct GalleryGridView: View {
                     }
                 }
         } else {
-            let useGeometry = !appModel.effectiveReduceMotion
+            let useScalePop = !appModel.effectiveReduceMotion
             GalleryThumbnailView(
                 image: image,
                 onTap: {
                     appModel.lastViewedImageId = image.id
                     onImageSelected?(image)
                 },
-                onLongPress: {
-                    let anim: Animation = useGeometry
-                        ? .spring(response: 0.45, dampingFraction: 0.82)
-                        : .easeInOut(duration: 0.2)
-                    withAnimation(anim) {
-                        quickLookImage = image
-                    }
+                onLongPress: { thumb in
+                    // Capture the cell's loaded UIImage so QL can paint
+                    // it immediately at the start of the animation.
+                    quickLookSeedImage = thumb
+                    // QL drives its own present animation from @State,
+                    // so we just install it — no withAnimation wrapper.
+                    quickLookImage = image
                 },
-                quickLookNamespace: useGeometry ? quickLookNamespace : nil,
-                quickLookActive: quickLookImage?.id == image.id
+                quickLookActive: quickLookImage?.id == image.id,
+                cellCoordinateSpace: gallerySpace
             )
         }
     }
