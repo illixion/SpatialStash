@@ -2,16 +2,25 @@
  Spatial Stash - Quick Look 3D Preview
 
  Tap-and-hold "Quick Look" preview presented over the gallery grid.
- Mirrors iOS 3D Touch's pop-out behavior on photos: the source cell's
- frame is matched via `matchedGeometryEffect`, and the preview expands
- from that frame to fill the container while RealityKit converts the
- full-size image to a Spatial3DImage at the user's configured 3D
- resolution. Tap anywhere or swipe down to dismiss; the animation
- reverses back into the source cell.
+ The source cell's frame is matched via `matchedGeometryEffect` so the
+ preview scales out of the cell (and animates back into it on
+ dismiss), mirroring iOS 3D Touch's photo pop. A side context menu
+ next to the preview offers a "View in 3D" toggle that triggers the
+ RealityKit 2D→3D conversion in the same view — the preview opens in
+ 2D so we don't pay the depth-map cost unless the user asks for it,
+ which also matches iOS Quick Look's progressive-reveal feel.
 
- Only one preview is alive at a time — important because RealityKit
- enforces a hard cap on concurrent ImagePresentationComponent
- instances on visionOS.
+ Z-stacking: an `.offset(z:)` lifts both the preview and the side
+ menu well in front of diorama-thumbnail foreground layers (which
+ sit at z: 24 inside the grid) so the popped-out preview can't be
+ visually intersected by a thumbnail's diorama pop.
+
+ Reduce-motion: when on, the host grid passes a `nil` namespace and
+ `useMatchedGeometry: false`, so the pop animation is replaced with
+ a plain opacity fade.
+
+ Only one preview is alive at a time — RealityKit enforces a hard
+ cap on concurrent ImagePresentationComponent instances on visionOS.
  */
 
 import os
@@ -19,17 +28,27 @@ import RealityKit
 import SwiftUI
 import UIKit
 
+/// Z-offset applied to the preview and side menu so they sit clearly
+/// in front of any diorama-thumbnail foreground layers (z: 24) in
+/// the underlying grid.
+private let quickLookZOffset: CGFloat = 80
+
 struct QuickLook3DView: View {
     @Environment(AppModel.self) private var appModel
     let image: GalleryImage
-    let namespace: Namespace.ID
+    let namespace: Namespace.ID?
+    let useMatchedGeometry: Bool
     let onDismiss: () -> Void
 
     @State private var entity = Entity()
     @State private var aspectRatio: CGFloat = 1
     @State private var spatialReady = false
+    @State private var spatialRequested = false
+    @State private var spatialLoading = false
+    @State private var spatialFailed = false
     @State private var loadFailed = false
     @State private var loadedImage: UIImage?
+    @State private var localURL: URL?
 
     var body: some View {
         ZStack {
@@ -39,60 +58,131 @@ struct QuickLook3DView: View {
                 .onTapGesture { onDismiss() }
 
             GeometryReader { geo in
-                let maxW = geo.size.width * 0.92
+                // Reserve space for the side menu next to the preview.
+                let menuReserve: CGFloat = 260
+                let maxW = max(geo.size.width * 0.92 - menuReserve, 200)
                 let maxH = geo.size.height * 0.92
                 let fitted = fittedSize(in: CGSize(width: maxW, height: maxH))
 
-                ZStack {
-                    if let loadedImage {
-                        Image(uiImage: loadedImage)
-                            .resizable()
-                            .scaledToFill()
-                            .frame(width: fitted.width, height: fitted.height)
-                            .clipped()
-                    } else {
-                        Color.secondary.opacity(0.2)
-                            .frame(width: fitted.width, height: fitted.height)
-                    }
-
-                    if spatialReady {
-                        GeometryReader3D { geometry3D in
-                            RealityView { content in
-                                content.add(entity)
-                                scaleEntityToFit(content: content, geometry: geometry3D)
-                            } update: { content in
-                                scaleEntityToFit(content: content, geometry: geometry3D)
-                            }
-                        }
-                        .frame(width: fitted.width, height: fitted.height)
-                        .transition(.opacity)
-                    }
-
-                    if !spatialReady && !loadFailed {
-                        ProgressView()
-                            .controlSize(.large)
-                    }
+                HStack(alignment: .center, spacing: 24) {
+                    previewContent(size: fitted)
+                    sideMenu
+                        .frame(width: 220)
+                        .offset(z: quickLookZOffset)
                 }
-                .frame(width: fitted.width, height: fitted.height)
-                .cornerRadius(20)
-                .matchedGeometryEffect(id: image.id, in: namespace, isSource: false)
-                .position(x: geo.size.width / 2, y: geo.size.height / 2)
-                .contentShape(Rectangle())
-                .onTapGesture { onDismiss() }
-                .gesture(
-                    DragGesture(minimumDistance: 30)
-                        .onEnded { value in
-                            if abs(value.translation.height) > 60 || abs(value.translation.width) > 60 {
-                                onDismiss()
-                            }
-                        }
-                )
+                .frame(width: geo.size.width, height: geo.size.height, alignment: .center)
             }
         }
         .task(id: image.id) {
-            await load()
+            await loadBase()
+        }
+        .onChange(of: spatialRequested) { _, requested in
+            guard requested else { return }
+            Task { await loadSpatial() }
         }
     }
+
+    // MARK: - Preview
+
+    @ViewBuilder
+    private func previewContent(size: CGSize) -> some View {
+        ZStack {
+            if let loadedImage {
+                Image(uiImage: loadedImage)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: size.width, height: size.height)
+                    .clipped()
+            } else {
+                Color.secondary.opacity(0.2)
+            }
+
+            if spatialReady {
+                GeometryReader3D { geometry3D in
+                    RealityView { content in
+                        content.add(entity)
+                        scaleEntityToFit(content: content, geometry: geometry3D)
+                    } update: { content in
+                        scaleEntityToFit(content: content, geometry: geometry3D)
+                    }
+                }
+                .transition(.opacity)
+            }
+
+            if (loadedImage == nil && !loadFailed) || spatialLoading {
+                ProgressView()
+                    .controlSize(.large)
+            }
+        }
+        .frame(width: size.width, height: size.height)
+        .cornerRadius(20)
+        .matchedGeometryEffectIfActive(
+            id: image.id,
+            namespace: namespace,
+            active: useMatchedGeometry
+        )
+        .offset(z: quickLookZOffset)
+        .contentShape(Rectangle())
+        .onTapGesture { onDismiss() }
+        .gesture(
+            DragGesture(minimumDistance: 30)
+                .onEnded { value in
+                    if abs(value.translation.height) > 60 || abs(value.translation.width) > 60 {
+                        onDismiss()
+                    }
+                }
+        )
+    }
+
+    // MARK: - Side menu
+
+    private var sideMenu: some View {
+        VStack(spacing: 0) {
+            menuButton(
+                title: spatialReady ? "Spatial 3D" : (spatialLoading ? "Generating…" : "View in 3D"),
+                systemImage: "cube",
+                tinted: spatialReady,
+                disabled: spatialLoading || spatialReady || spatialFailed
+            ) {
+                spatialRequested = true
+            }
+
+            Divider().opacity(0.3)
+
+            menuButton(
+                title: "Close",
+                systemImage: "xmark",
+                tinted: false,
+                disabled: false
+            ) {
+                onDismiss()
+            }
+        }
+        .padding(.vertical, 6)
+        .glassBackgroundEffect()
+    }
+
+    @ViewBuilder
+    private func menuButton(title: String, systemImage: String, tinted: Bool, disabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: systemImage)
+                    .frame(width: 22)
+                Text(title)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .foregroundStyle(tinted ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.primary))
+            .font(.callout)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .hoverEffect()
+        .disabled(disabled)
+    }
+
+    // MARK: - Geometry
 
     private func fittedSize(in container: CGSize) -> CGSize {
         let ratio = max(aspectRatio, 0.0001)
@@ -116,22 +206,29 @@ struct QuickLook3DView: View {
         entity.scale = SIMD3<Float>(scale, scale, 1.0)
     }
 
+    // MARK: - Loading
+
+    /// First-stage load: resolve the source to a local file and show
+    /// the 2D image immediately. No depth-map work runs here — that
+    /// only happens when the user picks "View in 3D" from the side
+    /// menu.
     @MainActor
-    private func load() async {
+    private func loadBase() async {
         spatialReady = false
+        spatialRequested = false
+        spatialLoading = false
+        spatialFailed = false
         loadFailed = false
         loadedImage = nil
+        localURL = nil
 
         let sourceURL = image.fullSizeURL
-        let maxDim = appModel.spatial3DMaxResolution
 
-        // Resolve to a local file: cache hit on disk, file URL passthrough,
-        // or download into the disk cache.
-        let localURL: URL
+        let resolved: URL
         if sourceURL.isFileURL {
-            localURL = sourceURL
+            resolved = sourceURL
         } else if let cached = await DiskImageCache.shared.cachedFileURL(for: sourceURL) {
-            localURL = cached
+            resolved = cached
         } else {
             do {
                 guard let data = try await ImageLoader.shared.loadRawData(from: sourceURL) else {
@@ -141,7 +238,7 @@ struct QuickLook3DView: View {
                 guard let cached = await DiskImageCache.shared.cachedFileURL(for: sourceURL) else {
                     loadFailed = true; return
                 }
-                localURL = cached
+                resolved = cached
             } catch {
                 AppLogger.views.warning("QuickLook3DView: download failed: \(error.localizedDescription, privacy: .public)")
                 loadFailed = true
@@ -150,18 +247,26 @@ struct QuickLook3DView: View {
         }
 
         if Task.isCancelled { return }
+        localURL = resolved
 
-        // Show the 2D image immediately as a backdrop while RealityKit
-        // generates the depth map.
-        if let preview = UIImage(contentsOfFile: localURL.path) {
+        if let preview = UIImage(contentsOfFile: resolved.path) {
             loadedImage = preview
             if preview.size.height > 0 {
                 aspectRatio = preview.size.width / preview.size.height
             }
         }
+    }
 
-        // Build the Spatial3DImage from a JPEG capped at the user's
-        // configured 3D resolution. 0 = no cap (native resolution).
+    /// Second-stage load: build the `Spatial3DImage` and run `generate()`.
+    /// Triggered by the side menu's "View in 3D" button.
+    @MainActor
+    private func loadSpatial() async {
+        guard !spatialLoading, !spatialReady, let localURL else { return }
+        spatialLoading = true
+        spatialFailed = false
+
+        let maxDim = appModel.spatial3DMaxResolution
+
         let spatial: ImagePresentationComponent.Spatial3DImage
         do {
             if maxDim > 0,
@@ -173,11 +278,12 @@ struct QuickLook3DView: View {
             }
         } catch {
             AppLogger.views.warning("QuickLook3DView: Spatial3DImage init failed: \(error.localizedDescription, privacy: .public)")
-            loadFailed = true
+            spatialLoading = false
+            spatialFailed = true
             return
         }
 
-        if Task.isCancelled { return }
+        if Task.isCancelled { spatialLoading = false; return }
 
         var ipc = ImagePresentationComponent(spatial3DImage: spatial)
         ipc.desiredViewingMode = .spatial3D
@@ -199,9 +305,21 @@ struct QuickLook3DView: View {
                 }
             } catch {
                 AppLogger.views.warning("QuickLook3DView: generate failed: \(error.localizedDescription, privacy: .public)")
-                loadFailed = true
+                spatialFailed = true
             }
+            spatialLoading = false
             _ = heldEntity
+        }
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func matchedGeometryEffectIfActive(id: some Hashable, namespace: Namespace.ID?, active: Bool) -> some View {
+        if active, let namespace {
+            self.matchedGeometryEffect(id: id, in: namespace, isSource: false)
+        } else {
+            self
         }
     }
 }

@@ -89,11 +89,16 @@ struct GalleryGridView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlay {
             if let quickLookImage {
+                let useGeometry = !appModel.effectiveReduceMotion
                 QuickLook3DView(
                     image: quickLookImage,
-                    namespace: quickLookNamespace,
+                    namespace: useGeometry ? quickLookNamespace : nil,
+                    useMatchedGeometry: useGeometry,
                     onDismiss: {
-                        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+                        let anim: Animation = useGeometry
+                            ? .spring(response: 0.4, dampingFraction: 0.85)
+                            : .easeInOut(duration: 0.2)
+                        withAnimation(anim) {
                             self.quickLookImage = nil
                         }
                     }
@@ -190,6 +195,7 @@ struct GalleryGridView: View {
                     }
                 }
         } else {
+            let useGeometry = !appModel.effectiveReduceMotion
             GalleryThumbnailView(
                 image: image,
                 onTap: {
@@ -197,11 +203,14 @@ struct GalleryGridView: View {
                     onImageSelected?(image)
                 },
                 onLongPress: {
-                    withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
+                    let anim: Animation = useGeometry
+                        ? .spring(response: 0.45, dampingFraction: 0.82)
+                        : .easeInOut(duration: 0.2)
+                    withAnimation(anim) {
                         quickLookImage = image
                     }
                 },
-                quickLookNamespace: quickLookNamespace,
+                quickLookNamespace: useGeometry ? quickLookNamespace : nil,
                 quickLookActive: quickLookImage?.id == image.id
             )
         }
