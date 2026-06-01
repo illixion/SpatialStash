@@ -500,9 +500,7 @@ class SlideshowEngine {
         transition(to: .stopped)
         runLoopTask?.cancel()
         runLoopTask = nil
-        prefetchTask?.cancel()
-        prefetchTask = nil
-        prefetchInProgress = false
+        cancelPrefetch()
         gifConversionTask?.cancel()
         gifConversionTask = nil
         watchdogTask?.cancel()
@@ -564,8 +562,7 @@ class SlideshowEngine {
             // run loop falls through to the auto-advance path (prefetch or
             // placeholder).
             pendingPost = nil
-            prefetchTask?.cancel()
-            prefetchTask = nil
+            cancelPrefetch()
             runLoopTask?.cancel()
             runLoopTask = nil
             // Route through .loading so the fresh run loop re-enters cleanly.
@@ -690,7 +687,7 @@ class SlideshowEngine {
         cachedPosts.removeAll()
         prefetchedImages.removeAll()
         hasDisplayedFirstMedia = false
-        prefetchTask?.cancel()
+        cancelPrefetch()
         pendingPost = nil
         transition(to: .loading)
     }
@@ -703,7 +700,7 @@ class SlideshowEngine {
         // image stays on screen while the new list's first image loads,
         // instead of immediately flashing the placeholder.
         hasDisplayedFirstMedia = false
-        prefetchTask?.cancel()
+        cancelPrefetch()
         contentProvider?.resetPagination()
         if let tlm = tagListManager {
             let firstTag = tlm.tagLists[safe: tlm.activeIndex]?.first ?? ""
@@ -836,6 +833,10 @@ class SlideshowEngine {
             triggerPrefetch()
             while prefetchedImages.isEmpty && state == .loading {
                 try? await Task.sleep(for: .milliseconds(250))
+                // Re-arm in case the prior trigger no-op'd against an
+                // already-finished/cancelled task — idempotent via the
+                // prefetchInProgress guard, so this just self-heals a missed kick.
+                triggerPrefetch()
             }
             if let prefetched = prefetchedImages.first {
                 prefetchedImages.removeFirst()
@@ -1288,6 +1289,23 @@ class SlideshowEngine {
             await self?.prefetchImages()
             await MainActor.run { self?.prefetchInProgress = false }
         }
+    }
+
+    /// Cancel any in-flight prefetch and clear the liveness flag.
+    ///
+    /// `prefetchInProgress` gates `triggerPrefetch()` so callers can fire it
+    /// freely without spawning duplicate tasks. The running task normally
+    /// clears the flag itself when it exits — but a task cancelled mid-download
+    /// can hang on a dead socket (e.g. the `code=53` connection aborts seen
+    /// when visionOS unloads/reloads a snapped-to-wall window) and never reach
+    /// its reset. If we cancel without clearing the flag here, every future
+    /// `triggerPrefetch()` no-ops forever, the cold-start loading loop never
+    /// fills, and the engine wedges in `.loading` — which not even the watchdog
+    /// restart can recover. So always pair cancellation with clearing the flag.
+    private func cancelPrefetch() {
+        prefetchTask?.cancel()
+        prefetchTask = nil
+        prefetchInProgress = false
     }
 
     private func prefetchImages() async {
