@@ -119,7 +119,7 @@ struct RemoteTabView: View {
                     }
                 }
 
-                defaultListSection
+                tagListSection
 
                 modTagPresetsSection
 
@@ -237,27 +237,28 @@ struct RemoteTabView: View {
         }
     }
 
-    // MARK: - Default List preference (local)
+    // MARK: - Per-profile tag list
 
-    /// The tag list catalog itself comes from the RoboFrame server and isn't
-    /// editable here. The user's "Default List" preference is the only knob:
-    /// pin to a specific list across reconnects, or let the server decide.
-    private var defaultListSection: some View {
-        let tlm = appModel.tagListManager
+    /// The tag list catalog comes from the RoboFrame server (mirrored into
+    /// `appModel.tagListCatalog`). Each profile pins its own list: "Server
+    /// Decides" follows the channel's playback, while a specific list keeps
+    /// this window on that list regardless of what other windows pick.
+    private var tagListSection: some View {
+        let catalog = appModel.tagListCatalog
 
-        return Section("Tag Lists") {
-            if tlm.tagLists.isEmpty {
-                Text("No tag lists from server yet.")
+        return Section("Tag List") {
+            if catalog.isEmpty {
+                Text("No tag lists from server yet. Open a viewer to load them.")
                     .font(.caption)
                     .foregroundColor(.secondary)
             } else {
-                Picker("Default List", selection: Binding(
-                    get: { tlm.defaultIndex ?? -1 },
-                    set: { tlm.defaultIndex = $0 == -1 ? nil : $0 }
+                Picker("Tag List", selection: Binding(
+                    get: { editingConfig.tagListIndex ?? -1 },
+                    set: { editingConfig.tagListIndex = $0 == -1 ? nil : $0 }
                 )) {
                     Text("Server Decides").tag(-1)
-                    ForEach(tlm.tagLists.indices, id: \.self) { index in
-                        Text("List \(index + 1): \(tlm.tagLists[index].first ?? "")").tag(index)
+                    ForEach(catalog.indices, id: \.self) { index in
+                        Text("List \(index + 1): \(catalog[index].first ?? "")").tag(index)
                     }
                 }
                 .pickerStyle(.menu)

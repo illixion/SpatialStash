@@ -726,9 +726,13 @@ class AppModel {
 
     // MARK: - Remote Viewer
 
-    /// Shared tag list manager — owns tag lists and active index,
-    /// synced across all slideshow windows.
-    let tagListManager = TagListManager()
+    /// Last tag list catalog the server pushed to any open viewer. The catalog
+    /// is identical for every window, so it's mirrored here for the Remote tab
+    /// profile editor to populate its per-profile "Tag List" picker even when
+    /// no viewer is open. The *active* list is per-window (see TagListManager
+    /// on each RemoteViewerModel) and the *selected* list is per-profile
+    /// (`RemoteViewerConfig.tagListIndex`).
+    var tagListCatalog: [[String]] = []
     let modTagManager = ModTagManager()
 
     /// Persistent config for the gallery slideshow launched from photo viewer ornament.
@@ -1111,7 +1115,6 @@ class AppModel {
         loadSavedVideoViews()
         loadSavedWindowGroups()
         loadSavedRemoteConfigs()
-        loadTagListManager()
         modTagManager.load()
 
         // Apply default views on startup
@@ -1439,10 +1442,6 @@ class AppModel {
         }
     }
 
-    private func loadTagListManager() {
-        tagListManager.load()
-    }
-
     func persistSavedWindowGroups() {
         if let data = try? JSONEncoder().encode(savedWindowGroups) {
             UserDefaults.standard.set(data, forKey: Self.savedWindowGroupsKey)
@@ -1621,9 +1620,12 @@ class AppModel {
             savedVideoViews: savedVideoViews,
             savedWindowGroups: savedWindowGroups,
             savedRemoteConfigs: savedRemoteConfigs,
-            tagLists: tagListManager.tagLists,
-            tagListDefaultIndex: tagListManager.defaultIndex,
-            tagListLastActiveIndex: tagListManager.lastActiveIndex,
+            // Tag list selection is per-profile now (RemoteViewerConfig.tagListIndex)
+            // and rides inside savedRemoteConfigs. The old global fields are
+            // left nil for backward-compatible decoding of older backups.
+            tagLists: nil,
+            tagListDefaultIndex: nil,
+            tagListLastActiveIndex: nil,
             video3DSettings: video3DData,
             imageEnhancementConvertedURLs: imageEnhancementData.convertedURLs,
             imageEnhancementLastViewingModes: imageEnhancementData.lastViewingModes,
@@ -1680,11 +1682,10 @@ class AppModel {
         if let v = backup.savedRemoteConfigs {
             savedRemoteConfigs = v
         }
-        // The tag list catalog itself is owned by the RoboFrame server;
-        // only restore the user's local "Default List" preference.
-        if let defaultIdx = backup.tagListDefaultIndex {
-            tagListManager.defaultIndex = defaultIdx
-        }
+        // Tag list selection is per-profile now and travels inside
+        // savedRemoteConfigs. The legacy global `tagListDefaultIndex` from
+        // older backups is intentionally ignored (it can't sensibly map onto
+        // a specific profile, and per-profile values already restored above).
 
         // Actor-based trackers
         if let settings = backup.video3DSettings {

@@ -32,6 +32,13 @@ class RemoteViewerModel: SlideshowEngine {
         didSet {
             if oldValue != enableDisplaySync {
                 wsSession?.sendDisplaySync(enabled: enableDisplaySync)
+                // Leaving displaySync re-asserts a pinned profile's list: the
+                // merged stream may have carried this window onto another list,
+                // so claim ours again and snap back locally.
+                if !enableDisplaySync, let pinned = config.tagListIndex {
+                    wsSession?.sendSetTagList(listNumber: pinned)
+                    tagListManager?.setActiveIndexLocally(pinned)
+                }
             }
         }
     }
@@ -112,6 +119,21 @@ class RemoteViewerModel: SlideshowEngine {
             enableDiorama: config.enableDiorama
         )
 
+        // Per-window tag list state. Seeded from the profile's persisted
+        // selection so two windows can pin different lists without sharing a
+        // global index. The catalog (`tagLists`) is filled when the server
+        // pushes a `tagLists` frame to this window. A user switch here
+        // persists back into `config.tagListIndex` via `onUserSwitch`.
+        let tlm = TagListManager(startIndex: config.tagListIndex ?? 0)
+        tlm.onUserSwitch = { [weak self] index in
+            guard let self else { return }
+            if self.config.tagListIndex != index {
+                self.config.tagListIndex = index
+                self.onConfigChanged?(self.config)
+            }
+        }
+        self.tagListManager = tlm
+
         // Block lists are server-only state — the orchestrator filters
         // blocked posts out of every channel's queue before broadcasting,
         // so a remote-mode kiosk never sees them. The engine's local
@@ -119,6 +141,19 @@ class RemoteViewerModel: SlideshowEngine {
         // populated by the gallery-mode code path, where local filtering
         // is the only option (no WS).
     }
+
+    /// Whether server-driven tag list changes should be honored for this
+    /// window. A pinned profile (non-nil `tagListIndex`) ignores them — except
+    /// while displaySync is active, where the merged stream is fully
+    /// server-driven. A "Server Decides" profile (nil) always follows.
+    private var followsServerTagList: Bool {
+        config.tagListIndex == nil || enableDisplaySync
+    }
+
+    /// Mirror of catalog updates into AppModel so the Remote tab editor can
+    /// populate its per-profile picker even with no viewer open. Injected by
+    /// RemoteViewerWindowView.setupModel.
+    var onCatalogReceived: (([[String]]) -> Void)?
 
     /// Callback to persist config changes back to AppModel
     var onConfigChanged: ((RemoteViewerConfig) -> Void)?
@@ -136,9 +171,11 @@ class RemoteViewerModel: SlideshowEngine {
             // just open the socket and let the server announce.
             setupWebSocket()
 
-            // If "Server Decides" is configured and WS is active, wait 1s for the
-            // server to send a currentTagList message before starting the slideshow
-            if let tlm = tagListManager, tlm.serverControlEnabled && !config.effectiveWsEndpoint.isEmpty {
+            // If this profile is "Server Decides" and WS is active, wait 1s for
+            // the server to announce the channel's list before starting the
+            // slideshow. A pinned profile already knows its list, so it skips
+            // the wait and starts immediately on its own list.
+            if config.tagListIndex == nil && !config.effectiveWsEndpoint.isEmpty {
                 // Register tag list handler before the delay
                 tagListManager?.addChangeHandler(id: engineId) { [weak self] in
                     self?.handleTagListChanged()
@@ -589,6 +626,13 @@ class RemoteViewerModel: SlideshowEngine {
             ratio: currentRatioRangeString(),
             modTags: modTagManager?.activeTags ?? []
         )
+
+        // Pinned profile: claim our list for this channel so the server
+        // serves the right content. Skip while displaySync is active — the
+        // merged stream is fully server-driven and claiming would fight it.
+        if let pinned = config.tagListIndex, !enableDisplaySync {
+            wsSession?.sendSetTagList(listNumber: pinned)
+        }
     }
 
     /// Mirrors the web kiosk's `calculateDisplayRatioRange` (public/modules/config.js):
@@ -647,13 +691,19 @@ class RemoteViewerModel: SlideshowEngine {
             guard let tlm = tagListManager else { break }
             if !lists.isEmpty && tlm.tagLists != lists {
                 tlm.tagLists = lists
+                tlm.clampActiveIndex()
+                onCatalogReceived?(lists)
                 AppLogger.remoteViewer.info("Server pushed tagLists: \(lists.count, privacy: .public) lists")
                 showToast("Loaded \(lists.count) tag lists from server")
             }
 
         case .currentTagList(let index):
-            if let tlm = tagListManager {
-                if tlm.handleServerTagListChange(to: index) {
+            // Standalone (legacy) server list change. This frame is broadcast
+            // to every session regardless of channel, so honor it only when
+            // this window actually follows the server (server-decides, or
+            // displaySync active) to avoid cross-window flip-flop.
+            if followsServerTagList, let tlm = tagListManager {
+                if tlm.applyServerIndex(index) {
                     AppLogger.remoteViewer.info("Server changed tag list to \(index, privacy: .public)")
                 }
             }
@@ -718,12 +768,13 @@ class RemoteViewerModel: SlideshowEngine {
             if delay != newDelay { delay = newDelay }
         }
 
-        // Tag list — server-authoritative.
-        if let listNumber = payload["currentList"] as? Int,
-           let tlm = tagListManager,
-           listNumber >= 0, listNumber < tlm.tagLists.count,
-           listNumber != tlm.activeIndex {
-            _ = tlm.handleServerTagListChange(to: listNumber)
+        // Tag list — server-authoritative only when this window follows the
+        // server (server-decides profile, or displaySync active). A pinned
+        // profile ignores the channel's currentList so it stays on its list.
+        if followsServerTagList,
+           let listNumber = payload["currentList"] as? Int,
+           let tlm = tagListManager {
+            _ = tlm.applyServerIndex(listNumber)
         }
 
         // Merge driver — server tells us who, if anyone, currently holds

@@ -131,10 +131,10 @@ struct RemoteViewerWindowView: View {
             attachmentAnchor: .scene(.bottomFront),
             contentAlignment: .top,
             ornament: {
-                if let model = viewerModel {
+                if let model = viewerModel, let tlm = model.tagListManager {
                     RemoteViewerOrnamentView(
                         model: model,
-                        tagListManager: appModel.tagListManager,
+                        tagListManager: tlm,
                         modTagManager: appModel.modTagManager,
                         showHistory: $showHistory
                     )
@@ -626,8 +626,16 @@ struct RemoteViewerWindowView: View {
         model.slideshow3DMode = config.slideshow3DMode
         model.updateWindowAspectRatio(windowSize)
 
-        // Set up shared tag list manager + mod tag manager
-        model.tagListManager = appModel.tagListManager
+        // Tag list state is per-window (created in RemoteViewerModel.init from
+        // the profile's tagListIndex). Seed its catalog from the last one the
+        // app saw so the ornament has options before the server re-pushes, and
+        // mirror future catalog pushes back so the Remote tab editor can show
+        // the per-profile list picker.
+        model.tagListManager?.tagLists = appModel.tagListCatalog
+        model.tagListManager?.clampActiveIndex()
+        model.onCatalogReceived = { [weak appModel] lists in
+            appModel?.tagListCatalog = lists
+        }
         model.modTagManager = appModel.modTagManager
 
         // Set up content provider based on mode
