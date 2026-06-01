@@ -75,6 +75,12 @@ struct WebVideoPlayerView: UIViewRepresentable {
         if coordinator.loadedURL != videoURL {
             coordinator.loadedURL = videoURL
             coordinator.resetForNewVideo()
+            // Seed the coordinator's controls state so the post-load JS toggle
+            // doesn't fire redundantly (and, more importantly, so the initial
+            // DOM already matches — see the conditional `controls` attribute in
+            // generateVideoHTML). Without this, the page loads with native
+            // controls visible and they flash until updateUIView's JS runs.
+            coordinator.lastShowControls = showControls
             if videoURL.isFileURL {
                 loadLocalVideo(webView: webView, coordinator: coordinator, fileURL: videoURL)
             } else {
@@ -236,7 +242,9 @@ struct WebVideoPlayerView: UIViewRepresentable {
     }
 
     private func generateVideoHTML(videoSrc: String, apiKey: String?) -> String {
-
+        // Match the initial `controls` attribute to showControls so native
+        // controls never flash on load before the JS toggle can hide them.
+        let controlsAttr = showControls ? "controls " : ""
         return """
         <!DOCTYPE html>
         <html>
@@ -278,7 +286,7 @@ struct WebVideoPlayerView: UIViewRepresentable {
         </head>
         <body>
             <div class="video-container">
-                <video id="player" controls autoplay playsinline loop muted src="\(videoSrc)">
+                <video id="player" \(controlsAttr)autoplay playsinline loop muted src="\(videoSrc)">
                     Your browser does not support video playback.
                 </video>
             </div>
