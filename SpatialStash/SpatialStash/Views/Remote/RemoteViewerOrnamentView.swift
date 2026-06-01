@@ -84,7 +84,17 @@ struct RemoteViewerOrnamentView: View {
                 .disabled(model.saveablePost == nil)
                 .help("Save Image")
 
-                // Tag List Selector (spinner while loading, warning if empty)
+                // Reshuffle - ask the server to reshuffle post order
+                Button {
+                    model.reshuffle()
+                } label: {
+                    Image(systemName: "arrow.trianglehead.2.clockwise.rotate.90")
+                        .font(.title3)
+                }
+                .buttonStyle(.borderless)
+                .help("Reshuffle")
+
+                // Tag List Selector
                 tagListMenu
 
                 // Mod Tag Preset Selector
@@ -94,7 +104,7 @@ struct RemoteViewerOrnamentView: View {
                 Button {
                     model.enableDisplaySync.toggle()
                 } label: {
-                    Image(systemName: model.enableDisplaySync ? "arrow.triangle.swap" : "arrow.triangle.swap")
+                    Image(systemName: model.enableDisplaySync ? "link.circle.fill" : "link.circle")
                         .font(.title3)
                         .padding(6)
                         .background(model.enableDisplaySync ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
@@ -132,48 +142,36 @@ struct RemoteViewerOrnamentView: View {
     }
 
     private var tagListMenu: some View {
-        Group {
-            if model.isFetching && model.currentImage == nil {
-                ProgressView()
-                    .font(.title3)
-            } else if model.fetchReturnedEmpty && model.currentImage == nil {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.title3)
-                    .foregroundStyle(.yellow)
-                    .help("No posts found")
-            } else {
-                Menu {
-                    Group {
-                        ForEach(tagListManager.tagLists.indices, id: \.self) { index in
-                            Button {
-                                tagListManager.switchToTagList(index)
-                            } label: {
-                                HStack {
-                                    Text(tagListLabel(index))
-                                    if tagListManager.activeIndex == index {
-                                        Image(systemName: "checkmark")
-                                    }
-                                }
+        Menu {
+            Group {
+                ForEach(tagListManager.tagLists.indices, id: \.self) { index in
+                    Button {
+                        tagListManager.switchToTagList(index)
+                    } label: {
+                        HStack {
+                            Text(tagListLabel(index))
+                            if tagListManager.activeIndex == index {
+                                Image(systemName: "checkmark")
                             }
                         }
                     }
-                    .onAppear { updateOrnamentMenuCount(opened: true) }
-                    .onDisappear { updateOrnamentMenuCount(opened: false) }
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "arrow.triangle.2.circlepath")
-                            .font(.title3)
-                        Text("\(tagListManager.activeIndex + 1)/\(tagListManager.tagLists.count)")
-                            .font(.callout)
-                            .foregroundColor(.secondary)
-                    }
                 }
-                .menuStyle(.button)
-                .buttonStyle(.borderless)
-                .disabled(tagListManager.tagLists.count <= 1)
-                .help("Tag List")
+            }
+            .onAppear { updateOrnamentMenuCount(opened: true) }
+            .onDisappear { updateOrnamentMenuCount(opened: false) }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "number")
+                    .font(.title3)
+                Text("\(tagListManager.activeIndex + 1)/\(tagListManager.tagLists.count)")
+                    .font(.callout)
+                    .foregroundColor(.secondary)
             }
         }
+        .menuStyle(.button)
+        .buttonStyle(.borderless)
+        .disabled(tagListManager.tagLists.count <= 1)
+        .help("Tag List")
     }
 
     private func tagListLabel(_ index: Int) -> String {

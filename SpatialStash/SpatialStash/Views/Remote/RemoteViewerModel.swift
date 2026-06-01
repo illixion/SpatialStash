@@ -280,6 +280,12 @@ class RemoteViewerModel: SlideshowEngine {
         goToNextImage()
     }
 
+    /// Ask the server to reshuffle the current channel's post order.
+    func reshuffle() {
+        wsSession?.sendReshuffle(deviceId: config.wsDeviceId)
+        showToast("Reshuffling…")
+    }
+
     func toggleClock() {
         showClock.toggle()
     }

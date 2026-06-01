@@ -317,6 +317,13 @@ class RemoteWebSocketClient {
         sendJSON(["sessionId": sessionId, "action": "requestNext"])
     }
 
+    /// Ask the server to reshuffle the current channel's post order.
+    /// Matches the RoboFrame web client, which sends the deviceId in the
+    /// `sessionId` field for this action.
+    func sendReshuffle(deviceId: String) {
+        sendJSON(["sessionId": deviceId, "action": "reshuffle"])
+    }
+
     /// Tell the server we've finished transitioning to `postId`. The
     /// orchestrator's readiness barrier waits for every visible session on
     /// the channel before starting the dwell timer.

@@ -69,6 +69,10 @@ final class RemoteWSSession {
         client?.sendRequestNext(sessionId: sessionId)
     }
 
+    func sendReshuffle(deviceId: String) {
+        client?.sendReshuffle(deviceId: deviceId)
+    }
+
     func sendImageReady(postId: Int) {
         client?.sendImageReady(sessionId: sessionId, postId: postId)
     }
