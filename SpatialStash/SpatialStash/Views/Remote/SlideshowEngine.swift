@@ -87,6 +87,13 @@ class SlideshowEngine {
     var currentPost: RemotePost?
     var nextPost: RemotePost?
     var currentMediaType: SlideshowMediaType = .image
+    /// Media type of the incoming (crossfading-in) slot. Normally `.image`;
+    /// set to `.video` during an image→video true crossfade so the window
+    /// view can render a second `WebVideoPlayerView` for `nextVideoURL` at
+    /// full opacity while the outgoing image fades out.
+    var nextMediaType: SlideshowMediaType = .image
+    /// URL for the incoming video layer during an image→video crossfade.
+    var nextVideoURL: URL?
     var isCurrentPostAnimatedGIF: Bool = false
     var isRoomActive: Bool = true
     var isTransitioning: Bool = false
@@ -776,6 +783,32 @@ class SlideshowEngine {
             return
         }
 
+        // Video fast path: the prefetch loop deliberately stops at video
+        // posts (videos play live, they aren't decoded into prefetched
+        // images), so a queue of videos never fills `prefetchedImages` and
+        // would otherwise fall through to the steady-state-miss stall. Drive
+        // video display directly from the post queue here so videos advance
+        // on the same timer loop as images.
+        if prefetchedImages.isEmpty {
+            if cachedPosts.isEmpty && !isFetching {
+                await fetchMorePosts()
+            }
+            if let candidate = nextNonBlockedPost() {
+                if Self.videoExtensions.contains(candidate.file_ext.lowercased()) {
+                    guard state == .loading else { return }
+                    await fetchAndDisplayPost(candidate)
+                    if state == .loading {
+                        transition(to: .displaying)
+                    }
+                    triggerPrefetch()
+                    return
+                } else {
+                    // Not a video — return it for the image prefetch path.
+                    cachedPosts.insert(candidate, at: 0)
+                }
+            }
+        }
+
         // Fast path: use a prefetched image (in-memory, no network await).
         if let prefetched = prefetchedImages.first {
             prefetchedImages.removeFirst()
@@ -1017,6 +1050,71 @@ class SlideshowEngine {
 
         isCurrentPostAnimatedGIF = false
         hasDisplayedFirstMedia = true
+
+        let outgoingWasVideo: Bool
+        if case .video = currentMediaType { outgoingWasVideo = true } else { outgoingWasVideo = false }
+        let hadCurrentMedia = currentPost != nil
+
+        if reduceMotion || !hadCurrentMedia {
+            // Instant switch — reduce-motion, or the cold-start first video
+            // (nothing on screen to crossfade from).
+            clearImageDisplayState()
+            isTransitioning = false
+            currentPost = post
+            currentMediaType = .video(url)
+        } else if outgoingWasVideo {
+            // video → video: fade through black so only one
+            // WebVideoPlayerView is ever alive. Phase 1 fades the current
+            // video out (the black background shows through); phase 2 swaps
+            // in the new video URL while hidden, then fades it back in.
+            transition(to: .transitioning)
+            withAnimation(.easeInOut(duration: 0.5)) {
+                isTransitioning = true
+            }
+            try? await Task.sleep(for: .seconds(0.5))
+            guard state == .transitioning else { return }
+            clearImageDisplayState()
+            currentPost = post
+            currentMediaType = .video(url)
+            withAnimation(.easeInOut(duration: 0.5)) {
+                isTransitioning = false
+            }
+        } else {
+            // image / animated → video: true crossfade. The incoming video
+            // layer renders at full opacity while the outgoing image fades
+            // out via its `isTransitioning` opacity binding.
+            transition(to: .transitioning)
+            withAnimation(.easeInOut(duration: 1.0)) {
+                nextMediaType = .video(url)
+                nextVideoURL = url
+                nextPost = post
+                isTransitioning = true
+            }
+            try? await Task.sleep(for: .seconds(1.0))
+            guard state == .transitioning else { return }
+            clearImageDisplayState()
+            currentPost = post
+            currentMediaType = .video(url)
+            nextMediaType = .image
+            nextVideoURL = nil
+            nextPost = nil
+            isTransitioning = false
+        }
+
+        lastAdvanceTime = Date()
+        advanceDisplayDeadline()
+        if state == .transitioning {
+            transition(to: .displaying)
+        }
+
+        AppLogger.remoteViewer.info("Displaying video post \(post._id, privacy: .public)")
+        onPostTransitioned(post: post, url: url)
+    }
+
+    /// Clear all image-pipeline display state (base images, GPU textures,
+    /// animated bytes, diorama layers). Shared by the video display paths,
+    /// which never use these slots.
+    private func clearImageDisplayState() {
         currentImage = nil
         nextImage = nil
         currentTexture = nil
@@ -1026,14 +1124,6 @@ class SlideshowEngine {
         currentBackdropTexture = nil
         nextForegroundTexture = nil
         nextBackdropTexture = nil
-        isTransitioning = false
-        currentPost = post
-        currentMediaType = .video(url)
-        lastAdvanceTime = Date()
-        advanceDisplayDeadline()
-
-        AppLogger.remoteViewer.info("Displaying video post \(post._id, privacy: .public)")
-        onPostTransitioned(post: post, url: url)
     }
 
     func displayImage(_ image: UIImage, post: RemotePost, url: URL, mediaType: SlideshowMediaType = .image) async {
@@ -1126,6 +1216,8 @@ class SlideshowEngine {
         currentMediaType = mediaType
         nextImage = nil
         nextTexture = nil
+        nextMediaType = .image
+        nextVideoURL = nil
         isTransitioning = false
         hasDisplayedFirstMedia = true
         lastAdvanceTime = Date()

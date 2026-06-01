@@ -267,6 +267,10 @@ struct RemoteViewerWindowView: View {
                     isRoomActive: model.isRoomActive
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // Fade out during a crossfade — video→video reveals the black
+                // background (fade through black); image→video lets the
+                // incoming video layer take over.
+                .opacity(model.isTransitioning ? 0 : 1)
                 .brightness(model.effectiveBrightness)
                 .contrast(model.effectiveContrast)
                 .saturation(model.effectiveSaturation)
@@ -439,6 +443,24 @@ struct RemoteViewerWindowView: View {
                         .allowsHitTesting(false)
                 }
             }
+
+            // Incoming video layer for an image→video true crossfade. Renders
+            // at full opacity above the outgoing (fading) image. Only used
+            // when the new media is a video and the old was not — video→video
+            // fades through black with a single layer, so no second
+            // WebVideoPlayerView is created there.
+            if case .video(let url) = model.nextMediaType, model.isTransitioning {
+                WebVideoPlayerView(
+                    videoURL: url,
+                    apiKey: nil,
+                    showControls: false,
+                    isRoomActive: model.isRoomActive
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .brightness(model.effectiveBrightness)
+                .contrast(model.effectiveContrast)
+                .saturation(model.effectiveSaturation)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onChange(of: model.currentPost?.id) { _, _ in
@@ -586,6 +608,8 @@ struct RemoteViewerWindowView: View {
             config = saved
         } else if let gallery = appModel.gallerySlideshowConfig, gallery.id == windowValue.configId {
             config = gallery
+        } else if let videoSlideshow = appModel.videoSlideshowConfig, videoSlideshow.id == windowValue.configId {
+            config = videoSlideshow
         } else {
             AppLogger.remoteViewer.error("No config found for id \(windowValue.configId.uuidString, privacy: .public)")
             return
@@ -608,20 +632,31 @@ struct RemoteViewerWindowView: View {
 
         // Set up content provider based on mode
         if config.apiEndpoint.isEmpty {
-            // Gallery mode: prefer a transient override set by the launching
-            // photo viewer (e.g. local-folder slideshow), otherwise fall back
-            // to the app-wide image source and current filter.
-            let source: any ImageSource
-            let filter: ImageFilterCriteria?
-            if let override = appModel.pendingGallerySlideshowSource {
-                source = override.imageSource
-                filter = override.filter
-                appModel.pendingGallerySlideshowSource = nil
+            if let videoOverride = appModel.pendingVideoSlideshowSource,
+               appModel.videoSlideshowConfig?.id == config.id {
+                // Video slideshow mode: iterate over the video source/filter
+                // snapshot from the launching video viewer.
+                appModel.pendingVideoSlideshowSource = nil
+                model.contentProvider = VideoSlideshowContentProvider(
+                    videoSource: videoOverride.videoSource,
+                    filter: videoOverride.filter
+                )
             } else {
-                source = appModel.imageSource
-                filter = appModel.currentFilter
+                // Gallery mode: prefer a transient override set by the launching
+                // photo viewer (e.g. local-folder slideshow), otherwise fall back
+                // to the app-wide image source and current filter.
+                let source: any ImageSource
+                let filter: ImageFilterCriteria?
+                if let override = appModel.pendingGallerySlideshowSource {
+                    source = override.imageSource
+                    filter = override.filter
+                    appModel.pendingGallerySlideshowSource = nil
+                } else {
+                    source = appModel.imageSource
+                    filter = appModel.currentFilter
+                }
+                model.contentProvider = GalleryContentProvider(imageSource: source, filter: filter)
             }
-            model.contentProvider = GalleryContentProvider(imageSource: source, filter: filter)
         } else {
             // Remote API mode
             model.contentProvider = RemoteContentProvider(apiClient: model.apiClient, baseURL: config.apiEndpoint, accessToken: config.accessToken)

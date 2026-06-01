@@ -14,3 +14,11 @@ struct GallerySlideshowSourceOverride {
     let imageSource: any ImageSource
     let filter: ImageFilterCriteria?
 }
+
+/// Transient override passed from the video viewer's slideshow button to the
+/// video-mode remote viewer it launches. Carries the video source and scene
+/// filter snapshot so the slideshow iterates over the same set of videos.
+struct VideoSlideshowSourceOverride {
+    let videoSource: any VideoSource
+    let filter: SceneFilterCriteria?
+}

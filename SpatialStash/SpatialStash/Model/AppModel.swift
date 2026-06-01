@@ -136,6 +136,11 @@ class AppModel {
     /// the app-wide Stash source. Cleared once consumed.
     var pendingGallerySlideshowSource: GallerySlideshowSourceOverride?
 
+    /// Transient override consumed by the next video-mode remote viewer launch.
+    /// Set by the video-viewer slideshow button so the slideshow runs over the
+    /// originating window's video source/filter. Cleared once consumed.
+    var pendingVideoSlideshowSource: VideoSlideshowSourceOverride?
+
     /// The photo viewer's `contentEntity` while it is on loan to the
     /// Spatial 3D ImmersiveSpace. The IPC + generated `Spatial3DImage` are
     /// reparented across scenes rather than rebuilt — one copy of the GPU
@@ -729,6 +734,11 @@ class AppModel {
     /// Persistent config for the gallery slideshow launched from photo viewer ornament.
     /// Stored separately from savedRemoteConfigs so it doesn't clutter the Remote tab.
     var gallerySlideshowConfig: RemoteViewerConfig?
+
+    /// Persistent config for the video slideshow launched from the video viewer
+    /// ornament. Stored separately from savedRemoteConfigs and the gallery
+    /// (image) slideshow config so each keeps its own display settings.
+    var videoSlideshowConfig: RemoteViewerConfig?
 
     /// When true, the Remote tab appears in the tab bar ornament
     var enableRemoteViewer: Bool {
