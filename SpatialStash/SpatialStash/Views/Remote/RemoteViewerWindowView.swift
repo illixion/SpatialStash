@@ -74,8 +74,15 @@ struct RemoteViewerWindowView: View {
                         .offset(z: overlayZ)
                 }
 
-                // Loading indicator
-                if viewerModel?.isLoading == true && viewerModel?.currentImage == nil {
+                // Loading indicator — only when truly nothing is on screen.
+                // A video/GIF/WebP plays via its own WKWebView layer (and
+                // leaves currentImage nil), so checking currentImage alone
+                // would pop the spinner over a playing video while the next
+                // image prefetches. Gate on the image media type too so the
+                // spinner appears only when there is genuinely no media shown
+                // (e.g. first paint, or space restoration of snapped windows).
+                if let model = viewerModel,
+                   model.isLoading, model.currentMediaType == .image, model.currentImage == nil {
                     ProgressView()
                         .scaleEffect(2)
                         .offset(z: overlayZ)
