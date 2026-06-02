@@ -99,6 +99,18 @@ class SlideshowEngine {
     var isTransitioning: Bool = false
     var isLoading: Bool = false
 
+    /// Remote mode is purely server-paced: the orchestrator's `playback`
+    /// frames are the sole advance trigger and the engine never advances on
+    /// its own dwell clock. This guarantees the displayed post always matches
+    /// the server's `current`, so `imageReady` can't report an image the
+    /// server hasn't committed (which the readiness barrier would drop,
+    /// stalling the channel). Gallery mode leaves this false and runs the
+    /// local dwell timer. Set by the remote viewer before the run loop starts.
+    var serverDriven: Bool = false
+    /// The orchestrator's latest `current` post (remote mode only). The engine
+    /// advances toward this whenever it's in a state where jumping is safe.
+    private var serverCurrentPost: RemotePost?
+
     /// True once the slideshow has shown a real image at least once. Used to
     /// distinguish the cold-start case (allow a bounded wait for the first
     /// image, show spinner) from steady state (show placeholder immediately on
@@ -542,8 +554,10 @@ class SlideshowEngine {
 
         guard isRoomActive else { return }
 
-        // Case 1: overdue in .displaying — force the advance the run loop missed
-        if state == .displaying, let deadline = displayDeadline {
+        // Case 1: overdue in .displaying — force the advance the run loop
+        // missed. Skipped when server-driven: there is no local deadline to be
+        // "overdue" against; advances come only from the orchestrator.
+        if !serverDriven, state == .displaying, let deadline = displayDeadline {
             let overdue = Date().timeIntervalSince(deadline)
             if overdue > Self.watchdogAdvanceGrace {
                 AppLogger.remoteViewer.warning("Watchdog: stuck in .displaying \(Int(overdue), privacy: .public)s past deadline — forcing advance")
@@ -630,6 +644,28 @@ class SlideshowEngine {
         transition(to: .loading)
     }
 
+    // MARK: - Server-driven advance (remote mode)
+
+    /// Record the orchestrator's current post and advance toward it. Called
+    /// from every `playback` frame. The advance is deferred (not lost) when
+    /// the engine is mid-load / transitioning / paused: `reconcileWithServer`
+    /// re-runs from `onPostTransitioned` and `onBecameActive`, so the engine
+    /// always converges on the server's current without racing ahead of it.
+    func setServerCurrent(_ post: RemotePost?) {
+        serverCurrentPost = post
+        reconcileWithServer()
+    }
+
+    /// Advance to the server's current post if we're in a state where a jump
+    /// is safe and we're not already on it. No-op when not server-driven.
+    func reconcileWithServer() {
+        guard serverDriven, let target = serverCurrentPost else { return }
+        guard state == .displaying || state == .idle else { return }
+        guard target._id != currentPost?._id else { return }
+        pendingPost = target
+        transition(to: .loading)
+    }
+
     func previousImage() {
         guard postHistory.count >= 2 else { return }
         if let current = currentPost {
@@ -673,24 +709,6 @@ class SlideshowEngine {
     }
 
     // MARK: - Tag List Change
-
-    /// Reset prefetch state and re-arm the cold-start wait so the next
-    /// loading phase blocks on the new prefetch instead of dropping
-    /// straight to the failure placeholder. Used by the remote viewer
-    /// when the server jumps ahead of what the engine has cached so the
-    /// transition reads as "image takes a moment to load" rather than
-    /// "warning icon then a fresh image" — which is what users were
-    /// seeing every cycle when the server's tick beat the engine's local
-    /// deadline.
-    func prepareForRemoteJump() {
-        fetchReturnedEmpty = false
-        cachedPosts.removeAll()
-        prefetchedImages.removeAll()
-        hasDisplayedFirstMedia = false
-        cancelPrefetch()
-        pendingPost = nil
-        transition(to: .loading)
-    }
 
     func handleTagListChanged() {
         fetchReturnedEmpty = false
@@ -875,6 +893,16 @@ class SlideshowEngine {
     /// a long background) the loop exits immediately and advances once.
     private func runDisplayingPhase() async {
         let versionAtEntry = stateVersion
+
+        // Server-paced: hold the current image until the orchestrator pushes a
+        // new `current` (which drives the transition via reconcileWithServer).
+        // No local dwell timer means the engine can't diverge from the server,
+        // so it never reports `imageReady` for a frame the server hasn't
+        // committed.
+        if serverDriven {
+            await waitForStateChange()
+            return
+        }
 
         // Defensive: if no deadline was set (shouldn't normally happen since
         // displayImage/displayVideo set it), establish one now.

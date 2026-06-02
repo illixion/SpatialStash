@@ -144,6 +144,11 @@ class RemoteViewerModel: SlideshowEngine {
         SlideshowSyncHub.shared.registerForLocalSync(self)
 
         if !isGalleryMode {
+            // Remote mode is purely server-paced — the orchestrator's playback
+            // frames drive every advance and the engine never runs its own
+            // dwell clock. See SlideshowEngine.serverDriven.
+            serverDriven = true
+
             // Tag lists used to be HTTP-fetched here from `/tags.json`. The RoboFrame
             // rpcserver now pushes them on WebSocket connect (action: tagLists), so we
             // just open the socket and let the server announce.
@@ -198,6 +203,9 @@ class RemoteViewerModel: SlideshowEngine {
         // forces a reconnect.
         wsSession?.probeOrReconnect()
         scheduleVisibilityReport(true)
+        // Catch up if the server advanced while we were backgrounded and the
+        // intervening playback frames were deferred.
+        reconcileWithServer()
         // Per protocol §"Visibility never resets the timer": the server
         // resumes the channel's wall-clock dwell on visibility=true.
         // No client-side wake-advance (requestNext on stale playback) —
@@ -399,8 +407,9 @@ class RemoteViewerModel: SlideshowEngine {
                let image = currentImage,
                !generatedImageIds.contains(ObjectIdentifier(image)) {
                 // Defer until the slot reports generation complete. The
-                // server's readiness barrier will hold the channel open
-                // until we (or the bad-network fallback) report.
+                // server's readiness barrier holds the channel on this image
+                // until we report — there is no longer a timeout fallback, so
+                // the channel waits as long as 3D generation takes.
                 pendingImageReadyPost = post
                 AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "imageReady deferred for post \(post._id, privacy: .public) — waiting on 3D generation")
             } else {
@@ -415,6 +424,10 @@ class RemoteViewerModel: SlideshowEngine {
         } else {
             AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "imageReady suppressed for post \(post._id, privacy: .public) — applying incoming local sync")
         }
+
+        // If the server advanced again while this image was loading, the
+        // deferred advance lands now that we're back in .displaying.
+        reconcileWithServer()
 
         // Local broadcast — gallery mode only. In remote mode each window
         // owns its own WS, and the server's per-deviceId channel (or the
@@ -763,49 +776,17 @@ class RemoteViewerModel: SlideshowEngine {
         AppLogger.remoteViewer.info("playback: current=\(curStr, privacy: .public) next=\(nxtStr, privacy: .public) primary=\(self.serverPrimaryDeviceId ?? "nil", privacy: .public) myDevice=\(self.config.wsDeviceId, privacy: .public) engineState=\(stateStr, privacy: .public)")
 
         if let cur = current {
-            // The server's tick usually arrives a few ms before the
-            // engine's local 15-second deadline fires (network-induced
-            // skew). In that window the engine has the new current
-            // sitting at the head of prefetchedImages, fully downloaded
-            // and ready to display. Force-flushing here would throw all
-            // that work away and drop the next loading phase straight
-            // into the failure placeholder. So if the engine's next-up
-            // prefetched image is already this `cur`, we trust it and
-            // just keep the lookahead queue warm.
-            let engineNextMatches = prefetchedImages.first?.post._id == cur._id
-
-            if cur._id == currentPost?._id || engineNextMatches {
-                if let n = next,
-                   !prefetchedImages.contains(where: { $0.post._id == n._id }) {
-                    provider?.enqueueFromPlayback([n])
-                    triggerPrefetch()
-                }
-            } else if state == .displaying || state == .idle {
-                // Engine doesn't have this post and is in a state where
-                // jumping makes sense. prepareForRemoteJump re-arms the
-                // cold-start wait so the next loading phase blocks on
-                // the fresh prefetch instead of flashing the failure
-                // placeholder.
-                //
-                // Reset the provider FIRST so its `seenIds` dedup set
-                // doesn't reject re-enqueued ids — channels that cycle
-                // through a small post pool (e.g. two animated WebPs
-                // ping-ponging) would otherwise starve here forever:
-                // every force-advance re-enqueues already-seen ids that
-                // the provider silently drops, leaving the engine in
-                // .loading with an empty prefetch queue.
-                provider?.resetPagination()
-                provider?.enqueueFromPlayback([cur] + (next.map { [$0] } ?? []))
-                AppLogger.remoteViewer.info("playback: force-advancing to \(cur._id, privacy: .public) (was \(self.currentPost?._id ?? -1, privacy: .public))")
-                prepareForRemoteJump()
-            } else {
-                // Engine is loading / transitioning / paused / backgrounded
-                // / stopped. Don't disrupt — when it returns to a stable
-                // state and ticks naturally, the latest playback push will
-                // bring it forward. Just keep the queue warm.
-                provider?.enqueueFromPlayback([cur] + (next.map { [$0] } ?? []))
-                triggerPrefetch()
-            }
+            // Keep the lookahead warm, then hand the server's current to the
+            // engine. The engine is server-paced (no local dwell clock), so
+            // setServerCurrent is the sole advance trigger: it advances to
+            // `cur` when in a safe state and defers otherwise, converging via
+            // reconcileWithServer from onPostTransitioned / onBecameActive.
+            // Because the engine only ever transitions to a server `current`,
+            // the post it displays — and therefore the id it reports in
+            // imageReady — always matches what the server is waiting on.
+            provider?.enqueueFromPlayback([cur] + (next.map { [$0] } ?? []))
+            triggerPrefetch()
+            setServerCurrent(cur)
         } else if let n = next {
             provider?.enqueueFromPlayback([n])
             triggerPrefetch()
