@@ -206,6 +206,16 @@ class RemoteViewerModel: SlideshowEngine {
         // Catch up if the server advanced while we were backgrounded and the
         // intervening playback frames were deferred.
         reconcileWithServer()
+        // If the server is still parked on the post we have on screen, no
+        // transition fires (reconcile is a no-op when target == current), so
+        // onPostTransitioned won't run. But becoming visible re-includes this
+        // session in the server's readiness barrier, and we suppressed the
+        // imageReady for this post while inactive — re-report it now so the
+        // channel doesn't stall waiting on a window that just came back.
+        if !isApplyingIncomingSync, let post = currentPost,
+           serverCurrentPost?._id == post._id {
+            reportImageReady(for: post)
+        }
         // Per protocol §"Visibility never resets the timer": the server
         // resumes the channel's wall-clock dwell on visibility=true.
         // No client-side wake-advance (requestNext on stale playback) —
@@ -403,24 +413,7 @@ class RemoteViewerModel: SlideshowEngine {
         // transition was driven by another window, not by our own engine
         // ticking, and that window already reported.)
         if !isApplyingIncomingSync {
-            if isSlideshow3DActive,
-               let image = currentImage,
-               !generatedImageIds.contains(ObjectIdentifier(image)) {
-                // Defer until the slot reports generation complete. The
-                // server's readiness barrier holds the channel on this image
-                // until we report — there is no longer a timeout fallback, so
-                // the channel waits as long as 3D generation takes.
-                pendingImageReadyPost = post
-                AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "imageReady deferred for post \(post._id, privacy: .public) — waiting on 3D generation")
-            } else {
-                pendingImageReadyPost = nil
-                if wsSession == nil {
-                    AppLogger.remoteViewer.warning("imageReady not sent for post \(post._id, privacy: .public) — wsSession is nil")
-                } else {
-                    AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "imageReady sent for post \(post._id, privacy: .public)")
-                    wsSession?.sendImageReady(postId: post._id)
-                }
-            }
+            reportImageReady(for: post)
         } else {
             AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "imageReady suppressed for post \(post._id, privacy: .public) — applying incoming local sync")
         }
@@ -450,6 +443,44 @@ class RemoteViewerModel: SlideshowEngine {
         SlideshowSyncHub.shared.broadcastLocalSync(from: self, payload: payload)
     }
 
+    /// Report (or defer) `imageReady` for the post currently on screen,
+    /// honouring scene-phase visibility and the 3D generation gate. Called
+    /// both when the engine transitions to a new post and when the window
+    /// returns to active (so the server's readiness barrier — which re-includes
+    /// this session the moment it reports visibility=true — gets the report it
+    /// would otherwise wait on indefinitely).
+    private func reportImageReady(for post: RemotePost) {
+        guard isRoomActive else {
+            // Window isn't visible (scenePhase not active). The server already
+            // knows we're invisible via the visibility=false report and won't
+            // hold the readiness barrier on this session, so reporting
+            // imageReady here would needlessly drive the channel forward for a
+            // window nobody is looking at. Drop any pending deferral too — it
+            // gets re-evaluated when the window becomes active again.
+            pendingImageReadyPost = nil
+            AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "imageReady skipped for post \(post._id, privacy: .public) — window not active")
+            return
+        }
+        if isSlideshow3DActive,
+           let image = currentImage,
+           !generatedImageIds.contains(ObjectIdentifier(image)) {
+            // Defer until the slot reports generation complete. The
+            // server's readiness barrier holds the channel on this image
+            // until we report — there is no longer a timeout fallback, so
+            // the channel waits as long as 3D generation takes.
+            pendingImageReadyPost = post
+            AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "imageReady deferred for post \(post._id, privacy: .public) — waiting on 3D generation")
+        } else {
+            pendingImageReadyPost = nil
+            if wsSession == nil {
+                AppLogger.remoteViewer.warning("imageReady not sent for post \(post._id, privacy: .public) — wsSession is nil")
+            } else {
+                AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "imageReady sent for post \(post._id, privacy: .public)")
+                wsSession?.sendImageReady(postId: post._id)
+            }
+        }
+    }
+
     // MARK: - Slideshow 3D Generation Gate
 
     /// Called by `SlideshowSpatial3DLayer` whenever a slot finishes
@@ -469,6 +500,12 @@ class RemoteViewerModel: SlideshowEngine {
               let current = currentImage,
               ObjectIdentifier(current) == id else { return }
         pendingImageReadyPost = nil
+        // Don't advance the channel for a window that became invisible while
+        // its 3D depth map was generating.
+        guard isRoomActive else {
+            AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "imageReady dropped for post \(pending._id, privacy: .public) — window not active")
+            return
+        }
         AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "imageReady released for post \(pending._id, privacy: .public) — 3D generation completed")
         wsSession?.sendImageReady(postId: pending._id)
     }

@@ -109,7 +109,7 @@ class SlideshowEngine {
     var serverDriven: Bool = false
     /// The orchestrator's latest `current` post (remote mode only). The engine
     /// advances toward this whenever it's in a state where jumping is safe.
-    private var serverCurrentPost: RemotePost?
+    private(set) var serverCurrentPost: RemotePost?
 
     /// True once the slideshow has shown a real image at least once. Used to
     /// distinguish the cold-start case (allow a bounded wait for the first
