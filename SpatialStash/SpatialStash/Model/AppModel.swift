@@ -727,11 +727,11 @@ class AppModel {
     // MARK: - Remote Viewer
 
     /// Last tag list catalog the server pushed to any open viewer. The catalog
-    /// is identical for every window, so it's mirrored here for the Remote tab
-    /// profile editor to populate its per-profile "Tag List" picker even when
-    /// no viewer is open. The *active* list is per-window (see TagListManager
-    /// on each RemoteViewerModel) and the *selected* list is per-profile
-    /// (`RemoteViewerConfig.tagListIndex`).
+    /// is identical for every window, so it's mirrored here to seed a freshly
+    /// opened viewer's ornament before the server re-pushes `tagLists` (which
+    /// only happens on connect — a late joiner on an already-open shared WS
+    /// connection would otherwise start with no list names). The current list
+    /// itself is fully server-tracked (per-window TagListManager active index).
     var tagListCatalog: [[String]] = []
     let modTagManager = ModTagManager()
 
@@ -1620,9 +1620,10 @@ class AppModel {
             savedVideoViews: savedVideoViews,
             savedWindowGroups: savedWindowGroups,
             savedRemoteConfigs: savedRemoteConfigs,
-            // Tag list selection is per-profile now (RemoteViewerConfig.tagListIndex)
-            // and rides inside savedRemoteConfigs. The old global fields are
-            // left nil for backward-compatible decoding of older backups.
+            // The tag list (catalog and current selection) is fully
+            // server-tracked, so nothing about it is exported. These legacy
+            // global fields are left nil for backward-compatible decoding of
+            // older backups.
             tagLists: nil,
             tagListDefaultIndex: nil,
             tagListLastActiveIndex: nil,

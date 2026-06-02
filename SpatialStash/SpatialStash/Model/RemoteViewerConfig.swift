@@ -4,10 +4,9 @@
  Stores per-viewer settings (display, API endpoint, etc.). Saved
  configurations are persisted to UserDefaults.
 
- The tag list *catalog*, blocked posts, and blocked tags are owned by the
- RoboFrame server and pushed over the WebSocket on connect — they are not
- stored here. The profile's *selected* tag list (`tagListIndex`) is, so two
- windows can pin different lists without sharing a global index.
+ The tag list (catalog and current selection), blocked posts, and blocked
+ tags are owned by the RoboFrame server, which persists each channel's
+ current list and pushes it over the WebSocket. None of it is stored here.
  */
 
 import Foundation
@@ -74,15 +73,6 @@ struct RemoteViewerConfig: Codable, Identifiable {
     /// `nil` = inherit `AppModel.slideshowMaxImageResolution3D`.
     var maxImageResolution3D: Int?
 
-    /// Per-profile tag list selection. `nil` = "Server Decides" — the window
-    /// follows whatever list its channel's `playback.currentList` reports. A
-    /// non-nil value pins the window to that list: it claims the list on
-    /// connect and ignores server-driven list changes, *except* while
-    /// displaySync is active (then the merged stream is fully server-driven).
-    /// This is per-window state so two windows can sit on different lists
-    /// without overwriting a shared global index.
-    var tagListIndex: Int?
-
     init(name: String) {
         self.id = UUID()
         self.name = name
@@ -122,12 +112,14 @@ struct RemoteViewerConfig: Codable, Identifiable {
         case enableDynamicBrightness, enableDiorama
         case transparentBackground, textSize
         case slideshow3DMode, maxImageResolution2D, maxImageResolution3D
-        case tagListIndex
         // Decoded silently from older saved configs and never re-encoded.
         case wsEndpoint
         case homeAssistantURL
         case blockedPosts, blockedTags
-        case tagLists, defaultTagListIndex, lastActiveTagListIndex
+        // The tag list (catalog, selection, recovery hint) is fully
+        // server-tracked now — the RoboFrame backend persists each channel's
+        // current list, so nothing about it is stored per-profile.
+        case tagLists, defaultTagListIndex, lastActiveTagListIndex, tagListIndex
     }
 
     init(from decoder: Decoder) throws {
@@ -153,15 +145,6 @@ struct RemoteViewerConfig: Codable, Identifiable {
         maxImageResolution2D = try container.decodeIfPresent(Int.self, forKey: .maxImageResolution2D)
         maxImageResolution3D = try container.decodeIfPresent(Int.self, forKey: .maxImageResolution3D)
 
-        // Tag list selection is now per-profile. Migrate the old global
-        // "default list" preference into this profile if a saved config
-        // predates the per-profile field.
-        if let idx = try container.decodeIfPresent(Int.self, forKey: .tagListIndex) {
-            tagListIndex = idx
-        } else {
-            tagListIndex = try container.decodeIfPresent(Int.self, forKey: .defaultTagListIndex)
-        }
-
         // Older saved configs may carry these fields. Swallow them so the
         // decode succeeds and they're dropped on next save — the server
         // is now authoritative on tag and blocked lists, the WS URL is
@@ -172,7 +155,9 @@ struct RemoteViewerConfig: Codable, Identifiable {
         _ = try container.decodeIfPresent([Int].self, forKey: .blockedPosts)
         _ = try container.decodeIfPresent([String].self, forKey: .blockedTags)
         _ = try container.decodeIfPresent([[String]].self, forKey: .tagLists)
+        _ = try container.decodeIfPresent(Int.self, forKey: .defaultTagListIndex)
         _ = try container.decodeIfPresent(Int.self, forKey: .lastActiveTagListIndex)
+        _ = try container.decodeIfPresent(Int.self, forKey: .tagListIndex)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -197,6 +182,5 @@ struct RemoteViewerConfig: Codable, Identifiable {
         try container.encode(slideshow3DMode, forKey: .slideshow3DMode)
         try container.encodeIfPresent(maxImageResolution2D, forKey: .maxImageResolution2D)
         try container.encodeIfPresent(maxImageResolution3D, forKey: .maxImageResolution3D)
-        try container.encodeIfPresent(tagListIndex, forKey: .tagListIndex)
     }
 }

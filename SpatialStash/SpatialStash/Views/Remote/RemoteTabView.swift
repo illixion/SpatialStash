@@ -119,8 +119,6 @@ struct RemoteTabView: View {
                     }
                 }
 
-                tagListSection
-
                 modTagPresetsSection
 
                 Section {
@@ -237,34 +235,6 @@ struct RemoteTabView: View {
         }
     }
 
-    // MARK: - Per-profile tag list
-
-    /// The tag list catalog comes from the RoboFrame server (mirrored into
-    /// `appModel.tagListCatalog`). Each profile pins its own list: "Server
-    /// Decides" follows the channel's playback, while a specific list keeps
-    /// this window on that list regardless of what other windows pick.
-    private var tagListSection: some View {
-        let catalog = appModel.tagListCatalog
-
-        return Section("Tag List") {
-            if catalog.isEmpty {
-                Text("No tag lists from server yet. Open a viewer to load them.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            } else {
-                Picker("Tag List", selection: Binding(
-                    get: { editingConfig.tagListIndex ?? -1 },
-                    set: { editingConfig.tagListIndex = $0 == -1 ? nil : $0 }
-                )) {
-                    Text("Server Decides").tag(-1)
-                    ForEach(catalog.indices, id: \.self) { index in
-                        Text("List \(index + 1): \(catalog[index].first ?? "")").tag(index)
-                    }
-                }
-                .pickerStyle(.menu)
-            }
-        }
-    }
 
     private func launchViewer(config: RemoteViewerConfig) {
         appModel.enqueueRemoteViewerOpen(configId: config.id)

@@ -633,11 +633,11 @@ struct RemoteViewerWindowView: View {
         model.slideshow3DMode = config.slideshow3DMode
         model.updateWindowAspectRatio(windowSize)
 
-        // Tag list state is per-window (created in RemoteViewerModel.init from
-        // the profile's tagListIndex). Seed its catalog from the last one the
-        // app saw so the ornament has options before the server re-pushes, and
-        // mirror future catalog pushes back so the Remote tab editor can show
-        // the per-profile list picker.
+        // Tag list state is per-window (created in RemoteViewerModel.init); the
+        // current list is server-tracked. Seed the catalog from the last one
+        // the app saw so the ornament has list names before the server
+        // re-pushes `tagLists`, and mirror future pushes back for the next
+        // window that opens.
         model.tagListManager?.tagLists = appModel.tagListCatalog
         model.tagListManager?.clampActiveIndex()
         model.onCatalogReceived = { [weak appModel] lists in

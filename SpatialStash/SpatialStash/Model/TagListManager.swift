@@ -2,13 +2,12 @@
  Spatial Stash - Tag List Manager
 
  Per-window observable tracking which tag list a single slideshow viewer is
- on. The catalog itself (`tagLists`) is server-pushed over the WebSocket and
- mirrored into each window's manager; the *active* index is per-window so two
- viewers can sit on different lists without overwriting a shared global value.
-
- The profile's selected list is persisted in `RemoteViewerConfig.tagListIndex`
- (see RemoteViewerModel), not in UserDefaults here. This object holds no
- persistence of its own — it's recreated per window from the profile.
+ on. The catalog (`tagLists`) and the current list are both server-tracked:
+ the RoboFrame backend persists each channel's current list and pushes it
+ over the WebSocket. The active index is held per-window so two viewers on
+ different channels don't overwrite a shared global value when each gets its
+ own channel's `playback.currentList`. This object holds no persistence of
+ its own — the server is the source of truth.
  */
 
 import Foundation
@@ -34,13 +33,9 @@ class TagListManager {
 
     /// Registered send handlers keyed by engine/window ID. Called only on
     /// *user-initiated* switches so the viewer's WS forwards a `setTagList`
-    /// to the server (claiming the list for its channel). Server-initiated
+    /// to the server (which persists it for the channel). Server-initiated
     /// changes (`applyServerIndex`) skip this to avoid a feedback loop.
     private var sendHandlers: [UUID: (Int) -> Void] = [:]
-
-    /// Called on user-initiated switches so the owning model can persist the
-    /// new index into its `RemoteViewerConfig.tagListIndex`.
-    var onUserSwitch: ((Int) -> Void)?
 
     /// Incremented on each tag list switch. Views can observe this
     /// with onChange(of:) for lightweight reactivity.
@@ -57,11 +52,7 @@ class TagListManager {
 
     // MARK: - Init
 
-    /// - Parameter startIndex: the profile's persisted `tagListIndex`, or 0
-    ///   for "Server Decides" (the server's first `playback` will move it).
-    init(startIndex: Int = 0) {
-        activeIndex = max(0, startIndex)
-    }
+    init() {}
 
     /// Clamp the active index after a catalog update so a shrunken catalog
     /// doesn't leave us pointing past the end.
@@ -90,10 +81,9 @@ class TagListManager {
 
     // MARK: - Switching
 
-    /// Manually switch to a specific tag list. Notifies the engine, broadcasts
-    /// the switch to the server via the send handler (claiming the list for
-    /// this window's channel), and asks the owning model to persist the choice
-    /// to its profile.
+    /// Manually switch to a specific tag list. Notifies the engine and
+    /// broadcasts the switch to the server via the send handler; the server
+    /// persists the channel's current list and echoes it back via `playback`.
     func switchToTagList(_ index: Int) {
         guard index < tagLists.count, index != activeIndex else { return }
         activeIndex = index
@@ -102,7 +92,6 @@ class TagListManager {
         for handler in sendHandlers.values {
             handler(index)
         }
-        onUserSwitch?(index)
     }
 
     /// Cycle to the next tag list.
@@ -112,10 +101,9 @@ class TagListManager {
         switchToTagList(next)
     }
 
-    /// Apply a server-driven tag list change for this window's channel. The
-    /// caller is responsible for the pin/displaySync policy — this just
-    /// performs the change and notifies the engine (no send handler, no
-    /// persistence). Returns true if the index actually changed.
+    /// Apply a server-driven tag list change for this window's channel. Just
+    /// performs the change and notifies the engine (no send handler, so no
+    /// echo back to the server). Returns true if the index actually changed.
     @discardableResult
     func applyServerIndex(_ index: Int) -> Bool {
         guard index >= 0, index < tagLists.count, index != activeIndex else { return false }
@@ -123,13 +111,6 @@ class TagListManager {
         changeVersion += 1
         notifyChangeHandlers()
         return true
-    }
-
-    /// Set the active index locally without notifying the server. Used when a
-    /// pinned window returns to its profile list (e.g. displaySync turns off).
-    @discardableResult
-    func setActiveIndexLocally(_ index: Int) -> Bool {
-        applyServerIndex(index)
     }
 
     // MARK: - Private
