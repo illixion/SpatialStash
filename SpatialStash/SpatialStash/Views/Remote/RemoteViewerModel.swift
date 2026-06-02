@@ -629,7 +629,7 @@ class RemoteViewerModel: SlideshowEngine {
             height: 1080,
             bright: false,
             convert: false,
-            ratio: currentRatioRangeString(),
+            ratio: currentRatioValue(),
             modTags: modTagManager?.activeTags ?? []
         )
 
@@ -641,15 +641,14 @@ class RemoteViewerModel: SlideshowEngine {
         }
     }
 
-    /// Mirrors the web kiosk's `calculateDisplayRatioRange` (public/modules/config.js):
-    /// emits a `±15%` numeric range string like `"1.32..1.79"` that the server
-    /// can plug into its `ratio:lo..hi` query clause. Returns nil if the window
-    /// hasn't reported a usable size yet.
-    private func currentRatioRangeString() -> String? {
+    /// Advertise the window's raw aspect ratio (width/height). The server owns
+    /// the matching tolerance and expands this into its `ratio:lo..hi` query
+    /// clause, so the client sends a bare number rather than a baked-in window.
+    /// Returns nil if the window hasn't reported a usable size yet.
+    private func currentRatioValue() -> Double? {
         let ratio = windowAspectRatio
         guard ratio.isFinite, ratio > 0 else { return nil }
-        let range = ratio * 0.15
-        return String(format: "%.2f..%.2f", ratio - range, ratio + range)
+        return (ratio * 10000).rounded() / 10000
     }
 
     /// Tracks the ratio we last advertised to the server, so we only re-send

@@ -280,7 +280,7 @@ class RemoteWebSocketClient {
     /// same image. Mod tags ride along so the orchestrator's first refill
     /// query already includes them — without that the initial query is
     /// discarded when a separate setModTags arrives a few ms later.
-    func sendSlideshowConfig(sessionId: String, deviceId: String, interval: Int, width: Int, height: Int, bright: Bool, convert: Bool, ratio: String? = nil, modTags: [String] = []) {
+    func sendSlideshowConfig(sessionId: String, deviceId: String, interval: Int, width: Int, height: Int, bright: Bool, convert: Bool, ratio: Double? = nil, modTags: [String] = []) {
         var payload: [String: Any] = [
             "deviceId": deviceId,
             "interval": interval,
