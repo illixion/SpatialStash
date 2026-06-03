@@ -271,7 +271,12 @@ struct RemoteViewerWindowView: View {
                     videoURL: url,
                     apiKey: nil,
                     showControls: false,
-                    isRoomActive: model.isRoomActive
+                    isRoomActive: model.isRoomActive,
+                    onDurationKnown: { [weak model] seconds in
+                        guard let model, let post = model.currentPost else { return }
+                        model.onVideoDurationKnown(seconds, for: post)
+                    },
+                    loop: model.currentVideoLoops
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 // Fade out during a crossfade — video→video reveals the black

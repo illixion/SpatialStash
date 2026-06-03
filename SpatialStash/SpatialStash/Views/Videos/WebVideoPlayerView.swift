@@ -17,6 +17,16 @@ struct WebVideoPlayerView: UIViewRepresentable {
     var isRoomActive: Bool = true
     /// Called once when the video's native dimensions become known (from the HTML video element's loadedmetadata event).
     var onVideoSizeKnown: ((CGSize) -> Void)? = nil
+    /// Called once when the clip length (seconds) becomes known, from the same
+    /// loadedmetadata event. The remote viewer reports it to the server as
+    /// `imageReady { durationMs }` so a clip longer than the slideshow interval
+    /// delays the advance until it has played through.
+    var onDurationKnown: ((Double) -> Void)? = nil
+    /// Whether the video element loops. A clip that fits the interval loops
+    /// (default); a clip longer than the interval plays once and freezes on its
+    /// last frame until the server advances, so it doesn't restart its opening
+    /// frame just before the crossfade.
+    var loop: Bool = true
     /// Optional visual adjustments to apply as CSS filters on the video element
     var visualAdjustments: VisualAdjustments? = nil
     /// Optional A-B loop controller. When provided, the player exposes JS hooks
@@ -30,6 +40,7 @@ struct WebVideoPlayerView: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView {
         let coordinator = context.coordinator
         coordinator.onVideoSizeKnown = onVideoSizeKnown
+        coordinator.onDurationKnown = onDurationKnown
 
         let configuration = WKWebViewConfiguration()
         configuration.allowsInlineMediaPlayback = true
@@ -48,6 +59,7 @@ struct WebVideoPlayerView: UIViewRepresentable {
     func updateUIView(_ webView: WKWebView, context: Context) {
         let coordinator = context.coordinator
         coordinator.onVideoSizeKnown = onVideoSizeKnown
+        coordinator.onDurationKnown = onDurationKnown
 
         // Wire up A-B loop controller (re-bound each update; closures hold a weak webView)
         if let loopController {
@@ -81,6 +93,7 @@ struct WebVideoPlayerView: UIViewRepresentable {
             // generateVideoHTML). Without this, the page loads with native
             // controls visible and they flash until updateUIView's JS runs.
             coordinator.lastShowControls = showControls
+            coordinator.lastLoop = loop
             if videoURL.isFileURL {
                 loadLocalVideo(webView: webView, coordinator: coordinator, fileURL: videoURL)
             } else {
@@ -93,6 +106,14 @@ struct WebVideoPlayerView: UIViewRepresentable {
         if coordinator.lastShowControls != showControls {
             coordinator.lastShowControls = showControls
             let js = "document.getElementById('player').controls = \(showControls);"
+            webView.evaluateJavaScript(js)
+        }
+
+        // Toggle looping via JS without reloading. A long clip flips this to
+        // false once its duration is known so it plays through once.
+        if coordinator.lastLoop != loop {
+            coordinator.lastLoop = loop
+            let js = "{ const p = document.getElementById('player'); if (p) p.loop = \(loop); }"
             webView.evaluateJavaScript(js)
         }
 
@@ -145,6 +166,7 @@ struct WebVideoPlayerView: UIViewRepresentable {
     static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "videoDimensions")
         coordinator.onVideoSizeKnown = nil
+        coordinator.onDurationKnown = nil
         coordinator.cancelSrcUnload()
         coordinator.cleanupHTMLFile()
     }
@@ -170,11 +192,15 @@ struct WebVideoPlayerView: UIViewRepresentable {
         var htmlFileURL: URL?
         var loadedURL: URL?
         var lastShowControls: Bool?
+        var lastLoop: Bool?
         var lastIsRoomActive: Bool?
         var lastAdjustments: VisualAdjustments?
         var onVideoSizeKnown: ((CGSize) -> Void)?
+        var onDurationKnown: ((Double) -> Void)?
         /// Prevents firing the callback more than once per video load
         private var didReportSize: Bool = false
+        /// Prevents firing the duration callback more than once per video load
+        private var didReportDuration: Bool = false
 
         /// Task that fires after 30s of inactivity to unload the video src
         var srcUnloadTask: Task<Void, Never>?
@@ -192,6 +218,7 @@ struct WebVideoPlayerView: UIViewRepresentable {
 
         func resetForNewVideo() {
             didReportSize = false
+            didReportDuration = false
             cancelSrcUnload()
             isSourceUnloaded = false
         }
@@ -219,8 +246,16 @@ struct WebVideoPlayerView: UIViewRepresentable {
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
             guard message.name == "videoDimensions",
-                  let body = message.body as? [String: Any],
-                  let width = body["width"] as? Double,
+                  let body = message.body as? [String: Any] else { return }
+            // Duration and dimensions arrive together on loadedmetadata but
+            // are guarded independently — a stream with unknown dimensions can
+            // still report a usable clip length, and vice versa.
+            if !didReportDuration, let duration = body["duration"] as? Double,
+               duration > 0, duration.isFinite {
+                didReportDuration = true
+                onDurationKnown?(duration)
+            }
+            guard let width = body["width"] as? Double,
                   let height = body["height"] as? Double,
                   width > 0, height > 0,
                   !didReportSize else { return }
@@ -245,6 +280,7 @@ struct WebVideoPlayerView: UIViewRepresentable {
         // Match the initial `controls` attribute to showControls so native
         // controls never flash on load before the JS toggle can hide them.
         let controlsAttr = showControls ? "controls " : ""
+        let loopAttr = loop ? "loop " : ""
         return """
         <!DOCTYPE html>
         <html>
@@ -286,7 +322,7 @@ struct WebVideoPlayerView: UIViewRepresentable {
         </head>
         <body>
             <div class="video-container">
-                <video id="player" \(controlsAttr)autoplay playsinline loop muted src="\(videoSrc)">
+                <video id="player" \(controlsAttr)autoplay playsinline \(loopAttr)muted src="\(videoSrc)">
                     Your browser does not support video playback.
                 </video>
             </div>
@@ -334,12 +370,15 @@ struct WebVideoPlayerView: UIViewRepresentable {
                     }
                 });
 
-                // Report native video dimensions to Swift once metadata is loaded
+                // Report native video dimensions and clip length to Swift once
+                // metadata is loaded. Duration drives the server's dwell so a
+                // clip longer than the interval plays through before advancing.
                 video.addEventListener('loadedmetadata', function() {
-                    if (video.videoWidth > 0 && video.videoHeight > 0 && window.webkit && window.webkit.messageHandlers.videoDimensions) {
+                    if (window.webkit && window.webkit.messageHandlers.videoDimensions) {
                         window.webkit.messageHandlers.videoDimensions.postMessage({
                             width: video.videoWidth,
-                            height: video.videoHeight
+                            height: video.videoHeight,
+                            duration: isFinite(video.duration) ? video.duration : 0
                         });
                     }
                 });

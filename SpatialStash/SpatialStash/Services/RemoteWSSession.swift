@@ -73,8 +73,8 @@ final class RemoteWSSession {
         client?.sendReshuffle(deviceId: deviceId)
     }
 
-    func sendImageReady(postId: Int) {
-        client?.sendImageReady(sessionId: sessionId, postId: postId)
+    func sendImageReady(postId: Int, durationMs: Int? = nil) {
+        client?.sendImageReady(sessionId: sessionId, postId: postId, durationMs: durationMs)
     }
 
     func forceReconnectNow() {

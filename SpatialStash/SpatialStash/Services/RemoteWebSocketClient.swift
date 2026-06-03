@@ -327,8 +327,13 @@ class RemoteWebSocketClient {
     /// Tell the server we've finished transitioning to `postId`. The
     /// orchestrator's readiness barrier waits for every visible session on
     /// the channel before starting the dwell timer.
-    func sendImageReady(sessionId: String, postId: Int) {
-        sendJSON(["sessionId": sessionId, "action": "imageReady", "payload": ["id": postId]])
+    /// `durationMs` is the clip length for a video; the server dwells for
+    /// max(interval, durationMs), so a clip longer than the interval delays
+    /// the advance until it has played through. Omitted (nil) for images.
+    func sendImageReady(sessionId: String, postId: Int, durationMs: Int? = nil) {
+        var payload: [String: Any] = ["id": postId]
+        if let durationMs, durationMs > 0 { payload["durationMs"] = durationMs }
+        sendJSON(["sessionId": sessionId, "action": "imageReady", "payload": payload])
     }
 
     // MARK: - Private
