@@ -5,6 +5,8 @@
 
  Layout: [Gallery] | [< N/M >] | [ViewMode v] | [A-B Loop] | [Info] | [Share] | [... More v] | [Title]
  The [A-B Loop] button is only shown when the 2D web player is active.
+ The More menu holds Adjustments (opens the enhancements popover, which now
+ includes Flip), Slideshow, and Pop Out (pushed only).
  */
 
 import SwiftUI
@@ -235,18 +237,6 @@ struct VideoOrnamentsView: View {
                     Label("Adjustments", systemImage: "slider.horizontal.3")
                 }
 
-                // Flip video
-                Button {
-                    withAnimation(.easeInOut(duration: 0.3)) {
-                        appModel.isVideoFlipped.toggle()
-                    }
-                } label: {
-                    Label(
-                        appModel.isVideoFlipped ? "Unflip" : "Flip",
-                        systemImage: "arrow.left.and.right.righttriangle.left.righttriangle.right"
-                    )
-                }
-
                 // Slideshow
                 Button {
                     launchVideoSlideshow()
@@ -290,7 +280,14 @@ struct VideoOrnamentsView: View {
                     get: { appModel.globalVisualAdjustments },
                     set: { appModel.globalVisualAdjustments = $0 }
                 ),
-                showAutoEnhance: false
+                showAutoEnhance: false,
+                showFlip: true,
+                isImageFlipped: appModel.isVideoFlipped,
+                onToggleFlip: {
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        appModel.isVideoFlipped.toggle()
+                    }
+                }
             )
         }
         .onChange(of: showAdjustmentsPopover) { _, isOpen in

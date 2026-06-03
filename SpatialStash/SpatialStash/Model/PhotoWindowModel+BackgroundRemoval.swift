@@ -6,14 +6,36 @@
  */
 
 import Foundation
+import ImageIO
 import Metal
 import os
 import RealityKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 extension PhotoWindowModel {
 
     // MARK: - Background Removal
+
+    /// Decode the full-resolution source image for the Vision background-removal
+    /// pass. Routes through `CGImageSource` (full-quality decode) rather than
+    /// `UIImage(data:)`, which silently fails or degrades on certain codecs —
+    /// notably JXL — for the same reason `MetalImageRenderer` avoids it. Falls
+    /// back to `UIImage(data:)` only if the CGImageSource path can't produce an
+    /// image, preserving prior behavior for formats it handled.
+    func fullResolutionImageForBackgroundRemoval() -> UIImage? {
+        guard let imageData = currentImageData else { return nil }
+        if let source = CGImageSourceCreateWithData(imageData as CFData, nil) {
+            let options: [CFString: Any] = [
+                kCGImageSourceShouldCacheImmediately: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+            ]
+            if let cgImage = CGImageSourceCreateImageAtIndex(source, 0, options as CFDictionary) {
+                return UIImage(cgImage: cgImage)
+            }
+        }
+        return UIImage(data: imageData)
+    }
 
     /// Toggle background removal: original -> remove, removing -> cancel, removed -> restore.
     func toggleBackgroundRemoval() async {
@@ -65,8 +87,10 @@ extension PhotoWindowModel {
     /// When auto-enhance is active, produces both regular and auto-enhanced variants
     /// using a single Vision pass (shared foreground mask). Otherwise only produces the regular variant.
     func performFullResolutionBackgroundRemoval(isAutoDuringLoad: Bool) async {
-        // Always use original image data for stable edge detection
-        guard let imageData = currentImageData, let fullResImage = UIImage(data: imageData) else {
+        // Always use original image data for stable edge detection. Decode via
+        // CGImageSource so JXL (and other codecs UIImage(data:) mishandles)
+        // restore correctly when the cached result is gone (e.g. reinstall).
+        guard let fullResImage = fullResolutionImageForBackgroundRemoval() else {
             AppLogger.photoWindow.warning("No image data available for full-resolution background removal")
             return
         }

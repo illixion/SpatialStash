@@ -5,7 +5,11 @@
  Controls are configured via PhotoViewerContext to show/hide
  navigation, slideshow, rating, and context-specific buttons.
 
- Layout: [Gallery] | [< N/M >] | [Slideshow] | [3D v] | [Info] | [Share] | [... More v] | [Resolution]
+ Layout: [Gallery] | [< N/M >] | [Slideshow] | [3D v] | [Info] | [Share] | [Adjustments] | [extras] | [Resolution]
+
+ "Adjustments" opens the image-enhancements popover (brightness/contrast/saturation,
+ auto-enhance, background removal, and flip — all unified there). "extras" are
+ context-specific icon buttons (Pop Out when pushed, Save when shared).
  */
 
 import RealityKit
@@ -71,7 +75,15 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
             Divider()
                 .frame(height: 24)
 
-            moreMenu
+            adjustmentsButton
+
+            // Context-specific extras (Pop Out / Save). Rendered inline as
+            // icon-only buttons — there's at most one in any context, so a
+            // dedicated "More" menu would be a single-item drop-down.
+            extraMenuItems()
+                .labelStyle(.iconOnly)
+                .buttonStyle(.borderless)
+                .font(.title3)
 
             // Resolution indicator: in 3D mode controls the spatial 3D source
             // resolution; otherwise controls the 2D display resolution.
@@ -403,50 +415,19 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
         }
     }
 
-    // MARK: - More Menu (Adjustments, Flip, extras)
+    // MARK: - Adjustments Button (image enhancements: sliders, auto-enhance, background removal, flip)
 
-    private var moreMenu: some View {
-        Menu {
-            // Tracker — fires onAppear when the Menu's content panel is
-            // instantiated (i.e. the menu opens) and onDisappear when it's
-            // dismissed. Lets us suppress the diorama foreground while the
-            // menu panel is shown so its drop-down isn't visually occluded.
-            Group {
-                // Visual Adjustments (opens popover — use a Button that toggles the popover state)
-                Button {
-                    windowModel.showAdjustmentsPopover.toggle()
-                } label: {
-                    Label("Adjustments", systemImage: "slider.horizontal.3")
-                }
-
-                // Flip (only in 2D non-animated mode)
-                if !windowModel.isRealityKitDisplay && !windowModel.is3DMode && !windowModel.isAnimatedImage {
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.3)) {
-                            windowModel.toggleFlip()
-                        }
-                    } label: {
-                        Label(
-                            windowModel.isImageFlipped ? "Unflip" : "Flip",
-                            systemImage: "arrow.left.and.right.righttriangle.left.righttriangle.right"
-                        )
-                    }
-                }
-
-                // Context-specific extra menu items
-                extraMenuItems()
-            }
-            .onAppear { updateOrnamentMenuCount(opened: true) }
-            .onDisappear { updateOrnamentMenuCount(opened: false) }
+    private var adjustmentsButton: some View {
+        Button {
+            windowModel.showAdjustmentsPopover.toggle()
         } label: {
-            Image(systemName: "ellipsis.circle")
+            Image(systemName: "slider.horizontal.3")
                 .font(.title3)
                 .padding(6)
-                .background(moreMenuHighlighted ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
+                .background(adjustmentsHighlighted ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
         }
-        .menuStyle(.button)
         .buttonStyle(.borderless)
-        .help("More")
+        .help("Adjustments")
         .popover(isPresented: Bindable(windowModel).showAdjustmentsPopover) {
             VisualAdjustmentsPopover(
                 currentAdjustments: Binding(
@@ -498,7 +479,6 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
         }
     }
 
-    /// Whether the More menu button should show a highlight (adjustments modified or image flipped)
     /// Increment / decrement the open-menu counter on `windowModel`. Clamped
     /// at zero so a missed event can't drive the count negative.
     private func updateOrnamentMenuCount(opened: Bool) {
@@ -513,7 +493,8 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
         }
     }
 
-    private var moreMenuHighlighted: Bool {
+    /// Whether the Adjustments button should show a highlight (adjustments modified or image flipped)
+    private var adjustmentsHighlighted: Bool {
         windowModel.effectiveAdjustments.isModified || windowModel.isImageFlipped
     }
 
