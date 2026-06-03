@@ -519,13 +519,20 @@ class RemoteViewerModel: SlideshowEngine {
             AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "imageReady deferred for post \(post._id, privacy: .public) — waiting on video duration")
             return
         }
-        if isSlideshow3DActive,
+        if isSlideshow3DActive, !isCurrentPostAnimatedGIF,
            let image = currentImage,
            !generatedImageIds.contains(ObjectIdentifier(image)) {
             // Defer until the slot reports generation complete. The
             // server's readiness barrier holds the channel on this image
             // until we report — there is no longer a timeout fallback, so
             // the channel waits as long as 3D generation takes.
+            //
+            // Animated media (GIF/WebP) is excluded: the spatial-3D layer only
+            // renders for a static `.image`, so it never generates a depth map
+            // for animated content and `notifySpatial3DGenerated` never fires.
+            // Without this guard an animated post in 3D mode would defer
+            // imageReady forever and stall the channel (videos return above;
+            // static photos generate and release — only animated got stuck).
             pendingImageReadyPost = post
             AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "imageReady deferred for post \(post._id, privacy: .public) — waiting on 3D generation")
         } else {
