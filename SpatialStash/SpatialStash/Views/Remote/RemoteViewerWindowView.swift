@@ -265,14 +265,15 @@ struct RemoteViewerWindowView: View {
     @ViewBuilder
     private func imageLayer(model: RemoteViewerModel) -> some View {
         ZStack {
-            // Static first-frame fallback for .animatedWebP. WKWebView
-            // takes a few hundred ms to spin up on first creation, so
-            // without this the slideshow briefly goes blank when
-            // transitioning from a static image to the first animated
-            // WebP of a session. Rendered behind the WKWebView in the
-            // ZStack so it shows through until WebKit paints, then is
-            // visually covered by the live animation.
-            if case .animatedWebP = model.currentMediaType,
+            // Static first-frame fallback for animated media (.animatedWebP via
+            // WKWebView, .animatedGIF via the HEVC player). Both take a few
+            // hundred ms to spin up on first creation — for GIFs the player is
+            // only swapped in *after* the crossfade once HEVC conversion
+            // finishes, so without this the slideshow briefly goes blank.
+            // Rendered behind the live player in the ZStack so it shows through
+            // until the player paints, then is visually covered by the
+            // animation.
+            if model.isAnimatedMediaWithStaticFallback,
                let image = model.currentImage {
                 currentImageRenderer(model: model, image: image)
                     .aspectRatio(image.size, contentMode: .fit)
@@ -282,26 +283,10 @@ struct RemoteViewerWindowView: View {
 
             // Video / animated GIF layer (WebVideoPlayerView)
             switch model.currentMediaType {
-            case .video(let url):
-                WebVideoPlayerView(
-                    videoURL: url,
-                    apiKey: nil,
-                    showControls: false,
-                    isRoomActive: model.isRoomActive,
-                    onDurationKnown: { [weak model] seconds in
-                        guard let model, let post = model.currentPost else { return }
-                        model.onVideoDurationKnown(seconds, for: post)
-                    },
-                    loop: model.currentVideoLoops
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                // Fade out during a crossfade — video→video reveals the black
-                // background (fade through black); image→video lets the
-                // incoming video layer take over.
-                .opacity(model.isTransitioning ? 0 : 1)
-                .brightness(model.effectiveBrightness)
-                .contrast(model.effectiveContrast)
-                .saturation(model.effectiveSaturation)
+            case .video:
+                // Rendered by the unified video layer below (see activeVideoURL)
+                // so the player survives the image→video crossfade commit.
+                EmptyView()
 
             case .animatedGIF(let hevcURL):
                 WebVideoPlayerView(
@@ -472,19 +457,32 @@ struct RemoteViewerWindowView: View {
                 }
             }
 
-            // Incoming video layer for an image→video true crossfade. Renders
-            // at full opacity above the outgoing (fading) image. Only used
-            // when the new media is a video and the old was not — video→video
-            // fades through black with a single layer, so no second
-            // WebVideoPlayerView is created there.
-            if case .video(let url) = model.nextMediaType, model.isTransitioning {
+            // Unified video layer. A single WebVideoPlayerView hosts both the
+            // incoming image→video crossfade slot and the committed video slot.
+            // Because the view's position and `videoURL` are identical before
+            // and after the crossfade commit (see `activeVideoURL`), SwiftUI
+            // preserves its identity across the commit instead of destroying
+            // the playing layer and creating a fresh one — which previously
+            // forced a reload and a brief blank flash right after the crossfade.
+            if let videoURL = model.activeVideoURL {
+                let isOutgoing = model.isTransitioning && model.nextVideoURL == nil
                 WebVideoPlayerView(
-                    videoURL: url,
+                    videoURL: videoURL,
                     apiKey: nil,
                     showControls: false,
-                    isRoomActive: model.isRoomActive
+                    isRoomActive: model.isRoomActive,
+                    onDurationKnown: { [weak model] seconds in
+                        guard let model, let post = model.currentPost else { return }
+                        model.onVideoDurationKnown(seconds, for: post)
+                    },
+                    loop: model.currentVideoLoops
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // Fade out only when this is the *outgoing* video (video→video
+                // through black, or video→image). When a video is crossfading
+                // *in* over a fading image (nextVideoURL set), it stays at full
+                // opacity and the image fades beneath it.
+                .opacity(isOutgoing ? 0 : 1)
                 .brightness(model.effectiveBrightness)
                 .contrast(model.effectiveContrast)
                 .saturation(model.effectiveSaturation)

@@ -94,6 +94,36 @@ class SlideshowEngine {
     var nextMediaType: SlideshowMediaType = .image
     /// URL for the incoming video layer during an image→video crossfade.
     var nextVideoURL: URL?
+
+    /// The video URL that should currently be rendered, unifying the
+    /// incoming-crossfade slot and the committed slot. During an image→video
+    /// crossfade `nextVideoURL` is set while `currentMediaType` is still
+    /// `.image`; after commit `currentMediaType` becomes `.video(url)` with the
+    /// *same* URL. Returning that single URL lets the window view host one
+    /// stable `WebVideoPlayerView` across the commit, so the player isn't
+    /// destroyed and reloaded (which caused a brief blank flash right after the
+    /// crossfade completed). Returns nil for animated GIF/WebP, which have
+    /// their own players.
+    var activeVideoURL: URL? {
+        // Incoming crossfade slot takes precedence (image→video), then the
+        // committed slot (steady-state video, or after the crossfade commits).
+        if let url = nextVideoURL { return url }
+        if case .video(let url) = currentMediaType { return url }
+        return nil
+    }
+
+    /// True when the current media is animated (WebP or HEVC-GIF) and its
+    /// player needs a static first-frame fallback behind it to avoid a blank
+    /// flash while the player spins up. For GIFs the player only swaps in after
+    /// the crossfade (once HEVC conversion finishes), so the fallback bridges
+    /// that gap.
+    var isAnimatedMediaWithStaticFallback: Bool {
+        switch currentMediaType {
+        case .animatedWebP, .animatedGIF: return true
+        case .image, .video: return false
+        }
+    }
+
     var isCurrentPostAnimatedGIF: Bool = false
     var isRoomActive: Bool = true
     var isTransitioning: Bool = false
