@@ -373,7 +373,7 @@ struct WebVideoPlayerView: UIViewRepresentable {
                 // Report native video dimensions and clip length to Swift once
                 // metadata is loaded. Duration drives the server's dwell so a
                 // clip longer than the interval plays through before advancing.
-                video.addEventListener('loadedmetadata', function() {
+                function reportMetadata() {
                     if (window.webkit && window.webkit.messageHandlers.videoDimensions) {
                         window.webkit.messageHandlers.videoDimensions.postMessage({
                             width: video.videoWidth,
@@ -381,7 +381,12 @@ struct WebVideoPlayerView: UIViewRepresentable {
                             duration: isFinite(video.duration) ? video.duration : 0
                         });
                     }
-                });
+                }
+                video.addEventListener('loadedmetadata', reportMetadata);
+                // Some containers report NaN duration at loadedmetadata and the
+                // real value only on a later durationchange. Swift dedupes, so
+                // re-reporting is harmless.
+                video.addEventListener('durationchange', reportMetadata);
 
                 // Reset retry count on successful playback
                 video.addEventListener('playing', function() {

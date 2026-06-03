@@ -97,6 +97,19 @@ class RemoteViewerModel: SlideshowEngine {
     /// Reported to the server in `imageReady` so a clip longer than the
     /// interval delays the advance until it has played through.
     @ObservationIgnored private var currentVideoDurationMs: Int?
+    /// Which post `currentVideoDurationMs` belongs to. The player's
+    /// loadedmetadata usually fires *during* the image→video crossfade —
+    /// before the engine commits `currentPost` — so the duration arrives
+    /// tagged with the incoming (`nextPost`) id. `onPostTransitioned` keeps
+    /// the value when this id matches the post it just committed instead of
+    /// blindly wiping it (the webview's identity is preserved across the
+    /// commit, so loadedmetadata never re-fires for the same clip).
+    @ObservationIgnored private var currentVideoDurationPostId: Int?
+    /// Watchdog for a deferred video imageReady: if the player never reports
+    /// duration (load failure, NaN duration on a stream, torn-down webview),
+    /// fire imageReady without a duration after a grace period rather than
+    /// stalling the channel forever.
+    @ObservationIgnored private var videoDurationTimeoutTask: Task<Void, Never>?
     /// A video post that transitioned visually but whose clip length isn't
     /// known yet. imageReady is deferred until the player reports duration
     /// (mirrors the web kiosk, which reports on `loadeddata` with the
@@ -209,6 +222,9 @@ class RemoteViewerModel: SlideshowEngine {
         visibilityDebounce?.cancel()
         visibilityDebounce = nil
         lastSentVisibility = nil
+        videoDurationTimeoutTask?.cancel()
+        videoDurationTimeoutTask = nil
+        pendingVideoImageReadyPost = nil
     }
 
     override func onBecameActive() {
@@ -444,11 +460,17 @@ class RemoteViewerModel: SlideshowEngine {
 
     override func onPostTransitioned(post: RemotePost, url: URL) {
         // New media on screen — drop any prior video's clip-length state. A
-        // video reports its length asynchronously (player loadedmetadata);
-        // until then reportImageReady defers for video posts.
-        currentVideoDurationMs = nil
+        // video reports its length asynchronously (player loadedmetadata),
+        // and often *before* this commit (the incoming player mounts during
+        // the crossfade), so keep a duration already recorded for this post.
+        videoDurationTimeoutTask?.cancel()
+        videoDurationTimeoutTask = nil
         pendingVideoImageReadyPost = nil
-        currentVideoLoops = true
+        if currentVideoDurationPostId != post._id {
+            currentVideoDurationMs = nil
+            currentVideoDurationPostId = nil
+            currentVideoLoops = true
+        }
 
         // Tell the server we've finished transitioning to this post. The
         // orchestrator's readiness barrier closes once every visible session
@@ -506,6 +528,8 @@ class RemoteViewerModel: SlideshowEngine {
             // gets re-evaluated when the window becomes active again.
             pendingImageReadyPost = nil
             pendingVideoImageReadyPost = nil
+            videoDurationTimeoutTask?.cancel()
+            videoDurationTimeoutTask = nil
             AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "imageReady skipped for post \(post._id, privacy: .public) — window not active")
             return
         }
@@ -517,6 +541,31 @@ class RemoteViewerModel: SlideshowEngine {
             // timeout — it parks on this frame until we report, same as images.
             pendingVideoImageReadyPost = post
             AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "imageReady deferred for post \(post._id, privacy: .public) — waiting on video duration")
+            // Watchdog: the duration can legitimately never arrive (load
+            // failure after retries, non-finite duration on a stream). Don't
+            // park the server's readiness barrier forever — report without a
+            // duration after a grace period and let the channel use its
+            // normal interval.
+            videoDurationTimeoutTask?.cancel()
+            videoDurationTimeoutTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(10))
+                guard !Task.isCancelled, let self else { return }
+                guard let pending = self.pendingVideoImageReadyPost, pending._id == post._id else { return }
+                self.pendingVideoImageReadyPost = nil
+                self.videoDurationTimeoutTask = nil
+                guard self.isRoomActive else {
+                    AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "imageReady (duration timeout) dropped for post \(post._id, privacy: .public) — window not active")
+                    return
+                }
+                // Send directly — going back through reportImageReady would
+                // just re-enter the duration deferral and re-arm this timer.
+                if self.wsSession == nil {
+                    AppLogger.remoteViewer.warning("Video duration never reported for post \(post._id, privacy: .public) and wsSession is nil — imageReady not sent")
+                } else {
+                    AppLogger.remoteViewer.warning("Video duration never reported for post \(post._id, privacy: .public) — sending imageReady without duration after 10 s")
+                    self.wsSession?.sendImageReady(postId: pending._id, durationMs: nil)
+                }
+            }
             return
         }
         if isSlideshow3DActive, !isCurrentPostAnimatedGIF,
@@ -552,16 +601,27 @@ class RemoteViewerModel: SlideshowEngine {
     /// imageReady that was deferred waiting on it.
     @MainActor
     func onVideoDurationKnown(_ seconds: Double, for post: RemotePost) {
-        guard seconds.isFinite, seconds > 0 else { return }
+        guard seconds.isFinite, seconds > 0 else {
+            AppLogger.remoteViewer.warning("Video duration unusable for post \(post._id, privacy: .public): \(seconds, privacy: .public)")
+            return
+        }
         // A late callback from a torn-down player for a post we've moved past
-        // is irrelevant — only the post currently on screen matters.
-        guard currentPost?._id == post._id else { return }
+        // is irrelevant — only the post on screen (or crossfading in as
+        // `nextPost`, since loadedmetadata typically beats the commit) matters.
+        guard currentPost?._id == post._id || nextPost?._id == post._id else {
+            AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "Stale video duration ignored for post \(post._id, privacy: .public)")
+            return
+        }
         let ms = Int((seconds * 1000).rounded())
         currentVideoDurationMs = ms
+        currentVideoDurationPostId = post._id
+        AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "Video duration known for post \(post._id, privacy: .public): \(ms, privacy: .public) ms")
         // Loop only if the clip fits inside the interval; a longer clip plays
         // through once and the server delays the advance until it ends.
         currentVideoLoops = Double(ms) <= delay * 1000
         if let pending = pendingVideoImageReadyPost, pending._id == post._id {
+            videoDurationTimeoutTask?.cancel()
+            videoDurationTimeoutTask = nil
             pendingVideoImageReadyPost = nil
             reportImageReady(for: pending)
         }

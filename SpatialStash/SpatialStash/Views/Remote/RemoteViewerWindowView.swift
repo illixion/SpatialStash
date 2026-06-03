@@ -472,7 +472,12 @@ struct RemoteViewerWindowView: View {
                     showControls: false,
                     isRoomActive: model.isRoomActive,
                     onDurationKnown: { [weak model] seconds in
-                        guard let model, let post = model.currentPost else { return }
+                        // During the image→video crossfade the incoming clip is
+                        // `nextPost` — loadedmetadata usually fires before the
+                        // engine commits it to `currentPost`. Attribute the
+                        // duration to the post that owns the video, not whatever
+                        // is still fading out.
+                        guard let model, let post = model.nextPost ?? model.currentPost else { return }
                         model.onVideoDurationKnown(seconds, for: post)
                     },
                     loop: model.currentVideoLoops
