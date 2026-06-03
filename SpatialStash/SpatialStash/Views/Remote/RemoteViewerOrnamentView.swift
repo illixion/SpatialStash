@@ -61,7 +61,7 @@ struct RemoteViewerOrnamentView: View {
 
             // Next
             Button {
-                model.goToNextImage()
+                model.advanceToNext()
             } label: {
                 Image(systemName: "chevron.right")
                     .font(.title3)

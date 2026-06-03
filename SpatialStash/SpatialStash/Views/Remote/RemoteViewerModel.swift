@@ -288,7 +288,32 @@ class RemoteViewerModel: SlideshowEngine {
         blockedPosts.insert(post._id)
         wsSession?.sendBlock(postId: post._id)
         showToast("Blocked post #\(post._id)")
-        goToNextImage()
+        if isGalleryMode {
+            // No server to advance us — pull the next from the local queue.
+            goToNextImage()
+        }
+        // Remote mode is purely server-driven (see start()/serverDriven): the
+        // server removes the blocked post and pushes a fresh, ratio-appropriate
+        // `current` via the next playback frame. Advancing locally would race
+        // that and surface a prefetched post ignoring the window's advertised
+        // ratio (a wide image in a tall window), so we do nothing here.
+    }
+
+    /// Advance one post forward. In gallery mode there's no server, so pull the
+    /// next from the local queue. In remote mode the engine is purely
+    /// server-driven (see start()/serverDriven), so a local advance would race
+    /// the orchestrator and surface a prefetched post that ignores the window's
+    /// advertised ratio. Instead emit `requestNext`: the protocol lets any
+    /// session advance its own channel, and the server replies with a fresh,
+    /// ratio-appropriate `current` that drives the transition via the playback
+    /// frame. (This is a manual user action, not a wake-advance — the protocol's
+    /// "no client-side wake-advance" rule doesn't apply.)
+    func advanceToNext() {
+        if isGalleryMode {
+            goToNextImage()
+        } else {
+            wsSession?.sendRequestNext()
+        }
     }
 
     /// Ask the server to reshuffle the current channel's post order.
@@ -807,10 +832,17 @@ class RemoteViewerModel: SlideshowEngine {
             break
 
         case .refresh:
+            // Protocol: `refresh` means "reload" (the web kiosk reloads its
+            // page), not "advance". Drop the warm caches so stale lookahead is
+            // rebuilt, then let the server drive: reconcileWithServer re-enters
+            // .loading only if the server's current differs from ours, and the
+            // next playback frame repopulates the queue. A blind goToNextImage
+            // here would race the server and surface a wrong-ratio prefetched
+            // post — the same bug as the block/next paths.
             cachedPosts.removeAll()
             prefetchedImages.removeAll()
             contentProvider?.resetPagination()
-            goToNextImage()
+            reconcileWithServer()
 
         case .playback(let payload):
             handlePlaybackFrame(payload)
