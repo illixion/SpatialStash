@@ -126,6 +126,8 @@ Gallery grids (`GalleryGridView`, `VideoGalleryView`) support multi-select mode:
 ### Remote API Viewer
 A slideshow viewer that fetches images from a [RoboFrame](https://github.com/illixion/RoboFrame) API and displays them with clock/sensor overlays, Ken Burns animation, WebSocket control, and Home Assistant integration. Enabled via Settings → Developer → Enable Remote API Viewer, which adds a "Remote" tab.
 
+**Protocol reference:** The authoritative WebSocket protocol spec lives in the RoboFrame repo at `~/Projects/RoboFrame/docs/protocol.md` (frames, readiness barrier, playback cycle, action scoping). Consult it before changing any WS message handling.
+
 **Architecture:**
 - **RemoteViewerConfig** — Codable config struct with all settings, saved to UserDefaults via AppModel
 - **SlideshowEngine** — `@MainActor @Observable` reusable base class running a state machine (idle → loading → displaying ⇄ paused / backgrounded → stopped). Owns prefetch buffer (3 images ahead), crossfade transitions, Sobel-based Ken Burns focus, dynamic brightness, scene-phase handling, and navigation. Content is preserved across background cycles — the engine has no aggressive unload timer and relies on normal image cycling to bound memory.
@@ -150,6 +152,7 @@ A slideshow viewer that fetches images from a [RoboFrame](https://github.com/ill
 
 **Key implementation details:**
 - The server is authoritative on tag list, mod tags, current/next post, and channel timing. Clients render whatever `playback` says and preload the announced `next` via `/get`.
+- **No client-side advance in remote mode.** The engine is purely server-driven (`serverDriven` flag set in `start()`): it has no local dwell clock and only ever transitions to a server-pushed `current` (via `setServerCurrent` → `reconcileWithServer`). Advancing locally races the orchestrator and surfaces a prefetched post that ignores the window's advertised ratio (e.g. a wide image in a tall window with fit-to-aspect on). So: **Block** just sends `block` (server drops the post and broadcasts a fresh ratio-appropriate `current`); the **Next button** emits `requestNext` (`advanceToNext()`, the protocol's per-channel advance) rather than `goToNextImage`; the **refresh** frame clears caches and calls `reconcileWithServer` (reload, not advance). `goToNextImage` is gallery-mode only. The exceptions are **Prev** and **history-jump**, which replay already-seen posts or are explicit manual overrides. Never implement a wake-advance (requesting next on returning from background) — the server already owns dwell timing; see protocol.md "no client-side wake-advance".
 - Ratio filter uses `..` separator (e.g. `ratio:1.32..1.79`), matching server expectations
 - Blocked posts/tags from WS `blocked` are merged into local config and persisted
 - Save button has 1.5s grace period after image transition (saves previous post)
