@@ -23,6 +23,17 @@ struct PhotoDisplayView: View {
     /// Whether swipe navigation between gallery images is enabled
     let enableSwipeNavigation: Bool
 
+    /// User's persisted custom window size from the scene-restoration archive.
+    /// Non-nil only for standalone pop-outs that were resized in a prior session;
+    /// when set, it takes priority over aspect-ratio sizing on appear so a
+    /// wall-snapped window restores to the exact size the user left it.
+    var restoredSize: CGSize? = nil
+
+    /// Writes the resolved window size back into the Codable window value so
+    /// visionOS persists it for the next cold relaunch. Debounced via the
+    /// geometry-change handler. Nil for windows that don't persist size.
+    var onSizeSettled: ((CGSize) -> Void)? = nil
+
     /// Effective swipe navigation state: disabled when window is snapped to a surface,
     /// and only active while the viewer's UI chrome is visible so swipes don't fire
     /// during the hidden-chrome immersive state.
@@ -57,6 +68,14 @@ struct PhotoDisplayView: View {
     /// Task for delayed window size verification (catches restoration timing issues)
     @State private var sizeVerificationTask: Task<Void, Never>?
 
+    /// Debounce task for persisting the resolved window size back into the
+    /// Codable window value (scene-restoration write-back).
+    @State private var sizeWritebackTask: Task<Void, Never>?
+
+    /// True once the restored size has been applied on appear, so the
+    /// aspect-ratio / verifier resize paths defer to it during launch.
+    @State private var didApplyRestoredSize: Bool = false
+
     /// Minimum drag fraction of container width to trigger swipe
     private let swipeThresholdFraction: CGFloat = 0.2
 
@@ -65,7 +84,14 @@ struct PhotoDisplayView: View {
 
     /// The bounds used to fit images into — starts as saved window size or main window size, then tracks viewer size
     private var currentBounds: CGSize {
-        viewerWindowSize ?? windowModel.savedWindowSize ?? appModel.mainWindowSize
+        // While restoring a persisted size on launch, fit images into the
+        // restored bounds rather than the OS-supplied scene default — visionOS
+        // sets `viewerWindowSize` to `.defaultSize` before our geometry request
+        // resolves, so the image-load resize would otherwise fit to the default.
+        if didApplyRestoredSize, let restoredSize {
+            return restoredSize
+        }
+        return viewerWindowSize ?? windowModel.savedWindowSize ?? appModel.mainWindowSize
     }
 
     private var animatedImageAuth: (apiKey: String?, token: String?) {
@@ -208,10 +234,17 @@ struct PhotoDisplayView: View {
                         viewerWindowSize = newSize
                         containerWidth = newSize.width
                         windowModel.handleWindowResize(newSize)
+                        scheduleSizeWriteback(newSize)
                     }
             }
         )
         .onAppear {
+            // Restore the user's custom window size from the scene-restoration
+            // archive. This wins over aspect-ratio sizing: visionOS restores
+            // wall-snapped windows at the scene `.defaultSize`, so we reassert
+            // the persisted size and suppress the aspect-driven resize paths for
+            // ~1s so they don't stomp it before the OS resolves the request.
+            applyRestoredSizeIfNeeded()
             // Schedule post-restoration size verification (initial 2D load is
             // handled sequentially by PhotoWindowModel.start())
             scheduleWindowSizeVerification()
@@ -772,6 +805,44 @@ struct PhotoDisplayView: View {
         }
     }
 
+    /// Apply the persisted custom window size (if any) on appear. Requests the
+    /// geometry immediately and holds `suppressWindowResize` for ~1s so the
+    /// aspect-ratio and verifier resize paths defer to the restored size until
+    /// the OS has resolved the request. No-op when there is no persisted size.
+    private func applyRestoredSizeIfNeeded() {
+        guard let restoredSize, restoredSize.width > 2, restoredSize.height > 2 else { return }
+        guard let windowScene = resolvedWindowScene else { return }
+        didApplyRestoredSize = true
+        suppressWindowResize = true
+        UIView.performWithoutAnimation {
+            if windowModel.isAnimatedImage {
+                windowScene.requestGeometryUpdate(.Vision(size: restoredSize, resizingRestrictions: .uniform))
+            } else {
+                windowScene.requestGeometryUpdate(.Vision(size: restoredSize))
+            }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1))
+            suppressWindowResize = false
+            didApplyRestoredSize = false
+        }
+    }
+
+    /// Debounce a write-back of the resolved window size into the Codable window
+    /// value so visionOS persists it for the next cold relaunch. Skipped while
+    /// `suppressWindowResize` is set (during restored-size apply / swipe
+    /// transitions) so a transient default size isn't persisted over the user's.
+    private func scheduleSizeWriteback(_ size: CGSize) {
+        guard let onSizeSettled else { return }
+        guard !suppressWindowResize, size.width > 2, size.height > 2 else { return }
+        sizeWritebackTask?.cancel()
+        sizeWritebackTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled else { return }
+            onSizeSettled(size)
+        }
+    }
+
     /// Schedule a delayed check that the window size matches the loaded image content.
     /// Catches cases where requestGeometryUpdate was ignored during window restoration.
     private func scheduleWindowSizeVerification() {
@@ -792,9 +863,11 @@ struct PhotoDisplayView: View {
               !windowModel.isLoadingDetailImage,
               !suppressWindowResize else { return }
 
-        // Use saved window size as the target bounds when available — this ensures
-        // post-reboot restoration uses the persisted size rather than the scene default.
-        let targetBounds = windowModel.savedWindowSize ?? currentBounds
+        // Prefer the per-window restored size (from the scene archive) over the
+        // per-image saved size — this ensures post-reboot restoration uses the
+        // exact size the user left this window at rather than the scene default
+        // or a different window's size for the same image.
+        let targetBounds = restoredSize ?? windowModel.savedWindowSize ?? currentBounds
 
         // Compare the current window against the expected size for the image AR within target bounds
         let expectedSize = windowSize(for: windowModel.imageAspectRatio, within: targetBounds)

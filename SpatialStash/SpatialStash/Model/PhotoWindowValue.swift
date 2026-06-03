@@ -17,9 +17,16 @@ struct PhotoWindowValue: Identifiable, Codable, Hashable {
     /// vs openWindow (standalone pop-out with gallery button)
     var wasPushed: Bool
 
+    /// User's last-resolved window size, written back as the window is resized.
+    /// Persisted by visionOS into the scene-restoration archive so a wall-snapped
+    /// pop-out can be restored to its custom size after a cold relaunch. `nil` on
+    /// fresh opens — those size from the image aspect ratio / scene default.
+    var restoredSize: CodableSize?
+
     init(image: GalleryImage, wasPushed: Bool = false) {
         self.id = UUID()
         self.image = image
         self.wasPushed = wasPushed
+        self.restoredSize = nil
     }
 }

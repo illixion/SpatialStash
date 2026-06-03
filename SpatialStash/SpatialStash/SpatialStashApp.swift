@@ -28,7 +28,9 @@ struct SpatialStashApp: App {
         // Individual photo window - supports multiple pop-out instances
         WindowGroup(id: "photo-detail", for: PhotoWindowValue.self) { $windowValue in
             if let windowValue = windowValue {
-                PhotoWindowView(windowValue: windowValue, appModel: appModel)
+                PhotoWindowView(windowValue: windowValue, appModel: appModel, onSizeSettled: { size in
+                    $windowValue.wrappedValue?.restoredSize = CodableSize(size)
+                })
                     .environment(appModel)
                     .captureOpenWindowAction()
             }
@@ -96,7 +98,9 @@ struct SpatialStashApp: App {
         // Remote viewer - slideshow from RoboFrame API
         WindowGroup(id: "remote-viewer", for: RemoteViewerWindowValue.self) { $windowValue in
             if let windowValue = windowValue {
-                RemoteViewerWindowView(windowValue: windowValue)
+                RemoteViewerWindowView(windowValue: windowValue, onSizeSettled: { size in
+                    $windowValue.wrappedValue?.restoredSize = CodableSize(size)
+                })
                     .environment(appModel)
                     .captureOpenWindowAction()
             }

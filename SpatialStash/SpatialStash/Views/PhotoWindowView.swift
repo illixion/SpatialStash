@@ -13,6 +13,10 @@ import SwiftUI
 struct PhotoWindowView: View {
     let wasPushed: Bool
     private let popOutWindowID: UUID?
+    /// User's persisted custom window size from the restoration archive (nil on fresh opens)
+    private let restoredSize: CGSize?
+    /// Writes the resolved window size back into the Codable window value for scene restoration
+    private let onSizeSettled: (CGSize) -> Void
     @State private var windowModel: PhotoWindowModel
     @Environment(AppModel.self) private var appModel
     @Environment(\.openWindow) private var openWindow
@@ -21,9 +25,11 @@ struct PhotoWindowView: View {
     @State private var pendingPopOutImage: GalleryImage? = nil
     @State private var showDuplicateWindowAlert: Bool = false
 
-    init(windowValue: PhotoWindowValue, appModel: AppModel) {
+    init(windowValue: PhotoWindowValue, appModel: AppModel, onSizeSettled: @escaping (CGSize) -> Void = { _ in }) {
         self.wasPushed = windowValue.wasPushed
         self.popOutWindowID = windowValue.wasPushed ? nil : windowValue.id
+        self.restoredSize = windowValue.restoredSize?.cgSize
+        self.onSizeSettled = onSizeSettled
         // Re-resolve local file URLs in case this is a visionOS scene restoration
         // where the sandbox container UUID has changed since the window was saved.
         let resolvedImage = windowValue.image.resolvingLocalFileURL()
@@ -37,7 +43,12 @@ struct PhotoWindowView: View {
     }
 
     var body: some View {
-        PhotoDisplayView(windowModel: windowModel, enableSwipeNavigation: true)
+        PhotoDisplayView(
+            windowModel: windowModel,
+            enableSwipeNavigation: true,
+            restoredSize: wasPushed ? nil : restoredSize,
+            onSizeSettled: wasPushed ? nil : onSizeSettled
+        )
         .opacity(appModel.allWindowsHidden ? 0 : 1)
         .persistentSystemOverlays(windowModel.isWindowControlsHidden ? .hidden : .visible)
         .ornament(

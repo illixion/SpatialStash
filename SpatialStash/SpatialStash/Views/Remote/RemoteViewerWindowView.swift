@@ -12,6 +12,9 @@ import SwiftUI
 
 struct RemoteViewerWindowView: View {
     let windowValue: RemoteViewerWindowValue
+    /// Writes the resolved window size back into the Codable window value so
+    /// visionOS persists it for the next cold relaunch (scene restoration).
+    var onSizeSettled: ((CGSize) -> Void)? = nil
     @Environment(AppModel.self) private var appModel
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.openWindow) private var openWindow
@@ -33,6 +36,14 @@ struct RemoteViewerWindowView: View {
     /// fix in PhotoDisplayView — IPC drops its off-axis blur calibration
     /// across image swaps and only a real geometry change reasserts it.
     @State private var nudgeAlternator: Bool = false
+
+    /// Debounce task for persisting the resolved window size back into the
+    /// Codable window value (scene-restoration write-back).
+    @State private var sizeWritebackTask: Task<Void, Never>?
+
+    /// True for ~1s after applying a restored size on launch, so the transient
+    /// scene-default geometry isn't persisted over the user's custom size.
+    @State private var suppressSizeWriteback: Bool = false
 
     private let clockTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
@@ -131,6 +142,7 @@ struct RemoteViewerWindowView: View {
             .onChange(of: geo.size) { _, newSize in
                 windowSize = newSize
                 viewerModel?.updateWindowAspectRatio(newSize)
+                scheduleSizeWriteback(newSize)
             }
         }
         .ornament(
@@ -160,6 +172,10 @@ struct RemoteViewerWindowView: View {
                 RestoredWindowTracker.markSeen(windowValue.id)
                 resetAutoHideTimer()
             }
+            // Restore the user's custom window size/aspect ratio from the scene
+            // archive. visionOS restores wall-snapped windows at the scene
+            // `.defaultSize` (1400×900), so reassert the persisted size here.
+            applyRestoredSizeIfNeeded()
         }
         .onDisappear {
             if let model = viewerModel {
@@ -734,6 +750,36 @@ struct RemoteViewerWindowView: View {
         UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
             .first { $0.activationState == .foregroundActive }
+    }
+
+    /// Apply the persisted custom window size (if any) on launch. Requests the
+    /// geometry once and suppresses size write-back for ~1s so the transient
+    /// scene-default size visionOS hands us isn't persisted over the user's.
+    private func applyRestoredSizeIfNeeded() {
+        guard let restored = windowValue.restoredSize?.cgSize,
+              restored.width > 2, restored.height > 2,
+              let windowScene = resolvedWindowScene else { return }
+        suppressSizeWriteback = true
+        UIView.performWithoutAnimation {
+            windowScene.requestGeometryUpdate(.Vision(size: restored))
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1))
+            suppressSizeWriteback = false
+        }
+    }
+
+    /// Debounce a write-back of the resolved window size into the Codable window
+    /// value so visionOS persists it for the next cold relaunch.
+    private func scheduleSizeWriteback(_ size: CGSize) {
+        guard let onSizeSettled else { return }
+        guard !suppressSizeWriteback, size.width > 2, size.height > 2 else { return }
+        sizeWritebackTask?.cancel()
+        sizeWritebackTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled else { return }
+            onSizeSettled(size)
+        }
     }
 
     private func nudgeWindowSizeForCalibration() {
