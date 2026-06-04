@@ -16,6 +16,11 @@ if [ $# -ge 1 ]; then
     HASH="$1"
 elif command -v git &>/dev/null && git -C "$REPO_ROOT" rev-parse --short HEAD &>/dev/null; then
     HASH="$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
+    # Mark dirty working trees so a troubleshooting hash is never mistaken
+    # for a clean build of that commit
+    if ! git -C "$REPO_ROOT" diff --quiet HEAD -- 2>/dev/null; then
+        HASH="${HASH}-dirty"
+    fi
 else
     HASH="unknown"
 fi
