@@ -19,14 +19,7 @@ jobs:
           fetch-depth: 0
 
       - name: Select Xcode
-        run: |
-          XCODE_PATH="/Applications/Xcode_26.3.app"
-          if [ ! -d "$XCODE_PATH" ]; then
-            echo "Error: Xcode 26.3 not found at $XCODE_PATH"
-            exit 1
-          fi
-          echo "Using $XCODE_PATH"
-          sudo xcode-select -s "$XCODE_PATH/Contents/Developer"
+        run: sudo xcode-select -s /Applications/Xcode_26.4.app/Contents/Developer
 
       - name: Set build info
         run: ./scripts/set-build-info.sh
