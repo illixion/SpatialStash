@@ -39,3 +39,7 @@ DEVICE_NAME="Apple Vision Pro"
 # --- Optional pre-build hook ---
 # Script executed before xcodebuild (relative to repo root). Leave empty to skip.
 PRE_BUILD_HOOK="./scripts/set-build-info.sh"
+
+# --- Optional extra xcodebuild settings (bash array) ---
+# Appended to the build invocation, e.g. compilation conditions:
+# EXTRA_BUILD_SETTINGS=('SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) SOME_FLAG')

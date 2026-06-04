@@ -35,6 +35,9 @@ P12_PASSWORD="${P12_PASSWORD:-}"
 DEV_P12_PASSWORD="${DEV_P12_PASSWORD:-$P12_PASSWORD}"
 DIST_P12_PASSWORD="${DIST_P12_PASSWORD:-$P12_PASSWORD}"
 PRE_BUILD_HOOK="${PRE_BUILD_HOOK:-}"
+# Extra xcodebuild settings (bash array), e.g. compilation conditions:
+#   EXTRA_BUILD_SETTINGS=('SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) SOME_FLAG')
+if [[ -z "${EXTRA_BUILD_SETTINGS+x}" ]]; then EXTRA_BUILD_SETTINGS=(); fi
 
 required_vars=(
     PROJECT_PATH SCHEME_NAME TARGET_NAME PLATFORM
@@ -203,6 +206,7 @@ if [[ "$SIGN_ONLY" == false ]]; then
         DEVELOPMENT_TEAM="" \
         PROVISIONING_PROFILE_SPECIFIER="" \
         PRODUCT_BUNDLE_IDENTIFIER="$BUILD_BUNDLE_ID" \
+        ${EXTRA_BUILD_SETTINGS[@]+"${EXTRA_BUILD_SETTINGS[@]}"} \
         build
 
     echo "==> Packaging IPA..."
