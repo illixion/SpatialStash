@@ -44,4 +44,32 @@ enum RestoredWindowTracker {
         }
         return Set(raw.compactMap(UUID.init(uuidString:)))
     }
+
+    // MARK: - Per-window size fallback
+
+    /// UserDefaults-backed window size keyed by window value UUID. Backup for
+    /// the `restoredSize` field in the Codable window value: the scene-archive
+    /// binding write-back is the primary mechanism, but this survives even if
+    /// the archive round-trip drops the mutated value. Bounded like `seen`.
+    private static let sizesKey = "RestoredWindowTracker.windowSizes"
+
+    private static var sizes: [String: [Double]] = (
+        UserDefaults.standard.dictionary(forKey: sizesKey) as? [String: [Double]]
+    ) ?? [:]
+
+    static func windowSize(for id: UUID) -> CGSize? {
+        guard let pair = sizes[id.uuidString], pair.count == 2,
+              pair[0] > 2, pair[1] > 2 else { return nil }
+        return CGSize(width: pair[0], height: pair[1])
+    }
+
+    static func setWindowSize(_ size: CGSize, for id: UUID) {
+        sizes[id.uuidString] = [size.width, size.height]
+        if sizes.count > maxEntries {
+            for key in sizes.keys.shuffled().prefix(sizes.count - maxEntries) {
+                sizes.removeValue(forKey: key)
+            }
+        }
+        UserDefaults.standard.set(sizes, forKey: sizesKey)
+    }
 }

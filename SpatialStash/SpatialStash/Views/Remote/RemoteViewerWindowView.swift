@@ -16,6 +16,7 @@ struct RemoteViewerWindowView: View {
     /// visionOS persists it for the next cold relaunch (scene restoration).
     var onSizeSettled: ((CGSize) -> Void)? = nil
     @Environment(AppModel.self) private var appModel
+    @Environment(SceneDelegate.self) private var sceneDelegate: SceneDelegate?
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismissWindow) private var dismissWindow
@@ -746,29 +747,62 @@ struct RemoteViewerWindowView: View {
         }
     }
 
-    /// Resolve the window scene hosting this viewer so we can request a
-    /// 1pt geometry update — IPC re-anchors its off-axis blur calibration
-    /// only on a real size change, and there is no public API for it.
+    /// Resolve the window scene hosting this viewer for geometry updates
+    /// (restored-size apply, IPC calibration nudge). Prefer the per-scene
+    /// SceneDelegate from the environment — it is THIS window's scene. The
+    /// foreground-active fallback is wrong during cold-launch restoration
+    /// (it can pick another window's scene, sending the resize elsewhere),
+    /// so it only remains as a last resort for the calibration nudge.
     private var resolvedWindowScene: UIWindowScene? {
-        UIApplication.shared.connectedScenes
+        if let scene = sceneDelegate?.windowScene {
+            return scene
+        }
+        return UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
             .first { $0.activationState == .foregroundActive }
     }
 
-    /// Apply the persisted custom window size (if any) on launch. Requests the
-    /// geometry once and suppresses size write-back for ~1s so the transient
-    /// scene-default size visionOS hands us isn't persisted over the user's.
+    /// Apply the persisted custom window size (if any) on launch.
+    ///
+    /// `requestGeometryUpdate` is routinely ignored while visionOS is still
+    /// mid-restoration (the photo viewer works around the same problem with
+    /// its delayed size verifier), and at `onAppear` time this window's scene
+    /// may not even be connected yet. So instead of a single fire-and-forget
+    /// request, retry until the live geometry actually matches the restored
+    /// size (within 5%), targeting only THIS window's scene via the
+    /// SceneDelegate — never the foreground-active fallback, which can be a
+    /// different window during cold launch. Write-back stays suppressed for
+    /// the duration so the transient scene-default size isn't persisted.
     private func applyRestoredSizeIfNeeded() {
-        guard let restored = windowValue.restoredSize?.cgSize,
-              restored.width > 2, restored.height > 2,
-              let windowScene = resolvedWindowScene else { return }
+        // Prefer the scene-archive value; fall back to the UserDefaults store
+        // (written in lockstep) in case the archive round-trip dropped it.
+        guard let restored = windowValue.restoredSize?.cgSize
+                ?? RestoredWindowTracker.windowSize(for: windowValue.id),
+              restored.width > 2, restored.height > 2 else { return }
         suppressSizeWriteback = true
-        UIView.performWithoutAnimation {
-            windowScene.requestGeometryUpdate(.Vision(size: restored))
-        }
+        let source = windowValue.restoredSize != nil ? "scene archive" : "defaults fallback"
+        AppLogger.remoteViewer.info("Applying restored window size \(Int(restored.width), privacy: .public)x\(Int(restored.height), privacy: .public) (\(source, privacy: .public))")
         Task { @MainActor in
-            try? await Task.sleep(for: .seconds(1))
-            suppressSizeWriteback = false
+            defer { suppressSizeWriteback = false }
+            for attempt in 0..<8 {
+                if let windowScene = sceneDelegate?.windowScene {
+                    UIView.performWithoutAnimation {
+                        windowScene.requestGeometryUpdate(.Vision(size: restored))
+                    }
+                }
+                // Give the OS time to resolve (or ignore) the request, then
+                // check the live size reported by the GeometryReader. The
+                // geo size is content size (insets differ from the scene
+                // size), so compare with a tolerance.
+                try? await Task.sleep(for: .milliseconds(attempt == 0 ? 400 : 700))
+                let current = windowSize
+                if current.width > 2, current.height > 2,
+                   abs(current.width - restored.width) / restored.width < 0.05,
+                   abs(current.height - restored.height) / restored.height < 0.05 {
+                    return
+                }
+            }
+            AppLogger.remoteViewer.warning("Restored window size did not apply after retries (wanted \(Int(restored.width), privacy: .public)x\(Int(restored.height), privacy: .public), have \(Int(windowSize.width), privacy: .public)x\(Int(windowSize.height), privacy: .public))")
         }
     }
 
@@ -782,6 +816,8 @@ struct RemoteViewerWindowView: View {
             try? await Task.sleep(for: .milliseconds(500))
             guard !Task.isCancelled else { return }
             onSizeSettled(size)
+            // UserDefaults backup in case the scene archive drops the value
+            RestoredWindowTracker.setWindowSize(size, for: windowValue.id)
         }
     }
 
