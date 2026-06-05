@@ -796,16 +796,51 @@ class RemoteViewerModel: SlideshowEngine {
     /// `onConnected` after every auto-reconnect.
     private func sendSlideshowConfigToServer() {
         let intervalMs = max(2000, Int(delay * 1000))
+        let (convert, width, height) = serverConvertParameters()
         wsSession?.sendSlideshowConfig(
             deviceId: config.wsDeviceId,
             interval: intervalMs,
-            width: 1920,
-            height: 1080,
+            width: width,
+            height: height,
             bright: false,
-            convert: false,
+            convert: convert,
             ratio: currentRatioValue(),
             modTags: modTagManager?.activeTags ?? []
         )
+    }
+
+    /// Decide whether to ask the RoboFrame server to pre-rescale images
+    /// (`convert`) instead of sending full-resolution sources, and at what
+    /// target size. This is the off-device escape hatch for the JXL decode-
+    /// transient OOM (see .claude/research/jxl-decode-memory-oom.md): for genuinely
+    /// huge sources, capping concurrent decodes (Fix A) and forcing 8-bit (Fix B)
+    /// aren't enough — the only way to keep the ~360 MB+ transient off the device
+    /// is to never download the giant source.
+    ///
+    /// Heuristic, gated on two conditions:
+    /// 1. Dynamic Image Resolution is on. When it's off the user has explicitly
+    ///    chosen real, unoptimized images — that's a manual override, so we never
+    ///    silently request server downscaling.
+    /// 2. The device is under GPU-memory pressure (multiple windows / large
+    ///    working set). Re-evaluated and re-sent on memory-pressure events via
+    ///    `trimForMemoryPressure`, and on every (re)connect.
+    private func serverConvertParameters() -> (convert: Bool, width: Int, height: Int) {
+        let cap = effectiveDownloadResolution
+        let dynamicResOn = cap > 0
+        let gpuHigh = MetalImageRenderer.shared?.isGPUMemoryHigh ?? false
+        let convert = dynamicResOn && gpuHigh
+        // When converting, tell the server our target cap (square bound — it fits
+        // within). Otherwise keep the legacy 1920×1080 hint for the no-convert case.
+        let dim = cap > 0 ? cap : 1920
+        return convert ? (true, dim, dim) : (false, 1920, 1080)
+    }
+
+    /// On a system memory warning, drop look-ahead (super) and re-advertise our
+    /// slideshow config so the server-convert heuristic can flip to `convert: true`
+    /// now that GPU pressure is elevated.
+    override func trimForMemoryPressure() {
+        super.trimForMemoryPressure()
+        sendSlideshowConfigToServer()
     }
 
     /// Advertise the window's raw aspect ratio (width/height). The server owns

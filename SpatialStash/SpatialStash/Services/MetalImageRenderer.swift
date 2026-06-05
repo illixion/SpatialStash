@@ -57,6 +57,36 @@ final class MetalImageRenderer: Sendable {
     /// changing effective thread pressure.
     private static let decodeGate = DispatchSemaphore(value: 2)
 
+    /// Predicted full-decode size (in bytes) above which a source is treated as
+    /// "oversized" and the memory-safety guard engages. ImageIO's JXL decoder
+    /// streams cheaply up to ~35 MP (≈140 MB at 8-bit RGBA) and then degrades
+    /// into a near-full-bitmap decode whose transient grows ~linearly with pixel
+    /// count (see .claude/research/jxl-decode-memory-oom.md). 140 MB ≈ that knee,
+    /// and because the figure is bytes (not megapixels) a 16-bit/deep-color source
+    /// crosses it at half the pixel count — which is correct, since it costs 2×
+    /// per pixel. Tunable.
+    static let oversizedDecodeByteThreshold = 140 * 1024 * 1024
+
+    /// Predicted bytes a full decode of `width`×`height` at `bitsPerComponent`
+    /// would allocate, assuming 4 (RGBA) channels. Header-only — no decode.
+    static func predictedDecodeBytes(width: Int, height: Int, bitsPerComponent: Int) -> Int {
+        let bytesPerComponent = bitsPerComponent > 8 ? 2 : 1
+        return width * height * 4 * bytesPerComponent
+    }
+
+    /// Current GPU allocation reported by Metal (shared-memory bytes). Used by
+    /// callers (e.g. the slideshow's server-convert heuristic) to gauge pressure.
+    var currentGPUAllocation: Int { device.currentAllocatedSize }
+
+    /// Allocation above which we consider the device under GPU-memory pressure.
+    /// Vision Pro has ~5.5 GB shared; 2 GB of textures is a conservative point to
+    /// start shedding load (e.g. asking the slideshow server to send rescaled
+    /// images instead of full-resolution sources). Tunable.
+    static let highGPUAllocationThreshold = 2 * 1024 * 1024 * 1024
+
+    /// True when GPU allocation has crossed `highGPUAllocationThreshold`.
+    var isGPUMemoryHigh: Bool { currentGPUAllocation > Self.highGPUAllocationThreshold }
+
     private init?() {
         guard let device = MTLCreateSystemDefaultDevice(),
               let commandQueue = device.makeCommandQueue() else {
@@ -124,13 +154,19 @@ final class MetalImageRenderer: Sendable {
     /// holds the masked subject inside a full-source-frame canvas; cropping
     /// shifts and shrinks the subject so it no longer registers with the
     /// backdrop layer at the same window aspect.
-    func createTexture(from cgImage: CGImage, useLossyCompression: Bool = false, autoCropTransparentEdges: Bool = true) -> MTLTexture? {
+    /// - Parameter forceStandardColorDepth: When true, render to an 8-bit
+    ///   `bgra8Unorm` texture even if the source is deep-color. The memory-safety
+    ///   guard sets this for oversized sources (when Dynamic Image Resolution is
+    ///   on) to halve the GPU texture + render buffer for 16-bit JXL. It does not
+    ///   reduce the upstream decode transient — ImageIO decodes at source depth —
+    ///   but it bounds everything downstream of the decoded CGImage.
+    func createTexture(from cgImage: CGImage, useLossyCompression: Bool = false, autoCropTransparentEdges: Bool = true, forceStandardColorDepth: Bool = false) -> MTLTexture? {
         let cgImage = autoCropTransparentEdges ? TransparentEdgeCropper.crop(cgImage) : cgImage
         let width = cgImage.width
         let height = cgImage.height
         guard width > 0, height > 0 else { return nil }
 
-        let isDeepColor = cgImage.bitsPerComponent > 8
+        let isDeepColor = !forceStandardColorDepth && cgImage.bitsPerComponent > 8
         let pixelFormat: MTLPixelFormat = isDeepColor ? .rgba16Float : .bgra8Unorm
 
         // Create a writable staging texture for CIContext to render into.
@@ -288,35 +324,57 @@ final class MetalImageRenderer: Sendable {
             }
 
             let cgImage: CGImage?
+            // Set when the memory-safety guard fires (oversized source, Dynamic
+            // Image Resolution on) so the downstream texture is forced to 8-bit.
+            var reduceDepth = false
             if forceFullDecode {
-                // Caller explicitly requested full-quality decode (e.g. effectiveMaxResolution == 0)
+                // Caller explicitly requested full-quality decode (effectiveMaxResolution == 0).
+                // This is the user's manual override — Dynamic Image Resolution is off, so
+                // they want the real image with no optimizations. The oversized guard below
+                // is intentionally NOT applied here.
                 let fullOptions: [CFString: Any] = [
                     kCGImageSourceShouldCacheImmediately: true
                 ]
                 cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, fullOptions as CFDictionary)
             } else {
-                // Read native dimensions to decide decode path.
+                // Read native dimensions and bit depth to decide decode path.
                 // Use NSNumber bridge for robust conversion — CGImageSource properties
                 // may store pixel dimensions as integer CFNumber types.
                 let nativeMaxDim: CGFloat
+                let predictedBytes: Int
                 if let properties = CGImageSourceCopyPropertiesAtIndex(imageSource, 0, nil) as? [CFString: Any],
                    let pw = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.doubleValue,
                    let ph = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.doubleValue {
                     nativeMaxDim = max(CGFloat(pw), CGFloat(ph))
+                    let depth = (properties[kCGImagePropertyDepth] as? NSNumber)?.intValue ?? 8
+                    predictedBytes = Self.predictedDecodeBytes(width: Int(pw), height: Int(ph), bitsPerComponent: depth)
                 } else {
                     nativeMaxDim = 0
+                    predictedBytes = 0
                 }
 
-                if nativeMaxDim > 0 && maxDimension >= nativeMaxDim {
+                // Memory-safety guard: a source whose full decode would exceed the
+                // threshold (e.g. a 90+ MP JXL ImageIO can't stream) must never take
+                // the uncapped CGImageSourceCreateImageAtIndex branch, even when the
+                // requested maxDimension meets/exceeds native — that would allocate the
+                // whole bitmap and can trip jetsam. Force the thumbnail path and drop
+                // to 8-bit downstream. See .claude/research/jxl-decode-memory-oom.md.
+                let oversized = predictedBytes > Self.oversizedDecodeByteThreshold
+
+                if !oversized && nativeMaxDim > 0 && maxDimension >= nativeMaxDim {
                     // Full-resolution decode — avoids thumbnail path quality loss
                     let fullOptions: [CFString: Any] = [
                         kCGImageSourceShouldCacheImmediately: true
                     ]
                     cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, fullOptions as CFDictionary)
                 } else {
-                    // Downsampled decode via thumbnail API
+                    // Downsampled decode via thumbnail API. For oversized sources cap the
+                    // thumbnail to maxDimension (or native if maxDimension is unset) so we
+                    // never request a larger-than-needed raster.
+                    reduceDepth = oversized
+                    let cap = maxDimension > 0 ? maxDimension : nativeMaxDim
                     let thumbOptions: [CFString: Any] = [
-                        kCGImageSourceThumbnailMaxPixelSize: maxDimension,
+                        kCGImageSourceThumbnailMaxPixelSize: cap,
                         kCGImageSourceCreateThumbnailFromImageAlways: true,
                         kCGImageSourceCreateThumbnailWithTransform: true,
                         kCGImageSourceShouldCacheImmediately: true
@@ -327,7 +385,7 @@ final class MetalImageRenderer: Sendable {
 
             guard let cgImage else { return nil }
 
-            return createTexture(from: cgImage, useLossyCompression: useLossyCompression)
+            return createTexture(from: cgImage, useLossyCompression: useLossyCompression, forceStandardColorDepth: reduceDepth)
         }
     }
 }
