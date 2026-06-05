@@ -65,6 +65,50 @@ final class SlideshowSyncHub {
         }
     }
 
+    /// First connected pooled client — telemetry is process-wide, so any live
+    /// connection will do as the transport.
+    private func anyConnectedClient() -> RemoteWebSocketClient? {
+        wsClientsByEndpoint.values.first(where: { $0.isConnected })
+    }
+
+    // MARK: - Device Telemetry (Console dev toggle)
+
+    /// Provider injected by AppModel: builds a process-wide sample on demand
+    /// (window counts + deviceId live there). nil ⇒ telemetry disabled.
+    private var metricsProvider: (() -> DeviceMetrics)?
+    private var telemetryTask: Task<Void, Never>?
+    /// Sampling cadence. Frequent enough to capture the ramp that precedes an
+    /// OOM, sparse enough to be negligible while idle.
+    private static let telemetryInterval: Duration = .seconds(7)
+
+    /// Enable/disable the process-wide telemetry ticker. Driven by the Console
+    /// developer toggle. Idempotent. When enabled, periodically emits
+    /// `reportMetrics` over any live pooled connection; when disabled, stops.
+    func setTelemetryEnabled(_ enabled: Bool, provider: (() -> DeviceMetrics)?) {
+        metricsProvider = enabled ? provider : nil
+        telemetryTask?.cancel()
+        telemetryTask = nil
+        guard enabled, provider != nil else { return }
+        telemetryTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: Self.telemetryInterval)
+                guard !Task.isCancelled, let self, let provider = self.metricsProvider else { break }
+                if let client = self.anyConnectedClient() {
+                    client.sendReportMetrics(provider())
+                }
+            }
+        }
+    }
+
+    /// Emit an event-driven log line over telemetry. No-op unless telemetry is
+    /// enabled and a connection is live. deviceId/app are taken from the current
+    /// metrics provider so callers don't need to know them.
+    func emitTelemetryLog(level: String, domain: String, message: String) {
+        guard let provider = metricsProvider, let client = anyConnectedClient() else { return }
+        let m = provider()
+        client.sendReportLog(deviceId: m.deviceId, app: m.app, level: level, domain: domain, message: message)
+    }
+
     // MARK: - Local Display Sync Broadcast
 
     private final class WeakModelRef {

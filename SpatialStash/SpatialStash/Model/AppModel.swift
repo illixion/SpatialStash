@@ -789,8 +789,34 @@ class AppModel {
         didSet {
             if showDebugConsole != oldValue {
                 UserDefaults.standard.set(showDebugConsole, forKey: "showDebugConsole")
+                updateDeviceTelemetry()
             }
         }
+    }
+
+    /// Wire the process-wide device-telemetry ticker (SlideshowSyncHub) to the
+    /// Console developer toggle — quasi-dev-mode. When on, periodic
+    /// `reportMetrics` + event `reportLog` frames flow to the RoboFrame backend
+    /// over the existing slideshow WS (see DeviceMetrics / protocol.md).
+    func updateDeviceTelemetry() {
+        let enabled = showDebugConsole
+        SlideshowSyncHub.shared.setTelemetryEnabled(enabled, provider: enabled ? { [weak self] in
+            self?.captureDeviceMetrics() ?? DeviceMetrics.capture(deviceId: "spatialstash", app: "spatialstash", photoWindows: 0, slideshowWindows: 0)
+        } : nil)
+    }
+
+    /// Build a process-wide telemetry sample. deviceId is best-effort: the first
+    /// active remote viewer's configured `wsDeviceId`, else a generic label.
+    private func captureDeviceMetrics() -> DeviceMetrics {
+        let deviceId = activeRemoteViewerModels.values
+            .compactMap { $0.config.wsDeviceId.isEmpty ? nil : $0.config.wsDeviceId }
+            .first ?? "spatialstash"
+        return DeviceMetrics.capture(
+            deviceId: deviceId,
+            app: "spatialstash",
+            photoWindows: openPhotoWindowCount,
+            slideshowWindows: activeRemoteViewerModels.count
+        )
     }
 
     /// When true, the app responds to system memory pressure by downscaling
@@ -1120,6 +1146,10 @@ class AppModel {
         // Apply default views on startup
         applyDefaultViewsOnStartup()
 
+        // Start device telemetry if Console (dev mode) was already enabled —
+        // property didSet doesn't fire for in-init assignment.
+        updateDeviceTelemetry()
+
         // Monitor memory pressure and downscale windows that have been
         // backgrounded (not in active room) for at least 2 minutes.
         // Windows in the current room are never touched — the OS can
@@ -1158,6 +1188,11 @@ class AppModel {
                     for model in self.activeRemoteViewerModels.values {
                         model.trimForMemoryPressure()
                     }
+                    SlideshowSyncHub.shared.emitTelemetryLog(
+                        level: "warning",
+                        domain: "memory",
+                        message: "Memory warning — trimmed \(self.activeRemoteViewerModels.count) slideshow window(s), \(self.openPhotoWindowCount) photo window(s)"
+                    )
                 } else {
                     AppLogger.appModel.warning("Memory warning received — ignored (Respect System Memory Alerts is off)")
                 }

@@ -298,6 +298,29 @@ class RemoteWebSocketClient {
         sendJSON(["sessionId": sessionId, "action": "slideshowConfig", "payload": payload])
     }
 
+    /// Connection-wide device telemetry (gated behind the Console dev toggle).
+    /// `reportMetrics` is a periodic memory/state sample; the server stores it
+    /// for diagnosing the multi-window slideshow OOM during live playback. Not
+    /// part of the slideshow loop — see protocol.md `reportMetrics`.
+    func sendReportMetrics(_ metrics: DeviceMetrics) {
+        guard isConnected else { return }
+        sendJSON(["action": "reportMetrics", "payload": metrics.payload])
+    }
+
+    /// Connection-wide event log line (warnings, trims, guard hits). Paired with
+    /// `reportMetrics`; see protocol.md `reportLog`.
+    func sendReportLog(deviceId: String, app: String, level: String, domain: String, message: String) {
+        guard isConnected else { return }
+        sendJSON(["action": "reportLog", "payload": [
+            "deviceId": deviceId,
+            "app": app,
+            "level": level,
+            "domain": domain,
+            "message": message,
+            "ts": Int(Date().timeIntervalSince1970 * 1000),
+        ]])
+    }
+
     /// Client-supplied modifier tags. The orchestrator folds them into this
     /// channel's DuckDB query (last-write-wins among same-channel sessions).
     func sendSetModTags(sessionId: String, tags: [String]) {
