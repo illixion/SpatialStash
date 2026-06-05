@@ -40,6 +40,23 @@ final class MetalImageRenderer: Sendable {
     let rcasPipelineState16: MTLRenderPipelineState
     private let ciContext: CIContext
 
+    /// Bounds the number of concurrent full-image CGImageSource decodes across
+    /// the whole app. A single absurd-resolution source (e.g. a 90+ MP JXL with
+    /// no progressive/DC structure) forces ImageIO to materialize the entire
+    /// bitmap — ~360 MB at 91 MP — before any downscale can run; subsampling
+    /// doesn't help because the decoder ignores it for such files. Multiple
+    /// slideshow windows decoding in parallel stack those transients and trip
+    /// jetsam, rebooting userspace. Capping concurrent decodes bounds peak
+    /// transient memory to roughly (permits × largest-single-decode) regardless
+    /// of how many windows are open.
+    ///
+    /// The decode entry points (`downsampledImage(from:)` and
+    /// `createTexture(from url:)`) are synchronous and run on detached/background
+    /// tasks, so a parked waiter holds its thread — but the decode it waits on
+    /// would occupy a CPU thread anyway, so peak memory is bounded without
+    /// changing effective thread pressure.
+    private static let decodeGate = DispatchSemaphore(value: 2)
+
     private init?() {
         guard let device = MTLCreateSystemDefaultDevice(),
               let commandQueue = device.makeCommandQueue() else {
@@ -209,7 +226,9 @@ final class MetalImageRenderer: Sendable {
     ///   - maxDimension: Maximum dimension for downsampling. 0 = no limit (full decode).
     /// - Returns: Decoded UIImage, or nil on failure.
     static func downsampledImage(from data: Data, maxDimension: CGFloat) -> UIImage? {
-        autoreleasepool {
+        decodeGate.wait()
+        defer { decodeGate.signal() }
+        return autoreleasepool {
             guard let imageSource = CGImageSourceCreateWithData(data as CFData, nil) else {
                 return nil
             }
@@ -257,7 +276,9 @@ final class MetalImageRenderer: Sendable {
     /// `CGImageSourceCreateImageAtIndex` for full-quality decode (avoids quality loss
     /// with certain codecs like JXL and prevents thumbnail API interpolation artifacts).
     func createTexture(from url: URL, maxDimension: CGFloat, useLossyCompression: Bool = false, forceFullDecode: Bool = false) -> MTLTexture? {
-        autoreleasepool {
+        Self.decodeGate.wait()
+        defer { Self.decodeGate.signal() }
+        return autoreleasepool {
             guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else {
                 return nil
             }
