@@ -655,6 +655,9 @@ class SlideshowEngine {
             if state != .stopped && state != .idle && state != .backgrounded {
                 stateBeforeBackground = state
                 transition(to: .backgrounded)
+                // Release the look-ahead working set now rather than waiting for
+                // a system memory warning — a backgrounded window no longer cycles.
+                trimForBackground()
             }
         }
     }
@@ -1091,6 +1094,29 @@ class SlideshowEngine {
         dioramaCache.removeAll(keepingCapacity: false)
         if droppedPrefetch + droppedDiorama > 0 {
             AppLogger.remoteViewer.info("Slideshow trim for memory pressure: dropped \(droppedPrefetch, privacy: .public) prefetched, \(droppedDiorama, privacy: .public) diorama entries")
+        }
+    }
+
+    /// Release the look-ahead working set when the window backgrounds. A
+    /// backgrounded slideshow has stopped cycling (run loop paused), so the
+    /// "continuous cycling bounds memory" assumption no longer holds — the
+    /// prefetch buffer and diorama working set would otherwise sit resident
+    /// indefinitely until a system memory warning. On visionOS gaze shifts
+    /// background windows constantly, so with several slideshow windows this
+    /// look-ahead is the dominant resident cost. Unlike `trimForMemoryPressure`
+    /// (which keeps one prefetch slot) this drops the entire buffer; the on-
+    /// screen `current` + crossfade-ready `next` image/texture are preserved so
+    /// resume is seamless, and the run loop re-prefetches on return to active.
+    @MainActor
+    func trimForBackground() {
+        let dropped = prefetchedImages.count
+        let droppedDiorama = dioramaCache.count
+        prefetchedImages.removeAll(keepingCapacity: false)
+        nextForegroundTexture = nil
+        nextBackdropTexture = nil
+        dioramaCache.removeAll(keepingCapacity: false)
+        if dropped + droppedDiorama > 0 {
+            AppLogger.remoteViewer.info("Slideshow trim for background: dropped \(dropped, privacy: .public) prefetched, \(droppedDiorama, privacy: .public) diorama entries")
         }
     }
 

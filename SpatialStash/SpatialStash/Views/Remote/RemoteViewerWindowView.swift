@@ -290,35 +290,44 @@ struct RemoteViewerWindowView: View {
                 EmptyView()
 
             case .animatedGIF(let hevcURL):
-                WebVideoPlayerView(
-                    videoURL: hevcURL,
-                    apiKey: nil,
-                    showControls: false,
-                    isRoomActive: model.isRoomActive
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                // Also show the static image underneath during transition
-                .opacity(model.isTransitioning ? 0 : 1)
-                .brightness(model.effectiveBrightness)
-                .contrast(model.effectiveContrast)
-                .saturation(model.effectiveSaturation)
+                // Backgrounded windows fall back to the static first-frame layer
+                // rendered above (isAnimatedMediaWithStaticFallback). Dropping the
+                // WKWebView here tears down its out-of-process WebContent/GPU
+                // helpers — which don't count toward our process footprint but do
+                // pin device memory — and it rebuilds on return to active.
+                if model.isRoomActive {
+                    WebVideoPlayerView(
+                        videoURL: hevcURL,
+                        apiKey: nil,
+                        showControls: false,
+                        isRoomActive: model.isRoomActive
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    // Also show the static image underneath during transition
+                    .opacity(model.isTransitioning ? 0 : 1)
+                    .brightness(model.effectiveBrightness)
+                    .contrast(model.effectiveContrast)
+                    .saturation(model.effectiveSaturation)
+                }
 
             case .animatedWebP(let url):
-                AnimatedImageWebView(
-                    imageURL: url,
-                    elementType: .image,
-                    apiKey: nil,
-                    authorizationToken: nil,
-                    imageData: model.currentAnimatedData,
-                    imageDataMimeType: "image/webp"
-                )
-                .aspectRatio(model.currentImage?.size ?? CGSize(width: 1, height: 1), contentMode: .fit)
-                // Fade out during crossfade so the next image's static
-                // texture (or its own WebKit layer) takes over cleanly.
-                .opacity(model.isTransitioning ? 0 : 1)
-                .brightness(model.effectiveBrightness)
-                .contrast(model.effectiveContrast)
-                .saturation(model.effectiveSaturation)
+                if model.isRoomActive {
+                    AnimatedImageWebView(
+                        imageURL: url,
+                        elementType: .image,
+                        apiKey: nil,
+                        authorizationToken: nil,
+                        imageData: model.currentAnimatedData,
+                        imageDataMimeType: "image/webp"
+                    )
+                    .aspectRatio(model.currentImage?.size ?? CGSize(width: 1, height: 1), contentMode: .fit)
+                    // Fade out during crossfade so the next image's static
+                    // texture (or its own WebKit layer) takes over cleanly.
+                    .opacity(model.isTransitioning ? 0 : 1)
+                    .brightness(model.effectiveBrightness)
+                    .contrast(model.effectiveContrast)
+                    .saturation(model.effectiveSaturation)
+                }
 
             case .image:
                 EmptyView()
