@@ -1023,11 +1023,19 @@ class PhotoWindowModel {
 
     /// Downscale a UIImage for display and upload directly to a GPU-private texture.
     /// The intermediate UIImage is freed after upload, keeping only the GPU texture alive.
-    func downscaleAndUploadTexture(_ image: UIImage) async -> MTLTexture? {
+    /// Pass `autoCropTransparentEdges: false` for background-removed images —
+    /// their output is a full-source-frame canvas with the subject inside a
+    /// transparent border (see `BackgroundRemover`, commit "Preserve source
+    /// frame size in background removal output"). Cropping the margins here
+    /// re-collapses the frame to the subject's bounding box, which for flat
+    /// images with a small foreground mask shifts the aspect ratio and shrinks
+    /// the viewer window — the bug f748109 was meant to fix, reintroduced at
+    /// the texture-upload step.
+    func downscaleAndUploadTexture(_ image: UIImage, autoCropTransparentEdges: Bool = true) async -> MTLTexture? {
         let downscaled = await downscaleForDisplay(image)
         let useLossy = appModel.useLossyTextureCompression
         let sendable = await Task.detached { [useLossy] in
-            guard let tex = MetalImageRenderer.shared?.createTexture(from: downscaled, useLossyCompression: useLossy) else { return nil as SendableTexture? }
+            guard let tex = MetalImageRenderer.shared?.createTexture(from: downscaled, useLossyCompression: useLossy, autoCropTransparentEdges: autoCropTransparentEdges) else { return nil as SendableTexture? }
             return SendableTexture(texture: tex)
         }.value
         return sendable?.texture

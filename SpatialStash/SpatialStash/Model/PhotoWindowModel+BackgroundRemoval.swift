@@ -127,12 +127,14 @@ extension PhotoWindowModel {
                         await BackgroundRemovalCache.shared.saveImage(autoEnhanced, for: self.imageURL, isAutoEnhanced: true)
                     }
 
-                    // Downscale and upload to GPU texture(s)
-                    let regularTexture = await self.downscaleAndUploadTexture(regular)
+                    // Downscale and upload to GPU texture(s). Keep the
+                    // transparent margins — the bg-removed output is a
+                    // full-frame canvas; cropping here would shrink it.
+                    let regularTexture = await self.downscaleAndUploadTexture(regular, autoCropTransparentEdges: false)
                     self.backgroundRemovedTexture = regularTexture
 
                     if let autoEnhanced {
-                        let enhancedTexture = await self.downscaleAndUploadTexture(autoEnhanced)
+                        let enhancedTexture = await self.downscaleAndUploadTexture(autoEnhanced, autoCropTransparentEdges: false)
                         self.autoEnhancedBackgroundRemovedTexture = enhancedTexture
                     }
 
@@ -182,8 +184,10 @@ extension PhotoWindowModel {
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
 
-            // Downscale and upload regular variant
-            let texture = await self.downscaleAndUploadTexture(fullResImage)
+            // Downscale and upload regular variant. Preserve transparent
+            // margins — the cached bg-removed image is a full-source-frame
+            // canvas and cropping would collapse it to the subject bbox.
+            let texture = await self.downscaleAndUploadTexture(fullResImage, autoCropTransparentEdges: false)
 
             guard !Task.isCancelled else {
                 self.backgroundRemovalState = .original
@@ -194,7 +198,7 @@ extension PhotoWindowModel {
 
             // Upload auto-enhanced variant only when needed
             if let enhancedImage {
-                self.autoEnhancedBackgroundRemovedTexture = await self.downscaleAndUploadTexture(enhancedImage)
+                self.autoEnhancedBackgroundRemovedTexture = await self.downscaleAndUploadTexture(enhancedImage, autoCropTransparentEdges: false)
             }
 
             self.originalDisplayTexture = self.displayTexture
@@ -226,9 +230,12 @@ extension PhotoWindowModel {
         let targetDimension = backgroundRemovalTargetDimension()
         let useLossy = appModel.useLossyTextureCompression
 
-        // Load regular variant
+        // Load regular variant. Keep transparent margins — the cached bg-removed
+        // image is a full-source-frame canvas (see BackgroundRemover); cropping
+        // them here re-collapses the frame to the subject bbox and shrinks the
+        // window on restore for flat images with a small foreground mask.
         let sendable = await Task.detached { [cachedURL, targetDimension, useLossy] () -> SendableTexture? in
-            guard let tex = MetalImageRenderer.shared?.createTexture(from: cachedURL, maxDimension: targetDimension, useLossyCompression: useLossy) else { return nil }
+            guard let tex = MetalImageRenderer.shared?.createTexture(from: cachedURL, maxDimension: targetDimension, useLossyCompression: useLossy, autoCropTransparentEdges: false) else { return nil }
             return SendableTexture(texture: tex)
         }.value
 
@@ -243,7 +250,7 @@ extension PhotoWindowModel {
         // Only load the auto-enhanced variant when auto-enhance is active
         if showEnhanced, let enhancedURL = await BackgroundRemovalCache.shared.cachedFileURL(for: imageURL, isAutoEnhanced: true) {
             let enhancedSendable = await Task.detached { [enhancedURL, targetDimension, useLossy] () -> SendableTexture? in
-                guard let tex = MetalImageRenderer.shared?.createTexture(from: enhancedURL, maxDimension: targetDimension, useLossyCompression: useLossy) else { return nil }
+                guard let tex = MetalImageRenderer.shared?.createTexture(from: enhancedURL, maxDimension: targetDimension, useLossyCompression: useLossy, autoCropTransparentEdges: false) else { return nil }
                 return SendableTexture(texture: tex)
             }.value
             autoEnhancedBackgroundRemovedTexture = enhancedSendable?.texture
@@ -280,7 +287,7 @@ extension PhotoWindowModel {
         let targetDimension = backgroundRemovalTargetDimension()
         let useLossy = appModel.useLossyTextureCompression
         let sendable = await Task.detached { [cachedURL, targetDimension, useLossy] () -> SendableTexture? in
-            guard let tex = MetalImageRenderer.shared?.createTexture(from: cachedURL, maxDimension: targetDimension, useLossyCompression: useLossy) else { return nil }
+            guard let tex = MetalImageRenderer.shared?.createTexture(from: cachedURL, maxDimension: targetDimension, useLossyCompression: useLossy, autoCropTransparentEdges: false) else { return nil }
             return SendableTexture(texture: tex)
         }.value
 

@@ -51,6 +51,8 @@ final class ThumbnailDioramaCache {
         let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
         let dir = caches.appendingPathComponent("ThumbnailDioramas", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        // Purge entries from an older diorama-generation version.
+        DiskCacheVersion.enforce(1, at: dir)
         var resourceValues = URLResourceValues()
         resourceValues.isExcludedFromBackup = true
         var mutable = dir

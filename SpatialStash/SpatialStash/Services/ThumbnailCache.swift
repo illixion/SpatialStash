@@ -36,6 +36,9 @@ actor ThumbnailCache {
         // Create cache directory if needed
         try? fileManager.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
 
+        // Purge entries from an older format/algorithm version.
+        DiskCacheVersion.enforce(1, at: cacheDirectory, fileManager: fileManager)
+
         // Mark directory as excluded from backups
         var resourceValues = URLResourceValues()
         resourceValues.isExcludedFromBackup = true

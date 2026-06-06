@@ -249,9 +249,9 @@ final class MetalImageRenderer: Sendable {
     }
 
     /// Create a GPU-private texture from a UIImage.
-    func createTexture(from uiImage: UIImage, useLossyCompression: Bool = false) -> MTLTexture? {
+    func createTexture(from uiImage: UIImage, useLossyCompression: Bool = false, autoCropTransparentEdges: Bool = true) -> MTLTexture? {
         guard let cgImage = uiImage.cgImage else { return nil }
-        return createTexture(from: cgImage, useLossyCompression: useLossyCompression)
+        return createTexture(from: cgImage, useLossyCompression: useLossyCompression, autoCropTransparentEdges: autoCropTransparentEdges)
     }
 
     /// Downsample image data using the same CGImageSource logic as the URL path.
@@ -311,7 +311,7 @@ final class MetalImageRenderer: Sendable {
     /// When `forceFullDecode` is true or `maxDimension` >= native size, uses
     /// `CGImageSourceCreateImageAtIndex` for full-quality decode (avoids quality loss
     /// with certain codecs like JXL and prevents thumbnail API interpolation artifacts).
-    func createTexture(from url: URL, maxDimension: CGFloat, useLossyCompression: Bool = false, forceFullDecode: Bool = false) -> MTLTexture? {
+    func createTexture(from url: URL, maxDimension: CGFloat, useLossyCompression: Bool = false, forceFullDecode: Bool = false, autoCropTransparentEdges: Bool = true) -> MTLTexture? {
         Self.decodeGate.wait()
         defer { Self.decodeGate.signal() }
         return autoreleasepool {
@@ -385,7 +385,7 @@ final class MetalImageRenderer: Sendable {
 
             guard let cgImage else { return nil }
 
-            return createTexture(from: cgImage, useLossyCompression: useLossyCompression, forceStandardColorDepth: reduceDepth)
+            return createTexture(from: cgImage, useLossyCompression: useLossyCompression, autoCropTransparentEdges: autoCropTransparentEdges, forceStandardColorDepth: reduceDepth)
         }
     }
 }

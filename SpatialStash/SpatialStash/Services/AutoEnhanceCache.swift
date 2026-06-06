@@ -30,6 +30,9 @@ actor AutoEnhanceCache {
 
         try? fileManager.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
 
+        // Purge entries from an older format/algorithm version.
+        DiskCacheVersion.enforce(1, at: cacheDirectory, fileManager: fileManager)
+
         var resourceValues = URLResourceValues()
         resourceValues.isExcludedFromBackup = true
         var mutableCacheDir = cacheDirectory

@@ -32,6 +32,11 @@ actor BackgroundRemovalCache {
         // Create cache directory if needed
         try? fileManager.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
 
+        // Purge entries written by an older format/algorithm. v1 clears the
+        // pre-`f748109` background-removal output (cropped to the subject bbox),
+        // which otherwise loads stale and mis-sizes the viewer window.
+        DiskCacheVersion.enforce(1, at: cacheDirectory, fileManager: fileManager)
+
         // Mark directory as excluded from backups (Apple requirement for caches)
         var resourceValues = URLResourceValues()
         resourceValues.isExcludedFromBackup = true
