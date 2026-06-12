@@ -53,6 +53,11 @@ enum RemoteWSMessage {
     /// for a non-empty tag query (typo'd `setModTags`, unsatisfiable combo).
     /// Informational only — the slideshow stays on its current image.
     case searchEmpty(query: String)
+    /// HA-driven panel power for a target deviceId (`displayState` frames,
+    /// also rebroadcast from a node-display's `reportDisplay`). Only frames
+    /// carrying a real `state` are surfaced — a state-less frame must not
+    /// toggle anything. Sessions filter on their own deviceId.
+    case displayState(target: String, on: Bool)
 }
 
 /// One logical viewer session multiplexed onto a shared connection.
@@ -595,6 +600,17 @@ class RemoteWebSocketClient {
         case "searchEmpty":
             let query = (payload as? [String: Any])?["query"] as? String ?? ""
             broadcastToSessions(.searchEmpty(query: query))
+
+        case "displayState":
+            // Only act on frames that actually carry a panel `state` — a
+            // state-less displayState must not toggle anything (same guard
+            // as the web kiosk). `"off"`/false → off; anything else → on.
+            if let dict = payload as? [String: Any],
+               let target = dict["target"] as? String,
+               let state = dict["state"] {
+                let off = (state as? String) == "off" || (state as? Bool) == false
+                broadcastToSessions(.displayState(target: target, on: !off))
+            }
 
         case "ping":
             // Server-initiated liveness probe. Reply immediately so it

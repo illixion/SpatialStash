@@ -233,20 +233,13 @@ class RemoteViewerModel: SlideshowEngine {
         // lets a healthy socket prove itself; only a missing pong
         // forces a reconnect.
         wsSession?.probeOrReconnect()
-        scheduleVisibilityReport(true)
-        // Catch up if the server advanced while we were backgrounded and the
-        // intervening playback frames were deferred.
-        reconcileWithServer()
-        // If the server is still parked on the post we have on screen, no
-        // transition fires (reconcile is a no-op when target == current), so
-        // onPostTransitioned won't run. But becoming visible re-includes this
-        // session in the server's readiness barrier, and we suppressed the
-        // imageReady for this post while inactive — re-report it now so the
-        // channel doesn't stall waiting on a window that just came back.
-        if !isApplyingIncomingSync, let post = currentPost,
-           serverCurrentPost?._id == post._id {
-            reportImageReady(for: post)
-        }
+        scheduleVisibilityReport(effectiveVisible)
+        // While HA holds the panel off, the channel stays paused: reporting
+        // visible or rejoining the barrier here would resume a slideshow the
+        // user explicitly switched off. The displayState(on) frame is what
+        // lifts the hold.
+        guard effectiveVisible else { return }
+        rejoinReadinessBarrier()
         // Per protocol §"Visibility never resets the timer": the server
         // resumes the channel's wall-clock dwell on visibility=true.
         // No client-side wake-advance (requestNext on stale playback) —
@@ -257,6 +250,43 @@ class RemoteViewerModel: SlideshowEngine {
 
     override func onEnteredBackground() {
         scheduleVisibilityReport(false)
+    }
+
+    /// HA-driven panel state addressed to this window's deviceId
+    /// (`displayState` frames). While off, the slideshow pauses server-side —
+    /// we report visibility=false so the channel parks its dwell — but the
+    /// window keeps the current image rendered and decoded, so the PIR/HA
+    /// wake that follows resumes the same frame with no pop-in.
+    private var remotePanelOff = false
+    /// The visibility this session should present to the server: the room
+    /// must be active AND the panel not held off by HA. Also gates
+    /// imageReady — a hidden session is outside the readiness barrier, and
+    /// reporting would drive the channel forward for a panel nobody sees.
+    private var effectiveVisible: Bool { isRoomActive && !remotePanelOff }
+
+    /// Catch up after this session becomes effectively visible again: pull
+    /// the server's current post if it advanced while we were hidden, and —
+    /// when the server is still parked on the post we already have on
+    /// screen — re-report imageReady. Becoming visible re-included this
+    /// session in the readiness barrier, and the report for this post was
+    /// suppressed while hidden, so without a re-send the channel would wait
+    /// on a window that's already showing the frame.
+    private func rejoinReadinessBarrier() {
+        reconcileWithServer()
+        if !isApplyingIncomingSync, let post = currentPost,
+           serverCurrentPost?._id == post._id {
+            reportImageReady(for: post)
+        }
+    }
+
+    /// A `displayState` frame addressed to this window's deviceId.
+    func handlePanelState(on: Bool) {
+        let off = !on
+        guard off != remotePanelOff else { return }
+        remotePanelOff = off
+        AppLogger.remoteViewer.info("displayState \(on ? "on" : "off", privacy: .public) for deviceId=\(self.config.wsDeviceId, privacy: .public)")
+        scheduleVisibilityReport(effectiveVisible)
+        if effectiveVisible { rejoinReadinessBarrier() }
     }
 
     /// Last visibility value we actually told the server about. Used to
@@ -519,18 +549,19 @@ class RemoteViewerModel: SlideshowEngine {
     /// this session the moment it reports visibility=true — gets the report it
     /// would otherwise wait on indefinitely).
     private func reportImageReady(for post: RemotePost) {
-        guard isRoomActive else {
-            // Window isn't visible (scenePhase not active). The server already
-            // knows we're invisible via the visibility=false report and won't
-            // hold the readiness barrier on this session, so reporting
-            // imageReady here would needlessly drive the channel forward for a
-            // window nobody is looking at. Drop any pending deferral too — it
-            // gets re-evaluated when the window becomes active again.
+        guard effectiveVisible else {
+            // Session is hidden (scenePhase not active, or HA holds the panel
+            // off). The server already knows via the visibility=false report
+            // and won't hold the readiness barrier on this session, so
+            // reporting imageReady here would needlessly drive the channel
+            // forward for a window nobody is looking at. Drop any pending
+            // deferral too — it gets re-evaluated on the next effective-
+            // visibility flip.
             pendingImageReadyPost = nil
             pendingVideoImageReadyPost = nil
             videoDurationTimeoutTask?.cancel()
             videoDurationTimeoutTask = nil
-            AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "imageReady skipped for post \(post._id, privacy: .public) — window not active")
+            AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "imageReady skipped for post \(post._id, privacy: .public) — session hidden")
             return
         }
         if Self.videoExtensions.contains(post.file_ext.lowercased()), currentVideoDurationMs == nil {
@@ -553,8 +584,8 @@ class RemoteViewerModel: SlideshowEngine {
                 guard let pending = self.pendingVideoImageReadyPost, pending._id == post._id else { return }
                 self.pendingVideoImageReadyPost = nil
                 self.videoDurationTimeoutTask = nil
-                guard self.isRoomActive else {
-                    AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "imageReady (duration timeout) dropped for post \(post._id, privacy: .public) — window not active")
+                guard self.effectiveVisible else {
+                    AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "imageReady (duration timeout) dropped for post \(post._id, privacy: .public) — session hidden")
                     return
                 }
                 // Send directly — going back through reportImageReady would
@@ -646,10 +677,10 @@ class RemoteViewerModel: SlideshowEngine {
               let current = currentImage,
               ObjectIdentifier(current) == id else { return }
         pendingImageReadyPost = nil
-        // Don't advance the channel for a window that became invisible while
-        // its 3D depth map was generating.
-        guard isRoomActive else {
-            AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "imageReady dropped for post \(pending._id, privacy: .public) — window not active")
+        // Don't advance the channel for a session that went hidden (window
+        // inactive or panel held off) while its 3D depth map was generating.
+        guard effectiveVisible else {
+            AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "imageReady dropped for post \(pending._id, privacy: .public) — session hidden")
             return
         }
         AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "imageReady released for post \(pending._id, privacy: .public) — 3D generation completed")
@@ -952,6 +983,13 @@ class RemoteViewerModel: SlideshowEngine {
         case .searchEmpty(let query):
             AppLogger.remoteViewer.warning("WS searchEmpty: refill returned zero rows for query \"\(query, privacy: .public)\"")
             showToast("No images match: \(query)", isError: true)
+
+        case .displayState(let target, let on):
+            // HA turned this window's panel off/on. Off pauses the channel
+            // (visibility=false) while keeping the current image rendered —
+            // no teardown — so the wake that follows resumes without pop-in.
+            guard target == config.wsDeviceId else { break }
+            handlePanelState(on: on)
 
         case .fatalAuthError(let reason):
             // Server closed the upgrade with 1008. The WS client has

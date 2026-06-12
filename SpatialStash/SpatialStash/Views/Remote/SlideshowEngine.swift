@@ -621,9 +621,12 @@ class SlideshowEngine {
 
     func handleScenePhaseChange(from oldPhase: ScenePhase, to newPhase: ScenePhase) {
         if newPhase == .active && oldPhase != .active {
-            // Returning to active
-            onBecameActive()
+            // Returning to active. isRoomActive flips before the hook runs
+            // so overrides observe the new activity state — the model's
+            // barrier-rejoin imageReady gates on it and would be silently
+            // dropped under the old value.
             isRoomActive = true
+            onBecameActive()
 
             guard state == .backgrounded else { return }
 
@@ -647,9 +650,10 @@ class SlideshowEngine {
 
         } else if oldPhase == .active && newPhase != .active {
             // Leaving active — on visionOS this can happen from gaze shifts,
-            // system interruptions, or true backgrounding
-            onEnteredBackground()
+            // system interruptions, or true backgrounding. Same ordering as
+            // above: the hook observes the new state.
             isRoomActive = false
+            onEnteredBackground()
 
             // Remember current state so we can restore it properly
             if state != .stopped && state != .idle && state != .backgrounded {
