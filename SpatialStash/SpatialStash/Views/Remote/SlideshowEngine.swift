@@ -620,8 +620,21 @@ class SlideshowEngine {
     }
 
     func handleScenePhaseChange(from oldPhase: ScenePhase, to newPhase: ScenePhase) {
-        if newPhase == .active && oldPhase != .active {
-            // Returning to active. isRoomActive flips before the hook runs
+        // On visionOS scenePhase flips to .inactive constantly — gaze shifts,
+        // Control Center, notifications, or simply not being the user's current
+        // focus. A wall-snapped ambient slideshow is *meant* to sit unfocused,
+        // so it lives in .inactive almost permanently; treating that as hidden
+        // would skip imageReady and report visibility=false, parking the channel
+        // for a single-window deployment (the window's own report leaves the
+        // server with zero visible sessions). Only .background means the window
+        // is truly gone — app suspended, headset off, or window closed.
+        // "Nobody in the room" is handled separately via HA displayState frames.
+        let wasVisible = oldPhase != .background
+        let isVisible = newPhase != .background
+        guard wasVisible != isVisible else { return }
+
+        if isVisible {
+            // Returning to visible. isRoomActive flips before the hook runs
             // so overrides observe the new activity state — the model's
             // barrier-rejoin imageReady gates on it and would be silently
             // dropped under the old value.
@@ -648,10 +661,9 @@ class SlideshowEngine {
                 transition(to: .loading)
             }
 
-        } else if oldPhase == .active && newPhase != .active {
-            // Leaving active — on visionOS this can happen from gaze shifts,
-            // system interruptions, or true backgrounding. Same ordering as
-            // above: the hook observes the new state.
+        } else {
+            // Truly backgrounded. Same ordering as above: the hook observes
+            // the new state.
             isRoomActive = false
             onEnteredBackground()
 

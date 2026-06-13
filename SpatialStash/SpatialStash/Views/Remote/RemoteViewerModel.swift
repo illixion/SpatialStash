@@ -550,7 +550,7 @@ class RemoteViewerModel: SlideshowEngine {
     /// would otherwise wait on indefinitely).
     private func reportImageReady(for post: RemotePost) {
         guard effectiveVisible else {
-            // Session is hidden (scenePhase not active, or HA holds the panel
+            // Session is hidden (window backgrounded, or HA holds the panel
             // off). The server already knows via the visibility=false report
             // and won't hold the readiness barrier on this session, so
             // reporting imageReady here would needlessly drive the channel
