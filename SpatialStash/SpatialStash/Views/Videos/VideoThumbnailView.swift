@@ -112,6 +112,13 @@ struct VideoThumbnailView: View {
         }
         .cornerRadius(12)
         .clipped()
+        // Flatten the cell (background + image + play button + badges +
+        // filename bar) into a single Metal-rendered texture. The column-count
+        // realignment animation then just moves/scales one texture per cell
+        // instead of recompositing ~6 layers every frame. Re-rasterizes when
+        // the thumbnail finishes loading; the trade-off is the loading spinner
+        // no longer animates, which is fine on a fast (LAN) source.
+        .drawingGroup()
         .contentShape(Rectangle())
         .hoverEffect(ScaleHoverEffect())
         .task {
