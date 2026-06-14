@@ -11,6 +11,9 @@ import SwiftUI
 struct GalleryThumbnailView: View {
     @Environment(AppModel.self) private var appModel
     let image: GalleryImage
+    /// Side length of the square cell. The grid shrinks this below the
+    /// default to keep a minimum column count when the window is narrow.
+    var size: CGFloat = 200
     var onTap: (() -> Void)? = nil
     /// Fires when the cell's long-press grows-and-pops gesture
     /// completes. Receives the cell's already-loaded thumbnail bitmap
@@ -83,7 +86,7 @@ struct GalleryThumbnailView: View {
                 }
             }
         }
-        .frame(width: 200, height: 200)
+        .frame(width: size, height: size)
         .cornerRadius(12)
         .clipped()
         .contentShape(Rectangle())

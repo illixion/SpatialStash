@@ -22,9 +22,38 @@ struct GalleryGridView: View {
     @State private var cellFrames: [UUID: CGRect] = [:]
     private let gallerySpace = "gallery"
 
-    let columns = [
-        GridItem(.adaptive(minimum: 200, maximum: 300), spacing: 16)
-    ]
+    private let gridSpacing: CGFloat = 16
+    /// Matches the ScrollView's `.padding()` so the available content width
+    /// is computed correctly from the GeometryReader's outer width.
+    private let gridContentInset: CGFloat = 16
+    /// Preferred (and maximum) thumbnail edge. Wide windows keep cells at
+    /// this size and add columns; narrow windows shrink below it instead of
+    /// dropping a column.
+    private let preferredCellSize: CGFloat = 200
+    /// Never lay out fewer than this many columns — once the window is too
+    /// narrow to fit them at `preferredCellSize`, thumbnails shrink to fit.
+    private let minColumns = 4
+
+    /// Resolve the column layout and cell edge for a given container width.
+    /// `.adaptive` can't express a column-count floor (it just drops to
+    /// fewer, larger-than-minimum columns), so we size the grid manually.
+    private func gridLayout(forWidth width: CGFloat) -> (columns: [GridItem], cellSize: CGFloat) {
+        guard width > 0 else {
+            return (Array(repeating: GridItem(.fixed(preferredCellSize), spacing: gridSpacing),
+                          count: minColumns), preferredCellSize)
+        }
+        let available = max(preferredCellSize, width - gridContentInset * 2)
+        // How many full-size cells fit at the preferred edge.
+        let natural = Int((available + gridSpacing) / (preferredCellSize + gridSpacing))
+        let count = max(minColumns, natural)
+        // Derive the actual edge from the resolved column count. When the
+        // window can't fit `count` cells at full size (i.e. natural < minColumns),
+        // this falls below preferredCellSize, increasing density.
+        let raw = (available - gridSpacing * CGFloat(count - 1)) / CGFloat(count)
+        let cellSize = min(preferredCellSize, raw)
+        let columns = Array(repeating: GridItem(.fixed(cellSize), spacing: gridSpacing), count: count)
+        return (columns, cellSize)
+    }
 
     var body: some View {
         Group {
@@ -53,37 +82,40 @@ struct GalleryGridView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 // Gallery grid
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVGrid(columns: columns, spacing: 16) {
-                            ForEach(appModel.galleryImages) { image in
-                                thumbnailCell(for: image)
-                                    .id(image.id)
-                                    .onAppear {
-                                        if image == appModel.galleryImages.last && appModel.hasMorePages {
-                                            Task {
-                                                await appModel.loadNextPage()
+                GeometryReader { geo in
+                    let layout = gridLayout(forWidth: geo.size.width)
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            LazyVGrid(columns: layout.columns, spacing: gridSpacing) {
+                                ForEach(appModel.galleryImages) { image in
+                                    thumbnailCell(for: image, cellSize: layout.cellSize)
+                                        .id(image.id)
+                                        .onAppear {
+                                            if image == appModel.galleryImages.last && appModel.hasMorePages {
+                                                Task {
+                                                    await appModel.loadNextPage()
+                                                }
                                             }
                                         }
-                                    }
-                            }
+                                }
 
-                            if appModel.isLoadingGallery {
-                                ProgressView()
-                                    .frame(maxWidth: .infinity)
-                                    .padding()
+                                if appModel.isLoadingGallery {
+                                    ProgressView()
+                                        .frame(maxWidth: .infinity)
+                                        .padding()
+                                }
                             }
+                            .padding()
                         }
-                        .padding()
-                    }
-                    .refreshable {
-                        await appModel.loadInitialGallery()
-                    }
-                    .onAppear {
-                        if let lastId = appModel.lastViewedImageId {
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                withAnimation(.easeInOut(duration: 0.2)) {
-                                    proxy.scrollTo(lastId, anchor: .center)
+                        .refreshable {
+                            await appModel.loadInitialGallery()
+                        }
+                        .onAppear {
+                            if let lastId = appModel.lastViewedImageId {
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                        proxy.scrollTo(lastId, anchor: .center)
+                                    }
                                 }
                             }
                         }
@@ -197,9 +229,9 @@ struct GalleryGridView: View {
     }
 
     @ViewBuilder
-    private func thumbnailCell(for image: GalleryImage) -> some View {
+    private func thumbnailCell(for image: GalleryImage, cellSize: CGFloat) -> some View {
         if appModel.isSelectingImages {
-            GalleryThumbnailView(image: image)
+            GalleryThumbnailView(image: image, size: cellSize)
                 .overlay(alignment: .topTrailing) {
                     let isSelected = image.stashId.map { appModel.selectedImageIds.contains($0) } ?? false
                     Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
@@ -220,6 +252,7 @@ struct GalleryGridView: View {
             let useScalePop = !appModel.effectiveReduceMotion
             GalleryThumbnailView(
                 image: image,
+                size: cellSize,
                 onTap: {
                     appModel.lastViewedImageId = image.id
                     onImageSelected?(image)
