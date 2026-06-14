@@ -40,9 +40,12 @@ struct VideoThumbnailView: View {
                     Image(uiImage: loadedImage)
                         .resizable()
                         .scaledToFill()
-                } else if isLoading {
-                    ProgressView()
                 } else {
+                    // Static placeholder for both the loading and failed states.
+                    // A ProgressView (UIKit activity indicator) can't be
+                    // rasterized inside .drawingGroup() and renders as a broken
+                    // glyph; on a fast (LAN) source the load is near-instant, so
+                    // a still icon is enough.
                     Image(systemName: "video")
                         .font(.largeTitle)
                         .foregroundColor(.secondary)
