@@ -112,6 +112,15 @@ struct GalleryGridView: View {
                                 }
                             }
                             .padding()
+                            // Animate only the column-count transition: cells
+                            // slide into their new positions when a column is
+                            // added/removed. In-band resizing (and the small-mode
+                            // cell shrink, where count stays at the floor) keeps
+                            // count stable, so it tracks the drag live with no
+                            // animation. Keyed on count so appending images or
+                            // the live resize don't trigger a transaction.
+                            .animation(appModel.effectiveReduceMotion ? nil : .smooth(duration: 0.3),
+                                       value: layout.columns.count)
                         }
                         .refreshable {
                             await appModel.loadInitialGallery()
