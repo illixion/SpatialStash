@@ -215,7 +215,11 @@ struct VideoGalleryView: View {
     private func prefetchThumbnails(around video: GalleryVideo) {
         guard let index = appModel.galleryVideos.firstIndex(where: { $0.id == video.id }) else { return }
         let videos = appModel.galleryVideos
-        let prefetchCount = 12
+        // Modest look-ahead: every visible cell calls this, so a large window
+        // already covers a wide range. Actual concurrency is bounded downstream
+        // (ThumbnailGenerator's 4-wide decode gate + per-URL fetch dedupe), so
+        // these tasks mostly coalesce or wait rather than stampede.
+        let prefetchCount = 6
         let endIndex = min(index + prefetchCount, videos.count)
         guard endIndex > index + 1 else { return }
 
@@ -224,7 +228,11 @@ struct VideoGalleryView: View {
             let url = upcoming.thumbnailURL
             Task.detached(priority: .utility) {
                 if await ThumbnailCache.shared.isCached(for: url) { return }
-                _ = await ImageLoader.shared.loadRemoteThumbnailCached(from: url, crop: VideoThumbnailView.cropTo16x9)
+                _ = await ImageLoader.shared.loadRemoteThumbnailCached(
+                    from: url,
+                    maxSize: VideoThumbnailView.thumbnailMaxSize,
+                    crop: VideoThumbnailView.cropTo16x9
+                )
             }
         }
     }

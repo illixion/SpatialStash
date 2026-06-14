@@ -8,6 +8,11 @@ import os
 import SwiftUI
 
 struct VideoThumbnailView: View {
+    /// Max thumbnail dimension for the grid. 16:9 → ~512×288, which stays
+    /// crisp in the widest grid cells while keeping decoded bitmaps small so a
+    /// large window full of thumbnails doesn't thrash memory/compositing.
+    static let thumbnailMaxSize: CGFloat = 512
+
     let video: GalleryVideo
     @State private var loadedImage: UIImage?
     @State private var isLoading = true
@@ -127,8 +132,8 @@ struct VideoThumbnailView: View {
                 loadFailed = true
             }
         } else {
-            // Remote URLs: use cached thumbnail path (stores cropped result in ThumbnailCache)
-            if let image = await ImageLoader.shared.loadRemoteThumbnailCached(from: video.thumbnailURL, crop: Self.cropTo16x9) {
+            // Remote URLs: downsample + cache (stores cropped result in ThumbnailCache)
+            if let image = await ImageLoader.shared.loadRemoteThumbnailCached(from: video.thumbnailURL, maxSize: Self.thumbnailMaxSize, crop: Self.cropTo16x9) {
                 loadedImage = image
             } else {
                 AppLogger.views.warning("Failed to load video thumbnail: \(video.thumbnailURL.lastPathComponent, privacy: .private)")

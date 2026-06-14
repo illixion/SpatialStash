@@ -160,6 +160,45 @@ actor ThumbnailGenerator {
         return createThumbnailSync(for: url, maxSize: maxDimension)
     }
 
+    /// Downsample already-fetched encoded image bytes to a target max dimension.
+    /// Decodes directly at thumbnail size via CGImageSource (no full-resolution
+    /// decode) and runs under the shared concurrency limit, so a gallery full of
+    /// cold thumbnails can't spawn unbounded decodes at once.
+    func downsample(data: Data, maxSize: CGFloat = defaultThumbnailSize) async -> UIImage? {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async { [self] in
+                self.semaphore.wait()
+                defer { self.semaphore.signal() }
+                continuation.resume(returning: self.downsampleSync(data: data, maxSize: maxSize))
+            }
+        }
+    }
+
+    private nonisolated func downsampleSync(data: Data, maxSize: CGFloat) -> UIImage? {
+        autoreleasepool {
+            guard let imageSource = CGImageSourceCreateWithData(data as CFData, nil) else {
+                return nil
+            }
+
+            let options: [CFString: Any] = [
+                kCGImageSourceThumbnailMaxPixelSize: maxSize,
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceShouldCacheImmediately: true
+            ]
+
+            guard let thumbnailRef = CGImageSourceCreateThumbnailAtIndex(
+                imageSource,
+                0,
+                options as CFDictionary
+            ) else {
+                return nil
+            }
+
+            return UIImage(cgImage: thumbnailRef)
+        }
+    }
+
     /// Check if a file is an animated GIF without loading the full image
     nonisolated func isAnimatedGIF(at url: URL) -> Bool {
         guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil) else {

@@ -24,6 +24,10 @@ actor ImageLoader {
 
     private var cache = NSCache<NSURL, CachedImageData>()
     private var inProgressTasks: [URL: Task<CachedImageData?, Error>] = [:]
+    /// In-flight dedupe for decode-free raw-data fetches, so a prefetch
+    /// fan-out (many cells requesting overlapping ranges) coalesces instead of
+    /// issuing duplicate network loads for the same URL.
+    private var inProgressDataTasks: [URL: Task<Data?, Error>] = [:]
 
     private init() {
         // Configure cache limits (costs reflect true decoded image sizes)
@@ -215,18 +219,29 @@ actor ImageLoader {
             return diskData
         }
 
-        // Download without decoding to UIImage
-        let (data, response) = try await URLSession.shared.data(from: url)
-
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200...299).contains(httpResponse.statusCode) else {
-            return nil
+        // Coalesce concurrent network fetches for the same URL.
+        if let existingTask = inProgressDataTasks[url] {
+            return try await existingTask.value
         }
 
-        // Cache to disk only (skip memory cache since we're not decoding)
-        await DiskImageCache.shared.saveData(data, for: url)
+        // Download without decoding to UIImage
+        let task = Task<Data?, Error> {
+            let (data, response) = try await URLSession.shared.data(from: url)
 
-        return data
+            guard let httpResponse = response as? HTTPURLResponse,
+                  (200...299).contains(httpResponse.statusCode) else {
+                return nil
+            }
+
+            // Cache to disk only (skip memory cache since we're not decoding)
+            await DiskImageCache.shared.saveData(data, for: url)
+
+            return data
+        }
+
+        inProgressDataTasks[url] = task
+        defer { inProgressDataTasks[url] = nil }
+        return try await task.value
     }
 
     /// Load both image and data from a URL, using cache if available
@@ -404,21 +419,34 @@ actor ImageLoader {
     /// This avoids the expensive normalizeImage() path on every scroll-back.
     /// - Parameters:
     ///   - url: The remote thumbnail URL
+    ///   - maxSize: When set, downsample to this max dimension straight from the
+    ///     encoded bytes (no full-resolution decode), so large grids hold small
+    ///     bitmaps. When nil, the full-resolution image is used (legacy behavior).
     ///   - crop: Optional transform to apply before caching (e.g. crop to square or 16:9)
     /// - Returns: The cached thumbnail UIImage
-    func loadRemoteThumbnailCached(from url: URL, crop: ((UIImage) -> UIImage)? = nil) async -> UIImage? {
+    func loadRemoteThumbnailCached(from url: URL, maxSize: CGFloat? = nil, crop: ((UIImage) -> UIImage)? = nil) async -> UIImage? {
         // Check ThumbnailCache first (fast memory cache, then HEIC disk)
         if let cached = await ThumbnailCache.shared.loadThumbnail(for: url) {
             return cached
         }
 
-        // Fall back to full load (memory cache → disk cache → network + normalizeImage)
-        guard let image = try? await loadImage(from: url) else {
-            return nil
+        let base: UIImage
+        if let maxSize,
+           let data = try? await loadRawData(from: url),
+           let downsampled = await ThumbnailGenerator.shared.downsample(data: data, maxSize: maxSize) {
+            // Downsample directly from bytes — skips the full decode + normalize.
+            base = downsampled
+        } else {
+            // Full load (memory cache → disk cache → network + normalizeImage).
+            // Also the fallback if the raw-data/downsample path failed.
+            guard let image = try? await loadImage(from: url) else {
+                return nil
+            }
+            base = image
         }
 
         // Apply crop transform if provided
-        let thumbnail = crop?(image) ?? image
+        let thumbnail = crop?(base) ?? base
 
         // Store in ThumbnailCache for fast future reloads
         await ThumbnailCache.shared.saveThumbnail(thumbnail, for: url)
