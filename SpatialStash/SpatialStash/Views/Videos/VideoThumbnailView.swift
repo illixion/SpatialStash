@@ -8,10 +8,10 @@ import os
 import SwiftUI
 
 struct VideoThumbnailView: View {
-    /// Max thumbnail dimension for the grid. 16:9 → ~512×288, which stays
-    /// crisp in the widest grid cells while keeping decoded bitmaps small so a
-    /// large window full of thumbnails doesn't thrash memory/compositing.
-    static let thumbnailMaxSize: CGFloat = 512
+    /// Max thumbnail dimension for the grid. 16:9 → ~384×216 — crisp at the
+    /// cell sizes a large (dense) window produces while keeping decoded bitmaps
+    /// small so 60+ thumbnails don't thrash memory/compositing bandwidth.
+    static let thumbnailMaxSize: CGFloat = 384
 
     let video: GalleryVideo
     @State private var loadedImage: UIImage?
@@ -48,11 +48,13 @@ struct VideoThumbnailView: View {
                         .foregroundColor(.secondary)
                 }
 
-                // Play button overlay
+                // Play button overlay. No drop shadow — a per-cell shadow forces
+                // an offscreen blur pass, which is a meaningful cost across a
+                // gridful of cells. The fill-color SF Symbol already reads on
+                // most thumbnails.
                 Image(systemName: "play.circle.fill")
                     .font(.system(size: 44))
                     .foregroundColor(.white.opacity(0.9))
-                    .shadow(radius: 4)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                 // Bottom badges (3D indicator and duration)
@@ -126,7 +128,7 @@ struct VideoThumbnailView: View {
         if video.thumbnailURL.isFileURL {
             // Local files: use efficient downsampling path
             if let image = await ImageLoader.shared.loadThumbnail(from: video.thumbnailURL) {
-                loadedImage = Self.cropTo16x9(image)
+                loadedImage = await displayReady(Self.cropTo16x9(image))
             } else {
                 AppLogger.views.warning("Failed to load video thumbnail: \(video.thumbnailURL.lastPathComponent, privacy: .private)")
                 loadFailed = true
@@ -134,13 +136,21 @@ struct VideoThumbnailView: View {
         } else {
             // Remote URLs: downsample + cache (stores cropped result in ThumbnailCache)
             if let image = await ImageLoader.shared.loadRemoteThumbnailCached(from: video.thumbnailURL, maxSize: Self.thumbnailMaxSize, crop: Self.cropTo16x9) {
-                loadedImage = image
+                loadedImage = await displayReady(image)
             } else {
                 AppLogger.views.warning("Failed to load video thumbnail: \(video.thumbnailURL.lastPathComponent, privacy: .private)")
                 loadFailed = true
             }
         }
         isLoading = false
+    }
+
+    /// Decode into a display-ready bitmap once, off the main thread, so
+    /// compositing/scrolling doesn't re-decode the (possibly non-display-format)
+    /// CGImageSource thumbnail every frame. Falls back to the original on
+    /// failure. The square image grid gets this for free via its redraw path.
+    private func displayReady(_ image: UIImage) async -> UIImage {
+        await image.byPreparingForDisplay() ?? image
     }
     
     nonisolated static func cropTo16x9(_ image: UIImage) -> UIImage {
