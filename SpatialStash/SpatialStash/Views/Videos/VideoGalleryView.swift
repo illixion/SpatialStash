@@ -14,9 +14,13 @@ struct VideoGalleryView: View {
 
     @State private var showBulkDeleteConfirmation = false
 
-    let columns = [
-        GridItem(.adaptive(minimum: 250, maximum: 350), spacing: 16)
-    ]
+    private let gridSpacing: CGFloat = 16
+    /// Target cell width; the column count is chosen to keep cells near this.
+    /// Video cells fill the column (16:9 via `.aspectRatio`), so they shrink
+    /// with it rather than being capped + centered like the image grid.
+    private let preferredCellSize: CGFloat = 250
+    /// Keep at least this many columns; narrower windows shrink the cells.
+    private let minColumns = 3
 
     var body: some View {
         Group {
@@ -43,9 +47,14 @@ struct VideoGalleryView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ScrollViewReader { proxy in
+                GeometryReader { geo in
+                    let layout = GridColumnLayout.resolve(width: geo.size.width,
+                                                          preferredCellSize: preferredCellSize,
+                                                          minColumns: minColumns,
+                                                          spacing: gridSpacing)
+                    ScrollViewReader { proxy in
                     ScrollView {
-                        LazyVGrid(columns: columns, spacing: 16) {
+                        LazyVGrid(columns: layout.columns, spacing: gridSpacing) {
                             ForEach(appModel.galleryVideos) { video in
                                 thumbnailCell(for: video)
                                     .id(video.id)
@@ -66,6 +75,10 @@ struct VideoGalleryView: View {
                             }
                         }
                         .padding()
+                        // Animate only the column-count transition (add/remove a
+                        // column); in-band resizing tracks the drag live.
+                        .animation(appModel.effectiveReduceMotion ? nil : .smooth(duration: 0.3),
+                                   value: layout.columns.count)
                     }
                     .refreshable {
                         await appModel.loadInitialVideos()
@@ -78,6 +91,7 @@ struct VideoGalleryView: View {
                                 }
                             }
                         }
+                    }
                     }
                 }
             }

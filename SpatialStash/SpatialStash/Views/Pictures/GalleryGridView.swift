@@ -23,42 +23,24 @@ struct GalleryGridView: View {
     private let gallerySpace = "gallery"
 
     private let gridSpacing: CGFloat = 16
-    /// Matches the ScrollView's `.padding()` so the available content width
-    /// is computed correctly from the GeometryReader's outer width.
-    private let gridContentInset: CGFloat = 16
     /// Preferred (and maximum) thumbnail edge. Wide windows keep cells at
-    /// this size and add columns; narrow windows shrink below it instead of
+    /// this size and grow the gaps; narrow windows shrink below it instead of
     /// dropping a column.
     private let preferredCellSize: CGFloat = 200
     /// Never lay out fewer than this many columns — once the window is too
     /// narrow to fit them at `preferredCellSize`, thumbnails shrink to fit.
     private let minColumns = 4
 
-    /// Resolve the column layout and cell edge for a given container width.
-    /// `.adaptive` can't express a column-count *floor* (it just drops to
-    /// fewer, larger columns), so we pick the count manually and use
-    /// `.flexible()` columns — which, like `.adaptive`, expand to fill the
-    /// window width. That keeps the grid hugging the window edges (so the
-    /// resize grabbers don't float), lets inter-cell spacing grow smoothly
-    /// within a band instead of snapping, and keeps the columns array stable
-    /// while only the cell size changes in small mode (so the scroll position
-    /// isn't reset). The cell stays capped at `preferredCellSize` and centered,
-    /// so wide windows grow the gaps; once the window is too narrow to fit
-    /// `minColumns` at full size the column width drops below the cap and the
-    /// thumbnail shrinks to match, increasing density.
+    /// Column layout plus the cell edge. Unlike the video/local grids, image
+    /// cells are a fixed square *centered* in the column and capped at
+    /// `preferredCellSize`, so wide windows grow the inter-cell gaps; the cap is
+    /// applied here on top of the shared column resolution.
     private func gridLayout(forWidth width: CGFloat) -> (columns: [GridItem], cellSize: CGFloat) {
-        guard width > 0 else {
-            return (Array(repeating: GridItem(.flexible(), spacing: gridSpacing),
-                          count: minColumns), preferredCellSize)
-        }
-        let available = max(preferredCellSize, width - gridContentInset * 2)
-        // Same count `.adaptive(minimum: preferredCellSize)` would pick.
-        let natural = Int((available + gridSpacing) / (preferredCellSize + gridSpacing))
-        let count = max(minColumns, natural)
-        let columnWidth = (available - gridSpacing * CGFloat(count - 1)) / CGFloat(count)
-        let cellSize = min(preferredCellSize, columnWidth)
-        let columns = Array(repeating: GridItem(.flexible(), spacing: gridSpacing), count: count)
-        return (columns, cellSize)
+        let layout = GridColumnLayout.resolve(width: width,
+                                              preferredCellSize: preferredCellSize,
+                                              minColumns: minColumns,
+                                              spacing: gridSpacing)
+        return (layout.columns, min(preferredCellSize, layout.columnWidth))
     }
 
     var body: some View {

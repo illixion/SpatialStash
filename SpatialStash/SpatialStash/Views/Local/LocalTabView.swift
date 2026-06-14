@@ -142,9 +142,13 @@ struct LocalMediaListView: View {
     @State private var subfolders: [String] = []
     @State private var isLoading = true
 
-    let columns = [
-        GridItem(.adaptive(minimum: 150, maximum: 250), spacing: 16)
-    ]
+    private let gridSpacing: CGFloat = 16
+    /// Target tile width; the column count is chosen to keep tiles near this.
+    /// Local tiles fill the column (fixed 150 height, width fills), so they
+    /// shrink with it rather than being capped + centered like the image grid.
+    private let preferredCellSize: CGFloat = 150
+    /// Keep at least this many columns; narrower windows shrink the tiles.
+    private let minColumns = 3
 
     var currentFolderName: String {
         folderPath.last ?? "Media"
@@ -197,8 +201,13 @@ struct LocalMediaListView: View {
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else {
-                        ScrollView {
-                            LazyVGrid(columns: columns, spacing: 16) {
+                        GeometryReader { geo in
+                            let layout = GridColumnLayout.resolve(width: geo.size.width,
+                                                                  preferredCellSize: preferredCellSize,
+                                                                  minColumns: minColumns,
+                                                                  spacing: gridSpacing)
+                            ScrollView {
+                            LazyVGrid(columns: layout.columns, spacing: gridSpacing) {
                                 // Back/Up navigation tile
                                 if folderPath.count >= 1 {
                                     Button {
@@ -289,9 +298,14 @@ struct LocalMediaListView: View {
                                 }
                             }
                             .padding()
+                            // Animate only the column-count transition (add/remove
+                            // a column); in-band resizing tracks the drag live.
+                            .animation(appModel.effectiveReduceMotion ? nil : .smooth(duration: 0.3),
+                                       value: layout.columns.count)
                         }
                         .refreshable {
                             loadContent()
+                        }
                         }
                     }
                 }
