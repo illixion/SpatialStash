@@ -234,7 +234,7 @@ struct WebVideoPlayerView: UIViewRepresentable {
                     if (p) { p.removeAttribute('src'); p.load(); }
                 })();
                 """
-                try? await webView.evaluateJavaScript(js)
+                _ = try? await webView.evaluateJavaScript(js)
                 self.isSourceUnloaded = true
             }
         }

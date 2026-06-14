@@ -133,7 +133,7 @@ actor ThumbnailCache {
 
                 // Check cache size and cleanup if needed
                 Task {
-                    await self.cleanupIfNeeded()
+                    self.cleanupIfNeeded()
                 }
             } catch {
                 AppLogger.diskCache.error("Failed to save thumbnail: \(error.localizedDescription, privacy: .public)")

@@ -249,7 +249,6 @@ struct GalleryGridView: View {
                     }
                 }
         } else {
-            let useScalePop = !appModel.effectiveReduceMotion
             GalleryThumbnailView(
                 image: image,
                 size: cellSize,

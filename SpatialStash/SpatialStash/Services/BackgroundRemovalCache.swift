@@ -155,7 +155,7 @@ actor BackgroundRemovalCache {
 
             // Check cache size and cleanup if needed
             Task { [self] in
-                await self.cleanupIfNeeded()
+                self.cleanupIfNeeded()
             }
         } catch {
             AppLogger.diskCache.error("Failed to save background-removed image: \(error.localizedDescription, privacy: .public)")
@@ -214,7 +214,7 @@ actor BackgroundRemovalCache {
         do {
             try heicData.write(to: fileURL)
             Task { [self] in
-                await self.cleanupIfNeeded()
+                self.cleanupIfNeeded()
             }
         } catch {
             AppLogger.diskCache.error("Failed to save diorama foreground: \(error.localizedDescription, privacy: .public)")
@@ -258,7 +258,7 @@ actor BackgroundRemovalCache {
         do {
             try heicData.write(to: fileURL)
             Task { [self] in
-                await self.cleanupIfNeeded()
+                self.cleanupIfNeeded()
             }
         } catch {
             AppLogger.diskCache.error("Failed to save diorama backdrop: \(error.localizedDescription, privacy: .public)")

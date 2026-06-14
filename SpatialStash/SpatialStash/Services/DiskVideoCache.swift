@@ -124,7 +124,7 @@ actor DiskVideoCache {
 
         // Check cache size and cleanup if needed
         Task { [self] in
-            await self.cleanupIfNeeded()
+            self.cleanupIfNeeded()
         }
 
         AppLogger.videoCache.info("Cached video: \(videoId, privacy: .private) (\(format, privacy: .public))")
@@ -158,7 +158,7 @@ actor DiskVideoCache {
 
         // Check cache size and cleanup if needed
         Task { [self] in
-            await self.cleanupIfNeeded()
+            self.cleanupIfNeeded()
         }
 
         AppLogger.videoCache.info("Cached video (moved): \(videoId, privacy: .private) (\(format, privacy: .public))")

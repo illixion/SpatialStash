@@ -93,7 +93,7 @@ actor DiskImageCache {
 
             // Check cache size and cleanup if needed
             Task { [self] in
-                await self.cleanupIfNeeded()
+                self.cleanupIfNeeded()
             }
         } catch {
             AppLogger.diskCache.error("Failed to save data: \(error.localizedDescription, privacy: .public)")

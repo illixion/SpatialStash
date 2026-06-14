@@ -496,8 +496,13 @@ class StereoscopicVideoPlayer: ObservableObject {
             forInterval: CMTime(seconds: 0.1, preferredTimescale: 600),
             queue: .main
         ) { [weak self] time in
-            guard let self = self else { return }
-            self.currentTime = time.seconds
+            // The observer is registered with `queue: .main`, so this fires on
+            // the main thread — i.e. the main actor's executor. assumeIsolated
+            // lets us touch the @MainActor `currentTime` synchronously without a
+            // Task hop (which would lag the time readout by a runloop turn).
+            MainActor.assumeIsolated {
+                self?.currentTime = time.seconds
+            }
         }
     }
 

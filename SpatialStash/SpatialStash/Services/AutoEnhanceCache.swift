@@ -87,7 +87,7 @@ actor AutoEnhanceCache {
         let fileURL = cacheFileURL(for: url)
         do {
             try heicData.write(to: fileURL)
-            Task { [self] in await self.cleanupIfNeeded() }
+            Task { [self] in self.cleanupIfNeeded() }
         } catch {
             AppLogger.diskCache.error("Failed to save auto-enhanced image: \(error.localizedDescription, privacy: .public)")
         }

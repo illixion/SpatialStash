@@ -489,8 +489,8 @@ class RemoteWebSocketClient {
             if let response = urlError.userInfo[NSURLErrorFailingURLPeerTrustErrorKey] {
                 detail += " peerTrust=\(response)"
             }
-            if let failing = urlError.failureURLString {
-                detail += " url=\(failing)"
+            if let failing = urlError.failingURL {
+                detail += " url=\(failing.absoluteString)"
             }
         }
         if task.closeCode != .invalid {
