@@ -11,7 +11,7 @@ struct ScaleHoverEffect: CustomHoverEffect {
         content.hoverEffect { effect, isActive, proxy in
             effect.animation(.easeOut(duration: 0.2)) {
                 $0.scaleEffect(
-                    isActive ? CGSize(width: 1.15, height: 1.15) : CGSize(width: 1, height: 1),
+                    isActive ? CGSize(width: 1.08, height: 1.08) : CGSize(width: 1, height: 1),
                     anchor: .center
                 )
             }
