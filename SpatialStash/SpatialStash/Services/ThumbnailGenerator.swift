@@ -75,9 +75,16 @@ actor ThumbnailGenerator {
     }
 
     /// Generate a thumbnail from a video file using AVAssetImageGenerator.
-    /// Formats not supported by AVFoundation (e.g. WebM) will return nil and
-    /// the UI shows a generic video icon placeholder instead.
+    /// WebM is unreadable by AVFoundation, so it's routed to the WebKit-based
+    /// capture instead. Other formats AVFoundation can't open still return nil
+    /// and the UI shows a generic video icon placeholder.
     private func createVideoThumbnail(for url: URL, maxSize: CGFloat) async -> UIImage? {
+        // AVFoundation can't decode WebM — capture a frame via WebKit (the same
+        // engine that plays it). Skip the AVAssetImageGenerator attempt entirely.
+        if url.pathExtension.lowercased() == "webm" {
+            return await WebMThumbnailGenerator.shared.generateThumbnail(for: url, maxSize: maxSize)
+        }
+
         let asset = AVURLAsset(url: url)
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
