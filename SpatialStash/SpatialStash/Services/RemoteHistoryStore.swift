@@ -34,10 +34,10 @@ final class RemoteHistoryStore {
         self.apiClient = apiClient
     }
 
-    /// Build the /get URL for a history entry. Mirrors what the playback
-    /// path uses so the same on-disk cache (URLSession) is exercised.
+    /// Build the /get URL for a history entry. Viewing a thumbnail must not
+    /// re-record it (it would land in `others`), so recording is suppressed.
     func imageURL(for entry: RemoteHistoryEntry) -> URL? {
-        apiClient.getImageURL(baseURL: endpoint, postId: entry.id, accessToken: accessToken)
+        apiClient.getImageURL(baseURL: endpoint, postId: entry.id, accessToken: accessToken, record: false)
     }
 
     func refresh() async {

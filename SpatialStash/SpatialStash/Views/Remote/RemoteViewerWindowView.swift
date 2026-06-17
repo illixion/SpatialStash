@@ -708,7 +708,7 @@ struct RemoteViewerWindowView: View {
             }
         } else {
             // Remote API mode
-            model.contentProvider = RemoteContentProvider(apiClient: model.apiClient, baseURL: config.apiEndpoint, accessToken: config.accessToken)
+            model.contentProvider = RemoteContentProvider(apiClient: model.apiClient, baseURL: config.apiEndpoint, accessToken: config.accessToken, deviceId: config.wsDeviceId)
         }
 
         // Wire up window callbacks

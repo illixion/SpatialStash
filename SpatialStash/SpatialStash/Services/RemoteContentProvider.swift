@@ -18,6 +18,9 @@ class RemoteContentProvider: SlideshowContentProvider {
     let apiClient: RemoteAPIClient
     let baseURL: String
     let accessToken: String
+    /// This window's WS channel id, recorded with each displayed post so the
+    /// server's /history page groups them under this display.
+    let deviceId: String
 
     /// Posts the server has nominated via `playback`. Drained by the
     /// engine's prefetch loop on each `fetchMoreContent` call.
@@ -31,10 +34,11 @@ class RemoteContentProvider: SlideshowContentProvider {
     /// same ids legitimately.
     private var seenIds: Set<Int> = []
 
-    init(apiClient: RemoteAPIClient, baseURL: String, accessToken: String) {
+    init(apiClient: RemoteAPIClient, baseURL: String, accessToken: String, deviceId: String) {
         self.apiClient = apiClient
         self.baseURL = baseURL
         self.accessToken = accessToken
+        self.deviceId = deviceId
     }
 
     /// Called by RemoteViewerModel when a `playback` frame arrives. The posts
@@ -95,11 +99,13 @@ class RemoteContentProvider: SlideshowContentProvider {
     }
 
     func resolveImageURL(for post: RemotePost) -> URL? {
-        apiClient.getImageURL(baseURL: baseURL, postId: post._id, accessToken: accessToken)
+        // Don't record on fetch — onPostDisplayed records authoritatively with
+        // our deviceId once the post is actually shown.
+        apiClient.getImageURL(baseURL: baseURL, postId: post._id, accessToken: accessToken, record: false)
     }
 
     func onPostDisplayed(_ post: RemotePost) async {
-        try? await apiClient.addToHistory(baseURL: baseURL, postId: post._id, accessToken: accessToken)
+        try? await apiClient.addToHistory(baseURL: baseURL, postId: post._id, accessToken: accessToken, deviceId: deviceId)
     }
 
     func resetPagination() {

@@ -42,8 +42,15 @@ actor RemoteAPIClient {
     /// Build the direct image URL for a specific post.
     /// The /get endpoint serves the image directly (or redirects to it),
     /// so we construct the URL and use it as the image source.
-    nonisolated func getImageURL(baseURL: String, postId: Int, accessToken: String) -> URL? {
-        URL(string: withToken("\(normalize(baseURL))/get?id=\(postId)", token: accessToken))
+    ///
+    /// Pass `record: false` to suppress the server's per-display history
+    /// entry for this fetch — we record authoritatively via `/addtohistory`
+    /// on display, so letting the image fetch record too would double-count
+    /// (playback) or pollute the `others` bucket (history-grid thumbnails).
+    nonisolated func getImageURL(baseURL: String, postId: Int, accessToken: String, record: Bool = true) -> URL? {
+        var url = "\(normalize(baseURL))/get?id=\(postId)"
+        if !record { url += "&record=0" }
+        return URL(string: withToken(url, token: accessToken))
     }
 
     /// Save the current post on the server.
@@ -56,9 +63,16 @@ actor RemoteAPIClient {
         return String(data: data, encoding: .utf8) ?? "Saved"
     }
 
-    /// Add a post to the viewing history on the server.
-    func addToHistory(baseURL: String, postId: Int, accessToken: String) async throws {
-        guard let url = URL(string: withToken("\(normalize(baseURL))/addtohistory?id=\(postId)", token: accessToken)) else {
+    /// Add a post to the viewing history on the server. `deviceId` files it
+    /// under this display on the server's /history page; empty → `others`.
+    func addToHistory(baseURL: String, postId: Int, accessToken: String, deviceId: String = "") async throws {
+        var path = "\(normalize(baseURL))/addtohistory?id=\(postId)"
+        let device = deviceId.trimmingCharacters(in: .whitespaces)
+        if !device.isEmpty {
+            let encoded = device.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? device
+            path += "&deviceId=\(encoded)"
+        }
+        guard let url = URL(string: withToken(path, token: accessToken)) else {
             throw RemoteAPIError.invalidURL
         }
 
