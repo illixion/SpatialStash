@@ -344,16 +344,20 @@ struct WebVideoPlayerView: UIViewRepresentable {
         var components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
         if let apiKey = apiKey, !apiKey.isEmpty {
             var queryItems = components.queryItems ?? []
-            queryItems.append(URLQueryItem(name: "apikey", value: apiKey))
-            components.queryItems = queryItems
+            if !queryItems.contains(where: { $0.name == "apikey" }) {
+                queryItems.append(URLQueryItem(name: "apikey", value: apiKey))
+                components.queryItems = queryItems
+            }
         }
         let videoURLString = components.url?.absoluteString ?? url.absoluteString
         let fallbackURLString = fallbackVideoURL.map { fallbackURL in
             var fallbackComponents = URLComponents(url: fallbackURL, resolvingAgainstBaseURL: false)
             if let apiKey = apiKey, !apiKey.isEmpty {
                 var queryItems = fallbackComponents?.queryItems ?? []
-                queryItems.append(URLQueryItem(name: "apikey", value: apiKey))
-                fallbackComponents?.queryItems = queryItems
+                if !queryItems.contains(where: { $0.name == "apikey" }) {
+                    queryItems.append(URLQueryItem(name: "apikey", value: apiKey))
+                    fallbackComponents?.queryItems = queryItems
+                }
             }
             return fallbackComponents?.url?.absoluteString ?? fallbackURL.absoluteString
         }

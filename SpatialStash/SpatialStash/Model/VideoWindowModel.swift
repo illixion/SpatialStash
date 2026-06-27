@@ -15,12 +15,18 @@
  */
 
 import Foundation
+import AVFoundation
 import os
 import SwiftUI
 
 @MainActor
 @Observable
 final class VideoWindowModel {
+    enum PlaybackRenderer {
+        case resolving
+        case nativeMetal
+        case webKit
+    }
 
     // MARK: - Identity / Context
 
@@ -73,6 +79,7 @@ final class VideoWindowModel {
     var isFlipped: Bool = false
     /// Per-window visual adjustments tier (falls back to global when unmodified).
     var currentAdjustments: VisualAdjustments = VisualAdjustments()
+    var playbackRenderer: PlaybackRenderer = .resolving
 
     // MARK: - Playback State (driven by the WebVideoPlayerView JS bridge)
 
@@ -132,6 +139,7 @@ final class VideoWindowModel {
     }
 
     @ObservationIgnored private var didStart = false
+    @ObservationIgnored private var playbackRendererTask: Task<Void, Never>?
 
     // MARK: - Initialization (side-effect-free)
 
@@ -161,11 +169,14 @@ final class VideoWindowModel {
         guard !didStart else { return }
         didStart = true
         appModel.lastViewedVideoId = video.id
+        resolvePlaybackRenderer()
     }
 
     /// Call from onDisappear.
     func cleanup() {
         cancelAutoHideTimer()
+        playbackRendererTask?.cancel()
+        playbackRendererTask = nil
         loopController.reset()
         playCommand = nil
         pauseCommand = nil
@@ -205,6 +216,7 @@ final class VideoWindowModel {
         isFlipped = false
         currentAdjustments = VisualAdjustments()
         loopController.reset()
+        resolvePlaybackRenderer()
 
         // Reset playback state (web view reloads as a fresh muted autoplay)
         currentTime = 0
@@ -270,6 +282,60 @@ final class VideoWindowModel {
     /// Per-window adjustments if modified, otherwise the global tier.
     var effectiveVideoAdjustments: VisualAdjustments {
         currentAdjustments.isModified ? currentAdjustments : appModel.globalVisualAdjustments
+    }
+
+    var authenticatedStreamURL: URL {
+        authenticatedURL(video.streamURL)
+    }
+
+    var authenticatedFallbackStreamURL: URL? {
+        video.fallbackStreamURL.map(authenticatedURL)
+    }
+
+    func forceWebKitPlayback() {
+        playbackRendererTask?.cancel()
+        playbackRenderer = .webKit
+    }
+
+    private func resolvePlaybackRenderer() {
+        playbackRendererTask?.cancel()
+        playbackRenderer = .resolving
+
+        let url = authenticatedStreamURL
+        playbackRendererTask = Task { [weak self] in
+            let isPlayable = await Self.canPlayNatively(url: url)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard let self, self.authenticatedStreamURL == url else { return }
+                self.playbackRenderer = isPlayable ? .nativeMetal : .webKit
+            }
+        }
+    }
+
+    private func authenticatedURL(_ url: URL) -> URL {
+        guard !url.isFileURL,
+              !appModel.stashAPIKey.isEmpty,
+              var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return url
+        }
+        var queryItems = components.queryItems ?? []
+        if !queryItems.contains(where: { $0.name == "apikey" }) {
+            queryItems.append(URLQueryItem(name: "apikey", value: appModel.stashAPIKey))
+            components.queryItems = queryItems
+        }
+        return components.url ?? url
+    }
+
+    private nonisolated static func canPlayNatively(url: URL) async -> Bool {
+        let asset = AVURLAsset(url: url)
+        do {
+            let isPlayable = try await asset.load(.isPlayable)
+            guard isPlayable else { return false }
+            let tracks = try await asset.loadTracks(withMediaType: .video)
+            return !tracks.isEmpty
+        } catch {
+            return false
+        }
     }
 
     func toggleFlip() {

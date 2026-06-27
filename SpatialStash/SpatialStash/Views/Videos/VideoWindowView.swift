@@ -57,23 +57,48 @@ struct VideoWindowView: View {
                         )
                         .id("\(video.id)_3d")
                     } else {
-                        WebVideoPlayerView(
-                            videoURL: video.streamURL,
-                            fallbackVideoURL: video.fallbackStreamURL,
-                            apiKey: appModel.stashAPIKey.isEmpty ? nil : appModel.stashAPIKey,
-                            // Native Safari controls are off; our SwiftUI
-                            // control bar drives playback via the JS bridge.
-                            showControls: false,
-                            isRoomActive: windowModel.isInActiveRoom,
-                            onVideoSizeKnown: { size in
-                                lockWindowToVideoAspectRatio(videoSize: size)
-                            },
-                            visualAdjustments: windowModel.effectiveVideoAdjustments,
-                            loopController: windowModel.loopController,
-                            playbackModel: windowModel
-                        )
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .id("\(video.id)_2d")
+                        switch windowModel.playbackRenderer {
+                        case .resolving:
+                            ProgressView("Loading video...")
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .id("\(video.id)_resolving")
+
+                        case .nativeMetal:
+                            NativeMetalVideoPlayerView(
+                                videoURL: windowModel.authenticatedStreamURL,
+                                isRoomActive: windowModel.isInActiveRoom,
+                                onVideoSizeKnown: { size in
+                                    lockWindowToVideoAspectRatio(videoSize: size)
+                                },
+                                visualAdjustments: windowModel.effectiveVideoAdjustments,
+                                loopController: windowModel.loopController,
+                                playbackModel: windowModel,
+                                onPlaybackError: {
+                                    windowModel.forceWebKitPlayback()
+                                }
+                            )
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .id("\(video.id)_native")
+
+                        case .webKit:
+                            WebVideoPlayerView(
+                                videoURL: windowModel.authenticatedStreamURL,
+                                fallbackVideoURL: windowModel.authenticatedFallbackStreamURL,
+                                apiKey: appModel.stashAPIKey.isEmpty ? nil : appModel.stashAPIKey,
+                                // Native Safari controls are off; our SwiftUI
+                                // control bar drives playback via the JS bridge.
+                                showControls: false,
+                                isRoomActive: windowModel.isInActiveRoom,
+                                onVideoSizeKnown: { size in
+                                    lockWindowToVideoAspectRatio(videoSize: size)
+                                },
+                                visualAdjustments: windowModel.effectiveVideoAdjustments,
+                                loopController: windowModel.loopController,
+                                playbackModel: windowModel
+                            )
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .id("\(video.id)_web")
+                        }
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -81,7 +106,11 @@ struct VideoWindowView: View {
                 .brightness(windowModel.shouldUse3DMode ? windowModel.effectiveVideoAdjustments.brightness : 0)
                 .contrast(windowModel.shouldUse3DMode ? windowModel.effectiveVideoAdjustments.contrast : 1)
                 .saturation(windowModel.shouldUse3DMode ? windowModel.effectiveVideoAdjustments.saturation : 1)
-                .opacity(windowModel.shouldUse3DMode ? windowModel.effectiveVideoAdjustments.opacity : 1)
+                .opacity(
+                    windowModel.shouldUse3DMode || windowModel.playbackRenderer == .nativeMetal
+                        ? windowModel.effectiveVideoAdjustments.opacity
+                        : 1
+                )
                 .overlay {
                     // Transparent tap target that only appears when UI is hidden
                     if windowModel.isUIHidden {
