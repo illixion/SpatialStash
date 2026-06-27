@@ -59,6 +59,7 @@ struct VideoWindowView: View {
                     } else {
                         WebVideoPlayerView(
                             videoURL: video.streamURL,
+                            fallbackVideoURL: video.fallbackStreamURL,
                             apiKey: appModel.stashAPIKey.isEmpty ? nil : appModel.stashAPIKey,
                             // Native Safari controls are off; our SwiftUI
                             // control bar drives playback via the JS bridge.

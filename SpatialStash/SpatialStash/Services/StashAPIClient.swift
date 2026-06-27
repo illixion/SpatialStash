@@ -526,6 +526,7 @@ actor StashAPIClient {
         let paths: StashScenePaths
         let files: [StashSceneFile]?
         let tags: [StashSceneTag]?
+        let sceneStreams: [StashSceneStreamEndpoint]?
     }
 
     struct StashSceneTag: Decodable {
@@ -543,6 +544,12 @@ actor StashAPIClient {
         let width: Int?
         let height: Int?
         let duration: Double?
+    }
+
+    struct StashSceneStreamEndpoint: Decodable {
+        let url: String
+        let mime_type: String?
+        let label: String?
     }
 
     func findScenes(page: Int, perPage: Int, query: String? = nil) async throws -> FindScenesResult {
@@ -574,6 +581,11 @@ actor StashAPIClient {
                     tags {
                         id
                         name
+                    }
+                    sceneStreams {
+                        url
+                        mime_type
+                        label
                     }
                 }
             }

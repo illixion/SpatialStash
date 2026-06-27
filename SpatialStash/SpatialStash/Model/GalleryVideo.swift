@@ -10,7 +10,12 @@ struct GalleryVideo: Identifiable, Equatable, Hashable, Codable {
     let id: UUID
     let stashId: String
     let thumbnailURL: URL
+    /// Preferred playback URL. For Stash-hosted WebM this may be a server-side
+    /// MP4/HLS transcode because visionOS WebKit WebM support depends on codec.
     let streamURL: URL
+    /// Original direct Stash stream URL, used as fallback when a preferred
+    /// server-side transcode cannot be played.
+    let fallbackStreamURL: URL?
     let title: String?
     let duration: TimeInterval?
 
@@ -35,6 +40,7 @@ struct GalleryVideo: Identifiable, Equatable, Hashable, Codable {
         stashId: String,
         thumbnailURL: URL,
         streamURL: URL,
+        fallbackStreamURL: URL? = nil,
         title: String? = nil,
         duration: TimeInterval? = nil,
         isStereoscopic: Bool = false,
@@ -50,6 +56,7 @@ struct GalleryVideo: Identifiable, Equatable, Hashable, Codable {
         self.stashId = stashId
         self.thumbnailURL = thumbnailURL
         self.streamURL = streamURL
+        self.fallbackStreamURL = fallbackStreamURL
         self.title = title
         self.duration = duration
         self.isStereoscopic = isStereoscopic

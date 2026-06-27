@@ -29,7 +29,7 @@ final class GraphQLVideoSource: VideoSource, @unchecked Sendable {
 
         let videos = result.scenes.compactMap { scene -> GalleryVideo? in
             guard let streamURLString = scene.paths.stream,
-                  let streamURL = URL(string: streamURLString) else {
+                  let directStreamURL = URL(string: streamURLString) else {
                 return nil
             }
 
@@ -39,7 +39,7 @@ final class GraphQLVideoSource: VideoSource, @unchecked Sendable {
                 thumbnailURL = screenshotURL
             } else {
                 // Use a placeholder or first frame
-                thumbnailURL = streamURL
+                thumbnailURL = directStreamURL
             }
 
             let firstFile = scene.files?.first
@@ -49,6 +49,12 @@ final class GraphQLVideoSource: VideoSource, @unchecked Sendable {
 
             // Extract original filename from files path
             let fileName = firstFile?.path.map { ($0 as NSString).lastPathComponent }
+            let streamURL = Self.preferredStreamURL(
+                directStreamURL: directStreamURL,
+                fileName: fileName,
+                streamEndpoints: scene.sceneStreams
+            )
+            let fallbackStreamURL = streamURL == directStreamURL ? nil : directStreamURL
 
             // Detect stereoscopic format from tags
             let tagNames = scene.tags?.map { $0.name } ?? []
@@ -67,6 +73,7 @@ final class GraphQLVideoSource: VideoSource, @unchecked Sendable {
                 stashId: scene.id,
                 thumbnailURL: thumbnailURL,
                 streamURL: streamURL,
+                fallbackStreamURL: fallbackStreamURL,
                 title: scene.title,
                 duration: duration,
                 isStereoscopic: isStereoscopic,
@@ -88,5 +95,37 @@ final class GraphQLVideoSource: VideoSource, @unchecked Sendable {
             hasMore: hasMore,
             totalCount: result.count
         )
+    }
+
+    /// Stash's direct `/stream` endpoint may serve WebM with VP8/AV1/etc. that
+    /// visionOS WebKit cannot reliably decode. When the original file is WebM,
+    /// prefer Stash's server-side MP4 live-transcode endpoint and keep direct
+    /// WebM as fallback for servers without live transcoding.
+    private static func preferredStreamURL(
+        directStreamURL: URL,
+        fileName: String?,
+        streamEndpoints: [StashAPIClient.StashSceneStreamEndpoint]?
+    ) -> URL {
+        let originalExtension = (fileName as NSString?)?.pathExtension.lowercased()
+            ?? directStreamURL.pathExtension.lowercased()
+        guard originalExtension == "webm",
+              let streamEndpoints,
+              !streamEndpoints.isEmpty else {
+            return directStreamURL
+        }
+
+        if let mp4URL = streamEndpoints
+            .compactMap({ URL(string: $0.url) })
+            .first(where: { $0.path.hasSuffix("/stream.mp4") }) {
+            return mp4URL
+        }
+
+        if let hlsURL = streamEndpoints
+            .compactMap({ URL(string: $0.url) })
+            .first(where: { $0.path.hasSuffix("/stream.m3u8") }) {
+            return hlsURL
+        }
+
+        return directStreamURL
     }
 }

@@ -11,6 +11,9 @@ import WebKit
 
 struct WebVideoPlayerView: UIViewRepresentable {
     let videoURL: URL
+    /// Optional direct/original URL to try if the preferred playback URL fails.
+    /// Used when Stash server-side transcoding is unavailable for a WebM scene.
+    var fallbackVideoURL: URL? = nil
     let apiKey: String?
     var showControls: Bool = true
     /// Whether the window is in the user's current room. When false, auto-resume
@@ -240,7 +243,7 @@ struct WebVideoPlayerView: UIViewRepresentable {
         // Use relative filename so WKWebView resolves it against the HTML file's directory
         let relativeSrc = fileURL.lastPathComponent.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
             ?? fileURL.lastPathComponent
-        let html = generateVideoHTML(videoSrc: relativeSrc, apiKey: nil)
+        let html = generateVideoHTML(videoSrc: relativeSrc, fallbackVideoSrc: nil)
         let videoDir = fileURL.deletingLastPathComponent()
         let videoBaseName = fileURL.deletingPathExtension().lastPathComponent
         let htmlFile = videoDir.appendingPathComponent(".spatialstash_player_\(videoBaseName).html")
@@ -345,16 +348,26 @@ struct WebVideoPlayerView: UIViewRepresentable {
             components.queryItems = queryItems
         }
         let videoURLString = components.url?.absoluteString ?? url.absoluteString
-        return generateVideoHTML(videoSrc: videoURLString, apiKey: apiKey)
+        let fallbackURLString = fallbackVideoURL.map { fallbackURL in
+            var fallbackComponents = URLComponents(url: fallbackURL, resolvingAgainstBaseURL: false)
+            if let apiKey = apiKey, !apiKey.isEmpty {
+                var queryItems = fallbackComponents?.queryItems ?? []
+                queryItems.append(URLQueryItem(name: "apikey", value: apiKey))
+                fallbackComponents?.queryItems = queryItems
+            }
+            return fallbackComponents?.url?.absoluteString ?? fallbackURL.absoluteString
+        }
+        return generateVideoHTML(videoSrc: videoURLString, fallbackVideoSrc: fallbackURLString)
     }
 
-    private func generateVideoHTML(videoSrc: String, apiKey: String?) -> String {
+    private func generateVideoHTML(videoSrc: String, fallbackVideoSrc: String?) -> String {
         // Match the initial `controls` attribute to showControls so native
         // controls never flash on load before the JS toggle can hide them.
         let controlsAttr = showControls ? "controls " : ""
         let loopAttr = loop ? "loop " : ""
         let initialAdjustments = visualAdjustments ?? VisualAdjustments()
         let initialFilter = initialAdjustments.cssFilterString()
+        let fallbackVideoSrcLiteral = Self.javascriptStringLiteral(fallbackVideoSrc ?? "")
         return """
         <!DOCTYPE html>
         <html>
@@ -416,6 +429,8 @@ struct WebVideoPlayerView: UIViewRepresentable {
                 const video = document.getElementById('player');
                 const sharpenCanvas = document.getElementById('sharpen-canvas');
                 const originalSrc = video.src;
+                const fallbackSrc = \(fallbackVideoSrcLiteral);
+                let didSwitchToFallbackSrc = false;
                 let retryCount = 0;
                 const maxRetries = 5;
                 const baseDelay = 3000; // 3 seconds initial delay
@@ -677,9 +692,21 @@ struct WebVideoPlayerView: UIViewRepresentable {
                     }, delay);
                 }
 
+                function switchToFallbackVideo() {
+                    if (!fallbackSrc || didSwitchToFallbackSrc) return false;
+                    didSwitchToFallbackSrc = true;
+                    retryCount = 0;
+                    video.src = fallbackSrc;
+                    video.load();
+                    video.play().catch(function() {});
+                    return true;
+                }
+
                 // On error: attempt to reload instead of showing a permanent error
                 video.addEventListener('error', function() {
-                    reloadVideo();
+                    if (!switchToFallbackVideo()) {
+                        reloadVideo();
+                    }
                 });
 
                 // Also catch source-level errors (nested <source> or src attribute)
