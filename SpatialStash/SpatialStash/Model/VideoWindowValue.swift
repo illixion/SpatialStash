@@ -19,15 +19,30 @@ struct VideoWindowValue: Identifiable, Codable, Hashable {
     /// Snapshot of custom 3D settings at pop-out time
     var video3DSettings: Video3DSettings?
 
+    /// Snapshot of real-time fake-3D intent at pop-out time
+    var pseudo3DEnabled: Bool
+
+    /// Snapshot of fake-3D depth tuning at pop-out time
+    var pseudo3DSettings: Pseudo3DSettings?
+
     /// Whether this window was opened via pushWindow (back button dismisses)
     /// vs openWindow (standalone pop-out with gallery button)
     var wasPushed: Bool
 
-    init(video: GalleryVideo, stereoscopicOverride: Bool? = nil, video3DSettings: Video3DSettings? = nil, wasPushed: Bool = false) {
+    init(
+        video: GalleryVideo,
+        stereoscopicOverride: Bool? = nil,
+        video3DSettings: Video3DSettings? = nil,
+        pseudo3DEnabled: Bool = false,
+        pseudo3DSettings: Pseudo3DSettings? = nil,
+        wasPushed: Bool = false
+    ) {
         self.id = UUID()
         self.video = video
         self.stereoscopicOverride = stereoscopicOverride
         self.video3DSettings = video3DSettings
+        self.pseudo3DEnabled = pseudo3DEnabled
+        self.pseudo3DSettings = pseudo3DSettings
         self.wasPushed = wasPushed
     }
 }

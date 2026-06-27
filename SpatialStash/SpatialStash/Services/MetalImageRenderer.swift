@@ -38,6 +38,9 @@ final class MetalImageRenderer: Sendable {
     let rcasPipelineState: MTLRenderPipelineState
     /// Pass-1 RCAS pipeline, renders to a 16-bit intermediate.
     let rcasPipelineState16: MTLRenderPipelineState
+    /// Pseudo-3D eye-warp pipeline (renders one stereo eye into a bgra8 eye
+    /// texture). Used by the windowed real-time fake-3D video path.
+    let pseudo3DEyePipelineState: MTLRenderPipelineState
     private let ciContext: CIContext
 
     /// Bounds the number of concurrent full-image CGImageSource decodes across
@@ -102,7 +105,8 @@ final class MetalImageRenderer: Sendable {
         guard let library = device.makeDefaultLibrary(),
               let vertexFunction = library.makeFunction(name: "imageVertexShader"),
               let aaTonalFn = library.makeFunction(name: "imageFragmentShader"),
-              let rcasFn = library.makeFunction(name: "rcasFragmentShader") else {
+              let rcasFn = library.makeFunction(name: "rcasFragmentShader"),
+              let stereoEyeFn = library.makeFunction(name: "videoPseudo3DEyeFragmentShader") else {
             return nil
         }
 
@@ -136,6 +140,15 @@ final class MetalImageRenderer: Sendable {
             self.rcasPipelineState = try device.makeRenderPipelineState(descriptor: rcasDesc)
             rcasDesc.colorAttachments[0].pixelFormat = .rgba16Float
             self.rcasPipelineState16 = try device.makeRenderPipelineState(descriptor: rcasDesc)
+
+            // Pseudo-3D eye warp: opaque write into a bgra8 IOSurface-backed eye
+            // texture (no blending — each eye is a full opaque frame).
+            let stereoDesc = MTLRenderPipelineDescriptor()
+            stereoDesc.vertexFunction = vertexFunction
+            stereoDesc.fragmentFunction = stereoEyeFn
+            stereoDesc.colorAttachments[0].isBlendingEnabled = false
+            stereoDesc.colorAttachments[0].pixelFormat = .bgra8Unorm
+            self.pseudo3DEyePipelineState = try device.makeRenderPipelineState(descriptor: stereoDesc)
         } catch {
             return nil
         }

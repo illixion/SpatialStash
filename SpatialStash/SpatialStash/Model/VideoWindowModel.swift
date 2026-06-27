@@ -74,6 +74,14 @@ final class VideoWindowModel {
     /// Drives the per-window Video3DSettingsSheet.
     var showVideo3DSettingsSheet: Bool = false
 
+    /// Real-time fake-3D conversion of a mono video (windowed, no precompute).
+    /// Distinct from `stereoscopicOverride`, which presents a genuinely
+    /// stereoscopic source (SBS / MV-HEVC). Only applies to AVFoundation-
+    /// decodable videos (the `.nativeMetal` renderer).
+    var pseudo3DEnabled: Bool = false
+    /// Depth/convergence tuning for the fake-3D warp.
+    var pseudo3DSettings: Pseudo3DSettings = .default
+
     // MARK: - Per-Window Visuals
 
     var isFlipped: Bool = false
@@ -150,6 +158,8 @@ final class VideoWindowModel {
         self.appModel = appModel
         self.stereoscopicOverride = windowValue.stereoscopicOverride
         self.video3DSettings = windowValue.video3DSettings
+        self.pseudo3DEnabled = windowValue.pseudo3DEnabled
+        self.pseudo3DSettings = windowValue.pseudo3DSettings ?? .default
 
         // Snapshot the browse list + pagination so prev/next navigate over this
         // window's own copy (parallels PhotoWindowModel.init).
@@ -213,6 +223,8 @@ final class VideoWindowModel {
         // Reset per-window viewing state
         stereoscopicOverride = nil
         video3DSettings = nil
+        pseudo3DEnabled = false
+        pseudo3DSettings = .default
         isFlipped = false
         currentAdjustments = VisualAdjustments()
         loopController.reset()
@@ -257,13 +269,33 @@ final class VideoWindowModel {
         return video.isStereoscopic
     }
 
+    /// Whether this window should render with the real-time fake-3D player.
+    /// Mutually exclusive with the genuine stereoscopic path, and limited to the
+    /// AVFoundation (native Metal) renderer since it pulls decoded frames via
+    /// AVPlayerItemVideoOutput.
+    var shouldUsePseudo3D: Bool {
+        pseudo3DEnabled && !shouldUse3DMode && playbackRenderer == .nativeMetal
+    }
+
     func set2DMode() {
         stereoscopicOverride = false
+        pseudo3DEnabled = false
+    }
+
+    /// Engage real-time fake-3D, ensuring the genuine-stereoscopic path is off.
+    func enablePseudo3D() {
+        stereoscopicOverride = false
+        pseudo3DEnabled = true
+    }
+
+    func disablePseudo3D() {
+        pseudo3DEnabled = false
     }
 
     /// Resolve the best 3D settings for the current video and engage 3D, or
     /// open the settings sheet when none can be inferred.
     func enable3DMode() async {
+        pseudo3DEnabled = false
         if let saved = await Video3DSettingsTracker.shared.loadSettings(videoId: video.stashId) {
             video3DSettings = saved
             stereoscopicOverride = true

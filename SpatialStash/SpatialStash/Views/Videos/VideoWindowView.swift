@@ -56,6 +56,26 @@ struct VideoWindowView: View {
                             }
                         )
                         .id("\(video.id)_3d")
+                    } else if windowModel.shouldUsePseudo3D {
+                        Pseudo3DVideoPlayerView(
+                            videoURL: windowModel.authenticatedStreamURL,
+                            isRoomActive: windowModel.isInActiveRoom,
+                            onVideoSizeKnown: { size in
+                                lockWindowToVideoAspectRatio(videoSize: size)
+                            },
+                            visualAdjustments: windowModel.effectiveVideoAdjustments,
+                            settings: windowModel.pseudo3DSettings,
+                            isFlipped: windowModel.isFlipped,
+                            loopController: windowModel.loopController,
+                            playbackModel: windowModel,
+                            onPlaybackError: {
+                                // Fall back to the flat native player if the
+                                // stereo pipeline can't decode this source.
+                                windowModel.disablePseudo3D()
+                            }
+                        )
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .id("\(video.id)_pseudo3d")
                     } else {
                         switch windowModel.playbackRenderer {
                         case .resolving:
@@ -102,7 +122,9 @@ struct VideoWindowView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .scaleEffect(x: windowModel.isFlipped ? -1 : 1, y: 1)
+                // Fake-3D handles the mirror inside the warp shader; mirroring
+                // the RealityView container would invert the stereo pair too.
+                .scaleEffect(x: (windowModel.isFlipped && !windowModel.shouldUsePseudo3D) ? -1 : 1, y: 1)
                 .brightness(windowModel.shouldUse3DMode ? windowModel.effectiveVideoAdjustments.brightness : 0)
                 .contrast(windowModel.shouldUse3DMode ? windowModel.effectiveVideoAdjustments.contrast : 1)
                 .saturation(windowModel.shouldUse3DMode ? windowModel.effectiveVideoAdjustments.saturation : 1)
@@ -232,7 +254,9 @@ struct VideoWindowView: View {
                 let newValue = VideoWindowValue(
                     video: windowModel.video,
                     stereoscopicOverride: windowModel.stereoscopicOverride,
-                    video3DSettings: windowModel.video3DSettings
+                    video3DSettings: windowModel.video3DSettings,
+                    pseudo3DEnabled: windowModel.pseudo3DEnabled,
+                    pseudo3DSettings: windowModel.pseudo3DSettings
                 )
                 openWindow(id: "video-detail", value: newValue)
                 dismissWindow()

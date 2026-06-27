@@ -326,6 +326,34 @@ struct VideoOrnamentsView: View {
                     Label("Edit 3D Settings", systemImage: "slider.horizontal.3")
                 }
             }
+
+            // Real-time fake-3D conversion of a mono video (windowed, no
+            // precompute). Only available for AVFoundation-decodable sources.
+            Divider()
+
+            Button {
+                if windowModel.shouldUsePseudo3D {
+                    windowModel.disablePseudo3D()
+                } else {
+                    windowModel.enablePseudo3D()
+                }
+            } label: {
+                HStack {
+                    Text("Convert to 3D (Beta)")
+                    if windowModel.shouldUsePseudo3D {
+                        Image(systemName: "checkmark")
+                    }
+                }
+            }
+            .disabled(windowModel.playbackRenderer != .nativeMetal)
+
+            if windowModel.shouldUsePseudo3D {
+                Menu("3D Depth") {
+                    depthButton("Subtle", .subtle)
+                    depthButton("Medium", .medium)
+                    depthButton("Strong", .strong)
+                }
+            }
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: currentModeIcon)
@@ -350,11 +378,26 @@ struct VideoOrnamentsView: View {
         }
     }
 
+    @ViewBuilder
+    private func depthButton(_ title: String, _ preset: Pseudo3DSettings) -> some View {
+        Button {
+            windowModel.pseudo3DSettings = preset
+        } label: {
+            HStack {
+                Text(title)
+                if windowModel.pseudo3DSettings.depthStrength == preset.depthStrength {
+                    Image(systemName: "checkmark")
+                }
+            }
+        }
+    }
+
     private var currentModeIcon: String {
-        windowModel.shouldUse3DMode ? "view.3d" : "view.2d"
+        (windowModel.shouldUse3DMode || windowModel.shouldUsePseudo3D) ? "view.3d" : "view.2d"
     }
 
     private var currentModeLabel: String {
-        windowModel.shouldUse3DMode ? "3D" : "2D"
+        if windowModel.shouldUsePseudo3D { return "3D*" }
+        return windowModel.shouldUse3DMode ? "3D" : "2D"
     }
 }

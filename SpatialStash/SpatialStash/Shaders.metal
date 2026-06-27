@@ -155,3 +155,66 @@ fragment float4 imageFragmentShader(
     color.rgb = clamp(color.rgb, 0.0, 1.0);
     return color;
 }
+
+// MARK: - Pseudo-3D Eye Warp
+//
+// Real-time "fake 3D": synthesize one eye of a stereo pair from a single mono
+// frame, with no pre-compute. A cheap heuristic depth estimate (lower-of-frame
+// = nearer, brighter = nearer, edges = slightly nearer) drives a horizontal
+// parallax shift. Rendered once per eye into a full-frame eye texture; the eye
+// is selected by `eyeSign` (+1 left, -1 right). Brightness/contrast/saturation
+// are folded in here so the windowed RealityKit VideoPlayerComponent path keeps
+// the same look as the flat MetalKit player.
+//
+// The depth heuristic is intentionally isolated in `pseudo3DHeuristicDepth` so a
+// future Core ML depth provider can replace it (sample a supplied depth texture
+// instead) without touching the warp/tonal math.
+
+struct VideoStereoUniforms {
+    float brightness;
+    float contrast;
+    float saturation;
+    float depthStrength; // max horizontal disparity in UV (fraction of width)
+    float convergence;   // depth mapped to zero parallax (0 = far, 1 = near)
+    float eyeSign;       // +1 = left eye, -1 = right eye
+    float mirror;        // 1 = mirror horizontally (flip), 0 = normal
+};
+
+static inline float pseudo3DHeuristicDepth(texture2d<float> tex, sampler s, float2 uv) {
+    float2 px = float2(1.0) / float2(tex.get_width(0), tex.get_height(0));
+    float3 c  = tex.sample(s, uv).rgb;
+    float l   = dot(c, float3(0.2126, 0.7152, 0.0722));
+    float lL  = dot(tex.sample(s, uv + float2(-px.x, 0.0)).rgb, float3(0.2126, 0.7152, 0.0722));
+    float lR  = dot(tex.sample(s, uv + float2( px.x, 0.0)).rgb, float3(0.2126, 0.7152, 0.0722));
+    float lU  = dot(tex.sample(s, uv + float2(0.0, -px.y)).rgb, float3(0.2126, 0.7152, 0.0722));
+    float lD  = dot(tex.sample(s, uv + float2(0.0,  px.y)).rgb, float3(0.2126, 0.7152, 0.0722));
+    float edge       = saturate((abs(lR - lL) + abs(lD - lU)) * 1.2);
+    float lowerNear  = smoothstep(0.10, 0.95, uv.y); // uv.y=1 is bottom of frame
+    float brightNear = smoothstep(0.25, 0.85, l);
+    return saturate(lowerNear * 0.70 + brightNear * 0.25 + edge * 0.05);
+}
+
+fragment float4 videoPseudo3DEyeFragmentShader(
+    VertexOut in [[stage_in]],
+    texture2d<float> tex [[texture(0)]],
+    constant VideoStereoUniforms &u [[buffer(0)]]
+) {
+    constexpr sampler texSampler(mag_filter::linear, min_filter::linear, address::clamp_to_edge);
+
+    float2 uv = in.texCoord;
+    if (u.mirror > 0.5) { uv.x = 1.0 - uv.x; }
+
+    float depth = pseudo3DHeuristicDepth(tex, texSampler, uv);
+    float disparity = (depth - u.convergence) * u.depthStrength;
+    float2 warpedUV = float2(uv.x + u.eyeSign * disparity, uv.y);
+
+    float4 color = tex.sample(texSampler, warpedUV);
+
+    color.rgb += u.brightness;
+    color.rgb = (color.rgb - 0.5) * u.contrast + 0.5;
+    float luminance = dot(color.rgb, float3(0.2126, 0.7152, 0.0722));
+    color.rgb = mix(float3(luminance), color.rgb, u.saturation);
+    color.rgb = clamp(color.rgb, 0.0, 1.0);
+    color.a = 1.0;
+    return color;
+}
