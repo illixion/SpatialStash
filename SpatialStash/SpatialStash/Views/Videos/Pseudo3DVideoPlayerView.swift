@@ -7,20 +7,27 @@
    AVPlayer (audio + master clock + transport + scrubbing + A-B loop)
         │  decoded mono frames via AVPlayerItemVideoOutput
         ▼
-   per tick: warp the mono frame into LEFT + RIGHT eye buffers
-        │  (videoPseudo3DEyeFragmentShader, cheap heuristic depth — see
-        │   Pseudo3DSettings; depth source is isolated for a future Core ML swap)
+   StereoPump (dedicated background queue): warp the mono frame into LEFT +
+        │  RIGHT eye buffers (videoPseudo3DEyeFragmentShader, cheap heuristic
+        │  depth — see Pseudo3DSettings; depth source isolated for a future
+        │  Core ML swap)
         ▼
    tagged CMReadySampleBuffer (.leftEye / .rightEye)
-        │
         ▼
    AVSampleBufferVideoRenderer ─▶ VideoPlayerComponent(.stereo) in a RealityView
 
- The renderer's synchronizer free-runs at rate 1 and we enqueue the latest
- decoded frame each tick tagged "now", so AVPlayer remains the single clock that
- governs audio, pause, and seek; the sample-buffer renderer is purely a
- stereoscopic presentation surface. This reuses the existing VideoWindowModel
- command/loop/visual-adjustment plumbing unchanged.
+ CRITICAL: all per-frame GPU work and enqueueing happens on a dedicated
+ background queue with its own MTLCommandQueue — NEVER on the main thread. An
+ earlier version pumped on the main actor and blocked it with
+ waitUntilCompleted ~90×/s, which starved Core Animation commits (backboardd
+ render-watchdog SIGKILL) and the main-queue AVPlayer prepare callbacks
+ (mediaplaybackd async-prepare watchdog), taking down the whole compositor.
+
+ The renderer's synchronizer free-runs at rate 1; each warped frame is tagged
+ with a host-clock timestamp relative to that start, so AVPlayer stays the only
+ clock governing audio/pause/seek and the sample-buffer renderer is purely a
+ stereoscopic presentation surface. The eye pool is bounded (allocation
+ threshold) and the pump is rate-capped so it can never flood the compositor.
 
  visionOS 26 APIs: CMReadySampleBuffer / CMTaggedDynamicBuffer / CVReadOnlyPixelBuffer.
  */
@@ -95,13 +102,13 @@ struct Pseudo3DVideoPlayerView: View {
     }
 }
 
-// MARK: - Engine
+// MARK: - Engine (main-actor: SwiftUI + transport only)
 
 @MainActor
 @Observable
 final class Pseudo3DStereoEngine {
     // Presentation
-    private let videoRenderer = AVSampleBufferVideoRenderer()
+    let videoRenderer = AVSampleBufferVideoRenderer()
     private let synchronizer = AVSampleBufferRenderSynchronizer()
     private var didStartSynchronizer = false
 
@@ -115,14 +122,8 @@ final class Pseudo3DStereoEngine {
     private var failureObserver: NSObjectProtocol?
     private var isRoomActive = true
 
-    // GPU
-    private var textureCache: CVMetalTextureCache?
-    private var eyePool: CVPixelBufferPool?
-    private var eyePoolWidth = 0
-    private var eyePoolHeight = 0
-
-    // Render loop
-    private var renderLoopTask: Task<Void, Never>?
+    // Off-main frame pump (owns all per-frame GPU work).
+    private var pump: StereoPump?
 
     // Config
     private var visualAdjustments = VisualAdjustments()
@@ -137,13 +138,9 @@ final class Pseudo3DStereoEngine {
     @ObservationIgnored var onVideoSizeKnown: ((CGSize) -> Void)?
     @ObservationIgnored var onPlaybackError: (() -> Void)?
     @ObservationIgnored private var onPlaybackUpdate: ((NativeMetalVideoPlayerView.Coordinator.PlaybackState) -> Void)?
-    private var lastReportedSize: CGSize?
 
     init() {
         synchronizer.addRenderer(videoRenderer)
-        if let device = MetalImageRenderer.shared?.device {
-            CVMetalTextureCacheCreate(nil, nil, device, nil, &textureCache)
-        }
     }
 
     // MARK: Entity
@@ -163,6 +160,18 @@ final class Pseudo3DStereoEngine {
         self.visualAdjustments = visualAdjustments
         self.settings = settings
         self.isFlipped = isFlipped
+        pump?.updateConfig(makePumpConfig())
+    }
+
+    private func makePumpConfig() -> StereoPump.Config {
+        StereoPump.Config(
+            brightness: Float(visualAdjustments.brightness),
+            contrast: Float(visualAdjustments.contrast),
+            saturation: Float(visualAdjustments.saturation),
+            depthStrength: Float(settings.depthStrength),
+            convergence: Float(settings.convergence),
+            mirror: isFlipped
+        )
     }
 
     func bindCommands(loopController: VideoLoopController?, playbackModel: VideoWindowModel?) {
@@ -196,6 +205,8 @@ final class Pseudo3DStereoEngine {
         cleanupPlayer()
         loadedURL = url
         isRoomActive = roomActive
+
+        guard let renderer = MetalImageRenderer.shared else { return }
 
         let asset = AVURLAsset(url: url)
         let item = AVPlayerItem(asset: asset)
@@ -232,11 +243,27 @@ final class Pseudo3DStereoEngine {
             MainActor.assumeIsolated { self?.handleTimeUpdate(time.seconds) }
         }
 
-        startRenderLoop()
+        // Start the renderer timeline once; frames are tagged relative to this.
         if !didStartSynchronizer {
             didStartSynchronizer = true
             synchronizer.setRate(1, time: .zero)
         }
+
+        // Hand the pump everything it needs; it runs entirely off the main thread.
+        let sizeCallback: @Sendable (CGSize) -> Void = { [weak self] size in
+            Task { @MainActor in self?.onVideoSizeKnown?(size) }
+        }
+        let pump = StereoPump(
+            videoRenderer: videoRenderer,
+            output: output,
+            renderer: renderer,
+            startHostTime: CACurrentMediaTime(),
+            onVideoSizeKnown: sizeCallback
+        )
+        pump.updateConfig(makePumpConfig())
+        pump.start()
+        self.pump = pump
+
         if isRoomActive { play() }
     }
 
@@ -286,40 +313,145 @@ final class Pseudo3DStereoEngine {
         )
     }
 
-    // MARK: Render loop
+    // MARK: Cleanup
 
-    private func startRenderLoop() {
-        renderLoopTask?.cancel()
-        renderLoopTask = Task { @MainActor [weak self] in
-            while !Task.isCancelled {
-                self?.renderTick()
-                // ~90 Hz pump; the warp is cheap and we only enqueue when a new
-                // decoded frame is available and the renderer wants more data.
-                try? await Task.sleep(for: .milliseconds(11))
-            }
+    func cleanup() {
+        pump?.stop()
+        pump = nil
+        cleanupPlayer()
+        videoRenderer.flush()
+        onVideoSizeKnown = nil
+        onPlaybackError = nil
+        onPlaybackUpdate = nil
+    }
+
+    private func cleanupPlayer() {
+        pump?.stop()
+        pump = nil
+        if let timeObserver, let player { player.removeTimeObserver(timeObserver) }
+        if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
+        if let failureObserver { NotificationCenter.default.removeObserver(failureObserver) }
+        player?.pause()
+        if let videoOutput { playerItem?.remove(videoOutput) }
+        timeObserver = nil
+        endObserver = nil
+        failureObserver = nil
+        player = nil
+        playerItem = nil
+        videoOutput = nil
+        loadedURL = nil
+        loopA = nil
+        loopB = nil
+    }
+}
+
+// MARK: - StereoPump (off-main: decode → warp → enqueue)
+
+/// Owns all per-frame GPU work on a dedicated background queue with its own
+/// command queue. `@unchecked Sendable`: the AVFoundation / CoreVideo / Metal
+/// objects it holds are documented thread-safe, config is lock-guarded, and all
+/// mutable state is touched only on `queue`.
+final class StereoPump: @unchecked Sendable {
+    struct Config {
+        var brightness: Float = 0
+        var contrast: Float = 1
+        var saturation: Float = 1
+        var depthStrength: Float = 0.03
+        var convergence: Float = 0.45
+        var mirror: Bool = false
+    }
+
+    private let videoRenderer: AVSampleBufferVideoRenderer
+    private let output: AVPlayerItemVideoOutput
+    private let renderer: MetalImageRenderer
+    private let commandQueue: MTLCommandQueue
+    private let startHostTime: CFTimeInterval
+    private let onVideoSizeKnown: @Sendable (CGSize) -> Void
+
+    private let queue = DispatchQueue(label: "com.spatialstash.stereo-pump", qos: .userInteractive)
+    private var timer: DispatchSourceTimer?
+
+    private var textureCache: CVMetalTextureCache?
+    private var eyePool: CVPixelBufferPool?
+    private var eyePoolWidth = 0
+    private var eyePoolHeight = 0
+    private var lastReportedSize: CGSize?
+
+    private let configLock = NSLock()
+    private var config = Config()
+
+    /// 30 fps is ample for the fake-3D effect and halves GPU load vs. display
+    /// rate; the pump only enqueues when a genuinely new decoded frame exists.
+    private let frameInterval: Double = 1.0 / 30.0
+    /// Bounds in-flight eye buffers so a stalled compositor can never make the
+    /// pool allocate IOSurfaces without limit.
+    private let maxInFlightBuffers = 8
+
+    init(
+        videoRenderer: AVSampleBufferVideoRenderer,
+        output: AVPlayerItemVideoOutput,
+        renderer: MetalImageRenderer,
+        startHostTime: CFTimeInterval,
+        onVideoSizeKnown: @escaping @Sendable (CGSize) -> Void
+    ) {
+        self.videoRenderer = videoRenderer
+        self.output = output
+        self.renderer = renderer
+        self.commandQueue = renderer.device.makeCommandQueue() ?? renderer.commandQueue
+        self.startHostTime = startHostTime
+        self.onVideoSizeKnown = onVideoSizeKnown
+        CVMetalTextureCacheCreate(nil, nil, renderer.device, nil, &textureCache)
+    }
+
+    func updateConfig(_ newConfig: Config) {
+        configLock.lock()
+        config = newConfig
+        configLock.unlock()
+    }
+
+    private func currentConfig() -> Config {
+        configLock.lock(); defer { configLock.unlock() }
+        return config
+    }
+
+    func start() {
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now(), repeating: frameInterval, leeway: .milliseconds(2))
+        timer.setEventHandler { [weak self] in self?.tick() }
+        self.timer = timer
+        timer.resume()
+    }
+
+    func stop() {
+        timer?.cancel()
+        timer = nil
+        // Drain on the pump queue so no tick races teardown.
+        queue.async { [weak self] in
+            guard let self else { return }
+            if let textureCache { CVMetalTextureCacheFlush(textureCache, 0) }
+            self.eyePool = nil
         }
     }
 
-    private func renderTick() {
-        guard videoRenderer.isReadyForMoreMediaData,
-              let output = videoOutput,
-              let textureCache,
-              let renderer = MetalImageRenderer.shared else { return }
+    // MARK: Per-frame work (always on `queue`)
 
-        let itemTime = output.itemTime(forHostTime: CACurrentMediaTime())
+    private func tick() {
+        guard videoRenderer.isReadyForMoreMediaData, let textureCache else { return }
+
+        let hostTime = CACurrentMediaTime()
+        let itemTime = output.itemTime(forHostTime: hostTime)
         guard output.hasNewPixelBuffer(forItemTime: itemTime),
               let src = output.copyPixelBuffer(forItemTime: itemTime, itemTimeForDisplay: nil) else { return }
         reportSizeIfNeeded(src)
 
-        guard let (left, right) = makeEyePair(from: src, renderer: renderer, cache: textureCache) else { return }
-        enqueueStereo(left: left, right: right, pts: synchronizer.currentTime())
+        guard let (left, right) = makeEyePair(from: src, cache: textureCache) else { return }
+        // Tag relative to the synchronizer's zero-based, host-driven timeline so
+        // the frame presents immediately and in order.
+        let pts = CMTime(seconds: hostTime - startHostTime, preferredTimescale: 90_000)
+        enqueueStereo(left: left, right: right, pts: pts)
     }
 
-    private func makeEyePair(
-        from src: CVPixelBuffer,
-        renderer: MetalImageRenderer,
-        cache: CVMetalTextureCache
-    ) -> (CVPixelBuffer, CVPixelBuffer)? {
+    private func makeEyePair(from src: CVPixelBuffer, cache: CVMetalTextureCache) -> (CVPixelBuffer, CVPixelBuffer)? {
         let width = CVPixelBufferGetWidth(src)
         let height = CVPixelBufferGetHeight(src)
         guard width > 0, height > 0,
@@ -328,16 +460,19 @@ final class Pseudo3DStereoEngine {
 
         var leftBuf: CVPixelBuffer?
         var rightBuf: CVPixelBuffer?
-        guard CVPixelBufferPoolCreatePixelBuffer(nil, pool, &leftBuf) == kCVReturnSuccess,
-              CVPixelBufferPoolCreatePixelBuffer(nil, pool, &rightBuf) == kCVReturnSuccess,
+        let aux: [String: Any] = [kCVPixelBufferPoolAllocationThresholdKey as String: maxInFlightBuffers]
+        guard CVPixelBufferPoolCreatePixelBufferWithAuxAttributes(nil, pool, aux as CFDictionary, &leftBuf) == kCVReturnSuccess,
+              CVPixelBufferPoolCreatePixelBufferWithAuxAttributes(nil, pool, aux as CFDictionary, &rightBuf) == kCVReturnSuccess,
               let left = leftBuf, let right = rightBuf,
               let leftTex = makeTexture(from: left, cache: cache),
               let rightTex = makeTexture(from: right, cache: cache),
-              let cmdBuf = renderer.commandQueue.makeCommandBuffer() else { return nil }
+              let cmdBuf = commandQueue.makeCommandBuffer() else { return nil }
 
-        encodeEye(into: leftTex, source: srcTexture, eyeSign: 1.0, renderer: renderer, commandBuffer: cmdBuf)
-        encodeEye(into: rightTex, source: srcTexture, eyeSign: -1.0, renderer: renderer, commandBuffer: cmdBuf)
+        let cfg = currentConfig()
+        encodeEye(into: leftTex, source: srcTexture, eyeSign: 1.0, config: cfg, commandBuffer: cmdBuf)
+        encodeEye(into: rightTex, source: srcTexture, eyeSign: -1.0, config: cfg, commandBuffer: cmdBuf)
         cmdBuf.commit()
+        // Safe here: this runs on the background pump queue, never main.
         cmdBuf.waitUntilCompleted()
         return (left, right)
     }
@@ -346,7 +481,7 @@ final class Pseudo3DStereoEngine {
         into dest: MTLTexture,
         source: MTLTexture,
         eyeSign: Float,
-        renderer: MetalImageRenderer,
+        config: Config,
         commandBuffer: MTLCommandBuffer
     ) {
         let desc = MTLRenderPassDescriptor()
@@ -357,13 +492,13 @@ final class Pseudo3DStereoEngine {
         encoder.setRenderPipelineState(renderer.pseudo3DEyePipelineState)
         encoder.setFragmentTexture(source, index: 0)
         var uniforms = VideoStereoUniforms(
-            brightness: Float(visualAdjustments.brightness),
-            contrast: Float(visualAdjustments.contrast),
-            saturation: Float(visualAdjustments.saturation),
-            depthStrength: Float(settings.depthStrength),
-            convergence: Float(settings.convergence),
+            brightness: config.brightness,
+            contrast: config.contrast,
+            saturation: config.saturation,
+            depthStrength: config.depthStrength,
+            convergence: config.convergence,
             eyeSign: eyeSign,
-            mirror: isFlipped ? 1.0 : 0.0
+            mirror: config.mirror ? 1.0 : 0.0
         )
         encoder.setFragmentBytes(&uniforms, length: MemoryLayout<VideoStereoUniforms>.size, index: 0)
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
@@ -375,9 +510,9 @@ final class Pseudo3DStereoEngine {
         let leftTags: [CMTag] = [.videoLayerID(0), .stereoView(.leftEye), .mediaType(.video)]
         let rightTags: [CMTag] = [.videoLayerID(1), .stereoView(.rightEye), .mediaType(.video)]
         // CVReadOnlyPixelBuffer(unsafeBuffer:) takes a `sending` CVPixelBuffer:
-        // ownership transfers here. The buffers were freshly allocated from the
-        // pool this tick and the GPU warp has completed (waitUntilCompleted), so
-        // they are uniquely owned and untouched after this point — but creating
+        // ownership transfers here. The buffers were freshly allocated this tick
+        // and the GPU warp has completed (waitUntilCompleted), so they are
+        // uniquely owned and untouched after this point — but creating
         // MTLTextures from them taints their region for the sending check, so we
         // assert the transfer explicitly.
         nonisolated(unsafe) let leftBuf = left
@@ -431,39 +566,6 @@ final class Pseudo3DStereoEngine {
         let size = CGSize(width: CVPixelBufferGetWidth(pixelBuffer), height: CVPixelBufferGetHeight(pixelBuffer))
         guard size.width > 0, size.height > 0, lastReportedSize != size else { return }
         lastReportedSize = size
-        onVideoSizeKnown?(size)
-    }
-
-    // MARK: Cleanup
-
-    func cleanup() {
-        renderLoopTask?.cancel()
-        renderLoopTask = nil
-        cleanupPlayer()
-        videoRenderer.flush()
-        videoRenderer.stopRequestingMediaData()
-        if let textureCache { CVMetalTextureCacheFlush(textureCache, 0) }
-        eyePool = nil
-        onVideoSizeKnown = nil
-        onPlaybackError = nil
-        onPlaybackUpdate = nil
-    }
-
-    private func cleanupPlayer() {
-        if let timeObserver, let player { player.removeTimeObserver(timeObserver) }
-        if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
-        if let failureObserver { NotificationCenter.default.removeObserver(failureObserver) }
-        player?.pause()
-        if let videoOutput { playerItem?.remove(videoOutput) }
-        timeObserver = nil
-        endObserver = nil
-        failureObserver = nil
-        player = nil
-        playerItem = nil
-        videoOutput = nil
-        loadedURL = nil
-        lastReportedSize = nil
-        loopA = nil
-        loopB = nil
+        onVideoSizeKnown(size)
     }
 }
