@@ -112,8 +112,11 @@ struct VideoWindowView: View {
                         : 1
                 )
                 .overlay {
-                    // Transparent tap target that only appears when UI is hidden
-                    if windowModel.isUIHidden {
+                    // Transparent tap target over the video surface. Keep it
+                    // present when chrome is visible too so tapping the video
+                    // toggles controls both ways; transport controls are in a
+                    // higher ZStack layer and still receive their own input.
+                    if !appModel.allWindowsHidden {
                         Color.clear
                             .contentShape(.rect)
                             .onTapGesture {

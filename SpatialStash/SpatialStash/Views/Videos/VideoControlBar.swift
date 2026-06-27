@@ -15,6 +15,7 @@ import SwiftUI
 
 struct VideoControlBar: View {
     @Bindable var windowModel: VideoWindowModel
+    @State private var isScrubberHovering = false
 
     var body: some View {
         HStack(spacing: 16) {
@@ -70,26 +71,40 @@ struct VideoControlBar: View {
             let dur = max(windowModel.duration, 0.001)
             let progress = clamp(windowModel.currentTime / dur)
             let buffered = clamp(windowModel.bufferedEnd / dur)
+            let isTargeted = isScrubberHovering || windowModel.isScrubbing
+            let trackHeight: CGFloat = isTargeted ? 10 : 6
+            let markerHeight: CGFloat = isTargeted ? 20 : 16
+            let knobSize: CGFloat = isTargeted ? 24 : 18
 
             ZStack(alignment: .leading) {
-                Capsule().fill(.white.opacity(0.22)).frame(height: 6)
-                Capsule().fill(.white.opacity(0.35)).frame(width: CGFloat(w * buffered), height: 6)
-                Capsule().fill(Color.accentColor).frame(width: CGFloat(w * progress), height: 6)
+                Capsule()
+                    .fill(isTargeted ? .white.opacity(0.16) : .clear)
+                    .frame(height: 32)
+
+                Capsule().fill(.white.opacity(isTargeted ? 0.32 : 0.22)).frame(height: trackHeight)
+                Capsule().fill(.white.opacity(isTargeted ? 0.48 : 0.35)).frame(width: CGFloat(w * buffered), height: trackHeight)
+                Capsule().fill(Color.accentColor).frame(width: CGFloat(w * progress), height: trackHeight)
 
                 if let a = windowModel.loopController.pointA {
-                    marker(.green).position(x: CGFloat(w * clamp(a / dur)), y: 11)
+                    marker(.green, height: markerHeight).position(x: CGFloat(w * clamp(a / dur)), y: 16)
                 }
                 if let b = windowModel.loopController.pointB {
-                    marker(.red).position(x: CGFloat(w * clamp(b / dur)), y: 11)
+                    marker(.red, height: markerHeight).position(x: CGFloat(w * clamp(b / dur)), y: 16)
                 }
 
                 Circle()
                     .fill(.white)
-                    .frame(width: 18, height: 18)
-                    .shadow(radius: 2)
-                    .position(x: CGFloat(w * progress), y: 11)
+                    .frame(width: knobSize, height: knobSize)
+                    .shadow(color: .black.opacity(0.35), radius: isTargeted ? 5 : 2)
+                    .overlay {
+                        if isTargeted {
+                            Circle()
+                                .stroke(Color.accentColor, lineWidth: 3)
+                        }
+                    }
+                    .position(x: CGFloat(w * progress), y: 16)
             }
-            .frame(width: CGFloat(w), height: 22)
+            .frame(width: CGFloat(w), height: 32)
             .contentShape(Rectangle())
             .gesture(
                 DragGesture(minimumDistance: 0)
@@ -101,14 +116,19 @@ struct VideoControlBar: View {
                         windowModel.endScrub(at: clamp(Double(value.location.x) / w) * dur)
                     }
             )
+            .hoverEffect(.highlight)
+            .onHover { hovering in
+                isScrubberHovering = hovering
+            }
+            .animation(.easeInOut(duration: 0.12), value: isTargeted)
         }
-        .frame(height: 22)
+        .frame(height: 32)
     }
 
-    private func marker(_ color: Color) -> some View {
+    private func marker(_ color: Color, height: CGFloat) -> some View {
         RoundedRectangle(cornerRadius: 1.5)
             .fill(color)
-            .frame(width: 3, height: 16)
+            .frame(width: 3, height: height)
     }
 
     // MARK: - A-B Loop
