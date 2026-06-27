@@ -212,10 +212,12 @@ struct NativeMetalVideoPlayerView: UIViewRepresentable {
         func play() {
             isRoomActive = true
             player?.play()
+            reportPlaybackState()
         }
 
         func pause() {
             player?.pause()
+            reportPlaybackState()
         }
 
         func seek(to seconds: Double) {

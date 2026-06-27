@@ -465,9 +465,13 @@ final class VideoWindowModel {
     }
 
     func handleScenePhaseChange(from oldPhase: ScenePhase, to newPhase: ScenePhase) {
-        if newPhase == .active {
+        // On visionOS, .inactive is a noisy focus/gaze state and can fire while
+        // a visible video window is opening. Treating it as "left the room"
+        // pauses native AVPlayer playback even though the window is still in
+        // front of the user. Only .background means the window is actually gone.
+        if newPhase != .background {
             isInActiveRoom = true
-        } else if oldPhase == .active && (newPhase == .inactive || newPhase == .background) {
+        } else if oldPhase != .background {
             isInActiveRoom = false
         }
     }
