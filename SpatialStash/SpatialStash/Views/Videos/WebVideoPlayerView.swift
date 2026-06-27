@@ -5,6 +5,7 @@
  not natively supported by AVPlayer.
  */
 
+import Foundation
 import SwiftUI
 import WebKit
 
@@ -150,15 +151,42 @@ struct WebVideoPlayerView: UIViewRepresentable {
             webView.evaluateJavaScript(js)
         }
 
-        // Apply CSS filter adjustments when they change
+        // Apply visual adjustments when they change. Tonal/opacity-only changes
+        // stay as cheap CSS filters; sharpen switches the WebView to a WebGL
+        // presentation canvas because WebKit does not visibly apply SVG
+        // convolution filters to hardware-backed <video> layers on visionOS.
         if let adjustments = visualAdjustments, adjustments != coordinator.lastAdjustments {
             coordinator.lastAdjustments = adjustments
-            let css = adjustments.cssFilterString
-            let js = "document.querySelector('.video-container').style.filter = '\(css)';"
+            let css = Self.javascriptStringLiteral(adjustments.cssFilterString())
+            let js = """
+            if (window.__setSpatialStashVideoAdjustments) {
+                window.__setSpatialStashVideoAdjustments({
+                    brightness: \(adjustments.brightness),
+                    contrast: \(adjustments.contrast),
+                    saturation: \(adjustments.saturation),
+                    opacity: \(adjustments.opacity),
+                    sharpen: \(adjustments.clampedSharpenAmount),
+                    cssFilter: \(css)
+                });
+            }
+            """
             webView.evaluateJavaScript(js)
         } else if visualAdjustments == nil && coordinator.lastAdjustments != nil {
             coordinator.lastAdjustments = nil
-            let js = "document.querySelector('.video-container').style.filter = '';"
+            let identity = VisualAdjustments()
+            let css = Self.javascriptStringLiteral(identity.cssFilterString())
+            let js = """
+            if (window.__setSpatialStashVideoAdjustments) {
+                window.__setSpatialStashVideoAdjustments({
+                    brightness: \(identity.brightness),
+                    contrast: \(identity.contrast),
+                    saturation: \(identity.saturation),
+                    opacity: \(identity.opacity),
+                    sharpen: \(identity.clampedSharpenAmount),
+                    cssFilter: \(css)
+                });
+            }
+            """
             webView.evaluateJavaScript(js)
         }
 
@@ -325,6 +353,8 @@ struct WebVideoPlayerView: UIViewRepresentable {
         // controls never flash on load before the JS toggle can hide them.
         let controlsAttr = showControls ? "controls " : ""
         let loopAttr = loop ? "loop " : ""
+        let initialAdjustments = visualAdjustments ?? VisualAdjustments()
+        let initialFilter = initialAdjustments.cssFilterString()
         return """
         <!DOCTYPE html>
         <html>
@@ -345,16 +375,27 @@ struct WebVideoPlayerView: UIViewRepresentable {
                 .video-container {
                     width: 100%;
                     height: 100%;
+                    position: relative;
                     display: flex;
                     align-items: center;
                     justify-content: center;
                     background: transparent;
                 }
-                video {
+                video,
+                #sharpen-canvas {
+                    position: absolute;
+                    inset: 0;
                     width: 100%;
                     height: 100%;
                     object-fit: contain;
                     background: transparent;
+                }
+                video {
+                    filter: \(initialFilter);
+                }
+                #sharpen-canvas {
+                    display: none;
+                    pointer-events: none;
                 }
                 .error {
                     color: #ff6b6b;
@@ -369,13 +410,23 @@ struct WebVideoPlayerView: UIViewRepresentable {
                 <video id="player" \(controlsAttr)autoplay playsinline \(loopAttr)muted src="\(videoSrc)">
                     Your browser does not support video playback.
                 </video>
+                <canvas id="sharpen-canvas"></canvas>
             </div>
             <script>
                 const video = document.getElementById('player');
+                const sharpenCanvas = document.getElementById('sharpen-canvas');
                 const originalSrc = video.src;
                 let retryCount = 0;
                 const maxRetries = 5;
                 const baseDelay = 3000; // 3 seconds initial delay
+                let visualAdjustments = {
+                    brightness: \(initialAdjustments.brightness),
+                    contrast: \(initialAdjustments.contrast),
+                    saturation: \(initialAdjustments.saturation),
+                    opacity: \(initialAdjustments.opacity),
+                    sharpen: \(initialAdjustments.clampedSharpenAmount),
+                    cssFilter: '\(initialFilter)'
+                };
 
                 // Room activity flag — set by Swift via evaluateJavaScript.
                 // When false, auto-resume and error recovery are suppressed.
@@ -386,6 +437,231 @@ struct WebVideoPlayerView: UIViewRepresentable {
                 // spurious system pauses. Outside this window, user-initiated
                 // pauses and audio-session interruptions are respected.
                 window._autoResumeUntil = Date.now() + 3000;
+
+                // ----- WebGL sharpen presentation -----
+                // CSS/SVG convolution filters are ignored by WebKit's video
+                // compositor on visionOS. When Sharpen is active we keep the
+                // <video> as the decoder/playback source, upload each frame to a
+                // WebGL texture, and present a sharpened quad on the canvas.
+                let sharpenGL = null;
+                let sharpenProgram = null;
+                let sharpenTexture = null;
+                let sharpenUniforms = null;
+                let sharpenRenderToken = 0;
+                let sharpenRendererActive = false;
+                let sharpenFallbackToCSS = false;
+
+                window.__setSpatialStashVideoAdjustments = function(next) {
+                    visualAdjustments = next;
+                    applyVisualAdjustmentsMode();
+                };
+
+                function applyVisualAdjustmentsMode() {
+                    if (visualAdjustments.sharpen > 0.001 && !sharpenFallbackToCSS) {
+                        video.style.filter = 'none';
+                        video.style.opacity = '0';
+                        sharpenCanvas.style.display = 'block';
+                        startSharpenRenderer();
+                    } else {
+                        stopSharpenRenderer();
+                        sharpenCanvas.style.display = 'none';
+                        video.style.opacity = '';
+                        video.style.filter = visualAdjustments.cssFilter || 'none';
+                    }
+                }
+
+                function startSharpenRenderer() {
+                    if (sharpenRendererActive) return;
+                    sharpenRendererActive = true;
+                    const token = ++sharpenRenderToken;
+                    const render = function() {
+                        if (!sharpenRendererActive || token !== sharpenRenderToken || visualAdjustments.sharpen <= 0.001) return;
+                        drawSharpenedFrame();
+                        if (video.requestVideoFrameCallback) {
+                            video.requestVideoFrameCallback(render);
+                        } else {
+                            requestAnimationFrame(render);
+                        }
+                    };
+                    render();
+                }
+
+                function stopSharpenRenderer() {
+                    sharpenRendererActive = false;
+                    sharpenRenderToken++;
+                }
+
+                function initSharpenGL() {
+                    if (sharpenGL) return true;
+                    const gl = sharpenCanvas.getContext('webgl', {
+                        alpha: true,
+                        premultipliedAlpha: false,
+                        preserveDrawingBuffer: false
+                    });
+                    if (!gl) return false;
+
+                    const vertexSource = `
+                        attribute vec2 aPosition;
+                        varying vec2 vTexCoord;
+                        void main() {
+                            vTexCoord = (aPosition + 1.0) * 0.5;
+                            gl_Position = vec4(aPosition, 0.0, 1.0);
+                        }
+                    `;
+                    const fragmentSource = `
+                        precision mediump float;
+                        varying vec2 vTexCoord;
+                        uniform sampler2D uVideo;
+                        uniform vec2 uTexel;
+                        uniform float uBrightness;
+                        uniform float uContrast;
+                        uniform float uSaturation;
+                        uniform float uOpacity;
+                        uniform float uSharpen;
+
+                        void main() {
+                            vec2 uv = vec2(vTexCoord.x, 1.0 - vTexCoord.y);
+                            vec4 color = texture2D(uVideo, uv);
+                            vec3 b = texture2D(uVideo, uv + vec2(0.0, -uTexel.y)).rgb;
+                            vec3 d = texture2D(uVideo, uv + vec2(-uTexel.x, 0.0)).rgb;
+                            vec3 f = texture2D(uVideo, uv + vec2(uTexel.x, 0.0)).rgb;
+                            vec3 h = texture2D(uVideo, uv + vec2(0.0, uTexel.y)).rgb;
+                            float lobe = 0.55 * clamp(uSharpen, 0.0, 1.0);
+                            color.rgb = clamp(color.rgb * (1.0 + 4.0 * lobe) - lobe * (b + d + f + h), 0.0, 1.0);
+
+                            color.rgb += uBrightness;
+                            color.rgb = (color.rgb - 0.5) * uContrast + 0.5;
+                            float luminance = dot(color.rgb, vec3(0.2126, 0.7152, 0.0722));
+                            color.rgb = mix(vec3(luminance), color.rgb, uSaturation);
+                            color.rgb = clamp(color.rgb, 0.0, 1.0);
+                            gl_FragColor = vec4(color.rgb, color.a * uOpacity);
+                        }
+                    `;
+
+                    function compile(type, source) {
+                        const shader = gl.createShader(type);
+                        gl.shaderSource(shader, source);
+                        gl.compileShader(shader);
+                        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) return null;
+                        return shader;
+                    }
+
+                    const vertexShader = compile(gl.VERTEX_SHADER, vertexSource);
+                    const fragmentShader = compile(gl.FRAGMENT_SHADER, fragmentSource);
+                    if (!vertexShader || !fragmentShader) return false;
+
+                    const program = gl.createProgram();
+                    gl.attachShader(program, vertexShader);
+                    gl.attachShader(program, fragmentShader);
+                    gl.linkProgram(program);
+                    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) return false;
+
+                    const buffer = gl.createBuffer();
+                    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+                    gl.bufferData(
+                        gl.ARRAY_BUFFER,
+                        new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]),
+                        gl.STATIC_DRAW
+                    );
+
+                    gl.useProgram(program);
+                    const position = gl.getAttribLocation(program, 'aPosition');
+                    gl.enableVertexAttribArray(position);
+                    gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0);
+
+                    const texture = gl.createTexture();
+                    gl.bindTexture(gl.TEXTURE_2D, texture);
+                    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+                    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+                    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+                    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+
+                    sharpenGL = gl;
+                    sharpenProgram = program;
+                    sharpenTexture = texture;
+                    sharpenUniforms = {
+                        video: gl.getUniformLocation(program, 'uVideo'),
+                        texel: gl.getUniformLocation(program, 'uTexel'),
+                        brightness: gl.getUniformLocation(program, 'uBrightness'),
+                        contrast: gl.getUniformLocation(program, 'uContrast'),
+                        saturation: gl.getUniformLocation(program, 'uSaturation'),
+                        opacity: gl.getUniformLocation(program, 'uOpacity'),
+                        sharpen: gl.getUniformLocation(program, 'uSharpen')
+                    };
+                    return true;
+                }
+
+                function resizeSharpenCanvas(gl) {
+                    const maxRenderScale = 2.0;
+                    const maxRenderPixels = 2560 * 1440;
+                    const deviceScale = Math.min(window.devicePixelRatio || 1, maxRenderScale);
+                    let width = Math.max(1, Math.floor(sharpenCanvas.clientWidth * deviceScale));
+                    let height = Math.max(1, Math.floor(sharpenCanvas.clientHeight * deviceScale));
+                    const renderPixels = width * height;
+                    if (renderPixels > maxRenderPixels) {
+                        const pixelScale = Math.sqrt(maxRenderPixels / renderPixels);
+                        width = Math.max(1, Math.floor(width * pixelScale));
+                        height = Math.max(1, Math.floor(height * pixelScale));
+                    }
+                    if (sharpenCanvas.width !== width || sharpenCanvas.height !== height) {
+                        sharpenCanvas.width = width;
+                        sharpenCanvas.height = height;
+                    }
+
+                    const videoAspect = video.videoWidth > 0 && video.videoHeight > 0
+                        ? video.videoWidth / video.videoHeight
+                        : width / height;
+                    const canvasAspect = width / height;
+                    let viewportWidth = width;
+                    let viewportHeight = height;
+                    if (canvasAspect > videoAspect) {
+                        viewportWidth = Math.round(height * videoAspect);
+                    } else {
+                        viewportHeight = Math.round(width / videoAspect);
+                    }
+                    const viewportX = Math.floor((width - viewportWidth) * 0.5);
+                    const viewportY = Math.floor((height - viewportHeight) * 0.5);
+                    gl.viewport(viewportX, viewportY, viewportWidth, viewportHeight);
+                }
+
+                function drawSharpenedFrame() {
+                    if (video.readyState < 2) return;
+                    if (!initSharpenGL()) {
+                        sharpenFallbackToCSS = true;
+                        applyVisualAdjustmentsMode();
+                        return;
+                    }
+
+                    const gl = sharpenGL;
+                    const uniforms = sharpenUniforms;
+                    if (!uniforms) return;
+                    resizeSharpenCanvas(gl);
+                    gl.clearColor(0, 0, 0, 0);
+                    gl.clear(gl.COLOR_BUFFER_BIT);
+                    gl.useProgram(sharpenProgram);
+                    gl.bindTexture(gl.TEXTURE_2D, sharpenTexture);
+                    try {
+                        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
+                    } catch (e) {
+                        sharpenFallbackToCSS = true;
+                        applyVisualAdjustmentsMode();
+                        return;
+                    }
+
+                    gl.uniform1i(uniforms.video, 0);
+                    gl.uniform2f(
+                        uniforms.texel,
+                        1.0 / Math.max(1, video.videoWidth),
+                        1.0 / Math.max(1, video.videoHeight)
+                    );
+                    gl.uniform1f(uniforms.brightness, visualAdjustments.brightness);
+                    gl.uniform1f(uniforms.contrast, visualAdjustments.contrast);
+                    gl.uniform1f(uniforms.saturation, visualAdjustments.saturation);
+                    gl.uniform1f(uniforms.opacity, visualAdjustments.opacity);
+                    gl.uniform1f(uniforms.sharpen, visualAdjustments.sharpen);
+                    gl.drawArrays(gl.TRIANGLES, 0, 6);
+                };
+                applyVisualAdjustmentsMode();
 
                 // Reload the video source after an error with exponential backoff
                 function reloadVideo() {
@@ -525,5 +801,13 @@ struct WebVideoPlayerView: UIViewRepresentable {
         </body>
         </html>
         """
+    }
+
+    private static func javascriptStringLiteral(_ value: String) -> String {
+        guard let data = try? JSONEncoder().encode(value),
+              let literal = String(data: data, encoding: .utf8) else {
+            return "\"\""
+        }
+        return literal
     }
 }

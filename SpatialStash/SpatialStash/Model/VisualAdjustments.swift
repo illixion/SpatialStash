@@ -1,9 +1,9 @@
 /*
  Spatial Stash - Visual Adjustments
 
- Non-destructive visual adjustment settings (brightness, contrast, saturation)
- applied via SwiftUI view modifiers or CSS filters. Stored per-image via
- ImageEnhancementTracker and as global defaults via AppModel/UserDefaults.
+ Non-destructive visual adjustment settings (brightness, contrast, saturation,
+ opacity, sharpen) applied via SwiftUI, Metal, CSS, or WebGL. Stored
+ per-image via ImageEnhancementTracker and as global defaults via AppModel/UserDefaults.
  */
 
 import Foundation
@@ -21,8 +21,9 @@ struct VisualAdjustments: Codable, Equatable {
     /// SwiftUI .opacity() range: 0.0 to 1.0, where 1.0 = fully opaque
     var opacity: Double = 1.0
 
-    /// RCAS (FidelityFX-style Contrast Adaptive Sharpening) amount.
-    /// 0.0 = off, 1.0 = max. Applied in the Metal fragment shader on 2D-rendered photos only.
+    /// RCAS / FSR-style sharpening amount. 0.0 = off, 1.0 = max.
+    /// Applied in the Metal fragment shader for 2D photos and via WebGL for
+    /// 2D WebVideoPlayerView playback.
     var sharpen: Double = 0.0
 
     /// Whether CIImage auto-enhancement filters have been applied (photos only)
@@ -76,8 +77,17 @@ struct VisualAdjustments: Codable, Equatable {
     /// CSS brightness(1.0) = no change; SwiftUI brightness 0.0 = no change.
     /// Conversion: CSS brightness = 1.0 + SwiftUI brightness.
     /// Contrast and saturation use the same scale in both systems.
-    var cssFilterString: String {
+    func cssFilterString() -> String {
         let cssBrightness = 1.0 + brightness
-        return "brightness(\(cssBrightness)) contrast(\(contrast)) saturate(\(saturation)) opacity(\(opacity))"
+        return [
+            "brightness(\(cssBrightness))",
+            "contrast(\(contrast))",
+            "saturate(\(saturation))",
+            "opacity(\(opacity))"
+        ].joined(separator: " ")
+    }
+
+    var clampedSharpenAmount: Double {
+        min(max(sharpen, 0.0), 1.0)
     }
 }

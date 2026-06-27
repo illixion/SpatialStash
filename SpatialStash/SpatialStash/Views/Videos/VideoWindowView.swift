@@ -67,6 +67,7 @@ struct VideoWindowView: View {
                             onVideoSizeKnown: { size in
                                 lockWindowToVideoAspectRatio(videoSize: size)
                             },
+                            visualAdjustments: windowModel.effectiveVideoAdjustments,
                             loopController: windowModel.loopController,
                             playbackModel: windowModel
                         )
@@ -76,10 +77,10 @@ struct VideoWindowView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .scaleEffect(x: windowModel.isFlipped ? -1 : 1, y: 1)
-                .brightness(windowModel.effectiveVideoAdjustments.brightness)
-                .contrast(windowModel.effectiveVideoAdjustments.contrast)
-                .saturation(windowModel.effectiveVideoAdjustments.saturation)
-                .opacity(windowModel.effectiveVideoAdjustments.opacity)
+                .brightness(windowModel.shouldUse3DMode ? windowModel.effectiveVideoAdjustments.brightness : 0)
+                .contrast(windowModel.shouldUse3DMode ? windowModel.effectiveVideoAdjustments.contrast : 1)
+                .saturation(windowModel.shouldUse3DMode ? windowModel.effectiveVideoAdjustments.saturation : 1)
+                .opacity(windowModel.shouldUse3DMode ? windowModel.effectiveVideoAdjustments.opacity : 1)
                 .overlay {
                     // Transparent tap target that only appears when UI is hidden
                     if windowModel.isUIHidden {
