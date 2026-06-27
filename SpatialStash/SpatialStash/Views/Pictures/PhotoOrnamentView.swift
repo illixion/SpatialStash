@@ -409,6 +409,12 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
                         if let idx = appModel.galleryImages.firstIndex(where: { $0.stashId == stashId }) {
                             appModel.galleryImages.remove(at: idx)
                         }
+                    },
+                    onSaved: { newRating in
+                        windowModel.image.rating100 = newRating
+                        if let idx = windowModel.galleryImages.firstIndex(where: { $0.stashId == stashId }) {
+                            windowModel.galleryImages[idx].rating100 = newRating
+                        }
                     }
                 )
             }

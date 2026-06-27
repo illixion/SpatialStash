@@ -25,6 +25,22 @@ enum MediaDetailType {
     }
 }
 
+/// Normalized snapshot of the editable fields, used to detect unsaved changes
+/// so closing the sheet only writes to the server when something changed.
+private struct EditSnapshot: Equatable {
+    var title: String
+    var code: String
+    var date: String
+    var details: String
+    var creator: String
+    var rating100: Int?
+    var organized: Bool
+    var urls: [String]
+    var studioId: String?
+    var performerIds: [String]
+    var tagIds: [String]
+}
+
 // MARK: - Sheet View
 
 struct MediaDetailSheet: View {
@@ -74,6 +90,14 @@ struct MediaDetailSheet: View {
     /// Called after a successful delete so the parent can remove the item and navigate away.
     var onDelete: (() -> Void)?
 
+    /// Called after a successful save with the new rating100, so the presenting
+    /// view can refresh its displayed item (e.g. the ornament's rating icon).
+    var onSaved: ((Int?) -> Void)?
+
+    /// Snapshot of the edit fields as last loaded/saved. Drives `hasUnsavedChanges`
+    /// so closing the sheet only writes when something actually changed.
+    @State private var originalSnapshot: EditSnapshot?
+
     var body: some View {
         NavigationStack {
             Group {
@@ -112,12 +136,26 @@ struct MediaDetailSheet: View {
             .navigationTitle(navigationTitle)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
+                    Button(isSaving ? "Saving…" : "Done") {
+                        let model = appModel
+                        Task {
+                            if await commitChanges(using: model) { dismiss() }
+                        }
+                    }
+                    .disabled(isSaving)
                 }
             }
         }
         .frame(minWidth: 480, idealWidth: 520, minHeight: 500, idealHeight: 650)
         .task { await loadDetail() }
+        .onDisappear {
+            // Persist edits for any close path that didn't go through "Done"
+            // (e.g. swipe-to-dismiss). Capture the model synchronously while the
+            // environment is still valid, then save off the main close path.
+            guard hasUnsavedChanges else { return }
+            let model = appModel
+            Task { _ = await commitChanges(using: model) }
+        }
         .confirmationDialog(
             "Delete Item",
             isPresented: $showDeleteConfirmation,
@@ -450,27 +488,14 @@ struct MediaDetailSheet: View {
                 }
             }
 
-            // Save button
-            Section {
-                if let error = saveError {
+            // Changes are committed automatically when the sheet is closed
+            // (see commitChanges); only surface an error if a save fails.
+            if let error = saveError {
+                Section {
                     Text(error)
                         .foregroundColor(.red)
                         .font(.callout)
                 }
-                Button {
-                    Task { await saveChanges() }
-                } label: {
-                    HStack {
-                        Spacer()
-                        if isSaving {
-                            ProgressView()
-                        } else {
-                            Text("Save Changes")
-                        }
-                        Spacer()
-                    }
-                }
-                .disabled(isSaving)
             }
 
             // Delete section
@@ -744,6 +769,8 @@ struct MediaDetailSheet: View {
                 sceneDetail = try await client.fetchSceneDetail(id: id)
                 populateEditFields(from: sceneDetail!)
             }
+            // Baseline for unsaved-changes detection.
+            originalSnapshot = currentSnapshot
         } catch {
             loadError = error.localizedDescription
         }
@@ -820,56 +847,90 @@ struct MediaDetailSheet: View {
 
     // MARK: - Save
 
-    private func saveChanges() async {
+    /// Normalized snapshot of the current edit fields.
+    private var currentSnapshot: EditSnapshot {
+        EditSnapshot(
+            title: editTitle,
+            code: editCode,
+            date: editDate,
+            details: editDetails,
+            creator: editCreator,
+            rating100: editRating100,
+            organized: editOrganized,
+            urls: editUrls.filter { !$0.isEmpty },
+            studioId: editStudio?.id,
+            performerIds: editPerformers.map(\.id).sorted(),
+            tagIds: editTags.map(\.id).sorted()
+        )
+    }
+
+    /// Whether the edit fields differ from the last loaded/saved baseline.
+    private var hasUnsavedChanges: Bool {
+        guard let originalSnapshot else { return false }
+        return currentSnapshot != originalSnapshot
+    }
+
+    /// Commit edits to the server. Returns true on success (or when there is
+    /// nothing to save). The AppModel reference is captured by the caller while
+    /// the SwiftUI environment is still valid, so this is safe to run from the
+    /// sheet's dismissal path. No-op (returns true) when nothing changed.
+    @discardableResult
+    private func commitChanges(using model: AppModel) async -> Bool {
+        guard hasUnsavedChanges else { return true }
+
+        // Capture everything needed up front; the view may be tearing down.
+        let savedRating = editRating100
+        let savedSnapshot = currentSnapshot
+        let notifySaved = onSaved
+        let type = mediaType
+        let title = editTitle.isEmpty ? nil : editTitle
+        let code = editCode.isEmpty ? nil : editCode
+        let date = editDate.isEmpty ? nil : editDate
+        let details = editDetails.isEmpty ? nil : editDetails
+        let creator = editCreator.isEmpty ? nil : editCreator
+        let studioId = editStudio?.id
+        let performerIds = editPerformers.map(\.id)
+        let tagIds = editTags.map(\.id)
+        let galleryIds = editGalleries.map(\.id)
+        let urls = editUrls.filter { !$0.isEmpty }
+
         isSaving = true
         saveError = nil
 
         do {
-            let client = appModel.apiClient
-            let title = editTitle.isEmpty ? nil : editTitle
-            let code = editCode.isEmpty ? nil : editCode
-            let date = editDate.isEmpty ? nil : editDate
-            let details = editDetails.isEmpty ? nil : editDetails
-            let creator = editCreator.isEmpty ? nil : editCreator
-            let studioId = editStudio?.id
-            let performerIds = editPerformers.map(\.id)
-            let tagIds = editTags.map(\.id)
-            let galleryIds = editGalleries.map(\.id)
-            let urls = editUrls.filter { !$0.isEmpty }
-
-            switch mediaType {
+            switch type {
             case .image(let id):
-                try await client.updateImage(
+                try await model.apiClient.updateImage(
                     id: id, title: title, code: code, date: date,
-                    details: details, photographer: creator, rating100: editRating100,
+                    details: details, photographer: creator, rating100: savedRating,
                     studioId: studioId, performerIds: performerIds, tagIds: tagIds,
                     galleryIds: galleryIds, urls: urls, organized: editOrganized
                 )
-                // Update local gallery model rating/o-counter
-                // Update local gallery state
-                if let idx = appModel.galleryImages.firstIndex(where: { $0.stashId == id }) {
-                    appModel.galleryImages[idx].rating100 = editRating100
+                if let idx = model.galleryImages.firstIndex(where: { $0.stashId == id }) {
+                    model.galleryImages[idx].rating100 = savedRating
                 }
 
             case .scene(let id):
-                try await client.updateScene(
+                try await model.apiClient.updateScene(
                     id: id, title: title, code: code, date: date,
-                    details: details, director: creator, rating100: editRating100,
+                    details: details, director: creator, rating100: savedRating,
                     studioId: studioId, performerIds: performerIds, tagIds: tagIds,
                     galleryIds: galleryIds, urls: urls, organized: editOrganized
                 )
-                if let idx = appModel.galleryVideos.firstIndex(where: { $0.stashId == id }) {
-                    appModel.galleryVideos[idx].rating100 = editRating100
+                if let idx = model.galleryVideos.firstIndex(where: { $0.stashId == id }) {
+                    model.galleryVideos[idx].rating100 = savedRating
                 }
             }
 
-            // Reload detail to reflect saved state
-            await loadDetail()
+            isSaving = false
+            originalSnapshot = savedSnapshot
+            notifySaved?(savedRating)
+            return true
         } catch {
             saveError = error.localizedDescription
+            isSaving = false
+            return false
         }
-
-        isSaving = false
     }
 
     // MARK: - O Counter

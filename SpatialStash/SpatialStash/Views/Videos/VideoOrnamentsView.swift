@@ -140,6 +140,13 @@ struct VideoOrnamentsView: View {
                     appModel.galleryVideos.removeAll { $0.stashId == stashId }
                     windowModel.galleryVideos.removeAll { $0.stashId == stashId }
                     dismissWindow()
+                },
+                onSaved: { newRating in
+                    let stashId = video.stashId
+                    windowModel.video.rating100 = newRating
+                    if let idx = windowModel.galleryVideos.firstIndex(where: { $0.stashId == stashId }) {
+                        windowModel.galleryVideos[idx].rating100 = newRating
+                    }
                 }
             )
         }
