@@ -32,6 +32,11 @@ struct WebVideoPlayerView: UIViewRepresentable {
     /// Optional A-B loop controller. When provided, the player exposes JS hooks
     /// for querying current time and setting loop bounds; the controller drives them.
     var loopController: VideoLoopController? = nil
+    /// Optional per-window playback model. When provided, the player binds
+    /// play/pause/seek/mute command closures and reports playback state back to
+    /// it (driving the custom SwiftUI control bar). nil for callers that don't
+    /// need custom controls (animated GIFs, remote slideshow, stereoscopic fallback).
+    var playbackModel: VideoWindowModel? = nil
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -46,6 +51,7 @@ struct WebVideoPlayerView: UIViewRepresentable {
         configuration.allowsInlineMediaPlayback = true
         configuration.mediaTypesRequiringUserActionForPlayback = []
         configuration.userContentController.add(coordinator, name: "videoDimensions")
+        configuration.userContentController.add(coordinator, name: "videoPlayback")
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.isOpaque = false
@@ -80,6 +86,33 @@ struct WebVideoPlayerView: UIViewRepresentable {
                     js = "if (window.__stopABLoop) window.__stopABLoop();"
                 }
                 webView.evaluateJavaScript(js)
+            }
+        }
+
+        // Wire up the playback model (custom controls). Commands evaluate JS on
+        // the <video> element; state flows back via the videoPlayback handler.
+        if let playbackModel {
+            coordinator.onPlaybackUpdate = { [weak playbackModel] body in
+                guard let playbackModel else { return }
+                playbackModel.applyPlaybackState(
+                    currentTime: (body["currentTime"] as? Double) ?? 0,
+                    duration: (body["duration"] as? Double) ?? 0,
+                    paused: (body["paused"] as? Bool) ?? true,
+                    muted: (body["muted"] as? Bool) ?? false,
+                    buffered: (body["buffered"] as? Double) ?? 0
+                )
+            }
+            playbackModel.playCommand = { [weak webView] in
+                webView?.evaluateJavaScript("var p = document.getElementById('player'); if (p) p.play().catch(function(){});")
+            }
+            playbackModel.pauseCommand = { [weak webView] in
+                webView?.evaluateJavaScript("var p = document.getElementById('player'); if (p) p.pause();")
+            }
+            playbackModel.seekCommand = { [weak webView] t in
+                webView?.evaluateJavaScript("{ const p = document.getElementById('player'); if (p) p.currentTime = \(t); }")
+            }
+            playbackModel.setMutedCommand = { [weak webView] m in
+                webView?.evaluateJavaScript("{ const p = document.getElementById('player'); if (p) p.muted = \(m ? "true" : "false"); }")
             }
         }
 
@@ -165,8 +198,10 @@ struct WebVideoPlayerView: UIViewRepresentable {
 
     static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "videoDimensions")
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: "videoPlayback")
         coordinator.onVideoSizeKnown = nil
         coordinator.onDurationKnown = nil
+        coordinator.onPlaybackUpdate = nil
         coordinator.cancelSrcUnload()
         coordinator.cleanupHTMLFile()
     }
@@ -197,6 +232,9 @@ struct WebVideoPlayerView: UIViewRepresentable {
         var lastAdjustments: VisualAdjustments?
         var onVideoSizeKnown: ((CGSize) -> Void)?
         var onDurationKnown: ((Double) -> Void)?
+        /// Forwards periodic playback state ({currentTime, duration, paused, muted, buffered})
+        /// to the bound VideoWindowModel for the custom control bar.
+        var onPlaybackUpdate: (([String: Any]) -> Void)?
         /// Prevents firing the callback more than once per video load
         private var didReportSize: Bool = false
         /// Prevents firing the duration callback more than once per video load
@@ -245,6 +283,12 @@ struct WebVideoPlayerView: UIViewRepresentable {
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            if message.name == "videoPlayback" {
+                if let body = message.body as? [String: Any] {
+                    onPlaybackUpdate?(body)
+                }
+                return
+            }
             guard message.name == "videoDimensions",
                   let body = message.body as? [String: Any] else { return }
             // Duration and dimensions arrive together on loadedmetadata but
@@ -392,6 +436,29 @@ struct WebVideoPlayerView: UIViewRepresentable {
                 video.addEventListener('playing', function() {
                     retryCount = 0;
                 });
+
+                // ----- Custom controls bridge -----
+                // Report playback state to Swift so the SwiftUI control bar can
+                // render play/pause, the scrubber, buffered range, and mute.
+                function postPlayback() {
+                    if (!(window.webkit && window.webkit.messageHandlers.videoPlayback)) return;
+                    var b = 0;
+                    try { if (video.buffered.length) b = video.buffered.end(video.buffered.length - 1); } catch (e) {}
+                    window.webkit.messageHandlers.videoPlayback.postMessage({
+                        currentTime: video.currentTime || 0,
+                        duration: isFinite(video.duration) ? video.duration : 0,
+                        paused: video.paused,
+                        muted: video.muted,
+                        buffered: b
+                    });
+                }
+                video.addEventListener('timeupdate', postPlayback);
+                video.addEventListener('play', postPlayback);
+                video.addEventListener('pause', postPlayback);
+                video.addEventListener('seeked', postPlayback);
+                video.addEventListener('volumechange', postPlayback);
+                video.addEventListener('loadedmetadata', postPlayback);
+                video.addEventListener('durationchange', postPlayback);
 
                 // ----- A-B Loop -----
                 // Frame-accurate seek-back at point B using requestVideoFrameCallback

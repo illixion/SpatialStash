@@ -2,17 +2,18 @@
  Spatial Stash - Video Loop Controller
 
  Per-window @Observable model that drives the A-B loop feature on the
- web video player. Each press of the ornament button advances through:
+ web video player. Each press of the control-bar button advances through:
 
-   idle  → aSet → bSet → active → idle
+   idle → aSet → active → idle
 
- - idle  → aSet : capture current playback time as A
- - aSet  → bSet : capture current playback time as B (loop staged, not yet engaged)
- - bSet  → active : engage the loop (JS rVFC monitor seeks back to A near B)
- - active → idle : disable, clear points
+ - idle  → aSet   : capture current playback time as A
+ - aSet  → active : capture current playback time as B and engage the loop
+                    immediately (JS rVFC monitor seeks back to A near B)
+ - active → idle  : disable, clear points
 
- The bSet "stage" lets the user verify both points are captured before
- committing — the loop only becomes live on the third press.
+ The loop engages on the second press — there is no separate confirmation
+ step. A/B points are surfaced as markers on the scrubber so the user can
+ see them before/after engaging, and a clear button removes the loop.
 
  Owns its own toast message (mirroring the remote viewer pattern); the
  host view renders it as feedback for each transition.
@@ -26,7 +27,6 @@ final class VideoLoopController {
     enum State {
         case idle
         case aSet
-        case bSet
         case active
     }
 
@@ -72,22 +72,20 @@ final class VideoLoopController {
                 showToast("End point must be after start point", isError: true)
                 return
             }
+            // Capture B and engage the loop immediately (no confirmation step).
             pointB = t
-            state = .bSet
-            showToast("Loop end (B) set at \(formatTime(t))")
-
-        case .bSet:
-            guard let a = pointA, let b = pointB else {
-                clearLoop(showToast: false)
-                return
-            }
             state = .active
-            setLoopBounds?(a, b)
-            showToast("A-B Loop enabled (\(formatTime(a))–\(formatTime(b)))")
+            setLoopBounds?(a, t)
+            showToast("A-B Loop enabled (\(formatTime(a))–\(formatTime(t)))")
 
         case .active:
             clearLoop(showToast: true)
         }
+    }
+
+    /// Clear the loop from a user action (shows a toast if a loop was live).
+    func clear() {
+        clearLoop(showToast: true)
     }
 
     /// Reset to idle without showing a toast. Called when the video changes.
@@ -102,7 +100,6 @@ final class VideoLoopController {
         switch state {
         case .idle:   return "point.forward.to.point.capsulepath"
         case .aSet:   return "a.square"
-        case .bSet:   return "b.square"
         case .active: return "point.forward.to.point.capsulepath.fill"
         }
     }
@@ -114,8 +111,7 @@ final class VideoLoopController {
     var helpText: String {
         switch state {
         case .idle:   return "Set Loop Start (A)"
-        case .aSet:   return "Set Loop End (B)"
-        case .bSet:   return "Engage A-B Loop"
+        case .aSet:   return "Set Loop End (B) & Loop"
         case .active: return "Disable A-B Loop"
         }
     }

@@ -49,7 +49,7 @@ struct ImmersiveVideoView: View {
 
             // Set viewing mode based on override or auto-detect
             // Force 2D (override == false) uses mono to show only left eye
-            if appModel.videoStereoscopicOverride == false {
+            if appModel.immersiveVideoOwner?.stereoscopicOverride == false {
                 material.controller.preferredViewingMode = .mono
             } else {
                 material.controller.preferredViewingMode = videoInfo.isSpatial ? .stereo : .mono
@@ -89,7 +89,7 @@ struct ImmersiveVideoView: View {
             videoMaterial = nil
             videoEntity = nil
         }
-        .onChange(of: appModel.videoStereoscopicOverride) { _, newValue in
+        .onChange(of: appModel.immersiveVideoOwner?.stereoscopicOverride) { _, newValue in
             // Update viewing mode dynamically when user changes it
             guard let material = videoMaterial else { return }
             if newValue == false {

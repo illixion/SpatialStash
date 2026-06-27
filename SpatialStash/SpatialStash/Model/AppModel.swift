@@ -24,10 +24,6 @@ enum BackgroundRemovalState {
 @MainActor
 @Observable
 class AppModel {
-    // MARK: - Navigation State
-
-    var isShowingVideoDetail: Bool = false
-
     // MARK: - Server Configuration (with UserDefaults persistence)
 
     var stashServerURL: String {
@@ -69,11 +65,6 @@ class AppModel {
     /// Incremented on each loadInitialVideos; stale loadNextVideoPage results are discarded
     private var videoLoadGeneration: Int = 0
 
-    // MARK: - Video Share State
-
-    var isPreparingVideoShare: Bool = false
-    var videoShareFileURL: URL?
-
     // MARK: - Stereoscopic Video Immersive State
 
     /// Whether the stereoscopic video immersive space is currently shown
@@ -85,17 +76,10 @@ class AppModel {
     /// URL of the converted MV-HEVC file for immersive playback
     var immersiveVideoURL: URL?
 
-    /// Override for stereoscopic video viewing mode: nil = auto (stereo for 3D content), false = force mono (left eye only)
-    var videoStereoscopicOverride: Bool? = nil
-
-    /// Custom 3D settings for the current video (used when manually enabling 3D mode)
-    var video3DSettings: Video3DSettings?
-
-    /// Whether to show the 3D settings sheet
-    var showVideo3DSettingsSheet: Bool = false
-
-    /// Whether the in-window video is horizontally flipped
-    var isVideoFlipped: Bool = false
+    /// The video window that opened the current immersive session, so the
+    /// immersive player can read that window's stereoscopic override. Only one
+    /// immersive space exists at a time on visionOS, so a single owner suffices.
+    weak var immersiveVideoOwner: VideoWindowModel?
 
     // MARK: - Filter State
 
@@ -503,14 +487,6 @@ class AppModel {
         return .backgroundedInOtherRoom(values[0])
     }
 
-    // MARK: - UI Visibility State (for immersive image viewing)
-
-    /// Whether the UI (ornaments, navbar) should be hidden in detail view
-    var isUIHidden: Bool = false
-
-    /// Timer for auto-hiding UI after inactivity
-    private var autoHideTask: Task<Void, Never>?
-
     /// Duration before auto-hiding UI (in seconds), 0 means disabled
     var autoHideDelay: TimeInterval {
         didSet {
@@ -528,17 +504,6 @@ class AppModel {
         ("5 seconds", 5),
         ("10 seconds", 10)
     ]
-
-    // MARK: - Viewer Lazy Loading State
-
-    /// Snapshotted video filter for viewer navigation (captured when viewer opens)
-    private var viewerVideoFilter: SceneFilterCriteria?
-
-    /// Whether a video viewer page load is in progress
-    private(set) var isLoadingVideoViewerPage: Bool = false
-
-    /// How many items from end before prefetching next page
-    private let viewerPrefetchThreshold: Int = 5
 
     // MARK: - Image Display Settings
 
@@ -720,9 +685,6 @@ class AppModel {
             }
         }
     }
-
-    /// Per-session video visual adjustments (not persisted across app launches)
-    var videoVisualAdjustments: VisualAdjustments = VisualAdjustments()
 
     // MARK: - Remote Viewer
 
@@ -2099,46 +2061,6 @@ class AppModel {
         await searchPerformers(query: "")
     }
 
-    // MARK: - UI Visibility Control
-
-    /// Toggle UI visibility (for tap gesture)
-    func toggleUIVisibility() {
-        isUIHidden.toggle()
-        if !isUIHidden {
-            // UI is now visible, start auto-hide timer
-            startAutoHideTimer()
-        } else {
-            // UI is hidden, cancel any pending auto-hide
-            cancelAutoHideTimer()
-        }
-    }
-
-    /// Start the auto-hide timer
-    func startAutoHideTimer() {
-        cancelAutoHideTimer()
-        // If auto-hide is disabled (delay is 0), don't start the timer
-        guard autoHideDelay > 0 else { return }
-        autoHideTask = Task { @MainActor in
-            try? await Task.sleep(for: .seconds(autoHideDelay))
-            if !Task.isCancelled && isShowingVideoDetail {
-                isUIHidden = true
-            }
-        }
-    }
-
-    /// Cancel the auto-hide timer
-    func cancelAutoHideTimer() {
-        autoHideTask?.cancel()
-        autoHideTask = nil
-    }
-
-    /// Reset the auto-hide timer (called on user interaction)
-    func resetAutoHideTimer() {
-        if !isUIHidden {
-            startAutoHideTimer()
-        }
-    }
-
     // MARK: - Video Gallery Methods
 
     /// Load the initial video gallery page
@@ -2156,13 +2078,12 @@ class AppModel {
         hasMoreVideoPages = true
         // Force-reset loading flags so the new load can proceed even if a prior load is in-flight
         isLoadingVideos = false
-        isLoadingVideoViewerPage = false
         await loadNextVideoPage()
     }
 
     /// Load the next page of videos
     func loadNextVideoPage() async {
-        guard !isLoadingVideos && !isLoadingVideoViewerPage && hasMoreVideoPages else {
+        guard !isLoadingVideos && hasMoreVideoPages else {
             let loadingVideos = isLoadingVideos
             let hasMoreVideo = hasMoreVideoPages
             AppLogger.appModel.log(level: AppLogger.effectiveDebugLevel, "loadNextVideoPage skipped - isLoading: \(loadingVideos, privacy: .public), hasMore: \(hasMoreVideo, privacy: .public)")
@@ -2196,40 +2117,6 @@ class AppModel {
         }
     }
 
-    /// Load more videos for the viewer using the snapshotted filter
-    func loadMoreVideosForViewer() async {
-        guard !isLoadingVideos && !isLoadingVideoViewerPage && hasMoreVideoPages else { return }
-
-        let generation = videoLoadGeneration
-        isLoadingVideoViewerPage = true
-        defer {
-            if generation == videoLoadGeneration {
-                isLoadingVideoViewerPage = false
-            }
-        }
-
-        do {
-            let result = try await videoSource.fetchVideos(page: currentVideoPage, pageSize: pageSize, filter: viewerVideoFilter)
-            guard generation == videoLoadGeneration else { return }
-            AppLogger.appModel.log(level: AppLogger.effectiveDebugLevel, "Viewer loaded \(result.videos.count, privacy: .public) more videos")
-            galleryVideos.append(contentsOf: result.videos)
-            hasMoreVideoPages = result.hasMore
-            currentVideoPage += 1
-        } catch {
-            AppLogger.appModel.error("Failed to load viewer video page: \(error.localizedDescription, privacy: .public)")
-        }
-    }
-
-    /// Check if more videos should be loaded based on proximity to end
-    private func checkAndLoadMoreVideosIfNeeded(currentIndex: Int) {
-        let remaining = galleryVideos.count - currentIndex - 1
-        if remaining <= viewerPrefetchThreshold && hasMoreVideoPages && !isLoadingVideos && !isLoadingVideoViewerPage {
-            Task {
-                await loadMoreVideosForViewer()
-            }
-        }
-    }
-
     /// Apply current video filter and reload videos
     func applyVideoFilter() async {
         selectedSavedVideoView = nil  // Clear saved video view selection when manually filtering
@@ -2241,101 +2128,6 @@ class AppModel {
         currentVideoFilter.clearFilters()
         selectedSavedVideoView = nil
         await loadInitialVideos()
-    }
-
-    /// Select a video to play
-    func selectVideoForDetail(_ video: GalleryVideo) {
-        selectedVideo = video
-        lastViewedVideoId = video.id
-        isShowingVideoDetail = true
-        videoStereoscopicOverride = nil
-        video3DSettings = nil
-        isVideoFlipped = false
-
-        // Snapshot the filter on first entry to the viewer
-        if viewerVideoFilter == nil {
-            viewerVideoFilter = currentVideoFilter
-        }
-    }
-
-    /// Dismiss video player
-    func dismissVideoDetail() {
-        isShowingVideoDetail = false
-        selectedVideo = nil
-        videoStereoscopicOverride = nil
-        video3DSettings = nil
-        isVideoFlipped = false
-        // Clear the snapshotted viewer filter
-        viewerVideoFilter = nil
-    }
-
-    /// Navigate to next video
-    func nextVideo() {
-        guard let currentVideo = selectedVideo,
-              let currentIndex = galleryVideos.firstIndex(of: currentVideo),
-              currentIndex + 1 < galleryVideos.count else { return }
-
-        let nextIndex = currentIndex + 1
-        checkAndLoadMoreVideosIfNeeded(currentIndex: nextIndex)
-        selectVideoForDetail(galleryVideos[nextIndex])
-    }
-
-    /// Navigate to previous video
-    func previousVideo() {
-        guard let currentVideo = selectedVideo,
-              let currentIndex = galleryVideos.firstIndex(of: currentVideo),
-              currentIndex > 0 else { return }
-
-        selectVideoForDetail(galleryVideos[currentIndex - 1])
-    }
-
-    var hasNextVideo: Bool {
-        guard let currentVideo = selectedVideo,
-              let currentIndex = galleryVideos.firstIndex(of: currentVideo) else { return false }
-        return currentIndex + 1 < galleryVideos.count
-    }
-
-    var hasPreviousVideo: Bool {
-        guard let currentVideo = selectedVideo,
-              let currentIndex = galleryVideos.firstIndex(of: currentVideo) else { return false }
-        return currentIndex > 0
-    }
-
-    var currentVideoPosition: Int {
-        guard let currentVideo = selectedVideo,
-              let currentIndex = galleryVideos.firstIndex(of: currentVideo) else { return 0 }
-        return currentIndex + 1
-    }
-
-    // MARK: - Video Share
-
-    func shareVideo() async {
-        guard !isPreparingVideoShare, let video = selectedVideo else { return }
-        isPreparingVideoShare = true
-        defer { isPreparingVideoShare = false }
-
-        let url = video.streamURL
-        let shareName = video.fileName ?? video.title
-
-        if url.isFileURL {
-            presentVideoShareSheet(url: ShareSheetHelper.prepareShareFile(from: url, title: shareName, originalURL: url))
-            return
-        }
-
-        // Remote Stash video — download to temp file
-        do {
-            let (tempURL, _) = try await URLSession.shared.download(from: url)
-            let namedURL = ShareSheetHelper.prepareShareFile(from: tempURL, title: shareName, originalURL: url)
-            try? FileManager.default.removeItem(at: tempURL)
-            presentVideoShareSheet(url: namedURL)
-        } catch {
-            AppLogger.appModel.error("Failed to download video for sharing: \(error.localizedDescription, privacy: .public)")
-        }
-    }
-
-    private func presentVideoShareSheet(url: URL) {
-        cancelAutoHideTimer()
-        videoShareFileURL = url
     }
 
     // MARK: - Multi-Select State
@@ -2389,17 +2181,6 @@ class AppModel {
         }
     }
 
-    func updateVideoRating(stashId: String, rating100: Int?) async throws {
-        try await apiClient.updateSceneRating(sceneId: stashId, rating100: rating100)
-        if var video = selectedVideo, video.stashId == stashId {
-            video.rating100 = rating100
-            selectedVideo = video
-        }
-        if let index = galleryVideos.firstIndex(where: { $0.stashId == stashId }) {
-            galleryVideos[index].rating100 = rating100
-        }
-    }
-
     func incrementImageOCounter(stashId: String) async throws {
         let newValue = try await apiClient.incrementImageOCounter(imageId: stashId)
         if var image = selectedImage, image.stashId == stashId {
@@ -2419,28 +2200,6 @@ class AppModel {
         }
         if let index = galleryImages.firstIndex(where: { $0.stashId == stashId }) {
             galleryImages[index].oCounter = newValue
-        }
-    }
-
-    func incrementVideoOCounter(stashId: String) async throws {
-        let newValue = try await apiClient.incrementSceneOCounter(sceneId: stashId)
-        if var video = selectedVideo, video.stashId == stashId {
-            video.oCounter = newValue
-            selectedVideo = video
-        }
-        if let index = galleryVideos.firstIndex(where: { $0.stashId == stashId }) {
-            galleryVideos[index].oCounter = newValue
-        }
-    }
-
-    func decrementVideoOCounter(stashId: String) async throws {
-        let newValue = try await apiClient.decrementSceneOCounter(sceneId: stashId)
-        if var video = selectedVideo, video.stashId == stashId {
-            video.oCounter = newValue
-            selectedVideo = video
-        }
-        if let index = galleryVideos.firstIndex(where: { $0.stashId == stashId }) {
-            galleryVideos[index].oCounter = newValue
         }
     }
 

@@ -24,6 +24,10 @@ struct StereoscopicVideoView: View {
 
     let video: GalleryVideo
 
+    /// The owning window's model — used to register the immersive session so the
+    /// immersive player reads this window's stereoscopic override.
+    let windowModel: VideoWindowModel
+
     /// Optional initial settings (if provided, uses these instead of tag-detected)
     var initialSettings: Video3DSettings?
 
@@ -72,8 +76,8 @@ struct StereoscopicVideoView: View {
                 }
             }
         }
-        .onChange(of: appModel.video3DSettings) { oldSettings, newSettings in
-            // Handle settings change from ornament's Edit Settings
+        .onChange(of: initialSettings) { _, newSettings in
+            // Handle per-window settings change from the ornament's Edit Settings
             if let newSettings = newSettings, newSettings != currentSettings {
                 applyNewSettings(newSettings)
             }
@@ -348,9 +352,12 @@ struct StereoscopicVideoView: View {
             return
         }
 
-        // Store video info in AppModel for ImmersiveVideoView
+        // Store video info in AppModel for ImmersiveVideoView, and register this
+        // window as the immersive session's owner so the immersive player reads
+        // this window's stereoscopic override.
         appModel.immersiveVideo = video
         appModel.immersiveVideoURL = convertedURL
+        appModel.immersiveVideoOwner = windowModel
 
         // Stop the player since ImmersiveVideoView will create its own
         player.stop()
@@ -380,6 +387,7 @@ struct StereoscopicVideoView: View {
             appModel.isStereoscopicImmersiveSpaceShown = false
             appModel.immersiveVideo = nil
             appModel.immersiveVideoURL = nil
+            appModel.immersiveVideoOwner = nil
         }
     }
 }
@@ -389,18 +397,21 @@ struct StereoscopicVideoView: View {
 #if DEBUG
 struct StereoscopicVideoView_Previews: PreviewProvider {
     static var previews: some View {
-        StereoscopicVideoView(
-            video: GalleryVideo(
-                stashId: "preview",
-                thumbnailURL: URL(string: "https://example.com/thumb.jpg")!,
-                streamURL: URL(string: "https://example.com/video.mp4")!,
-                title: "Preview Video",
-                duration: 120,
-                isStereoscopic: true,
-                stereoscopicFormat: .sideBySide
-            )
+        let appModel = AppModel()
+        let video = GalleryVideo(
+            stashId: "preview",
+            thumbnailURL: URL(string: "https://example.com/thumb.jpg")!,
+            streamURL: URL(string: "https://example.com/video.mp4")!,
+            title: "Preview Video",
+            duration: 120,
+            isStereoscopic: true,
+            stereoscopicFormat: .sideBySide
         )
-        .environment(AppModel())
+        return StereoscopicVideoView(
+            video: video,
+            windowModel: VideoWindowModel(windowValue: VideoWindowValue(video: video), appModel: appModel)
+        )
+        .environment(appModel)
     }
 }
 #endif

@@ -7,6 +7,9 @@
    Shows full ornament with navigation, rating, share, adjustments, flip, pop-out.
  - Standalone (wasPushed=false): opened via openWindow as independent pop-out window.
    Shows same ornament as pushed, but without pop-out button (matching photo viewer pattern).
+
+ All per-window state lives in `VideoWindowModel` (created with @State here, like
+ PhotoWindowModel), so multiple video windows are fully independent.
  */
 
 import os
@@ -14,44 +17,25 @@ import SwiftUI
 
 struct VideoWindowView: View {
     let windowValue: VideoWindowValue
+    @State private var windowModel: VideoWindowModel
     @Environment(AppModel.self) private var appModel
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismissWindow) private var dismissWindow
     @Environment(\.scenePhase) private var scenePhase
-
-    @State private var isUIHidden = false
-    @State private var isWindowControlsHidden = false
-    @State private var autoHideTask: Task<Void, Never>?
-    @State private var windowControlsHideTask: Task<Void, Never>?
-    /// Counts open ornament menus / popovers (More menu, Adjustments).
-    /// `>0` pauses the auto-hide timer so the ornament doesn't vanish
-    /// out from under the user mid-selection. Same approach as
-    /// PhotoWindowModel.openOrnamentMenuCount.
-    @State private var chromeBlockCount: Int = 0
-    @State private var stereoscopicOverride: Bool?
-    @State private var video3DSettings: Video3DSettings?
-    /// Prevents onDisappear from clearing selectedVideo when popping out to a standalone window
-    @State private var isPoppingOut: Bool = false
-
-    /// Drives the A-B loop feature for the 2D web player. Owns its own toast state.
-    @State private var loopController = VideoLoopController()
-
-    // MARK: - Room Activity / Memory Management
-
-    /// Whether this window is in the user's current room
-    @State private var isInActiveRoom: Bool = true
+    /// THIS window's scene (used for aspect-ratio locking). Reading it from the
+    /// environment avoids the multi-window bug of resizing an arbitrary
+    /// foreground-active scene.
+    @Environment(SceneDelegate.self) private var sceneDelegate: SceneDelegate?
 
     /// Extra bottom padding to prevent the ornament from overlapping video content
     private let ornamentBottomPadding: CGFloat = 60
 
-    /// For pushed windows, follow AppModel.selectedVideo so prev/next navigation works.
-    /// For standalone pop-outs, use the snapshot from windowValue.
-    private var video: GalleryVideo {
-        if windowValue.wasPushed, let selected = appModel.selectedVideo {
-            return selected
-        }
-        return windowValue.video
+    init(windowValue: VideoWindowValue, appModel: AppModel) {
+        self.windowValue = windowValue
+        _windowModel = State(initialValue: VideoWindowModel(windowValue: windowValue, appModel: appModel))
     }
+
+    private var video: GalleryVideo { windowModel.video }
 
     var body: some View {
         ZStack {
@@ -59,15 +43,16 @@ struct VideoWindowView: View {
                 Group {
                     if appModel.allWindowsHidden {
                         Color.clear
-                    } else if shouldUseStereoscopicPlayer {
+                    } else if windowModel.shouldUse3DMode {
                         StereoscopicVideoView(
                             video: video,
-                            initialSettings: video3DSettings,
+                            windowModel: windowModel,
+                            initialSettings: windowModel.video3DSettings,
                             onRevertTo2D: {
-                                stereoscopicOverride = false
+                                windowModel.stereoscopicOverride = false
                             },
                             onSettingsChanged: { newSettings in
-                                video3DSettings = newSettings
+                                windowModel.video3DSettings = newSettings
                             }
                         )
                         .id("\(video.id)_3d")
@@ -75,30 +60,33 @@ struct VideoWindowView: View {
                         WebVideoPlayerView(
                             videoURL: video.streamURL,
                             apiKey: appModel.stashAPIKey.isEmpty ? nil : appModel.stashAPIKey,
-                            showControls: !isUIHidden,
-                            isRoomActive: isInActiveRoom,
+                            // Native Safari controls are off; our SwiftUI
+                            // control bar drives playback via the JS bridge.
+                            showControls: false,
+                            isRoomActive: windowModel.isInActiveRoom,
                             onVideoSizeKnown: { size in
                                 lockWindowToVideoAspectRatio(videoSize: size)
                             },
-                            loopController: loopController
+                            loopController: windowModel.loopController,
+                            playbackModel: windowModel
                         )
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .id("\(video.id)_2d")
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .scaleEffect(x: appModel.isVideoFlipped ? -1 : 1, y: 1)
-                .brightness(effectiveVideoAdjustments.brightness)
-                .contrast(effectiveVideoAdjustments.contrast)
-                .saturation(effectiveVideoAdjustments.saturation)
-                .opacity(effectiveVideoAdjustments.opacity)
+                .scaleEffect(x: windowModel.isFlipped ? -1 : 1, y: 1)
+                .brightness(windowModel.effectiveVideoAdjustments.brightness)
+                .contrast(windowModel.effectiveVideoAdjustments.contrast)
+                .saturation(windowModel.effectiveVideoAdjustments.saturation)
+                .opacity(windowModel.effectiveVideoAdjustments.opacity)
                 .overlay {
                     // Transparent tap target that only appears when UI is hidden
-                    if isUIHidden {
+                    if windowModel.isUIHidden {
                         Color.clear
                             .contentShape(.rect)
                             .onTapGesture {
-                                toggleUIVisibility()
+                                windowModel.toggleUIVisibility()
                             }
                     }
                 }
@@ -108,7 +96,7 @@ struct VideoWindowView: View {
             }
 
             // Toast notification (A-B loop feedback)
-            if let toast = loopController.toastMessage {
+            if let toast = windowModel.loopController.toastMessage {
                 VStack {
                     Spacer()
                     HStack {
@@ -120,31 +108,40 @@ struct VideoWindowView: View {
                             .padding(.vertical, 10)
                             .background(
                                 RoundedRectangle(cornerRadius: 10)
-                                    .fill(loopController.toastIsError ? Color.red.opacity(0.85) : Color.black.opacity(0.7))
+                                    .fill(windowModel.loopController.toastIsError ? Color.red.opacity(0.85) : Color.black.opacity(0.7))
                             )
                         Spacer()
                     }
-                    .padding(.bottom, ornamentBottomPadding + 24)
+                    .padding(.bottom, ornamentBottomPadding + 96)
                 }
                 .allowsHitTesting(false)
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
-                .animation(.easeInOut, value: loopController.toastMessage)
+                .animation(.easeInOut, value: windowModel.loopController.toastMessage)
+            }
+
+            // Custom playback controls (2D web player only)
+            if !appModel.allWindowsHidden, !windowModel.shouldUse3DMode, !windowModel.isUIHidden {
+                VStack {
+                    Spacer()
+                    VideoControlBar(windowModel: windowModel)
+                        .padding(.horizontal, 24)
+                        .padding(.bottom, ornamentBottomPadding + 12)
+                }
+                .transition(.opacity)
             }
         }
-        .persistentSystemOverlays(isWindowControlsHidden ? .hidden : .visible)
+        .animation(.easeInOut(duration: 0.2), value: windowModel.isUIHidden)
+        .persistentSystemOverlays(windowModel.isWindowControlsHidden ? .hidden : .visible)
         .ornament(
-            visibility: isUIHidden ? .hidden : .visible,
+            visibility: windowModel.isUIHidden ? .hidden : .visible,
             attachmentAnchor: .scene(.bottomFront),
             ornament: {
                 videoOrnament
             }
         )
-        .sheet(isPresented: Binding(
-            get: { appModel.showVideo3DSettingsSheet },
-            set: { appModel.showVideo3DSettingsSheet = $0 }
-        )) {
+        .sheet(isPresented: $windowModel.showVideo3DSettingsSheet) {
             Video3DSettingsSheet(
-                initialSettings: video3DSettings,
+                initialSettings: windowModel.video3DSettings,
                 onApply: { settings in
                     Task {
                         await Video3DSettingsTracker.shared.saveSettings(
@@ -152,58 +149,39 @@ struct VideoWindowView: View {
                             settings: settings
                         )
                     }
-                    video3DSettings = settings
-                    stereoscopicOverride = true
+                    windowModel.video3DSettings = settings
+                    windowModel.stereoscopicOverride = true
                 },
                 onCancel: nil
             )
         }
         .onAppear {
-            stereoscopicOverride = windowValue.stereoscopicOverride
-            video3DSettings = windowValue.video3DSettings
             // Wall-snapped pop-outs restored by visionOS after a reboot come
             // back with the same windowValue UUID. Repeat appearances of the
             // same UUID are treated as system-restored — start with ornaments
             // hidden instead of arming the reveal timer.
             if !windowValue.wasPushed, RestoredWindowTracker.isRestored(windowValue.id) {
-                isUIHidden = true
-                isWindowControlsHidden = true
+                windowModel.isRestoredPopOut = true
+                windowModel.isUIHidden = true
+                windowModel.isWindowControlsHidden = true
             } else {
                 if !windowValue.wasPushed {
                     RestoredWindowTracker.markSeen(windowValue.id)
                 }
-                startAutoHideTimer()
+                windowModel.startAutoHideTimer()
             }
-            // Set AppModel video state so VideoOrnamentsView works for both contexts
-            appModel.selectVideoForDetail(video)
+            windowModel.start()
         }
         .onDisappear {
-            cancelAutoHideTimer()
+            windowModel.cleanup()
             restoreWindowResizing()
-            // Don't clear selectedVideo when popping out — the standalone window needs it
-            if !isPoppingOut {
-                appModel.dismissVideoDetail()
-            }
-        }
-        .onChange(of: appModel.selectedVideo) { _, newVideo in
-            // When prev/next navigation changes the selected video, reset per-video state
-            if windowValue.wasPushed, newVideo != nil {
-                stereoscopicOverride = nil
-                video3DSettings = nil
-                appModel.isVideoFlipped = false
-                loopController.reset()
-            }
         }
         .onChange(of: scenePhase) { oldPhase, newPhase in
-            handleScenePhaseChange(from: oldPhase, to: newPhase)
+            AppLogger.videoWindow.info(
+                "[\(windowModel.videoDisplayName, privacy: .public)] scenePhase: \(phaseLabel(oldPhase), privacy: .public) → \(phaseLabel(newPhase), privacy: .public)"
+            )
+            windowModel.handleScenePhaseChange(from: oldPhase, to: newPhase)
         }
-    }
-
-    // MARK: - Visual Adjustments
-
-    /// Effective adjustments: use per-video session if modified, otherwise global
-    private var effectiveVideoAdjustments: VisualAdjustments {
-        appModel.videoVisualAdjustments.isModified ? appModel.videoVisualAdjustments : appModel.globalVisualAdjustments
     }
 
     // MARK: - Ornament
@@ -212,96 +190,36 @@ struct VideoWindowView: View {
     /// Only the pop-out button differs (hidden for standalone), matching photo viewer pattern.
     private var videoOrnament: some View {
         VideoOrnamentsView(
-            videoCount: appModel.galleryVideos.count,
-            video: video,
-            wasPushed: windowValue.wasPushed,
-            loopController: loopController,
-            isStereoscopicMode: shouldUseStereoscopicPlayer,
+            windowModel: windowModel,
             onGalleryButtonTap: {
                 appModel.showMainWindow(openWindow: openWindow)
             },
             onPopOut: windowValue.wasPushed ? {
-                isPoppingOut = true
-                let windowValue = VideoWindowValue(
-                    video: video,
-                    stereoscopicOverride: stereoscopicOverride,
-                    video3DSettings: video3DSettings
+                let newValue = VideoWindowValue(
+                    video: windowModel.video,
+                    stereoscopicOverride: windowModel.stereoscopicOverride,
+                    video3DSettings: windowModel.video3DSettings
                 )
-                openWindow(id: "video-detail", value: windowValue)
+                openWindow(id: "video-detail", value: newValue)
                 dismissWindow()
-            } : nil,
-            onChromeBlockingChange: { opened in
-                if opened {
-                    chromeBlockCount += 1
-                    cancelAutoHideTimer()
-                } else {
-                    chromeBlockCount = max(0, chromeBlockCount - 1)
-                    if chromeBlockCount == 0 {
-                        startAutoHideTimer()
-                    }
-                }
-            }
+            } : nil
         )
     }
 
-    // MARK: - Stereoscopic Mode
-
-    private var shouldUseStereoscopicPlayer: Bool {
-        if stereoscopicOverride == false { return false }
-        if stereoscopicOverride == true || video3DSettings != nil { return true }
-        return video.isStereoscopic
-    }
-
-    // MARK: - Auto-Hide
-
-    private func startAutoHideTimer() {
-        cancelAutoHideTimer()
-        guard appModel.autoHideDelay > 0 else { return }
-
-        autoHideTask = Task {
-            try? await Task.sleep(for: .seconds(appModel.autoHideDelay))
-            if !Task.isCancelled {
-                isUIHidden = true
-                scheduleWindowControlsHiding()
-            }
-        }
-    }
-
-    private func scheduleWindowControlsHiding() {
-        windowControlsHideTask?.cancel()
-        windowControlsHideTask = Task {
-            try? await Task.sleep(for: .seconds(1.5))
-            if !Task.isCancelled {
-                isWindowControlsHidden = true
-            }
-        }
-    }
-
-    private func cancelAutoHideTimer() {
-        autoHideTask?.cancel()
-        autoHideTask = nil
-        windowControlsHideTask?.cancel()
-        windowControlsHideTask = nil
-        isWindowControlsHidden = false
-    }
-
-    private func toggleUIVisibility() {
-        isUIHidden.toggle()
-        isWindowControlsHidden = false
-        if !isUIHidden {
-            startAutoHideTimer()
-        }
-    }
-
     // MARK: - Window Aspect Ratio
+
+    private var resolvedWindowScene: UIWindowScene? {
+        if let sceneDelegate { return sceneDelegate.windowScene }
+        return UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive }
+    }
 
     /// Lock the window's resize aspect ratio to the video's native dimensions
     /// (reported by the HTML video element's loadedmetadata event).
     private func lockWindowToVideoAspectRatio(videoSize: CGSize) {
         guard videoSize.width > 0, videoSize.height > 0,
-              let windowScene = UIApplication.shared.connectedScenes
-                .compactMap({ $0 as? UIWindowScene })
-                .first(where: { $0.activationState == .foregroundActive }) else { return }
+              let windowScene = resolvedWindowScene else { return }
 
         let videoAspectRatio = videoSize.width / videoSize.height
         let videoWidth: CGFloat = 1200
@@ -315,28 +233,8 @@ struct VideoWindowView: View {
     }
 
     private func restoreWindowResizing() {
-        guard let windowScene = UIApplication.shared.connectedScenes
-            .compactMap({ $0 as? UIWindowScene })
-            .first(where: { $0.activationState == .foregroundActive }) else { return }
+        guard let windowScene = resolvedWindowScene else { return }
         windowScene.requestGeometryUpdate(.Vision(resizingRestrictions: .freeform))
-    }
-
-    // MARK: - Scene Phase / Room Activity
-
-    private var videoDisplayName: String {
-        video.title ?? video.streamURL.lastPathComponent
-    }
-
-    private func handleScenePhaseChange(from oldPhase: ScenePhase, to newPhase: ScenePhase) {
-        AppLogger.videoWindow.info(
-            "[\(videoDisplayName, privacy: .public)] scenePhase: \(phaseLabel(oldPhase), privacy: .public) → \(phaseLabel(newPhase), privacy: .public)"
-        )
-
-        if newPhase == .active {
-            isInActiveRoom = true
-        } else if oldPhase == .active && (newPhase == .inactive || newPhase == .background) {
-            isInActiveRoom = false
-        }
     }
 
     private func phaseLabel(_ phase: ScenePhase) -> String {

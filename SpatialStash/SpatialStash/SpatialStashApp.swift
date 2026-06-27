@@ -42,7 +42,7 @@ struct SpatialStashApp: App {
         // Individual video window - pop-out video player
         WindowGroup(id: "video-detail", for: VideoWindowValue.self) { $windowValue in
             if let windowValue = windowValue {
-                VideoWindowView(windowValue: windowValue)
+                VideoWindowView(windowValue: windowValue, appModel: appModel)
                     .environment(appModel)
                     .captureOpenWindowAction()
             }
