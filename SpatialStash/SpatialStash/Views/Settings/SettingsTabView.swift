@@ -460,7 +460,10 @@ struct SettingsTabView: View {
                     // one starts its download. The button deletes whichever model is
                     // currently selected, so custom models can be removed too.
                     Picker("Depth Model", selection: $appModel.preferredDepthModelName) {
-                        Text("Auto").tag("")
+                        // The heuristic is a first-class, selectable entry (empty
+                        // tag) alongside the real models, so the active mode is
+                        // always visible in the selector.
+                        Text("Built-in (heuristic)").tag("")
                         ForEach(depthModels.installedNames, id: \.self) { name in
                             Text(DepthModelManager.displayName(for: name)).tag(name)
                         }
@@ -475,12 +478,6 @@ struct SettingsTabView: View {
                            !depthModels.isInstalled(variant) {
                             Task { await depthModels.download(variant) }
                         }
-                    }
-
-                    if depthModels.installedNames.isEmpty {
-                        Label("No model installed — Pseudo 3D uses the built-in heuristic warp.", systemImage: "info.circle")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
                     }
 
                     if let downloading = DepthModelManager.variants.first(where: { depthModels.isDownloading($0) }) {

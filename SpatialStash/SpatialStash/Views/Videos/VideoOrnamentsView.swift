@@ -417,7 +417,7 @@ struct VideoOrnamentsView: View {
                 appModel.preferredDepthModelName = ""
             } label: {
                 HStack {
-                    Text("Auto")
+                    Text("Built-in (heuristic)")
                     if appModel.preferredDepthModelName.isEmpty {
                         Image(systemName: "checkmark")
                     }

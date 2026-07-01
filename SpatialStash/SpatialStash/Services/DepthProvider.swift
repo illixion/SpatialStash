@@ -99,28 +99,26 @@ final class CoreMLDepthProvider: DepthProvider, @unchecked Sendable {
         return try? device.makeComputePipelineState(function: fn)
     }
 
-    /// Locate a depth model in the managed store, then the bundle. Models are
-    /// kept out of the app bundle so builds stay fast (no large Core ML compile
-    /// step). Accepts a precompiled `.mlmodelc` (loads directly) or an
-    /// `.mlpackage` (compiled + cached by `compiledModelURL`).
+    /// Resolve the depth model to load from the selected preference.
+    ///
+    /// The selection is explicit (see the Settings/ViewMode "Depth Model"
+    /// picker): an empty preference is the first-class **Built-in (heuristic)**
+    /// choice — load no model and let the warp use the heuristic. A named
+    /// preference loads that model if present in the managed store or bundle; if
+    /// it's missing (e.g. deleted out from under the preference) we fall back to
+    /// the heuristic rather than silently substituting a different model.
+    /// `.mlmodelc` loads directly; `.mlpackage` is compiled + cached by
+    /// `compiledModelURL`.
     private static func findModelURL() -> URL? {
-        let dirs = modelSearchDirectories()
-
-        // Honor an explicit preference (Settings → Depth Model) first: look for
-        // that base name (any extension) across Documents then the bundle.
         let preferred = UserDefaults.standard.string(forKey: "preferredDepthModelName") ?? ""
-        if !preferred.isEmpty {
-            let fm = FileManager.default
-            for dir in dirs {
-                for ext in ["mlmodelc", "mlpackage"] {
-                    let url = dir.appendingPathComponent(preferred).appendingPathExtension(ext)
-                    if fm.fileExists(atPath: url.path) { return url }
-                }
-            }
-        }
+        guard !preferred.isEmpty else { return nil }
 
-        for dir in dirs {
-            if let url = modelURL(in: dir) { return url }
+        let fm = FileManager.default
+        for dir in modelSearchDirectories() {
+            for ext in ["mlmodelc", "mlpackage"] {
+                let url = dir.appendingPathComponent(preferred).appendingPathExtension(ext)
+                if fm.fileExists(atPath: url.path) { return url }
+            }
         }
         return nil
     }
@@ -133,29 +131,6 @@ final class CoreMLDepthProvider: DepthProvider, @unchecked Sendable {
     /// the next launch, once imported into the store.
     private static func modelSearchDirectories() -> [URL] {
         [DepthModelStore.modelsDirectory, Bundle.main.bundleURL]
-    }
-
-    /// Find a depth model in `directory`, preferring compiled `.mlmodelc` over
-    /// `.mlpackage`, and known Depth Anything names over a generic "depth" match.
-    private static func modelURL(in directory: URL) -> URL? {
-        let fm = FileManager.default
-        let names = [
-            "DepthAnythingV2Base", "DepthAnythingV2BaseF16",
-            "DepthAnythingV2SmallF16", "DepthAnythingV2Small", "DepthAnythingV2"
-        ]
-        for ext in ["mlmodelc", "mlpackage"] {
-            for name in names {
-                let url = directory.appendingPathComponent(name).appendingPathExtension(ext)
-                if fm.fileExists(atPath: url.path) { return url }
-            }
-        }
-        if let urls = try? fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) {
-            return urls.first {
-                ["mlmodelc", "mlpackage"].contains($0.pathExtension) &&
-                $0.lastPathComponent.localizedCaseInsensitiveContains("depth")
-            }
-        }
-        return nil
     }
 
     /// Returns a loadable compiled-model URL. `.mlmodelc` is used directly;
