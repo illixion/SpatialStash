@@ -34,16 +34,23 @@ struct VideoWindowView: View {
         windowModel.shouldUsePseudo3D ? 90 : 60
     }
 
-    /// Depth offset (points, toward the viewer) applied to the chrome in fake-3D
-    /// mode so the ornament+transport sit on the same plane as the video, which
-    /// renders inside a RealityView volume rather than on the window's 2D glass.
-    /// Uses the same `.offset(z:)` mechanism as diorama mode. Tunable: flip the
-    /// sign if the chrome moves away from the video instead of toward it.
-    private let pseudo3DChromeZOffset: CGFloat = 200
+    /// Depth offset (points, toward the viewer) applied to the fake-3D chrome.
+    /// Kept at 0 so the ornament stays coplanar with the video AND the visionOS
+    /// window controls — all three on the window's front glass. The video plane
+    /// already sits on that glass because `Pseudo3DVideoPlayerView` pins it with
+    /// `.frame(depth: 0, alignment: .front)`; an earlier 20cm forward push
+    /// (added before that alignment fix) floated the whole ornament out in front
+    /// of that plane, which is what made the chrome "sit apart" from the video
+    /// and cast its silhouette over the window controls below. Tunable: nudge a
+    /// few points forward only if residual stereo pop-out makes the chrome read
+    /// as slightly behind near subjects.
+    private let pseudo3DChromeZOffset: CGFloat = 0
 
     /// Upward lift (points) for the taller two-row fake-3D ornament so its lower
-    /// transport row clears the visionOS window controls below the window.
-    /// visionOS points map to real cm at ~10 points/cm, so 50 ≈ 5cm.
+    /// transport row keeps clear of the visionOS window controls below the
+    /// window. With the chrome now coplanar (no forward push) this is pure bottom
+    /// padding rather than parallax compensation. visionOS points map to real cm
+    /// at ~10 points/cm, so 50 ≈ 5cm.
     private let pseudo3DChromeBottomLift: CGFloat = 50
 
     init(windowValue: VideoWindowValue, appModel: AppModel) {
@@ -232,9 +239,10 @@ struct VideoWindowView: View {
                     // Lift the taller two-row ornament so its transport row
                     // clears the visionOS window controls beneath the window.
                     .padding(.bottom, windowModel.shouldUsePseudo3D ? pseudo3DChromeBottomLift : 0)
-                    // Pull the chrome back to the video's plane in fake-3D
-                    // (video renders inside the RealityView volume, not on the
-                    // window glass). Same mechanism as diorama mode.
+                    // Keep the fake-3D chrome coplanar with the video (which is
+                    // pinned to the front glass via .frame(depth:0,.front)) and
+                    // the window controls — see pseudo3DChromeZOffset. 0 = no
+                    // forward push; the constant stays for on-device fine-tuning.
                     .offset(z: windowModel.shouldUsePseudo3D ? pseudo3DChromeZOffset : 0)
             }
         )

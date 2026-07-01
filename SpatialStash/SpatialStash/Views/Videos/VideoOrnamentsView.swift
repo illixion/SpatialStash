@@ -7,9 +7,10 @@
 
  Layout: [Gallery] | [< N/M >] | [ViewMode v] | [Info] | [Share] | [... More v] | [Title]
  Playback transport (play/pause, scrubber with A-B markers, A-B loop, mute)
- lives in the separate VideoControlBar overlay, not the ornament.
- The More menu holds Adjustments (opens the enhancements popover, which now
- includes Flip), Slideshow, and Pop Out (pushed only).
+ lives in the separate VideoControlBar overlay — except in fake-3D, where
+ showTransport folds it in as a second ornament row so all chrome is coplanar.
+ The More menu holds Adjustments (opens the standalone video-adjustments window,
+ which hosts Flip + the fake-3D stereo sliders), Slideshow, and Pop Out (pushed only).
  */
 
 import SwiftUI

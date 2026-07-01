@@ -14,6 +14,7 @@ A visionOS app for Apple Vision Pro that transforms your 2D images into immersiv
 - **Rating & O-Count** - View and edit image ratings and O-count directly from the viewer
 - **Video Playback** - Stream videos directly from your Stash server or play local files
 - **Stereoscopic 3D Video** - Automatically detects SBS/OU stereoscopic formats from tags, converts to MV-HEVC, and plays in full immersive mode
+- **Real-time Pseudo 3D Video** - Converts any flat video into stereoscopic 3D on the fly in an ordinary window — no pre-compute, no immersive space. Each decoded frame is warped per-eye in a Metal shader (with optional Core ML monocular depth), with adjustable depth strength and convergence and Subtle/Medium/Strong presets
 - **Unlimited Windows** - Open multiple image viewer windows that persist in your space
 - **Memory Management** - Lightweight 2D display by default with automatic downsampling, configurable dynamic image resolution, and memory-aware window management
 - **Demo Mode** - Try the app with bundled sample images without server setup
@@ -85,7 +86,10 @@ Browse your image gallery in a grid view. Tap any image to open it in the viewer
 - The window automatically adjusts to match image aspect ratios
 
 ### Videos Tab
-Browse and play videos. Stereoscopic 3D videos are automatically detected from Stash tags and can be played in full immersive mode after conversion to MV-HEVC format.
+Browse and play videos. Tap the **view-mode** button in the ornament to switch between flat 2D, real-time **Pseudo 3D**, and (for tagged SBS/OU sources) full immersive **Stereoscopic 3D**:
+- **Pseudo 3D** converts any flat video to windowed stereoscopic 3D in real time — no conversion step or immersive space required. Pick a Subtle/Medium/Strong depth preset from the menu, and fine-tune **Stereo Separation** and **Convergence** in the Adjustments window (which opens as its own repositionable window so it never sits behind the 3D video)
+- **Stereoscopic 3D** videos are automatically detected from Stash tags and play in full immersive mode after conversion to MV-HEVC format
+- Playback transport (play/pause, scrubber, A-B loop, mute) lives in a custom control bar; in Pseudo 3D it is folded into the ornament so it shares the video's depth
 
 ### Filters Tab
 Create complex queries to filter your media (Stash server only):
@@ -127,6 +131,7 @@ The app follows a SwiftUI architecture with:
 - `StashAPIClient` actor for thread-safe GraphQL communication
 - RealityKit integration via `ImagePresentationComponent` for spatial photos
 - `StereoscopicVideoPlayer` + `MVHEVCConverter` for stereoscopic 3D video conversion and immersive playback
+- `Pseudo3DVideoPlayerView` + `StereoPump` + `CoreMLDepthProvider` for real-time, windowed 2D→3D video conversion (per-eye Metal warp off the main thread)
 
 ## License
 
