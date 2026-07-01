@@ -61,6 +61,12 @@ class AppModel {
     var galleryVideos: [GalleryVideo] = []
     var isLoadingVideos: Bool = false
     var currentVideoPage: Int = 0
+
+    /// The video window whose Adjustments are shown in the separate, freely
+    /// repositionable "video-adjustments" window. Set when that window opens,
+    /// cleared when it (or the owning video window) closes. Strong ref, so it
+    /// must be cleared to avoid keeping a closed window's model alive.
+    var videoAdjustmentsTarget: VideoWindowModel?
     var hasMoreVideoPages: Bool = true
     /// Incremented on each loadInitialVideos; stale loadNextVideoPage results are discarded
     private var videoLoadGeneration: Int = 0
@@ -626,6 +632,30 @@ class AppModel {
         }
     }
 
+    /// When true, webm scenes prefer Stash's server-side transcode (HLS) so they
+    /// play in the native/Metal renderer (and fake-3D works). When false, use the
+    /// direct stream URL and let WebKit handle undecodable containers. Read live
+    /// by GraphQLVideoSource at fetch time (key "enableStashTranscoding").
+    var enableStashTranscoding: Bool {
+        didSet {
+            if enableStashTranscoding != oldValue {
+                UserDefaults.standard.set(enableStashTranscoding, forKey: "enableStashTranscoding")
+            }
+        }
+    }
+
+    /// Preferred depth model base filename (e.g. "DepthAnythingV2SmallF16"), or
+    /// "" for automatic selection. Lets you A/B models dropped into Documents.
+    /// Read live by CoreMLDepthProvider.findModelURL; applies to fake-3D videos
+    /// opened after the change (the provider is created per window).
+    var preferredDepthModelName: String {
+        didSet {
+            if preferredDepthModelName != oldValue {
+                UserDefaults.standard.set(preferredDepthModelName, forKey: "preferredDepthModelName")
+            }
+        }
+    }
+
     /// When true, per-image viewing enhancements (spatial 3D, background removal)
     /// are remembered and auto-restored on reopen.
     var rememberImageEnhancements: Bool {
@@ -681,6 +711,18 @@ class AppModel {
             if globalVisualAdjustments != oldValue {
                 if let data = try? JSONEncoder().encode(globalVisualAdjustments) {
                     UserDefaults.standard.set(data, forKey: "globalVisualAdjustments")
+                }
+            }
+        }
+    }
+
+    /// Global default fake-3D tuning, applied to pseudo-3D videos that haven't
+    /// been individually adjusted (mirrors globalVisualAdjustments).
+    var globalPseudo3DSettings: Pseudo3DSettings = .default {
+        didSet {
+            if globalPseudo3DSettings != oldValue {
+                if let data = try? JSONEncoder().encode(globalPseudo3DSettings) {
+                    UserDefaults.standard.set(data, forKey: "globalPseudo3DSettings")
                 }
             }
         }
@@ -992,6 +1034,9 @@ class AppModel {
             ? UserDefaults.standard.bool(forKey: "rememberImageEnhancements")
             : true
 
+        let loadedEnableStashTranscoding = loadBool("enableStashTranscoding", default: true)
+        let loadedPreferredDepthModelName = UserDefaults.standard.string(forKey: "preferredDepthModelName") ?? ""
+
         // Load default image viewing mode (default: 2D / mono)
         let loadedDefaultImageViewingMode: DefaultImageViewingMode
         if let raw = UserDefaults.standard.string(forKey: "defaultImageViewingMode"),
@@ -1039,6 +1084,14 @@ class AppModel {
             loadedGlobalVisualAdjustments = VisualAdjustments()
         }
 
+        let loadedGlobalPseudo3DSettings: Pseudo3DSettings
+        if let data = UserDefaults.standard.data(forKey: "globalPseudo3DSettings"),
+           let decoded = try? JSONDecoder().decode(Pseudo3DSettings.self, from: data) {
+            loadedGlobalPseudo3DSettings = decoded
+        } else {
+            loadedGlobalPseudo3DSettings = .default
+        }
+
         // Initialize stored properties
         self.stashServerURL = loadedServerURL
         self.stashAPIKey = loadedAPIKey
@@ -1061,6 +1114,8 @@ class AppModel {
         self.thumbnailStyle = loadedThumbnailStyle
         self.roundedCorners = loadedRoundedCorners
         self.openMediaInNewWindows = loadedOpenMediaInNewWindows
+        self.enableStashTranscoding = loadedEnableStashTranscoding
+        self.preferredDepthModelName = loadedPreferredDepthModelName
         self.rememberImageEnhancements = loadedRememberImageEnhancements
         self.autoRestoreSpatial3D = loadedAutoRestoreSpatial3D
         self.fullyImmersive3DMode = loadedFullyImmersive3DMode
@@ -1070,6 +1125,7 @@ class AppModel {
         self.respectMemoryAlerts = loadedRespectMemoryAlerts
         self.useLossyTextureCompression = loadedUseLossyTextureCompression
         self.globalVisualAdjustments = loadedGlobalVisualAdjustments
+        self.globalPseudo3DSettings = loadedGlobalPseudo3DSettings
 
         // Initialize API client and image sources
         let client: StashAPIClient
@@ -1097,6 +1153,9 @@ class AppModel {
         // Now all stored properties are initialized, we can use self
         AppLogger.appModel.info("Init - Has API Key: \(!self.stashAPIKey.isEmpty, privacy: .public)")
         AppLogger.appModel.info("Init - Page Size: 30")
+
+        // Mixable audio session so videos never interrupt other apps' audio.
+        AudioSessionConfig.configureMixedPlayback()
 
         // Load saved views and window groups from UserDefaults
         loadSavedViews()

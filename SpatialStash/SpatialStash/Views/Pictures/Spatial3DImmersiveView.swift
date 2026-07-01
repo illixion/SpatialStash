@@ -91,7 +91,7 @@ struct Spatial3DImmersiveView: View {
                 entity = await buildFallbackEntity()
             }
             if let entity {
-                entity.scale = SIMD3<Float>(1, 1, 1)
+                applyUserScale(to: entity)
                 entity.transform.translation = SIMD3<Float>(0, 0, -Self.placementDistance)
                 hostedEntity = entity
                 installHeadAnchor(in: content)
@@ -119,6 +119,10 @@ struct Spatial3DImmersiveView: View {
             // head anchor against the new pose.
             recenterTrigger &+= 1
         }
+        .onChange(of: appModel.immersiveLoanOwner?.currentAdjustments.immersiveScale) { _, _ in
+            // Live Distance slider updates while immersed.
+            if let entity = hostedEntity { applyUserScale(to: entity) }
+        }
         .onDisappear {
             // Detach the loaned entity here so the photo viewer's
             // RealityView `update` re-adopts it via its existing
@@ -135,6 +139,15 @@ struct Spatial3DImmersiveView: View {
                 owner.hostFullyImmersiveSpace = false
             }
         }
+    }
+
+    /// Apply the owning photo window's "Distance" (Adjustments) to the immersive
+    /// entity. Higher values scale the presentation, which reads as the subject
+    /// receding within the portal — hence the "Distance" label.
+    @MainActor
+    private func applyUserScale(to entity: Entity) {
+        let s = Float(appModel.immersiveLoanOwner?.currentAdjustments.immersiveScale ?? 1.0)
+        entity.scale = SIMD3<Float>(s, s, 1)
     }
 
     @MainActor

@@ -268,16 +268,30 @@ struct LocalMediaListView: View {
                                                 pushWindow(id: "photo-detail", value: PhotoWindowValue(image: image, wasPushed: true))
                                             }
                                         } else if folderPath.first == "Videos" {
-                                            let video = GalleryVideo(
-                                                stashId: file.url.absoluteString,
-                                                thumbnailURL: file.url,
-                                                streamURL: file.url,
-                                                title: file.name
-                                            )
+                                            // Build the sibling list so prev/next
+                                            // navigates the folder's videos (local
+                                            // videos aren't in appModel.galleryVideos).
+                                            let siblings = mediaFiles
+                                                .filter { $0.type == .video }
+                                                .map { f in
+                                                    GalleryVideo(
+                                                        stashId: f.url.absoluteString,
+                                                        thumbnailURL: f.url,
+                                                        streamURL: f.url,
+                                                        title: f.name
+                                                    )
+                                                }
+                                            let video = siblings.first { $0.stashId == file.url.absoluteString }
+                                                ?? GalleryVideo(
+                                                    stashId: file.url.absoluteString,
+                                                    thumbnailURL: file.url,
+                                                    streamURL: file.url,
+                                                    title: file.name
+                                                )
                                             if appModel.openMediaInNewWindows {
-                                                openWindow(id: "video-detail", value: VideoWindowValue(video: video))
+                                                openWindow(id: "video-detail", value: VideoWindowValue(video: video, galleryVideos: siblings))
                                             } else {
-                                                pushWindow(id: "video-detail", value: VideoWindowValue(video: video, wasPushed: true))
+                                                pushWindow(id: "video-detail", value: VideoWindowValue(video: video, galleryVideos: siblings, wasPushed: true))
                                             }
                                         }
                                     }

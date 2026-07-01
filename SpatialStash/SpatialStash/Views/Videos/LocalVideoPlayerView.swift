@@ -12,8 +12,8 @@ struct LocalVideoPlayerView: UIViewControllerRepresentable {
     let videoURL: URL
 
     func makeUIViewController(context: Context) -> AVPlayerViewController {
-        // Use ambient audio session so we don't interrupt other video players
-        try? AVAudioSession.sharedInstance().setCategory(.ambient)
+        // Mixable session so we don't interrupt other apps' audio.
+        AudioSessionConfig.configureMixedPlayback()
 
         let controller = AVPlayerViewController()
         let player = AVPlayer(url: videoURL)

@@ -31,3 +31,9 @@ scripts/build-signing.conf
 build/
 
 **/internal_docs/**
+
+# Core ML depth models (large binaries — use git-lfs if you want them in the repo)
+*.mlpackage/
+
+# Local compiled depth models (pushed to device, not bundled)
+/models/

@@ -53,6 +53,11 @@ final class VideoWindowModel {
     /// Current index into `galleryVideos`.
     var currentIndex: Int
 
+    /// True when `galleryVideos` is a complete list carried by the window value
+    /// (Local tab) rather than the paginated app-gallery snapshot. Preserved
+    /// across pop-out so navigation survives.
+    let usesStaticGalleryList: Bool
+
     /// Video source used for lazy pagination.
     let videoSource: any VideoSource
 
@@ -88,6 +93,10 @@ final class VideoWindowModel {
     /// Per-window visual adjustments tier (falls back to global when unmodified).
     var currentAdjustments: VisualAdjustments = VisualAdjustments()
     var playbackRenderer: PlaybackRenderer = .resolving
+    /// Native video pixel aspect (width/height), reported once the first frame's
+    /// size is known. Used to aspect-fit the native Metal player so it never
+    /// stretches when the window can't match the video's aspect (tall videos).
+    var videoAspectRatio: CGFloat?
 
     // MARK: - Playback State (driven by the WebVideoPlayerView JS bridge)
 
@@ -141,6 +150,14 @@ final class VideoWindowModel {
     var showAdjustments: Bool = false
     var showShareSheet: Bool = false
 
+    /// An *overlapping* menu/dropdown/sheet is open — used to fade the fake-3D
+    /// video so it doesn't occlude that chrome. Excludes `showAdjustments`: the
+    /// adjustments panel is a side ornament that doesn't overlap the video, so
+    /// the video should stay fully visible while editing.
+    var isChromeModalOpen: Bool {
+        showMediaInfo || showShareSheet || showVideo3DSettingsSheet || openOrnamentMenuCount > 0
+    }
+
     /// Whether any chrome is open that should pin the ornament/control bar.
     var hasOpenPopover: Bool {
         showMediaInfo || showAdjustments || showShareSheet || isScrubbing || openOrnamentMenuCount > 0
@@ -162,14 +179,25 @@ final class VideoWindowModel {
         self.pseudo3DSettings = windowValue.pseudo3DSettings ?? .default
 
         // Snapshot the browse list + pagination so prev/next navigate over this
-        // window's own copy (parallels PhotoWindowModel.init).
-        self.galleryVideos = appModel.galleryVideos
-        self.currentIndex = appModel.galleryVideos.firstIndex(of: windowValue.video) ?? 0
+        // window's own copy (parallels PhotoWindowModel.init). A window value may
+        // carry its own complete list (Local tab, which isn't backed by
+        // appModel.galleryVideos) — then navigate that fixed list, no pagination.
         self.videoSource = appModel.videoSource
         self.snapshotFilter = appModel.currentVideoFilter
-        self.currentPage = appModel.currentVideoPage
-        self.hasMorePages = appModel.hasMoreVideoPages
         self.pageSize = appModel.pageSize
+        if let list = windowValue.galleryVideos, !list.isEmpty {
+            self.usesStaticGalleryList = true
+            self.galleryVideos = list
+            self.currentIndex = list.firstIndex(of: windowValue.video) ?? 0
+            self.currentPage = 0
+            self.hasMorePages = false
+        } else {
+            self.usesStaticGalleryList = false
+            self.galleryVideos = appModel.galleryVideos
+            self.currentIndex = appModel.galleryVideos.firstIndex(of: windowValue.video) ?? 0
+            self.currentPage = appModel.currentVideoPage
+            self.hasMorePages = appModel.hasMoreVideoPages
+        }
 
         // NOTE: side effects deferred to start().
     }
@@ -192,6 +220,11 @@ final class VideoWindowModel {
         pauseCommand = nil
         seekCommand = nil
         setMutedCommand = nil
+        // Release the standalone Adjustments window's ref to us (also makes that
+        // window dismiss itself), so this closed window's model isn't retained.
+        if appModel.videoAdjustmentsTarget === self {
+            appModel.videoAdjustmentsTarget = nil
+        }
     }
 
     // MARK: - Navigation
@@ -316,6 +349,11 @@ final class VideoWindowModel {
         currentAdjustments.isModified ? currentAdjustments : appModel.globalVisualAdjustments
     }
 
+    /// Per-window fake-3D tuning if modified, otherwise the global default.
+    var effectivePseudo3DSettings: Pseudo3DSettings {
+        pseudo3DSettings.isModified ? pseudo3DSettings : appModel.globalPseudo3DSettings
+    }
+
     var authenticatedStreamURL: URL {
         authenticatedURL(video.streamURL)
     }
@@ -363,6 +401,14 @@ final class VideoWindowModel {
         do {
             let isPlayable = try await asset.load(.isPlayable)
             guard isPlayable else { return false }
+            // HLS assets expose their video through AVAssetVariant rather than
+            // classic tracks, so `loadTracks(.video)` comes back empty even when
+            // the stream is perfectly playable. Requiring a non-empty track list
+            // would wrongly route HLS to WebKit (disabling the native renderer
+            // and the fake-3D toggle), so trust `isPlayable` for HLS.
+            if url.pathExtension.lowercased() == "m3u8" {
+                return true
+            }
             let tracks = try await asset.loadTracks(withMediaType: .video)
             return !tracks.isEmpty
         } catch {

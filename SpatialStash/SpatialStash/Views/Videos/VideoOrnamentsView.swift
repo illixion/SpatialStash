@@ -20,16 +20,31 @@ struct VideoOrnamentsView: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismissWindow) private var dismissWindow
 
+    /// When true, stack the playback transport (VideoControlBar) above the button
+    /// row as a second ornament row. Used by fake-3D, where the video lives in a
+    /// RealityView volume and a separate 2D control-bar overlay floats at a
+    /// different depth than the video. Folding it into the ornament keeps all
+    /// chrome on one plane.
+    var showTransport: Bool = false
     /// Action to show the main gallery window
     var onGalleryButtonTap: () -> Void
     /// Custom pop-out action (used by pushed windows to open a new window and dismiss self)
     var onPopOut: (() -> Void)? = nil
 
-    @State private var showAdjustmentsPopover = false
-
     private var video: GalleryVideo { windowModel.video }
 
     var body: some View {
+        if showTransport {
+            VStack(spacing: 12) {
+                VideoControlBar(windowModel: windowModel)
+                buttonRow
+            }
+        } else {
+            buttonRow
+        }
+    }
+
+    private var buttonRow: some View {
         HStack(spacing: 16) {
             // Gallery button
             Button(action: onGalleryButtonTap) {
@@ -109,8 +124,9 @@ struct VideoOrnamentsView: View {
             if isOpen { windowModel.cancelAutoHideTimer() }
             else { windowModel.startAutoHideTimer() }
         }
-        .onChange(of: showAdjustmentsPopover) { _, isOpen in
-            windowModel.showAdjustments = isOpen
+        .onChange(of: windowModel.showAdjustments) { _, isOpen in
+            // Adjustments now presents as a side ornament (VideoWindowView), so
+            // it never overlaps the video; just pause auto-hide while it's open.
             if isOpen { windowModel.cancelAutoHideTimer() }
             else { windowModel.startAutoHideTimer() }
         }
@@ -197,7 +213,11 @@ struct VideoOrnamentsView: View {
             // auto-hide while the menu is open (same pattern as PhotoOrnamentView).
             Group {
                 Button {
-                    showAdjustmentsPopover.toggle()
+                    // Open the standalone Adjustments window (repositionable,
+                    // never overlaps the video). showAdjustments pauses auto-hide.
+                    appModel.videoAdjustmentsTarget = windowModel
+                    windowModel.showAdjustments = true
+                    openWindow(id: "video-adjustments")
                 } label: {
                     Label("Adjustments", systemImage: "slider.horizontal.3")
                 }
@@ -229,23 +249,6 @@ struct VideoOrnamentsView: View {
         .menuStyle(.button)
         .buttonStyle(.borderless)
         .help("More")
-        .popover(isPresented: $showAdjustmentsPopover) {
-            VisualAdjustmentsPopover(
-                currentAdjustments: $windowModel.currentAdjustments,
-                globalAdjustments: Binding(
-                    get: { appModel.globalVisualAdjustments },
-                    set: { appModel.globalVisualAdjustments = $0 }
-                ),
-                showAutoEnhance: false,
-                showFlip: true,
-                isImageFlipped: windowModel.isFlipped,
-                onToggleFlip: {
-                    withAnimation(.easeInOut(duration: 0.3)) {
-                        windowModel.toggleFlip()
-                    }
-                }
-            )
-        }
     }
 
     /// Whether the More menu button should show a highlight
@@ -293,6 +296,9 @@ struct VideoOrnamentsView: View {
     @ViewBuilder
     private var viewModeMenu: some View {
         Menu {
+            // Pause auto-hide + flag chrome open (recedes fake-3D so this menu
+            // isn't occluded), same pattern as the More menu.
+            Group {
             Button {
                 windowModel.set2DMode()
             } label: {
@@ -354,6 +360,9 @@ struct VideoOrnamentsView: View {
                     depthButton("Strong", .strong)
                 }
             }
+            }
+            .onAppear { chromeMenu(opened: true) }
+            .onDisappear { chromeMenu(opened: false) }
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: currentModeIcon)

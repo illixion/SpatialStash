@@ -178,6 +178,7 @@ struct VideoStereoUniforms {
     float convergence;   // depth mapped to zero parallax (0 = far, 1 = near)
     float eyeSign;       // +1 = left eye, -1 = right eye
     float mirror;        // 1 = mirror horizontally (flip), 0 = normal
+    float useDepth;      // 1 = sample real depth from depthTex, 0 = heuristic
 };
 
 static inline float pseudo3DHeuristicDepth(texture2d<float> tex, sampler s, float2 uv) {
@@ -197,6 +198,7 @@ static inline float pseudo3DHeuristicDepth(texture2d<float> tex, sampler s, floa
 fragment float4 videoPseudo3DEyeFragmentShader(
     VertexOut in [[stage_in]],
     texture2d<float> tex [[texture(0)]],
+    texture2d<float> depthTex [[texture(1)]],
     constant VideoStereoUniforms &u [[buffer(0)]]
 ) {
     constexpr sampler texSampler(mag_filter::linear, min_filter::linear, address::clamp_to_edge);
@@ -204,9 +206,18 @@ fragment float4 videoPseudo3DEyeFragmentShader(
     float2 uv = in.texCoord;
     if (u.mirror > 0.5) { uv.x = 1.0 - uv.x; }
 
-    float depth = pseudo3DHeuristicDepth(tex, texSampler, uv);
+    // Real Core ML depth when available (normalized inverse depth: near≈1,
+    // far≈0), otherwise the cheap heuristic.
+    float depth = u.useDepth > 0.5
+        ? saturate(depthTex.sample(texSampler, uv).r)
+        : pseudo3DHeuristicDepth(tex, texSampler, uv);
+    // Near objects (depth high) must get CROSSED disparity to read as "in front":
+    // the left eye sees them shifted right, the right eye left. That means
+    // sampling the source toward the OPPOSITE side of the shift — hence the
+    // minus. (The previous `+` gave uncrossed disparity, pushing near objects
+    // behind = inverted/weak depth that won't fuse.)
     float disparity = (depth - u.convergence) * u.depthStrength;
-    float2 warpedUV = float2(uv.x + u.eyeSign * disparity, uv.y);
+    float2 warpedUV = float2(uv.x - u.eyeSign * disparity, uv.y);
 
     float4 color = tex.sample(texSampler, warpedUV);
 
@@ -217,4 +228,120 @@ fragment float4 videoPseudo3DEyeFragmentShader(
     color.rgb = clamp(color.rgb, 0.0, 1.0);
     color.a = 1.0;
     return color;
+}
+
+// MARK: - Pseudo-3D Mesh Warp (depth-displaced grid, occlusion-correct)
+//
+// When a real depth map is available, render the frame as a displaced grid
+// instead of a per-pixel backward warp. Each vertex shifts horizontally by its
+// disparity (parallax) and takes a clip-space Z from its depth; with depth
+// testing, nearer geometry occludes farther geometry, so foreground/background
+// boundaries stay clean instead of smearing into halos. Disocclusions become
+// stretched triangles rather than edge smears. Reuses VideoStereoUniforms.
+
+struct MeshVertexOut {
+    float4 position [[position]];
+    float2 texCoord;
+};
+
+vertex MeshVertexOut videoStereoMeshVertex(
+    uint vid [[vertex_id]],
+    const device float2 *gridPositions [[buffer(0)]],
+    constant VideoStereoUniforms &u [[buffer(1)]],
+    texture2d<float> depthTex [[texture(0)]]
+) {
+    constexpr sampler depthSampler(mag_filter::linear, min_filter::linear, address::clamp_to_edge);
+    float2 grid = gridPositions[vid];           // [0,1] across the frame
+    float2 uv = grid;
+    if (u.mirror > 0.5) { uv.x = 1.0 - uv.x; }
+
+    float depth = saturate(depthTex.sample(depthSampler, uv, level(0)).r); // near≈1
+    float disparity = (depth - u.convergence) * u.depthStrength;
+
+    float ndcX = grid.x * 2.0 - 1.0 + u.eyeSign * disparity * 2.0;
+    float ndcY = 1.0 - grid.y * 2.0;
+    float ndcZ = clamp(1.0 - depth, 0.0, 1.0);   // near (depth 1) → 0 → wins depth test
+
+    MeshVertexOut out;
+    out.position = float4(ndcX, ndcY, ndcZ, 1.0);
+    out.texCoord = uv;
+    return out;
+}
+
+fragment float4 videoStereoMeshFragment(
+    MeshVertexOut in [[stage_in]],
+    texture2d<float> tex [[texture(0)]],
+    constant VideoStereoUniforms &u [[buffer(0)]]
+) {
+    constexpr sampler texSampler(mag_filter::linear, min_filter::linear, address::clamp_to_edge);
+    float4 color = tex.sample(texSampler, in.texCoord);
+    color.rgb += u.brightness;
+    color.rgb = (color.rgb - 0.5) * u.contrast + 0.5;
+    float luminance = dot(color.rgb, float3(0.2126, 0.7152, 0.0722));
+    color.rgb = mix(float3(luminance), color.rgb, u.saturation);
+    color.rgb = clamp(color.rgb, 0.0, 1.0);
+    color.a = 1.0;
+    return color;
+}
+
+// MARK: - Depth Stabilization (spatial band-limit + motion-adaptive temporal EMA)
+//
+// Two depth artifacts feed the warp:
+//  1. Spatial: the depth model (esp. Base) carries detail finer than the warp
+//     grid can sample, so the grid *aliases* it into rippling standing waves
+//     across the frame. A gaussian low-pass band-limits the depth to the grid's
+//     sampling rate, removing the ripples (at the cost of slightly softer
+//     silhouettes — the same trade the smoother low-res depth used to make).
+//  2. Temporal: monocular depth jitters frame-to-frame, wobbling subjects. A
+//     motion-adaptive EMA smooths hard where depth is stable (kills flicker) but
+//     trusts the new map where it changed a lot (no ghosting on motion).
+// Both run at the depth's native resolution.
+
+struct DepthStabilizeParams {
+    int   blurRadius;  // spatial low-pass radius in depth texels (0 = no blur)
+    float blurSigma;   // gaussian sigma for the low-pass
+    float baseAlpha;   // temporal blend toward new map where depth is stable
+    float motionGain;  // how fast the blend trusts the new map as depth changes
+    uint  hasPrev;     // 1 when emaPrev holds a valid previous frame
+};
+
+kernel void depthStabilize(
+    texture2d<float, access::sample> rawDepth [[texture(0)]],
+    texture2d<float, access::sample> emaPrev  [[texture(1)]],
+    texture2d<float, access::write>  emaNext  [[texture(2)]],
+    constant DepthStabilizeParams &p          [[buffer(0)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    const uint W = emaNext.get_width();
+    const uint H = emaNext.get_height();
+    if (gid.x >= W || gid.y >= H) { return; }
+
+    constexpr sampler s(mag_filter::linear, min_filter::linear, address::clamp_to_edge);
+    const float2 size = float2(W, H);
+    const float2 uv = (float2(gid) + 0.5) / size;
+
+    // Spatial gaussian low-pass to band-limit the depth for the warp grid.
+    float raw;
+    if (p.blurRadius > 0) {
+        const float inv2s2 = 1.0 / (2.0 * p.blurSigma * p.blurSigma);
+        float sum = 0.0, wsum = 0.0;
+        for (int dy = -p.blurRadius; dy <= p.blurRadius; ++dy) {
+            for (int dx = -p.blurRadius; dx <= p.blurRadius; ++dx) {
+                const float w = exp(-float(dx * dx + dy * dy) * inv2s2);
+                sum += w * rawDepth.sample(s, uv + float2(dx, dy) / size).r;
+                wsum += w;
+            }
+        }
+        raw = wsum > 1e-5 ? (sum / wsum) : rawDepth.sample(s, uv).r;
+    } else {
+        raw = rawDepth.sample(s, uv).r;
+    }
+
+    float out = raw;
+    if (p.hasPrev != 0) {
+        const float prev = emaPrev.sample(s, uv).r;
+        const float alpha = clamp(p.baseAlpha + p.motionGain * abs(raw - prev), p.baseAlpha, 1.0);
+        out = mix(prev, raw, alpha);
+    }
+    emaNext.write(float4(out, 0.0, 0.0, 1.0), gid);
 }

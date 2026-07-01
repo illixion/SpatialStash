@@ -34,6 +34,11 @@ struct VisualAdjustmentsPopover: View {
     /// stays available — it still affects 2D windows elsewhere.
     var showSharpen: Bool = true
 
+    /// When set (spatial-3D photo), shows a "Distance" slider bound to it. The
+    /// caller supplies the mode-appropriate value (windowed vs immersive) so the
+    /// two are persisted separately.
+    var scale3D: Binding<Double>? = nil
+
     /// Whether auto-enhance is currently processing
     var isProcessingAutoEnhance: Bool = false
 
@@ -64,6 +69,16 @@ struct VisualAdjustmentsPopover: View {
 
     /// Callback for flip toggle
     var onToggleFlip: (() -> Void)? = nil
+
+    // MARK: - Fake-3D Stereo
+
+    /// When set (fake-3D video), shows Stereo Separation / Convergence sliders on
+    /// the Current tab (per-window override).
+    var pseudo3DSettings: Binding<Pseudo3DSettings>? = nil
+
+    /// When set (fake-3D video), shows the same sliders on the Global tab as the
+    /// default applied to fake-3D videos that haven't been individually adjusted.
+    var globalPseudo3DSettings: Binding<Pseudo3DSettings>? = nil
 
     // MARK: - Remote Viewer Display Toggles
 
@@ -188,12 +203,43 @@ struct VisualAdjustmentsPopover: View {
                 linear: true
             )
 
+            if let scale3D {
+                adjustmentSlider(
+                    label: "Distance",
+                    value: scale3D,
+                    range: 1.0...4.0,
+                    defaultValue: 1.0,
+                    linear: true
+                )
+            }
+
+            if let pseudo3DSettings {
+                Divider()
+                adjustmentSlider(
+                    label: "Stereo Separation",
+                    value: pseudo3DSettings.depthStrength,
+                    range: Pseudo3DSettings.depthStrengthRange,
+                    defaultValue: Pseudo3DSettings.default.depthStrength,
+                    linear: true
+                )
+                adjustmentSlider(
+                    label: "Convergence",
+                    value: pseudo3DSettings.convergence,
+                    range: 0.0...1.0,
+                    defaultValue: Pseudo3DSettings.default.convergence,
+                    linear: true
+                )
+            }
+
             Button("Reset") {
                 currentAdjustments.brightness = 0.0
                 currentAdjustments.contrast = 1.0
                 currentAdjustments.saturation = 1.0
                 currentAdjustments.sharpen = 0.0
                 currentAdjustments.opacity = 1.0
+                currentAdjustments.scale = 1.0
+                currentAdjustments.immersiveScale = 1.0
+                pseudo3DSettings?.wrappedValue = .default
                 // Note: auto-enhance is toggled separately, not reset here
                 onCurrentAdjustmentsChanged?(currentAdjustments)
             }
@@ -204,6 +250,9 @@ struct VisualAdjustmentsPopover: View {
                 && currentAdjustments.saturation == 1.0
                 && currentAdjustments.sharpen == 0.0
                 && currentAdjustments.opacity == 1.0
+                && currentAdjustments.scale == 1.0
+                && currentAdjustments.immersiveScale == 1.0
+                && !(pseudo3DSettings?.wrappedValue.isModified ?? false)
             )
         }
         .onChange(of: currentAdjustments) { _, newValue in
@@ -258,11 +307,34 @@ struct VisualAdjustmentsPopover: View {
                 linear: true
             )
 
+            if let globalPseudo3DSettings {
+                Divider()
+                Text("Fake-3D default")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                adjustmentSlider(
+                    label: "Stereo Separation",
+                    value: globalPseudo3DSettings.depthStrength,
+                    range: Pseudo3DSettings.depthStrengthRange,
+                    defaultValue: Pseudo3DSettings.default.depthStrength,
+                    linear: true
+                )
+                adjustmentSlider(
+                    label: "Convergence",
+                    value: globalPseudo3DSettings.convergence,
+                    range: 0.0...1.0,
+                    defaultValue: Pseudo3DSettings.default.convergence,
+                    linear: true
+                )
+            }
+
             Button("Reset") {
                 globalAdjustments.reset()
+                globalPseudo3DSettings?.wrappedValue = .default
             }
             .buttonStyle(.bordered)
-            .disabled(!globalAdjustments.isModified)
+            .disabled(!globalAdjustments.isModified && !(globalPseudo3DSettings?.wrappedValue.isModified ?? false))
         }
     }
 

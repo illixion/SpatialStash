@@ -29,6 +29,15 @@ struct VisualAdjustments: Codable, Equatable {
     /// Whether CIImage auto-enhancement filters have been applied (photos only)
     var isAutoEnhanced: Bool = false
 
+    /// RealityKit 3D presentation "Distance" for *windowed* spatial 3D (photos).
+    /// 1.0 = fit-to-window; higher scales the entity. Persisted separately from
+    /// the immersive value because the two modes want different framing.
+    var scale: Double = 1.0
+
+    /// RealityKit 3D presentation "Distance" for *immersive* spatial 3D (photos).
+    /// 1.0 = unit placement; higher scales the entity (subject recedes).
+    var immersiveScale: Double = 1.0
+
     /// Decode with backward compatibility — older persisted data lacks the opacity/sharpen fields
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -38,17 +47,19 @@ struct VisualAdjustments: Codable, Equatable {
         opacity = try container.decodeIfPresent(Double.self, forKey: .opacity) ?? 1.0
         sharpen = try container.decodeIfPresent(Double.self, forKey: .sharpen) ?? 0.0
         isAutoEnhanced = try container.decodeIfPresent(Bool.self, forKey: .isAutoEnhanced) ?? false
+        scale = try container.decodeIfPresent(Double.self, forKey: .scale) ?? 1.0
+        immersiveScale = try container.decodeIfPresent(Double.self, forKey: .immersiveScale) ?? 1.0
     }
 
     init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case brightness, contrast, saturation, opacity, sharpen, isAutoEnhanced
+        case brightness, contrast, saturation, opacity, sharpen, isAutoEnhanced, scale, immersiveScale
     }
 
     /// Whether any adjustment differs from the neutral defaults
     var isModified: Bool {
-        brightness != 0.0 || contrast != 1.0 || saturation != 1.0 || opacity != 1.0 || sharpen != 0.0 || isAutoEnhanced
+        brightness != 0.0 || contrast != 1.0 || saturation != 1.0 || opacity != 1.0 || sharpen != 0.0 || isAutoEnhanced || scale != 1.0 || immersiveScale != 1.0
     }
 
     /// Whether two adjustment sets are equal on the fields that need to be
@@ -71,6 +82,8 @@ struct VisualAdjustments: Codable, Equatable {
         opacity = 1.0
         sharpen = 0.0
         isAutoEnhanced = false
+        scale = 1.0
+        immersiveScale = 1.0
     }
 
     /// CSS filter string for WebVideoPlayerView (GIF/video via WKWebView).

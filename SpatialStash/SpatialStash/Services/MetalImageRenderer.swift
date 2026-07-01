@@ -38,9 +38,20 @@ final class MetalImageRenderer: Sendable {
     let rcasPipelineState: MTLRenderPipelineState
     /// Pass-1 RCAS pipeline, renders to a 16-bit intermediate.
     let rcasPipelineState16: MTLRenderPipelineState
-    /// Pseudo-3D eye-warp pipeline (renders one stereo eye into a bgra8 eye
-    /// texture). Used by the windowed real-time fake-3D video path.
+    /// Pseudo-3D eye-warp pipeline (per-pixel backward warp; heuristic fallback
+    /// when no depth map is available).
     let pseudo3DEyePipelineState: MTLRenderPipelineState
+    /// Pseudo-3D depth-displaced mesh pipeline (occlusion-correct, used when a
+    /// real depth map is available). Renders into bgra8 with a depth attachment.
+    let pseudo3DMeshPipelineState: MTLRenderPipelineState
+    /// Depth-test state for the mesh pipeline (nearer geometry wins).
+    let pseudo3DMeshDepthState: MTLDepthStencilState
+    /// Shared grid geometry for the mesh warp ([0,1] positions + triangle
+    /// indices). MTLBuffer isn't declared Sendable (unlike the pipeline/device
+    /// types), but these are immutable thread-safe GPU resource handles.
+    nonisolated(unsafe) let pseudo3DGridPositions: MTLBuffer
+    nonisolated(unsafe) let pseudo3DGridIndices: MTLBuffer
+    let pseudo3DGridIndexCount: Int
     private let ciContext: CIContext
 
     /// Bounds the number of concurrent full-image CGImageSource decodes across
@@ -106,9 +117,49 @@ final class MetalImageRenderer: Sendable {
               let vertexFunction = library.makeFunction(name: "imageVertexShader"),
               let aaTonalFn = library.makeFunction(name: "imageFragmentShader"),
               let rcasFn = library.makeFunction(name: "rcasFragmentShader"),
-              let stereoEyeFn = library.makeFunction(name: "videoPseudo3DEyeFragmentShader") else {
+              let stereoEyeFn = library.makeFunction(name: "videoPseudo3DEyeFragmentShader"),
+              let meshVertexFn = library.makeFunction(name: "videoStereoMeshVertex"),
+              let meshFragmentFn = library.makeFunction(name: "videoStereoMeshFragment"),
+              let meshDepthState = device.makeDepthStencilState(descriptor: {
+                  let d = MTLDepthStencilDescriptor()
+                  // lessEqual, not less: the farthest geometry (sky) sits at
+                  // ndcZ == 1.0 == the cleared far value; `.less` would reject it
+                  // (1.0 < 1.0 is false), dropping sky fragments to the black
+                  // clear — speckled differently per eye → binocular rivalry.
+                  d.depthCompareFunction = .lessEqual
+                  d.isDepthWriteEnabled = true
+                  return d
+              }()) else {
             return nil
         }
+        self.pseudo3DMeshDepthState = meshDepthState
+
+        // Build the displaced-grid geometry once. A 193×109 vertex grid (192×108
+        // cells) gives clean silhouettes without meaningful cost on Apple Silicon.
+        // (A denser grid rendered the model's high-frequency depth detail as
+        // visible per-vertex wobble, so it stays moderate.)
+        let nx = 193, ny = 109
+        var gridPositions = [SIMD2<Float>](); gridPositions.reserveCapacity(nx * ny)
+        for j in 0..<ny {
+            for i in 0..<nx {
+                gridPositions.append(SIMD2(Float(i) / Float(nx - 1), Float(j) / Float(ny - 1)))
+            }
+        }
+        var gridIndices = [UInt32](); gridIndices.reserveCapacity((nx - 1) * (ny - 1) * 6)
+        for j in 0..<(ny - 1) {
+            for i in 0..<(nx - 1) {
+                let a = UInt32(j * nx + i), b = a + 1
+                let c = UInt32((j + 1) * nx + i), d = c + 1
+                gridIndices.append(contentsOf: [a, c, b, b, c, d])
+            }
+        }
+        guard let posBuf = device.makeBuffer(bytes: gridPositions, length: gridPositions.count * MemoryLayout<SIMD2<Float>>.stride),
+              let idxBuf = device.makeBuffer(bytes: gridIndices, length: gridIndices.count * MemoryLayout<UInt32>.stride) else {
+            return nil
+        }
+        self.pseudo3DGridPositions = posBuf
+        self.pseudo3DGridIndices = idxBuf
+        self.pseudo3DGridIndexCount = gridIndices.count
 
         // Pass-2 (final): alpha blending enabled so transparent pixels (bg removal)
         // composite over whatever's behind the MTKView.
@@ -149,6 +200,15 @@ final class MetalImageRenderer: Sendable {
             stereoDesc.colorAttachments[0].isBlendingEnabled = false
             stereoDesc.colorAttachments[0].pixelFormat = .bgra8Unorm
             self.pseudo3DEyePipelineState = try device.makeRenderPipelineState(descriptor: stereoDesc)
+
+            // Depth-displaced mesh pipeline: opaque bgra8 color + depth attachment.
+            let meshDesc = MTLRenderPipelineDescriptor()
+            meshDesc.vertexFunction = meshVertexFn
+            meshDesc.fragmentFunction = meshFragmentFn
+            meshDesc.colorAttachments[0].isBlendingEnabled = false
+            meshDesc.colorAttachments[0].pixelFormat = .bgra8Unorm
+            meshDesc.depthAttachmentPixelFormat = .depth32Float
+            self.pseudo3DMeshPipelineState = try device.makeRenderPipelineState(descriptor: meshDesc)
         } catch {
             return nil
         }

@@ -27,8 +27,24 @@ struct VideoWindowView: View {
     /// foreground-active scene.
     @Environment(SceneDelegate.self) private var sceneDelegate: SceneDelegate?
 
-    /// Extra bottom padding to prevent the ornament from overlapping video content
-    private let ornamentBottomPadding: CGFloat = 60
+    /// Reserved space below the video so the bottom ornament (which floats at the
+    /// window's bottom edge) doesn't overlap the video. Larger for fake-3D, whose
+    /// two-row ornament is taller and needs more clearance from the video plane.
+    private var ornamentBottomPadding: CGFloat {
+        windowModel.shouldUsePseudo3D ? 90 : 60
+    }
+
+    /// Depth offset (points, toward the viewer) applied to the chrome in fake-3D
+    /// mode so the ornament+transport sit on the same plane as the video, which
+    /// renders inside a RealityView volume rather than on the window's 2D glass.
+    /// Uses the same `.offset(z:)` mechanism as diorama mode. Tunable: flip the
+    /// sign if the chrome moves away from the video instead of toward it.
+    private let pseudo3DChromeZOffset: CGFloat = 200
+
+    /// Upward lift (points) for the taller two-row fake-3D ornament so its lower
+    /// transport row clears the visionOS window controls below the window.
+    /// visionOS points map to real cm at ~10 points/cm, so 50 ≈ 5cm.
+    private let pseudo3DChromeBottomLift: CGFloat = 50
 
     init(windowValue: VideoWindowValue, appModel: AppModel) {
         self.windowValue = windowValue
@@ -60,11 +76,14 @@ struct VideoWindowView: View {
                         Pseudo3DVideoPlayerView(
                             videoURL: windowModel.authenticatedStreamURL,
                             isRoomActive: windowModel.isInActiveRoom,
+                            // Recede the video (in-scene) while a menu/popover is
+                            // open so it doesn't occlude the presented chrome.
+                            chromeOpen: windowModel.isChromeModalOpen,
                             onVideoSizeKnown: { size in
                                 lockWindowToVideoAspectRatio(videoSize: size)
                             },
                             visualAdjustments: windowModel.effectiveVideoAdjustments,
-                            settings: windowModel.pseudo3DSettings,
+                            settings: windowModel.effectivePseudo3DSettings,
                             isFlipped: windowModel.isFlipped,
                             loopController: windowModel.loopController,
                             playbackModel: windowModel,
@@ -72,6 +91,12 @@ struct VideoWindowView: View {
                                 // Fall back to the flat native player if the
                                 // stereo pipeline can't decode this source.
                                 windowModel.disablePseudo3D()
+                            },
+                            // A 2D transparent overlay can't catch gaze over a
+                            // RealityView, so the tap-to-toggle lives inside it as
+                            // a RealityKit tap target instead.
+                            onToggleUI: {
+                                windowModel.toggleUIVisibility()
                             }
                         )
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -97,6 +122,11 @@ struct VideoWindowView: View {
                                     windowModel.forceWebKitPlayback()
                                 }
                             )
+                            // Preserve aspect (the Metal renderer stretches the
+                            // texture to fill its view). If the window can't match
+                            // the video's aspect, this letterboxes rather than
+                            // stretching — the fix for tall videos appearing wide.
+                            .aspectRatio(windowModel.videoAspectRatio, contentMode: .fit)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .id("\(video.id)_native")
 
@@ -138,7 +168,10 @@ struct VideoWindowView: View {
                     // present when chrome is visible too so tapping the video
                     // toggles controls both ways; transport controls are in a
                     // higher ZStack layer and still receive their own input.
-                    if !appModel.allWindowsHidden {
+                    // The pseudo-3D RealityView can't be toggled by a 2D overlay
+                    // (gaze targets the 3D plane), so it carries its own tap
+                    // target via onToggleUI instead.
+                    if !appModel.allWindowsHidden, !windowModel.shouldUsePseudo3D {
                         Color.clear
                             .contentShape(.rect)
                             .onTapGesture {
@@ -175,8 +208,11 @@ struct VideoWindowView: View {
                 .animation(.easeInOut, value: windowModel.loopController.toastMessage)
             }
 
-            // Custom playback controls (2D web player only)
-            if !appModel.allWindowsHidden, !windowModel.shouldUse3DMode, !windowModel.isUIHidden {
+            // Custom playback controls (2D players only). In fake-3D the
+            // transport is folded into the ornament (showTransport) so it shares
+            // the chrome's depth instead of floating at the window plane.
+            if !appModel.allWindowsHidden, !windowModel.shouldUse3DMode,
+               !windowModel.shouldUsePseudo3D, !windowModel.isUIHidden {
                 VStack {
                     Spacer()
                     VideoControlBar(windowModel: windowModel)
@@ -193,6 +229,13 @@ struct VideoWindowView: View {
             attachmentAnchor: .scene(.bottomFront),
             ornament: {
                 videoOrnament
+                    // Lift the taller two-row ornament so its transport row
+                    // clears the visionOS window controls beneath the window.
+                    .padding(.bottom, windowModel.shouldUsePseudo3D ? pseudo3DChromeBottomLift : 0)
+                    // Pull the chrome back to the video's plane in fake-3D
+                    // (video renders inside the RealityView volume, not on the
+                    // window glass). Same mechanism as diorama mode.
+                    .offset(z: windowModel.shouldUsePseudo3D ? pseudo3DChromeZOffset : 0)
             }
         )
         .sheet(isPresented: $windowModel.showVideo3DSettingsSheet) {
@@ -247,12 +290,15 @@ struct VideoWindowView: View {
     private var videoOrnament: some View {
         VideoOrnamentsView(
             windowModel: windowModel,
+            showTransport: windowModel.shouldUsePseudo3D,
             onGalleryButtonTap: {
                 appModel.showMainWindow(openWindow: openWindow)
             },
             onPopOut: windowValue.wasPushed ? {
                 let newValue = VideoWindowValue(
                     video: windowModel.video,
+                    // Preserve a static (Local) navigation list across pop-out.
+                    galleryVideos: windowModel.usesStaticGalleryList ? windowModel.galleryVideos : nil,
                     stereoscopicOverride: windowModel.stereoscopicOverride,
                     video3DSettings: windowModel.video3DSettings,
                     pseudo3DEnabled: windowModel.pseudo3DEnabled,
@@ -280,8 +326,24 @@ struct VideoWindowView: View {
               let windowScene = resolvedWindowScene else { return }
 
         let videoAspectRatio = videoSize.width / videoSize.height
-        let videoWidth: CGFloat = 1200
-        let videoHeight = videoWidth / videoAspectRatio
+        windowModel.videoAspectRatio = videoAspectRatio
+
+        // Fit the video area into a bounded box, capping the LONGER side. Fixing
+        // width at 1200 meant a tall (e.g. 1080x1920) video requested a ~2200pt
+        // window; visionOS clamps that height, leaving a window wider than the
+        // video — and the Metal renderer stretches the frame to fill it. Capping
+        // the longer side keeps the requested window within limits and correctly
+        // proportioned for portrait, square, and landscape alike.
+        let maxVideoDimension: CGFloat = 1200
+        let videoWidth: CGFloat
+        let videoHeight: CGFloat
+        if videoAspectRatio >= 1 {
+            videoWidth = maxVideoDimension
+            videoHeight = maxVideoDimension / videoAspectRatio
+        } else {
+            videoHeight = maxVideoDimension
+            videoWidth = maxVideoDimension * videoAspectRatio
+        }
         let totalHeight = videoHeight + ornamentBottomPadding
         let windowSize = CGSize(width: videoWidth, height: totalHeight)
 

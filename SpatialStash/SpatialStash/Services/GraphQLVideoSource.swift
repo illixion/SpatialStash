@@ -27,6 +27,10 @@ final class GraphQLVideoSource: VideoSource, @unchecked Sendable {
         let result = try await apiClient.findScenes(page: stashPage, perPage: pageSize, filter: filter)
         AppLogger.graphQLVideo.log(level: AppLogger.effectiveDebugLevel, "Got \(result.scenes.count, privacy: .public) scenes, total: \(result.count, privacy: .public)")
 
+        // Read live (default on) so toggling the setting takes effect on next fetch.
+        // Mirrors AppModel.enableStashTranscoding.
+        let allowTranscoding = UserDefaults.standard.object(forKey: "enableStashTranscoding") as? Bool ?? true
+
         let videos = result.scenes.compactMap { scene -> GalleryVideo? in
             guard let streamURLString = scene.paths.stream,
                   let directStreamURL = URL(string: streamURLString) else {
@@ -52,7 +56,8 @@ final class GraphQLVideoSource: VideoSource, @unchecked Sendable {
             let streamURL = Self.preferredStreamURL(
                 directStreamURL: directStreamURL,
                 fileName: fileName,
-                streamEndpoints: scene.sceneStreams
+                streamEndpoints: scene.sceneStreams,
+                allowTranscoding: allowTranscoding
             )
             let fallbackStreamURL = streamURL == directStreamURL ? nil : directStreamURL
 
@@ -99,31 +104,40 @@ final class GraphQLVideoSource: VideoSource, @unchecked Sendable {
 
     /// Stash's direct `/stream` endpoint may serve WebM with VP8/AV1/etc. that
     /// visionOS WebKit cannot reliably decode. When the original file is WebM,
-    /// prefer Stash's server-side MP4 live-transcode endpoint and keep direct
-    /// WebM as fallback for servers without live transcoding.
+    /// route to a server-side live-transcode endpoint, preferring HLS.
+    ///
+    /// HLS (`/stream.m3u8`) is a proper VOD playlist of h264/AAC mpegts
+    /// segments, which AVFoundation plays natively — so it routes to the Metal
+    /// renderer (GPU-private textures) and, crucially, makes fake-3D available
+    /// (the pseudo-3D pipeline decodes via AVPlayerItemVideoOutput and is gated
+    /// on the native renderer). The `/stream.mp4` endpoint is a *fragmented*
+    /// MP4 served over a single non-seekable chunked pipe: WebKit plays it but
+    /// AVPlayer rejects it (it wants a byte-range-seekable resource), which is
+    /// why mp4 forces WebKit and blocks fake-3D. So prefer HLS, fall back to
+    /// MP4 (WebKit-only), then direct WebM for servers without live transcode.
     private static func preferredStreamURL(
         directStreamURL: URL,
         fileName: String?,
-        streamEndpoints: [StashAPIClient.StashSceneStreamEndpoint]?
+        streamEndpoints: [StashAPIClient.StashSceneStreamEndpoint]?,
+        allowTranscoding: Bool
     ) -> URL {
         let originalExtension = (fileName as NSString?)?.pathExtension.lowercased()
             ?? directStreamURL.pathExtension.lowercased()
-        guard originalExtension == "webm",
+        guard allowTranscoding,
+              originalExtension == "webm",
               let streamEndpoints,
               !streamEndpoints.isEmpty else {
             return directStreamURL
         }
 
-        if let mp4URL = streamEndpoints
-            .compactMap({ URL(string: $0.url) })
-            .first(where: { $0.path.hasSuffix("/stream.mp4") }) {
-            return mp4URL
+        let endpointURLs = streamEndpoints.compactMap { URL(string: $0.url) }
+
+        if let hlsURL = endpointURLs.first(where: { $0.path.hasSuffix("/stream.m3u8") }) {
+            return hlsURL
         }
 
-        if let hlsURL = streamEndpoints
-            .compactMap({ URL(string: $0.url) })
-            .first(where: { $0.path.hasSuffix("/stream.m3u8") }) {
-            return hlsURL
+        if let mp4URL = endpointURLs.first(where: { $0.path.hasSuffix("/stream.mp4") }) {
+            return mp4URL
         }
 
         return directStreamURL

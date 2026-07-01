@@ -13,6 +13,12 @@ struct VideoWindowValue: Identifiable, Codable, Hashable {
     let id: UUID
     var video: GalleryVideo
 
+    /// Complete sibling list for prev/next navigation. Used by sources not backed
+    /// by `appModel.galleryVideos` (e.g. the Local tab), so the window navigates
+    /// this fixed list instead of the (Stash) app gallery. nil = fall back to the
+    /// app gallery snapshot with lazy pagination.
+    var galleryVideos: [GalleryVideo]?
+
     /// Snapshot of stereoscopic override at pop-out time (nil = auto-detect, true = 3D, false = 2D)
     var stereoscopicOverride: Bool?
 
@@ -31,6 +37,7 @@ struct VideoWindowValue: Identifiable, Codable, Hashable {
 
     init(
         video: GalleryVideo,
+        galleryVideos: [GalleryVideo]? = nil,
         stereoscopicOverride: Bool? = nil,
         video3DSettings: Video3DSettings? = nil,
         pseudo3DEnabled: Bool = false,
@@ -39,6 +46,7 @@ struct VideoWindowValue: Identifiable, Codable, Hashable {
     ) {
         self.id = UUID()
         self.video = video
+        self.galleryVideos = galleryVideos
         self.stereoscopicOverride = stereoscopicOverride
         self.video3DSettings = video3DSettings
         self.pseudo3DEnabled = pseudo3DEnabled

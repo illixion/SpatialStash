@@ -901,10 +901,17 @@ struct PhotoDisplayView: View {
         }
 
         let presentationScreenSize = imagePresentationComponent.presentationScreenSize
-        let scale = min(
+        let fit = min(
             boundsInMeters.extents.x / presentationScreenSize.x,
             boundsInMeters.extents.y / presentationScreenSize.y
         )
+        // "Distance" (Adjustments) scales the presentation, remembered separately
+        // for regular 3D (.spatial3D) vs portal Immersive 3D (.spatial3DImmersive).
+        // The RealityView update closure re-runs this so the slider updates live.
+        let userScale = windowModel.desiredViewingMode == .spatial3DImmersive
+            ? windowModel.currentAdjustments.immersiveScale
+            : windowModel.currentAdjustments.scale
+        let scale = fit * Float(userScale)
 
         windowModel.contentEntity.scale = SIMD3<Float>(scale, scale, 1.0)
     }

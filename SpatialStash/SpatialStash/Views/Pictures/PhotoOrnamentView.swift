@@ -455,6 +455,23 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
                 // image is on screen (animated images don't use the
                 // sharpen shader path either).
                 showSharpen: !windowModel.is3DMode && !windowModel.isAnimatedImage,
+                // "Distance" for spatial-3D photos, persisted separately for the
+                // two context-menu modes: regular 3D (.spatial3D) vs portal
+                // Immersive 3D (.spatial3DImmersive). Bind to whichever is active.
+                scale3D: windowModel.is3DMode ? Binding(
+                    get: {
+                        windowModel.desiredViewingMode == .spatial3DImmersive
+                            ? windowModel.currentAdjustments.immersiveScale
+                            : windowModel.currentAdjustments.scale
+                    },
+                    set: { newValue in
+                        if windowModel.desiredViewingMode == .spatial3DImmersive {
+                            windowModel.currentAdjustments.immersiveScale = newValue
+                        } else {
+                            windowModel.currentAdjustments.scale = newValue
+                        }
+                    }
+                ) : nil,
                 isProcessingAutoEnhance: windowModel.isProcessingAutoEnhance,
                 onToggleAutoEnhance: {
                     Task {

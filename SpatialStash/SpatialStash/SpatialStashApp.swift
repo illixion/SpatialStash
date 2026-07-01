@@ -95,6 +95,17 @@ struct SpatialStashApp: App {
         .windowResizability(.contentMinSize)
         .defaultLaunchBehavior(.suppressed)
 
+        // Video adjustments — standalone, repositionable window for the active
+        // video window's Adjustments (avoids overlapping the fake-3D video).
+        Window("Adjustments", id: "video-adjustments") {
+            VideoAdjustmentsWindowView()
+                .environment(appModel)
+                .captureOpenWindowAction()
+        }
+        .defaultSize(width: 380, height: 640)
+        .windowResizability(.contentSize)
+        .defaultLaunchBehavior(.suppressed)
+
         // Remote viewer - slideshow from RoboFrame API
         WindowGroup(id: "remote-viewer", for: RemoteViewerWindowValue.self) { $windowValue in
             if let windowValue = windowValue {

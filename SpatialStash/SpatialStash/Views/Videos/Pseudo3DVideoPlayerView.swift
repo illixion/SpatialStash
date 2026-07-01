@@ -39,6 +39,18 @@ import Metal
 import QuartzCore
 import RealityKit
 import SwiftUI
+import VideoToolbox
+
+/// Diagnostics for the windowed-stereo pipeline. While `useStaticTestPattern`
+/// is true, the engine bypasses AVPlayer and the Metal warp entirely and feeds
+/// the renderer a static stereo test pattern built exactly like Apple's
+/// "Rendering stereoscopic video with RealityKit" sample (420v buffers from a
+/// pool merged with `recommendedPixelBufferAttributes`, proper format
+/// description, pull-model enqueue). This isolates whether the windowed-stereo
+/// plumbing itself is stable on-device before re-introducing our own decode/warp.
+enum Pseudo3DDiagnostics {
+    static let useStaticTestPattern = false
+}
 
 /// CPU mirror of the Metal `VideoStereoUniforms` struct (7 contiguous floats).
 private struct VideoStereoUniforms {
@@ -49,11 +61,15 @@ private struct VideoStereoUniforms {
     var convergence: Float
     var eyeSign: Float
     var mirror: Float
+    var useDepth: Float
 }
 
 struct Pseudo3DVideoPlayerView: View {
     let videoURL: URL
     var isRoomActive: Bool = true
+    /// When true (a menu/popover/sheet is open), recede the video plane within
+    /// the RealityKit scene so it renders behind the presented chrome.
+    var chromeOpen: Bool = false
     var onVideoSizeKnown: ((CGSize) -> Void)? = nil
     var visualAdjustments: VisualAdjustments = VisualAdjustments()
     var settings: Pseudo3DSettings = .default
@@ -61,20 +77,45 @@ struct Pseudo3DVideoPlayerView: View {
     var loopController: VideoLoopController? = nil
     var playbackModel: VideoWindowModel? = nil
     var onPlaybackError: (() -> Void)? = nil
+    /// Tap on the video surface (toggles chrome) — handled as a RealityKit tap
+    /// target because a 2D overlay can't catch gaze over a RealityView.
+    var onToggleUI: (() -> Void)? = nil
 
     @State private var engine = Pseudo3DStereoEngine()
 
     var body: some View {
-        RealityView { content in
-            engine.configure(
-                visualAdjustments: visualAdjustments,
-                settings: settings,
-                isFlipped: isFlipped
+        GeometryReader3D { geometry in
+            RealityView { content in
+                engine.configure(
+                    visualAdjustments: visualAdjustments,
+                    settings: settings,
+                    isFlipped: isFlipped
+                )
+                engine.onVideoSizeKnown = onVideoSizeKnown
+                engine.onPlaybackError = onPlaybackError
+                content.add(engine.makeVideoEntity())
+                engine.observeVideoSize(content: content)
+                engine.load(url: videoURL, roomActive: isRoomActive)
+            } update: { content in
+                // Fit the video plane to the window (VideoPlayerComponent's screen
+                // defaults to ~2× the window otherwise).
+                let bounds = content.convert(geometry.frame(in: .local), from: .local, to: .scene)
+                engine.updateViewBounds(bounds)
+            }
+            // Zero-depth slab keeps the video stable (nothing gets re-clipped
+            // or culled). frame(depth:) defaults to .center alignment, which
+            // parks the slab at the middle of the window's depth region while
+            // the 2D control bar sits on the front glass — that half-depth gap
+            // was the "Flip3D" recession. Align the slab to .front so the video
+            // plane is coplanar with the chrome.
+            .frame(depth: 0, alignment: .front)
+            // Tapping the video toggles chrome. Targeted to the video entity's
+            // tap-target collision (set up once the video size is known).
+            .gesture(
+                SpatialTapGesture()
+                    .targetedToAnyEntity()
+                    .onEnded { _ in onToggleUI?() }
             )
-            engine.onVideoSizeKnown = onVideoSizeKnown
-            engine.onPlaybackError = onPlaybackError
-            content.add(engine.makeVideoEntity())
-            engine.load(url: videoURL, roomActive: isRoomActive)
         }
         .onChange(of: videoURL) { _, newURL in
             engine.load(url: newURL, roomActive: isRoomActive)
@@ -83,6 +124,10 @@ struct Pseudo3DVideoPlayerView: View {
             engine.bindCommands(loopController: loopController, playbackModel: playbackModel)
             engine.configure(visualAdjustments: visualAdjustments, settings: settings, isFlipped: isFlipped)
             engine.setRoomActive(isRoomActive)
+            engine.setChromeOpen(chromeOpen)
+        }
+        .onChange(of: chromeOpen) { _, open in
+            engine.setChromeOpen(open)
         }
         .onChange(of: visualAdjustments) { _, new in
             engine.configure(visualAdjustments: new, settings: settings, isFlipped: isFlipped)
@@ -124,6 +169,20 @@ final class Pseudo3DStereoEngine {
 
     // Off-main frame pump (owns all per-frame GPU work).
     private var pump: StereoPump?
+    // Diagnostic static-pattern pump (used when Pseudo3DDiagnostics.useStaticTestPattern).
+    private var testPump: StereoTestPatternPump?
+
+    // RealityView video entity + fit-to-window state. VideoPlayerComponent's
+    // screen defaults to ~2× our window (Apple's sample scales it to fit), so we
+    // scale the entity to the RealityView's bounds.
+    @ObservationIgnored var videoEntity: Entity?
+    @ObservationIgnored private var lastViewBounds: BoundingBox?
+    @ObservationIgnored private var sizeSubscription: EventSubscription?
+    @ObservationIgnored private var tapTargetInstalled = false
+    /// While true, fade the video so an open menu/popover shows through it.
+    @ObservationIgnored private var chromeOpen = false
+    /// Video opacity while a menu/popover is open (low = chrome clearly visible).
+    @ObservationIgnored private let chromeDimOpacity: Float = 0.12
 
     // Config
     private var visualAdjustments = VisualAdjustments()
@@ -151,7 +210,76 @@ final class Pseudo3DStereoEngine {
         component.desiredViewingMode = VideoPlaybackController.ViewingMode.stereo
         component.isPassthroughTintingEnabled = false
         entity.components.set(component)
+        videoEntity = entity
+        // Sync the fade state now the entity exists — setChromeOpen may have
+        // fired (with the initial chromeOpen) before this, when videoEntity was
+        // still nil. Applied here (once, at creation) rather than in refitVideo,
+        // which runs on every layout/ornament change and wrongly re-tied the
+        // opacity to ornament visibility.
+        applyChromeOpacity()
         return entity
+    }
+
+    /// Subscribe to the video screen-size event so we re-fit once the plane has
+    /// real dimensions (its visualBounds is empty until then). Call from the
+    /// RealityView make closure where `content` is available.
+    func observeVideoSize(content: RealityViewContent) {
+        guard let entity = videoEntity else { return }
+        sizeSubscription = content.subscribe(
+            to: VideoPlayerEvents.VideoSizeDidChange.self, on: entity
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refitVideo() }
+        }
+    }
+
+    /// Store the latest RealityView bounds (scene space) and fit to them.
+    func updateViewBounds(_ bounds: BoundingBox) {
+        lastViewBounds = bounds
+        refitVideo()
+    }
+
+    private func refitVideo() {
+        guard let bounds = lastViewBounds else { return }
+        fitVideo(toViewBounds: bounds)
+        installTapTarget()
+    }
+
+    /// Give the video entity a collision shape + input target so a SpatialTapGesture
+    /// can land on it (a 2D overlay can't catch gaze over a RealityView). Sized to
+    /// the video plane in local space so the entity's fit-scale maps it correctly.
+    private func installTapTarget() {
+        guard let entity = videoEntity, !tapTargetInstalled else { return }
+        let local = entity.visualBounds(relativeTo: entity)
+        guard local.extents.x > 0.001, local.extents.y > 0.001 else { return }
+        let box = ShapeResource.generateBox(
+            width: local.extents.x, height: local.extents.y, depth: max(local.extents.z, 0.05)
+        ).offsetBy(translation: local.center)
+        entity.components.set(CollisionComponent(shapes: [box], isStatic: true))
+        entity.components.set(InputTargetComponent())
+        tapTargetInstalled = true
+    }
+
+    /// Scale the video entity so its plane fits within `bounds` (preserving
+    /// aspect). Converges in one or two calls because it sets an absolute scale
+    /// derived from the entity's unscaled size.
+    private func fitVideo(toViewBounds bounds: BoundingBox) {
+        guard let entity = videoEntity else { return }
+
+        // Center the entity on the window plane. (Depth can't be used to dodge
+        // an open menu — the zero-depth slab clips any off-plane entity, and a
+        // SwiftUI .offset(z:) perturbs this fit; menu occlusion is handled by
+        // fading the entity via OpacityComponent instead — see setChromeOpen.)
+        entity.position = bounds.center
+
+        let extents = entity.visualBounds(relativeTo: nil).extents
+        let scale = entity.scale.x
+        guard extents.x > 1e-4, extents.y > 1e-4, scale > 1e-4,
+              bounds.extents.x > 1e-4, bounds.extents.y > 1e-4 else { return }
+        let unscaledX = extents.x / scale
+        let unscaledY = extents.y / scale
+        let target = min(bounds.extents.x / unscaledX, bounds.extents.y / unscaledY)
+        guard target.isFinite, target > 1e-4, abs(target - scale) > 0.02 else { return }
+        entity.scale = SIMD3<Float>(repeating: target)
     }
 
     // MARK: Config
@@ -161,6 +289,21 @@ final class Pseudo3DStereoEngine {
         self.settings = settings
         self.isFlipped = isFlipped
         pump?.updateConfig(makePumpConfig())
+    }
+
+    /// Fade/restore the video when a menu/popover opens/closes, so the presented
+    /// chrome shows through the (front-plane) video instead of being occluded.
+    func setChromeOpen(_ open: Bool) {
+        chromeOpen = open
+        applyChromeOpacity()
+    }
+
+    /// Reflect `chromeOpen` on the entity. Called from setChromeOpen AND after
+    /// the entity is (re)fit, so the state is consistent even when the entity is
+    /// created after the first setChromeOpen (which otherwise left it desynced —
+    /// the first menu wouldn't fade, later ones would).
+    private func applyChromeOpacity() {
+        videoEntity?.components.set(OpacityComponent(opacity: chromeOpen ? chromeDimOpacity : 1.0))
     }
 
     private func makePumpConfig() -> StereoPump.Config {
@@ -205,6 +348,20 @@ final class Pseudo3DStereoEngine {
         cleanupPlayer()
         loadedURL = url
         isRoomActive = roomActive
+
+        // Diagnostic: prove the windowed-stereo plumbing in isolation, no
+        // AVPlayer / decode / warp. See Pseudo3DDiagnostics.
+        if Pseudo3DDiagnostics.useStaticTestPattern {
+            if !didStartSynchronizer {
+                didStartSynchronizer = true
+                synchronizer.setRate(1, time: .zero)
+            }
+            onVideoSizeKnown?(CGSize(width: 1280, height: 720))
+            let pump = StereoTestPatternPump(videoRenderer: videoRenderer)
+            pump.start()
+            testPump = pump
+            return
+        }
 
         guard let renderer = MetalImageRenderer.shared else { return }
 
@@ -316,6 +473,13 @@ final class Pseudo3DStereoEngine {
     // MARK: Cleanup
 
     func cleanup() {
+        sizeSubscription?.cancel()
+        sizeSubscription = nil
+        videoEntity = nil
+        lastViewBounds = nil
+        tapTargetInstalled = false
+        testPump?.stop()
+        testPump = nil
         pump?.stop()
         pump = nil
         cleanupPlayer()
@@ -326,6 +490,8 @@ final class Pseudo3DStereoEngine {
     }
 
     private func cleanupPlayer() {
+        testPump?.stop()
+        testPump = nil
         pump?.stop()
         pump = nil
         if let timeObserver, let player { player.removeTimeObserver(timeObserver) }
@@ -372,9 +538,23 @@ final class StereoPump: @unchecked Sendable {
     private var timer: DispatchSourceTimer?
 
     private var textureCache: CVMetalTextureCache?
-    private var eyePool: CVPixelBufferPool?
-    private var eyePoolWidth = 0
-    private var eyePoolHeight = 0
+    /// BGRA Metal render targets for the warp (intermediate, not handed to the
+    /// compositor).
+    private var bgraPool: CVPixelBufferPool?
+    /// 420v buffers handed to the renderer — built exactly like the validated
+    /// test pattern (merged with `recommendedPixelBufferAttributes`).
+    private var outPool: CVMutablePixelBuffer.Pool?
+    private var poolWidth = 0
+    private var poolHeight = 0
+    /// Per-eye depth attachments for the occlusion-correct mesh warp ([0]=left,
+    /// [1]=right). Separate textures because both eyes render in one command
+    /// buffer; sharing one depth attachment let the right eye (2nd pass) test
+    /// against the left eye's geometry, warping it more than the left.
+    private var eyeDepthTextures: [MTLTexture?] = [nil, nil]
+    /// Converts the BGRA warp output into the compositor's native 420v format.
+    private let transferSession: VTPixelTransferSession
+    /// Core ML monocular depth (nil when no model is bundled → heuristic warp).
+    private let depthProvider: CoreMLDepthProvider?
     private var lastReportedSize: CGSize?
 
     private let configLock = NSLock()
@@ -400,6 +580,10 @@ final class StereoPump: @unchecked Sendable {
         self.commandQueue = renderer.device.makeCommandQueue() ?? renderer.commandQueue
         self.startHostTime = startHostTime
         self.onVideoSizeKnown = onVideoSizeKnown
+        var session: VTPixelTransferSession?
+        VTPixelTransferSessionCreate(allocator: kCFAllocatorDefault, pixelTransferSessionOut: &session)
+        self.transferSession = session!
+        self.depthProvider = CoreMLDepthProvider(device: renderer.device)
         CVMetalTextureCacheCreate(nil, nil, renderer.device, nil, &textureCache)
     }
 
@@ -429,7 +613,9 @@ final class StereoPump: @unchecked Sendable {
         queue.async { [weak self] in
             guard let self else { return }
             if let textureCache { CVMetalTextureCacheFlush(textureCache, 0) }
-            self.eyePool = nil
+            self.bgraPool = nil
+            self.outPool = nil
+            self.eyeDepthTextures = [nil, nil]
         }
     }
 
@@ -444,53 +630,116 @@ final class StereoPump: @unchecked Sendable {
               let src = output.copyPixelBuffer(forItemTime: itemTime, itemTimeForDisplay: nil) else { return }
         reportSizeIfNeeded(src)
 
-        guard let (left, right) = makeEyePair(from: src, cache: textureCache) else { return }
         // Tag relative to the synchronizer's zero-based, host-driven timeline so
         // the frame presents immediately and in order.
         let pts = CMTime(seconds: hostTime - startHostTime, preferredTimescale: 90_000)
-        enqueueStereo(left: left, right: right, pts: pts)
+        renderAndEnqueue(from: src, cache: textureCache, pts: pts)
     }
 
-    private func makeEyePair(from src: CVPixelBuffer, cache: CVMetalTextureCache) -> (CVPixelBuffer, CVPixelBuffer)? {
+    /// Warp the mono frame into two BGRA eye render targets, convert each to a
+    /// 420v buffer (the compositor's native format) via VTPixelTransferSession,
+    /// then tag and enqueue. The 420v buffers come from a pool merged with
+    /// `recommendedPixelBufferAttributes` — the construction validated on-device.
+    /// `CVMutablePixelBuffer` is noncopyable, so the two eye buffers stay local:
+    /// borrowed by `transfer`, then consumed by `CVReadOnlyPixelBuffer`.
+    private func renderAndEnqueue(from src: CVPixelBuffer, cache: CVMetalTextureCache, pts: CMTime) {
         let width = CVPixelBufferGetWidth(src)
         let height = CVPixelBufferGetHeight(src)
         guard width > 0, height > 0,
-              let pool = ensureEyePool(width: width, height: height),
-              let srcTexture = makeTexture(from: src, cache: cache) else { return nil }
+              ensurePools(width: width, height: height),
+              let bgraPool, let outPool,
+              let srcTexture = makeTexture(from: src, cache: cache) else { return }
 
-        var leftBuf: CVPixelBuffer?
-        var rightBuf: CVPixelBuffer?
+        // 1. Warp into two BGRA eye render targets.
+        var leftBGRA: CVPixelBuffer?
+        var rightBGRA: CVPixelBuffer?
         let aux: [String: Any] = [kCVPixelBufferPoolAllocationThresholdKey as String: maxInFlightBuffers]
-        guard CVPixelBufferPoolCreatePixelBufferWithAuxAttributes(nil, pool, aux as CFDictionary, &leftBuf) == kCVReturnSuccess,
-              CVPixelBufferPoolCreatePixelBufferWithAuxAttributes(nil, pool, aux as CFDictionary, &rightBuf) == kCVReturnSuccess,
-              let left = leftBuf, let right = rightBuf,
-              let leftTex = makeTexture(from: left, cache: cache),
-              let rightTex = makeTexture(from: right, cache: cache),
-              let cmdBuf = commandQueue.makeCommandBuffer() else { return nil }
+        guard CVPixelBufferPoolCreatePixelBufferWithAuxAttributes(nil, bgraPool, aux as CFDictionary, &leftBGRA) == kCVReturnSuccess,
+              CVPixelBufferPoolCreatePixelBufferWithAuxAttributes(nil, bgraPool, aux as CFDictionary, &rightBGRA) == kCVReturnSuccess,
+              let leftBGRA, let rightBGRA,
+              let leftTex = makeTexture(from: leftBGRA, cache: cache),
+              let rightTex = makeTexture(from: rightBGRA, cache: cache),
+              let cmdBuf = commandQueue.makeCommandBuffer() else { return }
+
+        // Compute depth for THIS frame synchronously so the eyes are warped with
+        // a depth map matched to the exact frame being shown — no lag/ghosting
+        // from reusing a stale map. Slow inference just yields fewer rendered
+        // frames (this tick took longer), never a frame/depth mismatch.
+        let depthTex = depthProvider?.depth(for: src)
 
         let cfg = currentConfig()
-        encodeEye(into: leftTex, source: srcTexture, eyeSign: 1.0, config: cfg, commandBuffer: cmdBuf)
-        encodeEye(into: rightTex, source: srcTexture, eyeSign: -1.0, config: cfg, commandBuffer: cmdBuf)
+        encodeEye(into: leftTex, source: srcTexture, depth: depthTex, eyeSign: 1.0, config: cfg, commandBuffer: cmdBuf)
+        encodeEye(into: rightTex, source: srcTexture, depth: depthTex, eyeSign: -1.0, config: cfg, commandBuffer: cmdBuf)
         cmdBuf.commit()
-        // Safe here: this runs on the background pump queue, never main.
+        // Safe here: this runs on the background pump queue, never main. The warp
+        // must complete before VTPixelTransferSession reads the BGRA surfaces.
         cmdBuf.waitUntilCompleted()
-        return (left, right)
+
+        // 2. Convert each BGRA eye → 420v from the recommended-attributes pool,
+        // carrying the source's color tags so the compositor reads gamma/range
+        // correctly (untagged YCbCr was being misinterpreted = washed out).
+        guard let left = try? outPool.makeMutablePixelBuffer() else { return }
+        guard transfer(from: leftBGRA, to: left) else { return }
+        tagColor(left, from: src)
+        guard let right = try? outPool.makeMutablePixelBuffer() else { return }
+        guard transfer(from: rightBGRA, to: right) else { return }
+        tagColor(right, from: src)
+
+        // 3. Tag, describe, enqueue. CVReadOnlyPixelBuffer(_:) consumes each
+        // mutable buffer (move), and the format description is built from the
+        // tagged group — both exactly as Apple's sample does. (Omitting the
+        // format description / using BGRA was a cause of the earlier GPU hang.)
+        let presentation = pts.isValid ? pts : .zero
+        let leftTags: [CMTag] = [.videoLayerID(0), .stereoView(.leftEye), .mediaType(.video)]
+        let rightTags: [CMTag] = [.videoLayerID(1), .stereoView(.rightEye), .mediaType(.video)]
+        let tagged: [CMTaggedDynamicBuffer] = [
+            CMTaggedDynamicBuffer(tags: leftTags, content: .pixelBuffer(CVReadOnlyPixelBuffer(left))),
+            CMTaggedDynamicBuffer(tags: rightTags, content: .pixelBuffer(CVReadOnlyPixelBuffer(right)))
+        ]
+        let sample = CMReadySampleBuffer(
+            taggedBuffers: tagged,
+            formatDescription: CMTaggedBufferGroupFormatDescription(taggedBuffers: tagged),
+            presentationTimeStamp: presentation,
+            duration: CMTime(value: 1, timescale: 90)
+        )
+        sample.withUnsafeSampleBuffer { videoRenderer.enqueue($0) }
+    }
+
+    private func transfer(from source: CVPixelBuffer, to dest: borrowing CVMutablePixelBuffer) -> Bool {
+        var ok = false
+        dest.withUnsafeBuffer { destBuffer in
+            ok = VTPixelTransferSessionTransferImage(transferSession, from: source, to: destBuffer) == noErr
+        }
+        return ok
+    }
+
+    /// Copy the source frame's color primaries / transfer function / YCbCr matrix
+    /// onto the eye buffer (defaulting to Rec.709). Without these the compositor
+    /// guesses the color space and renders the eyes washed out.
+    private func tagColor(_ dest: borrowing CVMutablePixelBuffer, from src: CVPixelBuffer) {
+        dest.withUnsafeBuffer { d in
+            let primaries = CVBufferGetAttachment(src, kCVImageBufferColorPrimariesKey, nil)?.takeUnretainedValue()
+                ?? kCVImageBufferColorPrimaries_ITU_R_709_2
+            CVBufferSetAttachment(d, kCVImageBufferColorPrimariesKey, primaries, .shouldPropagate)
+
+            let transfer = CVBufferGetAttachment(src, kCVImageBufferTransferFunctionKey, nil)?.takeUnretainedValue()
+                ?? kCVImageBufferTransferFunction_ITU_R_709_2
+            CVBufferSetAttachment(d, kCVImageBufferTransferFunctionKey, transfer, .shouldPropagate)
+
+            let matrix = CVBufferGetAttachment(src, kCVImageBufferYCbCrMatrixKey, nil)?.takeUnretainedValue()
+                ?? kCVImageBufferYCbCrMatrix_ITU_R_709_2
+            CVBufferSetAttachment(d, kCVImageBufferYCbCrMatrixKey, matrix, .shouldPropagate)
+        }
     }
 
     private func encodeEye(
         into dest: MTLTexture,
         source: MTLTexture,
+        depth: MTLTexture?,
         eyeSign: Float,
         config: Config,
         commandBuffer: MTLCommandBuffer
     ) {
-        let desc = MTLRenderPassDescriptor()
-        desc.colorAttachments[0].texture = dest
-        desc.colorAttachments[0].loadAction = .dontCare
-        desc.colorAttachments[0].storeAction = .store
-        guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: desc) else { return }
-        encoder.setRenderPipelineState(renderer.pseudo3DEyePipelineState)
-        encoder.setFragmentTexture(source, index: 0)
         var uniforms = VideoStereoUniforms(
             brightness: config.brightness,
             contrast: config.contrast,
@@ -498,58 +747,105 @@ final class StereoPump: @unchecked Sendable {
             depthStrength: config.depthStrength,
             convergence: config.convergence,
             eyeSign: eyeSign,
-            mirror: config.mirror ? 1.0 : 0.0
+            mirror: config.mirror ? 1.0 : 0.0,
+            useDepth: depth != nil ? 1.0 : 0.0
         )
+
+        // With a real depth map: occlusion-correct depth-displaced mesh. Without
+        // one: the per-pixel heuristic warp. Each eye gets its own depth
+        // attachment (0=left, 1=right) — the two eyes render in one command
+        // buffer, so a shared attachment cross-contaminated the depth test.
+        let eyeIndex = eyeSign > 0 ? 0 : 1
+        if let depth, let depthAttachment = ensureDepthTexture(width: dest.width, height: dest.height, eye: eyeIndex) {
+            let desc = MTLRenderPassDescriptor()
+            desc.colorAttachments[0].texture = dest
+            desc.colorAttachments[0].loadAction = .clear
+            desc.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
+            desc.colorAttachments[0].storeAction = .store
+            desc.depthAttachment.texture = depthAttachment
+            desc.depthAttachment.loadAction = .clear
+            desc.depthAttachment.clearDepth = 1.0
+            desc.depthAttachment.storeAction = .dontCare
+            guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: desc) else { return }
+            encoder.setRenderPipelineState(renderer.pseudo3DMeshPipelineState)
+            encoder.setDepthStencilState(renderer.pseudo3DMeshDepthState)
+            encoder.setVertexBuffer(renderer.pseudo3DGridPositions, offset: 0, index: 0)
+            encoder.setVertexBytes(&uniforms, length: MemoryLayout<VideoStereoUniforms>.size, index: 1)
+            encoder.setVertexTexture(depth, index: 0)
+            encoder.setFragmentTexture(source, index: 0)
+            encoder.setFragmentBytes(&uniforms, length: MemoryLayout<VideoStereoUniforms>.size, index: 0)
+            encoder.drawIndexedPrimitives(
+                type: .triangle, indexCount: renderer.pseudo3DGridIndexCount,
+                indexType: .uint32, indexBuffer: renderer.pseudo3DGridIndices, indexBufferOffset: 0
+            )
+            encoder.endEncoding()
+            return
+        }
+
+        let desc = MTLRenderPassDescriptor()
+        desc.colorAttachments[0].texture = dest
+        desc.colorAttachments[0].loadAction = .dontCare
+        desc.colorAttachments[0].storeAction = .store
+        guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: desc) else { return }
+        encoder.setRenderPipelineState(renderer.pseudo3DEyePipelineState)
+        encoder.setFragmentTexture(source, index: 0)
+        encoder.setFragmentTexture(source, index: 1) // placeholder; unused when useDepth=0
         encoder.setFragmentBytes(&uniforms, length: MemoryLayout<VideoStereoUniforms>.size, index: 0)
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
         encoder.endEncoding()
     }
 
-    private func enqueueStereo(left: CVPixelBuffer, right: CVPixelBuffer, pts: CMTime) {
-        let presentation = pts.isValid ? pts : .zero
-        let leftTags: [CMTag] = [.videoLayerID(0), .stereoView(.leftEye), .mediaType(.video)]
-        let rightTags: [CMTag] = [.videoLayerID(1), .stereoView(.rightEye), .mediaType(.video)]
-        // CVReadOnlyPixelBuffer(unsafeBuffer:) takes a `sending` CVPixelBuffer:
-        // ownership transfers here. The buffers were freshly allocated this tick
-        // and the GPU warp has completed (waitUntilCompleted), so they are
-        // uniquely owned and untouched after this point — but creating
-        // MTLTextures from them taints their region for the sending check, so we
-        // assert the transfer explicitly.
-        nonisolated(unsafe) let leftBuf = left
-        nonisolated(unsafe) let rightBuf = right
-        let tagged: [CMTaggedDynamicBuffer] = [
-            CMTaggedDynamicBuffer(tags: leftTags, content: .pixelBuffer(CVReadOnlyPixelBuffer(unsafeBuffer: leftBuf))),
-            CMTaggedDynamicBuffer(tags: rightTags, content: .pixelBuffer(CVReadOnlyPixelBuffer(unsafeBuffer: rightBuf)))
-        ]
-        // formatDescription is optional (defaults to nil); the system derives a
-        // tagged-buffer-group format description from the buffers themselves.
-        let sample = CMReadySampleBuffer(
-            taggedBuffers: tagged,
-            presentationTimeStamp: presentation,
-            duration: CMTime(value: 1, timescale: 90)
-        )
-        sample.withUnsafeSampleBuffer { cmSampleBuffer in
-            videoRenderer.enqueue(cmSampleBuffer)
+    private func ensureDepthTexture(width: Int, height: Int, eye: Int) -> MTLTexture? {
+        if let existing = eyeDepthTextures[eye], existing.width == width, existing.height == height {
+            return existing
         }
+        let desc = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .depth32Float, width: width, height: height, mipmapped: false
+        )
+        desc.usage = [.renderTarget]
+        desc.storageMode = .private
+        let texture = renderer.device.makeTexture(descriptor: desc)
+        eyeDepthTextures[eye] = texture
+        return texture
     }
 
     // MARK: GPU helpers
 
-    private func ensureEyePool(width: Int, height: Int) -> CVPixelBufferPool? {
-        if let eyePool, eyePoolWidth == width, eyePoolHeight == height { return eyePool }
-        let attrs: [String: Any] = [
+    /// (Re)creates the BGRA warp pool and the 420v output pool for the current
+    /// source dimensions. Returns false if either pool can't be made.
+    private func ensurePools(width: Int, height: Int) -> Bool {
+        if bgraPool != nil, outPool != nil, poolWidth == width, poolHeight == height { return true }
+
+        let bgraAttrs: [String: Any] = [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
             kCVPixelBufferWidthKey as String: width,
             kCVPixelBufferHeightKey as String: height,
             kCVPixelBufferMetalCompatibilityKey as String: true,
             kCVPixelBufferIOSurfacePropertiesKey as String: [String: Any]()
         ]
-        var pool: CVPixelBufferPool?
-        guard CVPixelBufferPoolCreate(nil, nil, attrs as CFDictionary, &pool) == kCVReturnSuccess else { return nil }
-        eyePool = pool
-        eyePoolWidth = width
-        eyePoolHeight = height
-        return pool
+        var bgra: CVPixelBufferPool?
+        guard CVPixelBufferPoolCreate(nil, nil, bgraAttrs as CFDictionary, &bgra) == kCVReturnSuccess else { return false }
+
+        // 420 output pool, merged with the renderer's recommended attributes —
+        // the construction that validated on-device. Full-range (420f, luma
+        // 0-255) rather than video-range (420v, 16-235): our warp output is
+        // full-range RGB and the compositor reads the tagged buffer as full
+        // range, so video-range here lifts blacks / lowers whites (washed out).
+        let eyeSize = CVImageSize(width: width, height: height)
+        let defaultAttributes = CVPixelBufferCreationAttributes(
+            pixelFormatType: CVPixelFormatType(rawValue: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange),
+            size: eyeSize
+        )
+        let recommended = videoRenderer.recommendedPixelBufferAttributes
+        guard let merged = CVPixelBufferAttributes(merging: [CVPixelBufferAttributes(defaultAttributes), recommended]),
+              let creation = CVPixelBufferCreationAttributes(merged),
+              let out = try? CVMutablePixelBuffer.Pool(pixelBufferAttributes: creation) else { return false }
+
+        bgraPool = bgra
+        outPool = out
+        poolWidth = width
+        poolHeight = height
+        return true
     }
 
     private func makeTexture(from pixelBuffer: CVPixelBuffer, cache: CVMetalTextureCache) -> MTLTexture? {
@@ -567,5 +863,118 @@ final class StereoPump: @unchecked Sendable {
         guard size.width > 0, size.height > 0, lastReportedSize != size else { return }
         lastReportedSize = size
         onVideoSizeKnown(size)
+    }
+}
+
+// MARK: - StereoTestPatternPump (diagnostic)
+
+/// Feeds the renderer a static stereo test pattern — a bright vertical bar with
+/// horizontal disparity over a dark background, so it should appear to float in
+/// front of the window when stereo delivery works. Buffer construction mirrors
+/// Apple's "Rendering stereoscopic video with RealityKit" sample exactly (420v
+/// from a `CVMutablePixelBuffer.Pool` merged with `recommendedPixelBufferAttributes`,
+/// `CMTaggedBufferGroupFormatDescription`, pull-model enqueue) to validate the
+/// windowed-stereo plumbing without our decode/warp in the loop.
+/// `@unchecked Sendable`: all state is touched only on `queue`.
+final class StereoTestPatternPump: @unchecked Sendable {
+    private let videoRenderer: AVSampleBufferVideoRenderer
+    private let queue = DispatchQueue(label: "com.spatialstash.stereo-testpattern", qos: .userInteractive)
+    private let width = 1280
+    private let height = 720
+    /// Half-frame disparity of the bar between eyes (px). Bigger = more depth.
+    private let barShift = 16
+    private var pool: CVMutablePixelBuffer.Pool?
+    private var frameIndex: Int64 = 0
+    private var running = false
+
+    init(videoRenderer: AVSampleBufferVideoRenderer) {
+        self.videoRenderer = videoRenderer
+    }
+
+    func start() {
+        let eyeSize = CVImageSize(width: width, height: height)
+        let defaultAttributes = CVPixelBufferCreationAttributes(
+            pixelFormatType: CVPixelFormatType(rawValue: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange),
+            size: eyeSize
+        )
+        let recommended = videoRenderer.recommendedPixelBufferAttributes
+        guard let merged = CVPixelBufferAttributes(merging: [CVPixelBufferAttributes(defaultAttributes), recommended]),
+              let creation = CVPixelBufferCreationAttributes(merged),
+              let pool = try? CVMutablePixelBuffer.Pool(pixelBufferAttributes: creation) else {
+            return
+        }
+        self.pool = pool
+        running = true
+        videoRenderer.requestMediaDataWhenReady(on: queue) { [weak self] in
+            self?.pump()
+        }
+    }
+
+    func stop() {
+        running = false
+        videoRenderer.stopRequestingMediaData()
+        pool = nil
+    }
+
+    private func pump() {
+        guard running, let pool else { return }
+        while running, videoRenderer.isReadyForMoreMediaData {
+            guard enqueueFrame(pool: pool) else { break }
+            frameIndex += 1
+        }
+    }
+
+    private func enqueueFrame(pool: CVMutablePixelBuffer.Pool) -> Bool {
+        // Left eye sees the bar shifted right, right eye shifted left → crossed
+        // disparity → bar floats in front of the background.
+        guard let left = makeEyeBuffer(pool: pool, barShift: barShift),
+              let right = makeEyeBuffer(pool: pool, barShift: -barShift) else { return false }
+        let leftTags: [CMTag] = [.videoLayerID(0), .stereoView(.leftEye), .mediaType(.video)]
+        let rightTags: [CMTag] = [.videoLayerID(1), .stereoView(.rightEye), .mediaType(.video)]
+        let tagged: [CMTaggedDynamicBuffer] = [
+            CMTaggedDynamicBuffer(tags: leftTags, content: .pixelBuffer(CVReadOnlyPixelBuffer(left))),
+            CMTaggedDynamicBuffer(tags: rightTags, content: .pixelBuffer(CVReadOnlyPixelBuffer(right)))
+        ]
+        let pts = CMTime(value: frameIndex, timescale: 30)
+        let sample = CMReadySampleBuffer(
+            taggedBuffers: tagged,
+            formatDescription: CMTaggedBufferGroupFormatDescription(taggedBuffers: tagged),
+            presentationTimeStamp: pts,
+            duration: CMTime(value: 1, timescale: 30)
+        )
+        sample.withUnsafeSampleBuffer { videoRenderer.enqueue($0) }
+        return true
+    }
+
+    /// Fills a fresh 420v buffer: dark background (Y=40), a bright vertical bar
+    /// (Y=200) centered at `width/2 + barShift`, neutral chroma (grayscale).
+    private func makeEyeBuffer(pool: CVMutablePixelBuffer.Pool, barShift: Int) -> CVMutablePixelBuffer? {
+        guard let pb = try? pool.makeMutablePixelBuffer() else { return nil }
+        pb.withUnsafeBuffer { cv in
+            CVPixelBufferLockBaseAddress(cv, [])
+            defer { CVPixelBufferUnlockBaseAddress(cv, []) }
+
+            let w = CVPixelBufferGetWidthOfPlane(cv, 0)
+            let h = CVPixelBufferGetHeightOfPlane(cv, 0)
+            let cx = w / 2 + barShift
+            let barHalf = max(8, w / 14)
+            if let yBase = CVPixelBufferGetBaseAddressOfPlane(cv, 0) {
+                let y = yBase.assumingMemoryBound(to: UInt8.self)
+                let bpr = CVPixelBufferGetBytesPerRowOfPlane(cv, 0)
+                for row in 0..<h {
+                    let r = y + row * bpr
+                    for col in 0..<w {
+                        r[col] = abs(col - cx) < barHalf ? 200 : 40
+                    }
+                }
+            }
+            // Neutral chroma (Cb=Cr=128) → grayscale.
+            if let cBase = CVPixelBufferGetBaseAddressOfPlane(cv, 1) {
+                let bpr = CVPixelBufferGetBytesPerRowOfPlane(cv, 1)
+                let ch = CVPixelBufferGetHeightOfPlane(cv, 1)
+                memset(cBase, 128, bpr * ch)
+            }
+        }
+        return pb
     }
 }

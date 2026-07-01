@@ -27,6 +27,8 @@ struct SettingsTabView: View {
     @State private var renamingGroup: SavedWindowGroup?
     @State private var renameGroupName = ""
     @State private var restoreSheetGroup: SavedWindowGroup?
+    /// Depth models discovered in Documents/bundle, for the Fake-3D picker.
+    @State private var depthModelNames: [String] = []
     @State private var showExporter = false
     @State private var showImporter = false
     @State private var exportDocument: SettingsBackupDocument?
@@ -238,6 +240,11 @@ struct SettingsTabView: View {
                             await testConnection()
                         }
                     }
+
+                    Toggle("Server-Side Transcoding", isOn: $appModel.enableStashTranscoding)
+                    Text("Transcode WebM scenes on the Stash server (HLS) so they play in the native renderer and support fake-3D. Turn off to stream the original file directly. Applies to newly loaded scenes.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 Section("Gallery Statistics") {
@@ -445,6 +452,16 @@ struct SettingsTabView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
 
+                    Picker("Fake-3D Depth Model", selection: $appModel.preferredDepthModelName) {
+                        Text("Auto").tag("")
+                        ForEach(depthModelNames, id: \.self) { name in
+                            Text(name).tag(name)
+                        }
+                    }
+                    Text("Monocular depth model used for fake-3D video. Models are read from the app's Documents folder (push with scripts/push-depth-model.sh). Applies to fake-3D videos opened after the change.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
                     Button {
                         openWindow(id: "gpu-memory")
                     } label: {
@@ -481,6 +498,7 @@ struct SettingsTabView: View {
             .navigationTitle("Settings")
             .task {
                 await refreshCacheStats()
+                depthModelNames = CoreMLDepthProvider.availableModelNames()
             }
             .alert("Save Window Group", isPresented: $showSaveGroupAlert) {
                 TextField("Group Name", text: $newGroupName)
