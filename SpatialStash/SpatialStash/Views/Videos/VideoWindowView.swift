@@ -31,7 +31,7 @@ struct VideoWindowView: View {
     /// window's bottom edge) doesn't overlap the video. Larger for fake-3D, whose
     /// two-row ornament is taller and needs more clearance from the video plane.
     private var ornamentBottomPadding: CGFloat {
-        windowModel.shouldUsePseudo3D ? 90 : 60
+        windowModel.shouldUsePseudo3D ? 120 : 60
     }
 
     /// Depth offset (points, toward the viewer) applied to the fake-3D chrome.
