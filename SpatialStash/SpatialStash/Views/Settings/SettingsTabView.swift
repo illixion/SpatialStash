@@ -477,6 +477,12 @@ struct SettingsTabView: View {
                         }
                     }
 
+                    if depthModels.installedNames.isEmpty {
+                        Label("No model installed — Pseudo 3D uses the built-in heuristic warp.", systemImage: "info.circle")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+
                     if let downloading = DepthModelManager.variants.first(where: { depthModels.isDownloading($0) }) {
                         HStack(spacing: 12) {
                             ProgressView(value: depthModels.progress[downloading.name] ?? 0)

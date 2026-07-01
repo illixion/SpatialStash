@@ -99,11 +99,10 @@ final class CoreMLDepthProvider: DepthProvider, @unchecked Sendable {
         return try? device.makeComputePipelineState(function: fn)
     }
 
-    /// Locate a depth model in the managed store first, then Documents (as a
-    /// not-yet-imported fallback), then the bundle. Models are kept out of the
-    /// app bundle so builds stay fast (no large Core ML compile step). Accepts a
-    /// precompiled `.mlmodelc` (loads directly) or an `.mlpackage` (compiled +
-    /// cached by `compiledModelURL`).
+    /// Locate a depth model in the managed store, then the bundle. Models are
+    /// kept out of the app bundle so builds stay fast (no large Core ML compile
+    /// step). Accepts a precompiled `.mlmodelc` (loads directly) or an
+    /// `.mlpackage` (compiled + cached by `compiledModelURL`).
     private static func findModelURL() -> URL? {
         let dirs = modelSearchDirectories()
 
@@ -126,15 +125,14 @@ final class CoreMLDepthProvider: DepthProvider, @unchecked Sendable {
         return nil
     }
 
-    /// Managed store (checked first), then Documents as a fallback for a model
-    /// that hasn't been imported yet, then the app bundle.
+    /// The managed store, then the app bundle. Documents is intentionally NOT
+    /// searched: it's only a drop-off inbox, drained into the store on launch
+    /// (`DepthModelStore.importInboxModels`) and when Settings opens. Keeping the
+    /// store authoritative means a model can never load yet be invisible to the
+    /// Settings picker / undeletable — a model pushed to Documents loads after
+    /// the next launch, once imported into the store.
     private static func modelSearchDirectories() -> [URL] {
-        var dirs: [URL] = [DepthModelStore.modelsDirectory]
-        if let docs = DepthModelStore.documentsInbox {
-            dirs.append(docs)
-        }
-        dirs.append(Bundle.main.bundleURL)
-        return dirs
+        [DepthModelStore.modelsDirectory, Bundle.main.bundleURL]
     }
 
     /// Find a depth model in `directory`, preferring compiled `.mlmodelc` over
