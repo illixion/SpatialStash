@@ -14,10 +14,12 @@
    value the warp reads is stable even as the next inference overwrites Vision's
    output buffer.
 
- The model is loaded from the app bundle by name (any Depth Anything V2 variant
- — the I/O is identical across sizes). If no model is bundled, `init?` returns
- nil and the warp falls back to the heuristic depth, so the app still builds and
- runs without the (large) model asset.
+ The model is loaded by name from the managed store (Application Support, via
+ DepthModelStore) — any Depth Anything V2 variant, since the I/O is identical
+ across sizes. Models get there via the in-app download (DepthModelManager) or by
+ being dropped into Documents and imported on launch. If no model is present,
+ `init?` returns nil and the warp falls back to the heuristic depth, so the app
+ still builds and runs without the (large) model asset.
  */
 
 import CoreML
@@ -97,12 +99,11 @@ final class CoreMLDepthProvider: DepthProvider, @unchecked Sendable {
         return try? device.makeComputePipelineState(function: fn)
     }
 
-    /// Locate a depth model, preferring the app's Documents folder over the
-    /// bundle. Documents is checked first so the model can be pushed/swapped on
-    /// device (`devicectl device copy to … Documents/…`) and kept out of the app
-    /// bundle entirely, which keeps builds fast (no 186MB Core ML compile step).
-    /// Accepts a precompiled `.mlmodelc` (loads directly) or an `.mlpackage`
-    /// (compiled + cached by `compiledModelURL`).
+    /// Locate a depth model in the managed store first, then Documents (as a
+    /// not-yet-imported fallback), then the bundle. Models are kept out of the
+    /// app bundle so builds stay fast (no large Core ML compile step). Accepts a
+    /// precompiled `.mlmodelc` (loads directly) or an `.mlpackage` (compiled +
+    /// cached by `compiledModelURL`).
     private static func findModelURL() -> URL? {
         let dirs = modelSearchDirectories()
 
@@ -125,29 +126,15 @@ final class CoreMLDepthProvider: DepthProvider, @unchecked Sendable {
         return nil
     }
 
-    /// Documents (swappable, checked first) then the app bundle.
+    /// Managed store (checked first), then Documents as a fallback for a model
+    /// that hasn't been imported yet, then the app bundle.
     private static func modelSearchDirectories() -> [URL] {
-        let fm = FileManager.default
-        var dirs: [URL] = []
-        if let docs = try? fm.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: false) {
+        var dirs: [URL] = [DepthModelStore.modelsDirectory]
+        if let docs = DepthModelStore.documentsInbox {
             dirs.append(docs)
         }
         dirs.append(Bundle.main.bundleURL)
         return dirs
-    }
-
-    /// Base names of depth models available to select (Documents + bundle),
-    /// for the Settings picker. Deduplicated and sorted.
-    static func availableModelNames() -> [String] {
-        let fm = FileManager.default
-        var names = Set<String>()
-        for dir in modelSearchDirectories() {
-            guard let urls = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { continue }
-            for url in urls where ["mlmodelc", "mlpackage"].contains(url.pathExtension) {
-                names.insert(url.deletingPathExtension().lastPathComponent)
-            }
-        }
-        return names.sorted()
     }
 
     /// Find a depth model in `directory`, preferring compiled `.mlmodelc` over
@@ -181,11 +168,7 @@ final class CoreMLDepthProvider: DepthProvider, @unchecked Sendable {
         if url.pathExtension == "mlmodelc" { return url }
 
         let fm = FileManager.default
-        guard let support = try? fm.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true) else {
-            return try? MLModel.compileModel(at: url)
-        }
-        let cacheDir = support.appendingPathComponent("CompiledDepthModels", isDirectory: true)
-        try? fm.createDirectory(at: cacheDir, withIntermediateDirectories: true)
+        let cacheDir = DepthModelStore.compiledCacheDirectory
         let cached = cacheDir
             .appendingPathComponent(url.deletingPathExtension().lastPathComponent)
             .appendingPathExtension("mlmodelc")

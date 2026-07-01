@@ -1157,6 +1157,10 @@ class AppModel {
         // Mixable audio session so videos never interrupt other apps' audio.
         AudioSessionConfig.configureMixedPlayback()
 
+        // Drain any depth model dropped into Documents (devicectl push / Files)
+        // into the managed store so it's switchable/deletable like a download.
+        DepthModelManager.shared.importInboxIfNeeded()
+
         // Load saved views and window groups from UserDefaults
         loadSavedViews()
         loadSavedVideoViews()

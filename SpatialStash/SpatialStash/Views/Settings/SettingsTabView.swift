@@ -28,7 +28,7 @@ struct SettingsTabView: View {
     @State private var renameGroupName = ""
     @State private var restoreSheetGroup: SavedWindowGroup?
     /// Depth models discovered in Documents/bundle, for the Fake-3D picker.
-    @State private var depthModelNames: [String] = []
+    @State private var depthModels = DepthModelManager.shared
     @State private var showExporter = false
     @State private var showImporter = false
     @State private var exportDocument: SettingsBackupDocument?
@@ -452,13 +452,54 @@ struct SettingsTabView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
 
-                    Picker("Fake-3D Depth Model", selection: $appModel.preferredDepthModelName) {
-                        Text("Auto").tag("")
-                        ForEach(depthModelNames, id: \.self) { name in
-                            Text(name).tag(name)
+                    // Fake-3D depth model — download/manage the Core ML monocular
+                    // depth model that upgrades fake-3D from the built-in heuristic
+                    // to the occlusion-correct mesh warp.
+                    if !depthModels.installedNames.isEmpty {
+                        Picker("Active Depth Model", selection: $appModel.preferredDepthModelName) {
+                            Text("Auto").tag("")
+                            ForEach(depthModels.installedNames, id: \.self) { name in
+                                Text(DepthModelManager.displayName(for: name)).tag(name)
+                            }
                         }
                     }
-                    Text("Monocular depth model used for fake-3D video. Models are read from the app's Documents folder (push with scripts/push-depth-model.sh). Applies to fake-3D videos opened after the change.")
+                    ForEach(DepthModelManager.variants) { variant in
+                        HStack(spacing: 12) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(variant.displayName)
+                                Text(variant.subtitle)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            if depthModels.isDownloading(variant) {
+                                ProgressView(value: depthModels.progress[variant.name] ?? 0)
+                                    .frame(width: 90)
+                            } else if depthModels.isInstalled(variant) {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundColor(.green)
+                                Button(role: .destructive) {
+                                    depthModels.delete(variant.name)
+                                } label: {
+                                    Image(systemName: "trash")
+                                }
+                                .buttonStyle(.borderless)
+                            } else {
+                                Button {
+                                    Task { await depthModels.download(variant) }
+                                } label: {
+                                    Label(formatBytes(variant.approxBytes), systemImage: "arrow.down.circle")
+                                }
+                                .buttonStyle(.borderless)
+                            }
+                        }
+                    }
+                    if let error = depthModels.errorMessage {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundColor(.red)
+                    }
+                    Text("Higher-quality fake-3D uses a monocular depth model downloaded from Apple's Hugging Face repo. Without one, a lighter built-in heuristic is used. Applies to fake-3D videos opened after the change.")
                         .font(.caption)
                         .foregroundColor(.secondary)
 
@@ -498,7 +539,7 @@ struct SettingsTabView: View {
             .navigationTitle("Settings")
             .task {
                 await refreshCacheStats()
-                depthModelNames = CoreMLDepthProvider.availableModelNames()
+                depthModels.importInboxIfNeeded()
             }
             .alert("Save Window Group", isPresented: $showSaveGroupAlert) {
                 TextField("Group Name", text: $newGroupName)

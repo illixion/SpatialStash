@@ -88,6 +88,7 @@ Browse your image gallery in a grid view. Tap any image to open it in the viewer
 ### Videos Tab
 Browse and play videos. Tap the **view-mode** button in the ornament to switch between flat 2D, real-time **Pseudo 3D**, and (for tagged SBS/OU sources) full immersive **Stereoscopic 3D**:
 - **Pseudo 3D** converts any flat video to windowed stereoscopic 3D in real time — no conversion step or immersive space required. Pick a Subtle/Medium/Strong depth preset from the menu, and fine-tune **Stereo Separation** and **Convergence** in the Adjustments window (which opens as its own repositionable window so it never sits behind the 3D video)
+  - For higher quality, the view-mode menu (and Settings) can **download an optional monocular depth model** on demand — straight from Apple's Hugging Face repo, ~19–50 MB depending on variant — which enables an occlusion-correct depth warp. Without one, a lightweight built-in heuristic is used, so nothing is required. Installed models can be switched between and deleted at any time
 - **Stereoscopic 3D** videos are automatically detected from Stash tags and play in full immersive mode after conversion to MV-HEVC format
 - Playback transport (play/pause, scrubber, A-B loop, mute) lives in a custom control bar; in Pseudo 3D it is folded into the ornament so it shares the video's depth
 
@@ -105,6 +106,7 @@ Create complex queries to filter your media (Stash server only):
 - **Auto-hide Controls** - Configure how long ornament controls stay visible
 - **Slideshow Delay** - Set the interval between slideshow images
 - **Stash Server** - Configure server URL and API key
+- **3D Depth Model** (Developer) - Download, switch between, or delete the optional monocular depth models used by Pseudo 3D video. Models are fetched directly from Apple's Hugging Face repo and stored internally; a model pushed to the app's Documents folder (via `scripts/push-depth-model.sh`) is imported automatically on launch
 - **Cache Management** - View and clear image/video disk caches
 
 ### Remote API Viewer (Developer)

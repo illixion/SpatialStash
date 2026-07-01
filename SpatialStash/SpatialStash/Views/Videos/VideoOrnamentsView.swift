@@ -20,6 +20,7 @@ struct VideoOrnamentsView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismissWindow) private var dismissWindow
+    @State private var depthModels = DepthModelManager.shared
 
     /// When true, stack the playback transport (VideoControlBar) above the button
     /// row as a second ornament row. Used by fake-3D, where the video lives in a
@@ -360,6 +361,11 @@ struct VideoOrnamentsView: View {
                     depthButton("Medium", .medium)
                     depthButton("Strong", .strong)
                 }
+
+                // Switch the monocular depth model, or download a missing one
+                // (higher quality than the built-in heuristic). Applies on the
+                // next fake-3D video opened.
+                depthModelMenu
             }
             }
             .onAppear { chromeMenu(opened: true) }
@@ -397,6 +403,58 @@ struct VideoOrnamentsView: View {
                 Text(title)
                 if windowModel.pseudo3DSettings.depthStrength == preset.depthStrength {
                     Image(systemName: "checkmark")
+                }
+            }
+        }
+    }
+
+    /// Depth-model submenu: pick among installed models (or Auto), and download
+    /// any offered variant that isn't installed yet.
+    @ViewBuilder
+    private var depthModelMenu: some View {
+        Menu("Depth Model") {
+            Button {
+                appModel.preferredDepthModelName = ""
+            } label: {
+                HStack {
+                    Text("Auto")
+                    if appModel.preferredDepthModelName.isEmpty {
+                        Image(systemName: "checkmark")
+                    }
+                }
+            }
+
+            if !depthModels.installedNames.isEmpty {
+                Divider()
+                ForEach(depthModels.installedNames, id: \.self) { name in
+                    Button {
+                        appModel.preferredDepthModelName = name
+                    } label: {
+                        HStack {
+                            Text(DepthModelManager.displayName(for: name))
+                            if appModel.preferredDepthModelName == name {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            }
+
+            let downloadable = DepthModelManager.variants.filter { !depthModels.isInstalled($0) }
+            if !downloadable.isEmpty {
+                Divider()
+                ForEach(downloadable) { variant in
+                    Button {
+                        Task { await depthModels.download(variant) }
+                    } label: {
+                        Label(
+                            depthModels.isDownloading(variant)
+                                ? "Downloading \(variant.displayName)…"
+                                : "Download \(variant.displayName)",
+                            systemImage: "arrow.down.circle"
+                        )
+                    }
+                    .disabled(depthModels.isDownloading(variant))
                 }
             }
         }
