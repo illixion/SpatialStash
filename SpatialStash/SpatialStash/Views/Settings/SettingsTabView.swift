@@ -452,54 +452,55 @@ struct SettingsTabView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
 
-                    // Fake-3D depth model — download/manage the Core ML monocular
-                    // depth model that upgrades fake-3D from the built-in heuristic
-                    // to the occlusion-correct mesh warp.
-                    if !depthModels.installedNames.isEmpty {
-                        Picker("Active Depth Model", selection: $appModel.preferredDepthModelName) {
-                            Text("Auto").tag("")
-                            ForEach(depthModels.installedNames, id: \.self) { name in
-                                Text(DepthModelManager.displayName(for: name)).tag(name)
-                            }
+                    // Fake-3D depth model — pick, download, or delete the Core ML
+                    // monocular depth model that upgrades fake-3D from the built-in
+                    // heuristic to the occlusion-correct mesh warp. The picker lists
+                    // installed models (incl. custom/pushed ones) plus the offered
+                    // variants tagged "(download)"; selecting a not-yet-downloaded
+                    // one starts its download. The button deletes whichever model is
+                    // currently selected, so custom models can be removed too.
+                    Picker("Depth Model", selection: $appModel.preferredDepthModelName) {
+                        Text("Auto").tag("")
+                        ForEach(depthModels.installedNames, id: \.self) { name in
+                            Text(DepthModelManager.displayName(for: name)).tag(name)
+                        }
+                        ForEach(DepthModelManager.variants.filter { !depthModels.isInstalled($0) }) { variant in
+                            Text("\(variant.displayName) (download)").tag(variant.name)
                         }
                     }
-                    ForEach(DepthModelManager.variants) { variant in
+                    .onChange(of: appModel.preferredDepthModelName) { _, name in
+                        // Selecting an offered variant that isn't installed yet
+                        // downloads it (it stays selected and applies once ready).
+                        if let variant = DepthModelManager.variants.first(where: { $0.name == name }),
+                           !depthModels.isInstalled(variant) {
+                            Task { await depthModels.download(variant) }
+                        }
+                    }
+
+                    if let downloading = DepthModelManager.variants.first(where: { depthModels.isDownloading($0) }) {
                         HStack(spacing: 12) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(variant.displayName)
-                                Text(variant.subtitle)
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                            Spacer()
-                            if depthModels.isDownloading(variant) {
-                                ProgressView(value: depthModels.progress[variant.name] ?? 0)
-                                    .frame(width: 90)
-                            } else if depthModels.isInstalled(variant) {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .foregroundColor(.green)
-                                Button(role: .destructive) {
-                                    depthModels.delete(variant.name)
-                                } label: {
-                                    Image(systemName: "trash")
-                                }
-                                .buttonStyle(.borderless)
-                            } else {
-                                Button {
-                                    Task { await depthModels.download(variant) }
-                                } label: {
-                                    Label(formatBytes(variant.approxBytes), systemImage: "arrow.down.circle")
-                                }
-                                .buttonStyle(.borderless)
-                            }
+                            ProgressView(value: depthModels.progress[downloading.name] ?? 0)
+                            Text("Downloading \(downloading.displayName)…")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
                         }
                     }
+
+                    Button(role: .destructive) {
+                        let name = appModel.preferredDepthModelName
+                        depthModels.delete(name)
+                        appModel.preferredDepthModelName = ""
+                    } label: {
+                        Label("Delete Selected Model", systemImage: "trash")
+                    }
+                    .disabled(!depthModels.installedNames.contains(appModel.preferredDepthModelName))
+
                     if let error = depthModels.errorMessage {
                         Text(error)
                             .font(.caption)
                             .foregroundColor(.red)
                     }
-                    Text("Higher-quality fake-3D uses a monocular depth model downloaded from Apple's Hugging Face repo. Without one, a lighter built-in heuristic is used. Applies to fake-3D videos opened after the change.")
+                    Text("Higher-quality fake-3D uses a monocular depth model downloaded from Apple's Hugging Face repo (~19–50 MB). Without one, a lighter built-in heuristic is used. Applies to fake-3D videos opened after the change.")
                         .font(.caption)
                         .foregroundColor(.secondary)
 
