@@ -40,19 +40,19 @@ final class DepthModelManager {
 
     static let variants: [Variant] = [
         Variant(name: "DepthAnythingV2SmallF16",
-                displayName: "Small (F16)",
+                displayName: "DepthAnything V2 (F16)",
                 subtitle: "Best quality · recommended",
                 approxBytes: 49_820_000),
         Variant(name: "DepthAnythingV2SmallF16INT8",
-                displayName: "Small (INT8)",
+                displayName: "DepthAnything V2 (INT8)",
                 subtitle: "Quantized · smaller, a touch faster",
                 approxBytes: 25_400_000),
         Variant(name: "DepthAnythingV2SmallF16P6",
-                displayName: "Small (6-bit)",
+                displayName: "DepthAnything V2 (6-bit)",
                 subtitle: "Palettized · smallest",
                 approxBytes: 19_050_000),
         Variant(name: "DepthAnythingV2SmallF16P8",
-                displayName: "Small (8-bit)",
+                displayName: "DepthAnything V2 (8-bit)",
                 subtitle: "Palettized · small",
                 approxBytes: 25_260_000)
     ]
