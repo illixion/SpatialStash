@@ -459,11 +459,16 @@ struct SettingsTabView: View {
                     // variants tagged "(download)"; selecting a not-yet-downloaded
                     // one starts its download. The button deletes whichever model is
                     // currently selected, so custom models can be removed too.
-                    Picker("Depth Model", selection: $appModel.preferredDepthModelName) {
-                        // The heuristic is a first-class, selectable entry (empty
-                        // tag) alongside the real models, so the active mode is
-                        // always visible in the selector.
-                        Text("Built-in (heuristic)").tag("")
+                    Picker("Depth Model", selection: Binding(
+                        // Show the effective model as selected: the explicit
+                        // preference, else the first installed (what loads).
+                        get: {
+                            let pref = appModel.preferredDepthModelName
+                            if !pref.isEmpty { return pref }
+                            return depthModels.installedNames.first ?? ""
+                        },
+                        set: { appModel.preferredDepthModelName = $0 }
+                    )) {
                         ForEach(depthModels.installedNames, id: \.self) { name in
                             Text(DepthModelManager.displayName(for: name)).tag(name)
                         }
@@ -503,7 +508,7 @@ struct SettingsTabView: View {
                             .font(.caption)
                             .foregroundColor(.red)
                     }
-                    Text("Higher-quality fake-3D uses a monocular depth model downloaded from Apple's Hugging Face repo (~19–50 MB). Without one, a lighter built-in heuristic is used. Applies to fake-3D videos opened after the change.")
+                    Text("Pseudo 3D video requires a monocular depth model, downloaded from Apple's Hugging Face repo (~19–50 MB). Larger models look better; smaller ones are quicker. Applies to fake-3D videos opened after the change.")
                         .font(.caption)
                         .foregroundColor(.secondary)
 
@@ -544,6 +549,11 @@ struct SettingsTabView: View {
             .task {
                 await refreshCacheStats()
                 depthModels.importInboxIfNeeded()
+                // Materialize an empty preference to the first installed model so
+                // the selector shows a real choice and Delete targets it.
+                if appModel.preferredDepthModelName.isEmpty, let first = depthModels.installedNames.first {
+                    appModel.preferredDepthModelName = first
+                }
             }
             .alert("Save Window Group", isPresented: $showSaveGroupAlert) {
                 TextField("Group Name", text: $newGroupName)

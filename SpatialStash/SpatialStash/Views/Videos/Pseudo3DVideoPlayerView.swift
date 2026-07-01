@@ -345,6 +345,15 @@ final class Pseudo3DStereoEngine {
 
     func load(url: URL, roomActive: Bool) {
         guard loadedURL != url else { return }
+
+        // Fake-3D requires a depth model — there is no heuristic fallback. If
+        // none is available (e.g. a restored window whose model was since
+        // deleted), fall back to the flat player rather than warping heuristically.
+        guard Pseudo3DDiagnostics.useStaticTestPattern || CoreMLDepthProvider.hasAvailableModel() else {
+            Task { @MainActor in self.onPlaybackError?() }
+            return
+        }
+
         cleanupPlayer()
         loadedURL = url
         isRoomActive = roomActive

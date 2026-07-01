@@ -99,29 +99,28 @@ final class CoreMLDepthProvider: DepthProvider, @unchecked Sendable {
         return try? device.makeComputePipelineState(function: fn)
     }
 
-    /// Resolve the depth model to load from the selected preference.
-    ///
-    /// The selection is explicit (see the Settings/ViewMode "Depth Model"
-    /// picker): an empty preference is the first-class **Built-in (heuristic)**
-    /// choice — load no model and let the warp use the heuristic. A named
-    /// preference loads that model if present in the managed store or bundle; if
-    /// it's missing (e.g. deleted out from under the preference) we fall back to
-    /// the heuristic rather than silently substituting a different model.
-    /// `.mlmodelc` loads directly; `.mlpackage` is compiled + cached by
-    /// `compiledModelURL`.
+    /// Resolve the depth model to load. Fake-3D requires a real model (there is
+    /// no heuristic fallback): use the explicit preference if it's present, else
+    /// the first installed model, else nil (no model → the engine declines to run
+    /// fake-3D rather than showing a heuristic warp). `.mlmodelc` loads directly;
+    /// `.mlpackage` is compiled + cached by `compiledModelURL`.
     private static func findModelURL() -> URL? {
         let preferred = UserDefaults.standard.string(forKey: "preferredDepthModelName") ?? ""
-        guard !preferred.isEmpty else { return nil }
-
-        let fm = FileManager.default
-        for dir in modelSearchDirectories() {
-            for ext in ["mlmodelc", "mlpackage"] {
-                let url = dir.appendingPathComponent(preferred).appendingPathExtension(ext)
-                if fm.fileExists(atPath: url.path) { return url }
+        if !preferred.isEmpty {
+            let fm = FileManager.default
+            for dir in modelSearchDirectories() {
+                for ext in ["mlmodelc", "mlpackage"] {
+                    let url = dir.appendingPathComponent(preferred).appendingPathExtension(ext)
+                    if fm.fileExists(atPath: url.path) { return url }
+                }
             }
         }
-        return nil
+        return DepthModelStore.installedModelURLs().first
     }
+
+    /// Whether any depth model is available to load. Fake-3D needs one — the
+    /// engine uses this to decline (fall back to 2D) rather than warp heuristically.
+    static func hasAvailableModel() -> Bool { findModelURL() != nil }
 
     /// The managed store, then the app bundle. Documents is intentionally NOT
     /// searched: it's only a drop-off inbox, drained into the store on launch

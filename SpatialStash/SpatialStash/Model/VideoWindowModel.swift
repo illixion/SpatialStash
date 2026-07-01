@@ -315,6 +315,21 @@ final class VideoWindowModel {
         pseudo3DEnabled = false
     }
 
+    /// Set when the user requests fake-3D with no depth model installed — drives
+    /// the first-run `DepthModelSetupSheet`. Fake-3D requires a real depth model
+    /// (there is no heuristic fallback), so the sheet gates first use.
+    var showDepthModelSetup = false
+
+    /// ViewMode "Convert to 3D" entry point. Engages fake-3D when a depth model
+    /// is installed; otherwise opens the setup sheet to download/choose one.
+    func requestPseudo3D() {
+        if DepthModelStore.installedModelNames().isEmpty {
+            showDepthModelSetup = true
+        } else {
+            enablePseudo3D()
+        }
+    }
+
     /// Engage real-time fake-3D, ensuring the genuine-stereoscopic path is off.
     func enablePseudo3D() {
         stereoscopicOverride = false

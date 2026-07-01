@@ -262,6 +262,13 @@ struct VideoWindowView: View {
                 onCancel: nil
             )
         }
+        .sheet(isPresented: $windowModel.showDepthModelSetup) {
+            // First-run fake-3D: no depth model installed. Pick/download one,
+            // then engage fake-3D. (Fake-3D requires a real model.)
+            DepthModelSetupSheet(onModelReady: {
+                windowModel.enablePseudo3D()
+            })
+        }
         .onAppear {
             // Wall-snapped pop-outs restored by visionOS after a reboot come
             // back with the same windowValue UUID. Repeat appearances of the

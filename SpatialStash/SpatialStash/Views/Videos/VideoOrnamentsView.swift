@@ -343,7 +343,7 @@ struct VideoOrnamentsView: View {
                 if windowModel.shouldUsePseudo3D {
                     windowModel.disablePseudo3D()
                 } else {
-                    windowModel.enablePseudo3D()
+                    windowModel.requestPseudo3D()
                 }
             } label: {
                 HStack {
@@ -408,33 +408,28 @@ struct VideoOrnamentsView: View {
         }
     }
 
-    /// Depth-model submenu: pick among installed models (or Auto), and download
-    /// any offered variant that isn't installed yet.
+    /// Effective model shown as selected: the explicit preference if it's
+    /// installed, otherwise the first installed model (what findModelURL loads).
+    private var effectiveDepthModelName: String {
+        let pref = appModel.preferredDepthModelName
+        if !pref.isEmpty, depthModels.installedNames.contains(pref) { return pref }
+        return depthModels.installedNames.first ?? ""
+    }
+
+    /// Depth-model submenu: pick among installed models, and download any offered
+    /// variant that isn't installed yet. (Only shown while fake-3D is active,
+    /// which already requires an installed model — so there's no heuristic entry.)
     @ViewBuilder
     private var depthModelMenu: some View {
         Menu("Depth Model") {
-            Button {
-                appModel.preferredDepthModelName = ""
-            } label: {
-                HStack {
-                    Text("Built-in (heuristic)")
-                    if appModel.preferredDepthModelName.isEmpty {
-                        Image(systemName: "checkmark")
-                    }
-                }
-            }
-
-            if !depthModels.installedNames.isEmpty {
-                Divider()
-                ForEach(depthModels.installedNames, id: \.self) { name in
-                    Button {
-                        appModel.preferredDepthModelName = name
-                    } label: {
-                        HStack {
-                            Text(DepthModelManager.displayName(for: name))
-                            if appModel.preferredDepthModelName == name {
-                                Image(systemName: "checkmark")
-                            }
+            ForEach(depthModels.installedNames, id: \.self) { name in
+                Button {
+                    appModel.preferredDepthModelName = name
+                } label: {
+                    HStack {
+                        Text(DepthModelManager.displayName(for: name))
+                        if effectiveDepthModelName == name {
+                            Image(systemName: "checkmark")
                         }
                     }
                 }
