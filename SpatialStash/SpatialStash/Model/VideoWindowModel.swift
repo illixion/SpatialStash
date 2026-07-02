@@ -207,12 +207,19 @@ final class VideoWindowModel {
         guard !didStart else { return }
         didStart = true
         appModel.lastViewedVideoId = video.id
+        // A restored window re-engages fake-3D with the default realtime mode;
+        // prefer the pre-processed cache when one exists for this video.
+        if pseudo3DEnabled, pseudo3DDepthMode == .realtime,
+           DepthCacheStore.entry(videoIdentity: video.stashId) != nil {
+            pseudo3DDepthMode = .cached(videoIdentity: video.stashId)
+        }
         resolvePlaybackRenderer()
     }
 
     /// Call from onDisappear.
     func cleanup() {
         cancelAutoHideTimer()
+        dismissDepthReadyPrompt()
         playbackRendererTask?.cancel()
         playbackRendererTask = nil
         loopController.reset()
@@ -257,6 +264,8 @@ final class VideoWindowModel {
         stereoscopicOverride = nil
         video3DSettings = nil
         pseudo3DEnabled = false
+        pseudo3DDepthMode = .realtime
+        dismissDepthReadyPrompt()
         pseudo3DSettings = .default
         isFlipped = false
         currentAdjustments = VisualAdjustments()
@@ -325,17 +334,81 @@ final class VideoWindowModel {
     /// user engages Convert to 3D.
     var pseudo3DDepthMode: Pseudo3DDepthMode = .realtime
 
-    /// ViewMode "Convert to 3D" entry point. Engages fake-3D when a depth model
-    /// is installed; otherwise opens the setup sheet to download/choose one.
+    /// Drives the "Real-time or Pre-process?" alert when engaging Convert to 3D
+    /// with no cache yet (same alert pattern as the window Summon/Copy prompts).
+    var showPseudo3DModePrompt = false
+
+    /// "3D ready" pill shown when this video's background conversion completes.
+    var showDepthReadyPrompt = false
+    /// Non-nil while the conversion-failed alert is up.
+    var depthConversionFailureMessage: String?
+    @ObservationIgnored private var depthReadyPromptDismissTask: Task<Void, Never>?
+    private static let depthReadyPromptTimeout: TimeInterval = 10
+
+    /// ViewMode "Convert to 3D" entry point.
+    /// - A completed cache → engage pre-processed playback directly, no prompt.
+    /// - No model installed (and no cache) → first-run model setup sheet.
+    /// - Otherwise → ask Real-time vs Pre-process (unless a conversion for this
+    ///   video is already running).
     func requestPseudo3D() {
+        if DepthCacheStore.entry(videoIdentity: video.stashId) != nil {
+            engageCachedPseudo3D()
+            return
+        }
         if DepthModelStore.installedModelNames().isEmpty {
             showDepthModelSetup = true
-        } else {
-            enablePseudo3D()
+            return
+        }
+        guard !DepthConversionManager.shared.isProcessing(videoIdentity: video.stashId) else { return }
+        showPseudo3DModePrompt = true
+    }
+
+    /// Engage the realtime (synchronous inference) fake-3D path. Never starts a
+    /// background conversion — it would fight the live inference for the ANE.
+    func engageRealtimePseudo3D() {
+        pseudo3DDepthMode = .realtime
+        enablePseudo3D()
+    }
+
+    /// Engage fake-3D from this video's pre-processed depth cache.
+    func engageCachedPseudo3D() {
+        dismissDepthReadyPrompt()
+        pseudo3DDepthMode = .cached(videoIdentity: video.stashId)
+        enablePseudo3D()
+    }
+
+    /// Kick off the background depth conversion (the window stays 2D; a "3D
+    /// ready" pill appears when it finishes).
+    func startDepthPreprocessing() {
+        DepthConversionManager.shared.enqueue(DepthConversionManager.Request(
+            videoIdentity: video.stashId,
+            title: video.title ?? video.fileName,
+            sourceURL: authenticatedStreamURL,
+            apiKey: appModel.stashAPIKey.isEmpty ? nil : appModel.stashAPIKey
+        ))
+    }
+
+    /// Called when the conversion manager reports a completion for this video.
+    func presentDepthReadyPrompt() {
+        // Already watching from the cache — nothing to offer.
+        if shouldUsePseudo3D, case .cached = pseudo3DDepthMode { return }
+        showDepthReadyPrompt = true
+        depthReadyPromptDismissTask?.cancel()
+        depthReadyPromptDismissTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(Self.depthReadyPromptTimeout))
+            guard !Task.isCancelled else { return }
+            self?.showDepthReadyPrompt = false
+            self?.depthReadyPromptDismissTask = nil
         }
     }
 
-    /// Engage real-time fake-3D, ensuring the genuine-stereoscopic path is off.
+    func dismissDepthReadyPrompt() {
+        depthReadyPromptDismissTask?.cancel()
+        depthReadyPromptDismissTask = nil
+        showDepthReadyPrompt = false
+    }
+
+    /// Engage fake-3D, ensuring the genuine-stereoscopic path is off.
     func enablePseudo3D() {
         stereoscopicOverride = false
         pseudo3DEnabled = true

@@ -508,9 +508,12 @@ struct SettingsTabView: View {
                             .font(.caption)
                             .foregroundColor(.red)
                     }
-                    Text("Pseudo 3D video requires a monocular depth model, downloaded from Apple's Hugging Face repo (~19–50 MB). Larger models look better; smaller ones are quicker. Applies to fake-3D videos opened after the change.")
+                    Text("Pseudo 3D video requires a monocular depth model, downloaded from Apple's Hugging Face repo (~19–50 MB). Larger models look better; smaller ones are quicker. Applies to fake-3D videos opened after the change. Videos already pre-processed keep playing in 3D even without a model.")
                         .font(.caption)
                         .foregroundColor(.secondary)
+
+                    // Pre-processed fake-3D depth caches (Convert to 3D → Pre-Process).
+                    DepthCacheSettingsView()
 
                     Button {
                         openWindow(id: "gpu-memory")

@@ -335,8 +335,8 @@ struct VideoOrnamentsView: View {
                 }
             }
 
-            // Real-time fake-3D conversion of a mono video (windowed, no
-            // precompute). Only available for AVFoundation-decodable sources.
+            // Fake-3D conversion of a mono video: realtime inference or
+            // pre-processed cached depth. Only for AVFoundation-decodable sources.
             Divider()
 
             Button {
@@ -354,6 +354,23 @@ struct VideoOrnamentsView: View {
                 }
             }
             .disabled(windowModel.playbackRenderer != .nativeMetal)
+
+            // Background depth conversion for THIS video: live progress + cancel.
+            if let phase = DepthConversionManager.shared.phase(for: video.stashId) {
+                Text(phase.label)
+                Button(role: .destructive) {
+                    DepthConversionManager.shared.cancel(videoIdentity: video.stashId)
+                } label: {
+                    Label("Cancel Conversion", systemImage: "xmark.circle")
+                }
+            } else if DepthConversionManager.shared.isProcessing(videoIdentity: video.stashId) {
+                Text("Conversion queued")
+                Button(role: .destructive) {
+                    DepthConversionManager.shared.cancel(videoIdentity: video.stashId)
+                } label: {
+                    Label("Cancel Conversion", systemImage: "xmark.circle")
+                }
+            }
 
             if windowModel.shouldUsePseudo3D {
                 Menu("3D Depth") {

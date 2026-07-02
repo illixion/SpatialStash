@@ -216,6 +216,46 @@ struct VideoWindowView: View {
                 .animation(.easeInOut, value: windowModel.loopController.toastMessage)
             }
 
+            // "3D ready" pill — this video's background depth conversion
+            // finished (same capsule pattern as the photo 3D-restore prompt).
+            if windowModel.showDepthReadyPrompt {
+                VStack {
+                    Spacer()
+                    HStack(spacing: 12) {
+                        Image(systemName: "view.3d")
+                            .font(.body)
+                        Text("3D version ready")
+                            .font(.callout)
+                            .lineLimit(1)
+
+                        Button {
+                            windowModel.engageCachedPseudo3D()
+                        } label: {
+                            Text("Watch in 3D")
+                                .font(.callout.weight(.semibold))
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 8)
+                        }
+                        .buttonStyle(.borderedProminent)
+
+                        Button {
+                            windowModel.dismissDepthReadyPrompt()
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.callout)
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                    .fixedSize(horizontal: true, vertical: false)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 12)
+                    .glassBackgroundEffect(in: Capsule())
+                    .padding(.bottom, ornamentBottomPadding + 96) // clear the ornament
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .animation(.easeInOut(duration: 0.3), value: windowModel.showDepthReadyPrompt)
+            }
+
             // Custom playback controls (2D players only). In fake-3D the
             // transport is folded into the ornament (showTransport) so it shares
             // the chrome's depth instead of floating at the window plane.
@@ -265,10 +305,41 @@ struct VideoWindowView: View {
         }
         .sheet(isPresented: $windowModel.showDepthModelSetup) {
             // First-run fake-3D: no depth model installed. Pick/download one,
-            // then engage fake-3D. (Fake-3D requires a real model.)
+            // then re-enter the engage flow (which now asks realtime vs
+            // pre-processed).
             DepthModelSetupSheet(onModelReady: {
-                windowModel.enablePseudo3D()
+                windowModel.requestPseudo3D()
             })
+        }
+        .alert("Convert to 3D", isPresented: $windowModel.showPseudo3DModePrompt) {
+            Button("Real-Time") {
+                windowModel.engageRealtimePseudo3D()
+            }
+            Button("Pre-Process") {
+                windowModel.startDepthPreprocessing()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Real-time starts instantly and plays at 30fps. Pre-process analyzes the whole video in the background first (about as long as the video), then plays at up to 60fps with steadier depth — you'll be notified when it's ready.")
+        }
+        .onChange(of: DepthConversionManager.shared.lastCompleted) { _, completed in
+            guard let completed, completed.videoIdentity == video.stashId else { return }
+            windowModel.presentDepthReadyPrompt()
+        }
+        .onChange(of: DepthConversionManager.shared.lastError) { _, failure in
+            guard let failure, failure.videoIdentity == video.stashId else { return }
+            windowModel.depthConversionFailureMessage = failure.message
+        }
+        .alert(
+            "3D Conversion Failed",
+            isPresented: Binding(
+                get: { windowModel.depthConversionFailureMessage != nil },
+                set: { if !$0 { windowModel.depthConversionFailureMessage = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(windowModel.depthConversionFailureMessage ?? "")
         }
         .onAppear {
             // Wall-snapped pop-outs restored by visionOS after a reboot come
