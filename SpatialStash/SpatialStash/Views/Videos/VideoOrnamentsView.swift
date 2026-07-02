@@ -448,23 +448,26 @@ struct VideoOrnamentsView: View {
         }
     }
 
-    /// Effective model shown as selected: the explicit preference if it's
-    /// installed, otherwise the first installed model (what findModelURL loads).
+    /// Effective real-time model shown as selected: the explicit preference if
+    /// it's installed, otherwise the first installed model (what findModelURL
+    /// loads).
     private var effectiveDepthModelName: String {
-        let pref = appModel.preferredDepthModelName
+        let pref = appModel.realtimeDepthModelName
         if !pref.isEmpty, depthModels.installedNames.contains(pref) { return pref }
         return depthModels.installedNames.first ?? ""
     }
 
     /// Depth-model submenu: pick among installed models, and download any offered
-    /// variant that isn't installed yet. (Only shown while fake-3D is active,
-    /// which already requires an installed model — so there's no heuristic entry.)
+    /// variant that isn't installed yet. Switches the REAL-TIME model — that's
+    /// what live-reloads the playing video; the pre-process model is picked in
+    /// Settings → Display. (Only shown while fake-3D is active, which already
+    /// requires an installed model — so there's no heuristic entry.)
     @ViewBuilder
     private var depthModelMenu: some View {
-        Menu("Depth Model") {
+        Menu("Depth Model (Real-Time)") {
             ForEach(depthModels.installedNames, id: \.self) { name in
                 Button {
-                    appModel.preferredDepthModelName = name
+                    appModel.realtimeDepthModelName = name
                 } label: {
                     HStack {
                         Text(DepthModelManager.displayName(for: name))

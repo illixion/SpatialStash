@@ -122,7 +122,7 @@ enum DepthCacheStore {
     /// current-version entry. Converted depth outlives model deletion — the
     /// depth is baked, so playback doesn't need the model anymore.
     static func entry(videoIdentity: String) -> Entry? {
-        if let model = CoreMLDepthProvider.resolvedModelName(),
+        if let model = CoreMLDepthProvider.resolvedModelName(role: .preprocess),
            let preferred = entry(videoIdentity: videoIdentity, modelName: model) {
             return preferred
         }

@@ -134,9 +134,10 @@ struct Pseudo3DVideoPlayerView: View {
         .onChange(of: depthMode) { _, newMode in
             engine.setDepthMode(newMode)
         }
-        // Depth model switched (ViewMode menu or Settings): rebuild the pump so
-        // the new model applies to THIS video immediately, keeping position.
-        .onChange(of: appModel.preferredDepthModelName) { _, _ in
+        // Real-time depth model switched (ViewMode menu or Settings): rebuild
+        // the pump so the new model applies to THIS video immediately, keeping
+        // position. (Cached playback is unaffected — its depth is baked.)
+        .onChange(of: appModel.realtimeDepthModelName) { _, _ in
             engine.reloadDepthPipeline()
         }
         .onAppear {
@@ -410,7 +411,7 @@ final class Pseudo3DStereoEngine {
         // Fake-3D requires real depth — there is no heuristic fallback. Without
         // a cache entry or a model (e.g. a restored window whose model was since
         // deleted), fall back to the flat player rather than warping heuristically.
-        guard Pseudo3DDiagnostics.useStaticTestPattern || cacheEntry != nil || CoreMLDepthProvider.hasAvailableModel() else {
+        guard Pseudo3DDiagnostics.useStaticTestPattern || cacheEntry != nil || CoreMLDepthProvider.hasAvailableModel(role: .realtime) else {
             Task { @MainActor in self.onPlaybackError?() }
             return
         }

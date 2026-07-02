@@ -250,7 +250,7 @@ final class DepthConverter: @unchecked Sendable {
 
     private func run(_ plan: Plan, progress: @escaping ProgressHandler) throws -> Output {
         guard let gpu = makeGPUContext() else { throw DepthConversionError.gpuSetupFailed }
-        guard let provider = CoreMLDepthProvider(device: gpu.device) else {
+        guard let provider = CoreMLDepthProvider(device: gpu.device, role: .preprocess) else {
             throw DepthConversionError.noDepthModel
         }
 

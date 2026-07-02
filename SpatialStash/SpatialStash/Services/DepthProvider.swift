@@ -64,12 +64,27 @@ protocol PumpDepthSource: AnyObject {
     func invalidate()
 }
 
+/// Which pipeline a depth model is being loaded for. The preference is split:
+/// real-time inference gates every frame (fast model), while offline
+/// pre-processing can afford a slower, higher-quality one.
+enum DepthModelRole: String, Sendable {
+    case realtime
+    case preprocess
+
+    var defaultsKey: String {
+        switch self {
+        case .realtime: return "realtimeDepthModelName"
+        case .preprocess: return "preprocessDepthModelName"
+        }
+    }
+}
+
 /// Realtime source: synchronous same-frame Core ML inference (the 30fps path).
 final class RealtimeDepthSource: PumpDepthSource, @unchecked Sendable {
     private let provider: CoreMLDepthProvider
 
     init?(device: MTLDevice) {
-        guard let provider = CoreMLDepthProvider(device: device) else { return nil }
+        guard let provider = CoreMLDepthProvider(device: device, role: .realtime) else { return nil }
         self.provider = provider
     }
 
@@ -140,8 +155,8 @@ final class CoreMLDepthProvider: DepthProvider, @unchecked Sendable {
 
     private let signposter = AppLogger.pseudo3DSignposter
 
-    init?(device: MTLDevice) {
-        guard let modelURL = Self.findModelURL(),
+    init?(device: MTLDevice, role: DepthModelRole = .realtime) {
+        guard let modelURL = Self.findModelURL(role: role),
               let compiledURL = Self.compiledModelURL(for: modelURL),
               let queue = device.makeCommandQueue() else { return nil }
         let config = MLModelConfiguration()
@@ -172,13 +187,17 @@ final class CoreMLDepthProvider: DepthProvider, @unchecked Sendable {
         return try? device.makeComputePipelineState(function: fn)
     }
 
-    /// Resolve the depth model to load. Fake-3D requires a real model (there is
-    /// no heuristic fallback): use the explicit preference if it's present, else
-    /// the first installed model, else nil (no model → the engine declines to run
-    /// fake-3D rather than showing a heuristic warp). `.mlmodelc` loads directly;
-    /// `.mlpackage` is compiled + cached by `compiledModelURL`.
-    private static func findModelURL() -> URL? {
-        let preferred = UserDefaults.standard.string(forKey: "preferredDepthModelName") ?? ""
+    /// Resolve the depth model to load for a role. Fake-3D requires a real
+    /// model (there is no heuristic fallback): use the role's explicit
+    /// preference if present (falling back to the legacy single-preference key
+    /// for pre-split installs), else the first installed model, else nil (no
+    /// model → the engine declines to run fake-3D rather than showing a
+    /// heuristic warp). `.mlmodelc` loads directly; `.mlpackage` is compiled +
+    /// cached by `compiledModelURL`.
+    private static func findModelURL(role: DepthModelRole) -> URL? {
+        let preferred = UserDefaults.standard.string(forKey: role.defaultsKey)
+            ?? UserDefaults.standard.string(forKey: "preferredDepthModelName")
+            ?? ""
         if !preferred.isEmpty {
             let fm = FileManager.default
             for dir in modelSearchDirectories() {
@@ -191,14 +210,15 @@ final class CoreMLDepthProvider: DepthProvider, @unchecked Sendable {
         return DepthModelStore.installedModelURLs().first
     }
 
-    /// Whether any depth model is available to load. Fake-3D needs one — the
-    /// engine uses this to decline (fall back to 2D) rather than warp heuristically.
-    static func hasAvailableModel() -> Bool { findModelURL() != nil }
+    /// Whether a depth model is available to load for `role`. Fake-3D needs
+    /// one — the engine uses this to decline (fall back to 2D) rather than
+    /// warp heuristically.
+    static func hasAvailableModel(role: DepthModelRole) -> Bool { findModelURL(role: role) != nil }
 
-    /// Base name of the model `init?` would load, without loading it. Used to
-    /// key depth cache lookups before spinning up a provider.
-    static func resolvedModelName() -> String? {
-        findModelURL()?.deletingPathExtension().lastPathComponent
+    /// Base name of the model `init?` would load for `role`, without loading
+    /// it. Used to key depth cache lookups before spinning up a provider.
+    static func resolvedModelName(role: DepthModelRole) -> String? {
+        findModelURL(role: role)?.deletingPathExtension().lastPathComponent
     }
 
     /// Where `.scaleFit` anchors the frame inside the model's input. Vision

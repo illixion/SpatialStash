@@ -644,14 +644,29 @@ class AppModel {
         }
     }
 
-    /// Preferred depth model base filename (e.g. "DepthAnythingV2SmallF16"), or
-    /// "" for automatic selection. Lets you A/B models dropped into Documents.
-    /// Read live by CoreMLDepthProvider.findModelURL; applies to fake-3D videos
-    /// opened after the change (the provider is created per window).
-    var preferredDepthModelName: String {
+    /// Preferred depth model for REAL-TIME fake-3D (base filename, e.g.
+    /// "DepthAnythingV2SmallF16"), or "" for automatic (first installed).
+    /// Read live by CoreMLDepthProvider.findModelURL(role: .realtime); a
+    /// change applies to the video being watched immediately (the player
+    /// observes this and rebuilds the pump). Real-time inference gates every
+    /// frame, so this should stay a fast model.
+    var realtimeDepthModelName: String {
         didSet {
-            if preferredDepthModelName != oldValue {
-                UserDefaults.standard.set(preferredDepthModelName, forKey: "preferredDepthModelName")
+            if realtimeDepthModelName != oldValue {
+                UserDefaults.standard.set(realtimeDepthModelName, forKey: "realtimeDepthModelName")
+            }
+        }
+    }
+
+    /// Preferred depth model for PRE-PROCESS (offline) 3D conversion, or ""
+    /// for automatic. Offline conversion tolerates slower models, so a larger
+    /// variant (e.g. a custom Base conversion) can be selected here while
+    /// real-time keeps a fast one. Applies to conversions started after the
+    /// change; cache lookups prefer entries made by this model.
+    var preprocessDepthModelName: String {
+        didSet {
+            if preprocessDepthModelName != oldValue {
+                UserDefaults.standard.set(preprocessDepthModelName, forKey: "preprocessDepthModelName")
             }
         }
     }
@@ -1035,7 +1050,13 @@ class AppModel {
             : true
 
         let loadedEnableStashTranscoding = loadBool("enableStashTranscoding", default: true)
-        let loadedPreferredDepthModelName = UserDefaults.standard.string(forKey: "preferredDepthModelName") ?? ""
+        // Depth model preferences, split by role. Migrate the legacy single
+        // "preferredDepthModelName" into both roles on first launch after the
+        // split (the legacy key is also still read as a fallback by
+        // CoreMLDepthProvider for anything not yet migrated).
+        let legacyDepthModelName = UserDefaults.standard.string(forKey: "preferredDepthModelName") ?? ""
+        let loadedRealtimeDepthModelName = UserDefaults.standard.string(forKey: "realtimeDepthModelName") ?? legacyDepthModelName
+        let loadedPreprocessDepthModelName = UserDefaults.standard.string(forKey: "preprocessDepthModelName") ?? legacyDepthModelName
 
         // Load default image viewing mode (default: 2D / mono)
         let loadedDefaultImageViewingMode: DefaultImageViewingMode
@@ -1115,7 +1136,8 @@ class AppModel {
         self.roundedCorners = loadedRoundedCorners
         self.openMediaInNewWindows = loadedOpenMediaInNewWindows
         self.enableStashTranscoding = loadedEnableStashTranscoding
-        self.preferredDepthModelName = loadedPreferredDepthModelName
+        self.realtimeDepthModelName = loadedRealtimeDepthModelName
+        self.preprocessDepthModelName = loadedPreprocessDepthModelName
         self.rememberImageEnhancements = loadedRememberImageEnhancements
         self.autoRestoreSpatial3D = loadedAutoRestoreSpatial3D
         self.fullyImmersive3DMode = loadedFullyImmersive3DMode

@@ -94,7 +94,9 @@ struct DepthModelSetupSheet: View {
     }
 
     private func selectAndFinish(_ variant: DepthModelManager.Variant) {
-        appModel.preferredDepthModelName = variant.name
+        // First model on the device — make it the pick for both roles.
+        appModel.realtimeDepthModelName = variant.name
+        appModel.preprocessDepthModelName = variant.name
         onModelReady()
         dismiss()
     }

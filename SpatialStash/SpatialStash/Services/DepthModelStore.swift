@@ -75,6 +75,20 @@ enum DepthModelStore {
         modelURL(named: name) != nil
     }
 
+    /// Total on-disk size of an installed model (package or compiled bundle).
+    static func modelSize(named name: String) -> Int64 {
+        guard let url = modelURL(named: name) else { return 0 }
+        let fm = FileManager.default
+        guard let enumerator = fm.enumerator(at: url, includingPropertiesForKeys: [.fileSizeKey]) else { return 0 }
+        var total: Int64 = 0
+        while let fileURL = enumerator.nextObject() as? URL {
+            if let size = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]))?.fileSize {
+                total += Int64(size)
+            }
+        }
+        return total
+    }
+
     /// The managed-store URL for a model base name, preferring a compiled
     /// `.mlmodelc` over an `.mlpackage` (both load; the former loads instantly).
     static func modelURL(named name: String) -> URL? {

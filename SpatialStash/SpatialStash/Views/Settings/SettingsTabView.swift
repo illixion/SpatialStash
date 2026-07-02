@@ -19,8 +19,9 @@ struct SettingsTabView: View {
     @State private var renamingGroup: SavedWindowGroup?
     @State private var renameGroupName = ""
     @State private var restoreSheetGroup: SavedWindowGroup?
-    /// Depth models discovered in Documents/bundle, for the Fake-3D picker.
+    /// Depth models discovered in Documents/bundle, for the Fake-3D pickers.
     @State private var depthModels = DepthModelManager.shared
+    @State private var showDepthModelManager = false
     @State private var showExporter = false
     @State private var showImporter = false
     @State private var exportDocument: SettingsBackupDocument?
@@ -95,6 +96,22 @@ struct SettingsTabView: View {
                     .pickerStyle(.menu)
 
                     Toggle("Fully Immersive 3D Mode", isOn: $appModel.fullyImmersive3DMode)
+
+                    // Fake-3D depth models, per pipeline: real-time inference
+                    // gates every frame (keep this fast), while pre-process
+                    // conversion can afford a slower, higher-quality model.
+                    // Models are added/removed in Developer → Depth Model Manager.
+                    depthModelPicker(
+                        "Real-Time 3D Depth Model",
+                        selection: $appModel.realtimeDepthModelName
+                    )
+                    depthModelPicker(
+                        "Pre-Process 3D Depth Model",
+                        selection: $appModel.preprocessDepthModelName
+                    )
+                    Text("Convert to 3D uses these models: Real-Time for instant playback (fast model recommended), Pre-Process for background conversion (a larger model can be used). Manage installed models under Developer.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
 
                     Picker("Diorama Layer Distance", selection: $appModel.dioramaDistance) {
                         ForEach(AppModel.dioramaDistanceOptions, id: \.value) { option in
@@ -333,39 +350,14 @@ struct SettingsTabView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
 
-                    // Fake-3D depth model — pick, download, or delete the Core ML
-                    // monocular depth model that upgrades fake-3D from the built-in
-                    // heuristic to the occlusion-correct mesh warp. The picker lists
-                    // installed models (incl. custom/pushed ones) plus the offered
-                    // variants tagged "(download)"; selecting a not-yet-downloaded
-                    // one starts its download. The button deletes whichever model is
-                    // currently selected, so custom models can be removed too.
-                    Picker("Depth Model", selection: Binding(
-                        // Show the effective model as selected: the explicit
-                        // preference, else the first installed (what loads).
-                        get: {
-                            let pref = appModel.preferredDepthModelName
-                            if !pref.isEmpty { return pref }
-                            return depthModels.installedNames.first ?? ""
-                        },
-                        set: { appModel.preferredDepthModelName = $0 }
-                    )) {
-                        ForEach(depthModels.installedNames, id: \.self) { name in
-                            Text(DepthModelManager.displayName(for: name)).tag(name)
-                        }
-                        ForEach(DepthModelManager.variants.filter { !depthModels.isInstalled($0) }) { variant in
-                            Text("\(variant.displayName) (download)").tag(variant.name)
-                        }
+                    // Fake-3D depth models are managed (added/downloaded/deleted)
+                    // in a dedicated modal; which model each pipeline USES is
+                    // picked in the Display section's two dropdowns.
+                    Button {
+                        showDepthModelManager = true
+                    } label: {
+                        Label("Depth Model Manager", systemImage: "shippingbox")
                     }
-                    .onChange(of: appModel.preferredDepthModelName) { _, name in
-                        // Selecting an offered variant that isn't installed yet
-                        // downloads it (it stays selected and applies once ready).
-                        if let variant = DepthModelManager.variants.first(where: { $0.name == name }),
-                           !depthModels.isInstalled(variant) {
-                            Task { await depthModels.download(variant) }
-                        }
-                    }
-
                     if let downloading = DepthModelManager.variants.first(where: { depthModels.isDownloading($0) }) {
                         HStack(spacing: 12) {
                             ProgressView(value: depthModels.progress[downloading.name] ?? 0)
@@ -374,22 +366,7 @@ struct SettingsTabView: View {
                                 .foregroundColor(.secondary)
                         }
                     }
-
-                    Button(role: .destructive) {
-                        let name = appModel.preferredDepthModelName
-                        depthModels.delete(name)
-                        appModel.preferredDepthModelName = ""
-                    } label: {
-                        Label("Delete Selected Model", systemImage: "trash")
-                    }
-                    .disabled(!depthModels.installedNames.contains(appModel.preferredDepthModelName))
-
-                    if let error = depthModels.errorMessage {
-                        Text(error)
-                            .font(.caption)
-                            .foregroundColor(.red)
-                    }
-                    Text("Pseudo 3D video requires a monocular depth model, downloaded from Apple's Hugging Face repo (~19–50 MB). Larger models look better; smaller ones are quicker. Applies to fake-3D videos opened after the change. Videos already pre-processed keep playing in 3D even without a model.")
+                    Text("Pseudo 3D video requires a monocular depth model (~19–50 MB, downloaded from Apple's Hugging Face repo). Videos already pre-processed keep playing in 3D even without a model.")
                         .font(.caption)
                         .foregroundColor(.secondary)
 
@@ -432,11 +409,10 @@ struct SettingsTabView: View {
             .navigationTitle("Settings")
             .task {
                 depthModels.importInboxIfNeeded()
-                // Materialize an empty preference to the first installed model so
-                // the selector shows a real choice and Delete targets it.
-                if appModel.preferredDepthModelName.isEmpty, let first = depthModels.installedNames.first {
-                    appModel.preferredDepthModelName = first
-                }
+            }
+            .sheet(isPresented: $showDepthModelManager) {
+                DepthModelManagerSheet()
+                    .environment(appModel)
             }
             .alert("Save Window Group", isPresented: $showSaveGroupAlert) {
                 TextField("Group Name", text: $newGroupName)
@@ -540,6 +516,24 @@ struct SettingsTabView: View {
                 Text("Would you like to clear existing remembered enhancements? Keeping the data allows them to be restored if you re-enable this setting.")
             }
         }
+    }
+
+    /// Role-model dropdown: "Automatic" (first installed) plus every installed
+    /// model. A preference naming a since-deleted model is shown as missing so
+    /// the picker doesn't render an empty selection.
+    @ViewBuilder
+    private func depthModelPicker(_ title: String, selection: Binding<String>) -> some View {
+        Picker(title, selection: selection) {
+            Text("Automatic").tag("")
+            ForEach(depthModels.installedNames, id: \.self) { name in
+                Text(DepthModelManager.displayName(for: name)).tag(name)
+            }
+            if !selection.wrappedValue.isEmpty, !depthModels.installedNames.contains(selection.wrappedValue) {
+                Text("\(DepthModelManager.displayName(for: selection.wrappedValue)) (missing)")
+                    .tag(selection.wrappedValue)
+            }
+        }
+        .pickerStyle(.menu)
     }
 
     private func importFromDocuments() {
