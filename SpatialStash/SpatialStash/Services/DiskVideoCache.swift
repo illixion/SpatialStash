@@ -4,6 +4,10 @@
  Persistent cache for converted MV-HEVC stereoscopic videos.
  Avoids re-downloading and re-converting videos that have already been processed.
  The system can automatically clean this directory when storage is low.
+ Size accounting and LRU eviction live in the shared LRUDiskCache engine, with
+ the cap derived from device storage by CacheBudget; evicting a video also
+ removes its metadata sidecar, and reservations let an in-flight download's
+ expected bytes count against the cap so room is made before the file lands.
  */
 
 import Foundation
@@ -24,63 +28,108 @@ struct CachedVideoMetadata: Codable {
 actor DiskVideoCache {
     static let shared = DiskVideoCache()
 
-    private let cacheDirectory: URL
-    private let metadataDirectory: URL
-    private let maxCacheSize: Int64 // Maximum cache size in bytes
+    nonisolated private static let cacheDirectoryURL: URL = {
+        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        return caches.appendingPathComponent("VideoCache", isDirectory: true)
+    }()
+    nonisolated private static let metadataDirectoryURL: URL = {
+        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        return caches.appendingPathComponent("VideoCacheMetadata", isDirectory: true)
+    }()
+
+    private let engine: LRUDiskCache
+    private let metadataDirectory = DiskVideoCache.metadataDirectoryURL
     private let fileManager = FileManager.default
 
+    /// Expected bytes of downloads/conversions currently in flight, keyed by
+    /// caller-chosen token. Counted against the cap by the engine so a large
+    /// incoming video starts making room before it lands.
+    private let reservations = ReservationBook()
+
     private init() {
-        // Use the Caches directory - Apple-approved for temporary cache storage
-        // System can clean this when storage is low
-        let cachesDirectory = fileManager.urls(for: .cachesDirectory, in: .userDomainMask).first!
-        cacheDirectory = cachesDirectory.appendingPathComponent("VideoCache", isDirectory: true)
-        metadataDirectory = cachesDirectory.appendingPathComponent("VideoCacheMetadata", isDirectory: true)
+        let engine = LRUDiskCache(
+            directory: Self.cacheDirectoryURL,
+            domain: .videos,
+            log: AppLogger.videoCache
+        )
+        // Evicting a video drops its metadata sidecar too.
+        let metadataDir = Self.metadataDirectoryURL
+        engine.companionURLs = { videoURL in
+            [metadataDir.appendingPathComponent("\(videoURL.deletingPathExtension().lastPathComponent).json")]
+        }
+        let reservations = self.reservations
+        engine.pendingBytes = { reservations.total() }
+        self.engine = engine
 
-        // Default max size: 2 GB for video cache (videos are larger than images)
-        maxCacheSize = 2 * 1024 * 1024 * 1024
-
-        // Create cache directories if needed
-        try? fileManager.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
         try? fileManager.createDirectory(at: metadataDirectory, withIntermediateDirectories: true)
-
-        // Mark directories as excluded from backups (Apple requirement for caches)
-        var resourceValues = URLResourceValues()
-        resourceValues.isExcludedFromBackup = true
-        var mutableCacheDir = cacheDirectory
-        var mutableMetadataDir = metadataDirectory
-        try? mutableCacheDir.setResourceValues(resourceValues)
-        try? mutableMetadataDir.setResourceValues(resourceValues)
+        LRUDiskCache.excludeFromBackup(metadataDirectory)
     }
+
+    /// Thread-safe pending-bytes ledger (read by the engine's eviction pass).
+    private final class ReservationBook: @unchecked Sendable {
+        private let lock = NSLock()
+        private var bytes: [String: Int64] = [:]
+
+        func set(_ token: String, _ value: Int64) {
+            lock.lock()
+            bytes[token] = value
+            lock.unlock()
+        }
+
+        func remove(_ token: String) {
+            lock.lock()
+            bytes.removeValue(forKey: token)
+            lock.unlock()
+        }
+
+        func total() -> Int64 {
+            lock.lock()
+            defer { lock.unlock() }
+            return bytes.values.reduce(0, +)
+        }
+    }
+
+    // MARK: - Reservations
+
+    /// Announce an incoming video's expected size (e.g. from Content-Length)
+    /// so eviction accounts for it before the file is written. Triggers an
+    /// immediate budget check to start making room.
+    func reserveCapacity(token: String, expectedBytes: Int64) {
+        guard expectedBytes > 0 else { return }
+        reservations.set(token, expectedBytes)
+        engine.evictIfNeeded()
+    }
+
+    /// Release a reservation (after the save lands, or on failure/cancel).
+    func releaseReservation(token: String) {
+        reservations.remove(token)
+    }
+
+    // MARK: - Keys
 
     /// Generate a cache key from video ID and format
     private func cacheKey(videoId: String, format: String) -> String {
-        // Use video ID and format to create unique cache key
         "\(videoId)_\(format)"
     }
 
     /// Get the file URL for a cached video
     private func cacheFileURL(videoId: String, format: String) -> URL {
-        let key = cacheKey(videoId: videoId, format: format)
-        return cacheDirectory.appendingPathComponent("\(key).mov")
+        engine.directory.appendingPathComponent("\(cacheKey(videoId: videoId, format: format)).mov")
     }
 
     /// Get the metadata file URL for a cached video
     private func metadataFileURL(videoId: String, format: String) -> URL {
-        let key = cacheKey(videoId: videoId, format: format)
-        return metadataDirectory.appendingPathComponent("\(key).json")
+        metadataDirectory.appendingPathComponent("\(cacheKey(videoId: videoId, format: format)).json")
     }
+
+    // MARK: - Lookup
 
     /// Check if a converted video is cached
     func isCached(videoId: String, format: String) -> Bool {
-        let fileURL = cacheFileURL(videoId: videoId, format: format)
-        return fileManager.fileExists(atPath: fileURL.path)
+        fileManager.fileExists(atPath: cacheFileURL(videoId: videoId, format: format).path)
     }
 
     /// Get the cached video URL if available
-    /// - Parameters:
-    ///   - videoId: The unique video identifier
-    ///   - format: The stereoscopic format (e.g., "sbs", "ou")
-    /// - Returns: URL to the cached file if it exists, nil otherwise
     func getCachedVideoURL(videoId: String, format: String) -> URL? {
         let fileURL = cacheFileURL(videoId: videoId, format: format)
 
@@ -89,80 +138,8 @@ actor DiskVideoCache {
         }
 
         // Update access time for LRU tracking
-        try? fileManager.setAttributes(
-            [.modificationDate: Date()],
-            ofItemAtPath: fileURL.path
-        )
-
+        engine.touch(fileURL)
         return fileURL
-    }
-
-    /// Save a converted video to the cache
-    /// - Parameters:
-    ///   - sourceURL: URL of the converted video file to cache
-    ///   - videoId: The unique video identifier
-    ///   - format: The stereoscopic format
-    ///   - metadata: Metadata about the cached video
-    /// - Returns: URL to the cached file
-    @discardableResult
-    func saveVideo(from sourceURL: URL, videoId: String, format: String, metadata: CachedVideoMetadata) throws -> URL {
-        let destinationURL = cacheFileURL(videoId: videoId, format: format)
-        let metadataURL = metadataFileURL(videoId: videoId, format: format)
-
-        // Remove existing file if present
-        try? fileManager.removeItem(at: destinationURL)
-        try? fileManager.removeItem(at: metadataURL)
-
-        // Copy video file to cache
-        try fileManager.copyItem(at: sourceURL, to: destinationURL)
-
-        // Save metadata
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let metadataData = try encoder.encode(metadata)
-        try metadataData.write(to: metadataURL)
-
-        // Check cache size and cleanup if needed
-        Task { [self] in
-            self.cleanupIfNeeded()
-        }
-
-        AppLogger.videoCache.info("Cached video: \(videoId, privacy: .private) (\(format, privacy: .public))")
-        return destinationURL
-    }
-
-    /// Move a converted video to the cache (more efficient than copy)
-    /// - Parameters:
-    ///   - sourceURL: URL of the converted video file to cache
-    ///   - videoId: The unique video identifier
-    ///   - format: The stereoscopic format
-    ///   - metadata: Metadata about the cached video
-    /// - Returns: URL to the cached file
-    @discardableResult
-    func moveVideoToCache(from sourceURL: URL, videoId: String, format: String, metadata: CachedVideoMetadata) throws -> URL {
-        let destinationURL = cacheFileURL(videoId: videoId, format: format)
-        let metadataURL = metadataFileURL(videoId: videoId, format: format)
-
-        // Remove existing file if present
-        try? fileManager.removeItem(at: destinationURL)
-        try? fileManager.removeItem(at: metadataURL)
-
-        // Move video file to cache
-        try fileManager.moveItem(at: sourceURL, to: destinationURL)
-
-        // Save metadata
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let metadataData = try encoder.encode(metadata)
-        try metadataData.write(to: metadataURL)
-
-        // Check cache size and cleanup if needed
-        Task { [self] in
-            self.cleanupIfNeeded()
-        }
-
-        AppLogger.videoCache.info("Cached video (moved): \(videoId, privacy: .private) (\(format, privacy: .public))")
-        return destinationURL
     }
 
     /// Get metadata for a cached video
@@ -178,11 +155,56 @@ actor DiskVideoCache {
         return try? decoder.decode(CachedVideoMetadata.self, from: data)
     }
 
+    // MARK: - Store
+
+    /// Save a converted video to the cache (copying the source file).
+    @discardableResult
+    func saveVideo(from sourceURL: URL, videoId: String, format: String, metadata: CachedVideoMetadata) throws -> URL {
+        try store(sourceURL: sourceURL, videoId: videoId, format: format, metadata: metadata, move: false)
+    }
+
+    /// Move a converted video to the cache (more efficient than copy).
+    @discardableResult
+    func moveVideoToCache(from sourceURL: URL, videoId: String, format: String, metadata: CachedVideoMetadata) throws -> URL {
+        try store(sourceURL: sourceURL, videoId: videoId, format: format, metadata: metadata, move: true)
+    }
+
+    private func store(
+        sourceURL: URL, videoId: String, format: String, metadata: CachedVideoMetadata, move: Bool
+    ) throws -> URL {
+        let destinationURL = cacheFileURL(videoId: videoId, format: format)
+        let metadataURL = metadataFileURL(videoId: videoId, format: format)
+
+        // Remove existing file if present
+        let replaced = engine.sizeOnDisk(of: destinationURL)
+        try? fileManager.removeItem(at: destinationURL)
+        try? fileManager.removeItem(at: metadataURL)
+
+        if move {
+            try fileManager.moveItem(at: sourceURL, to: destinationURL)
+        } else {
+            try fileManager.copyItem(at: sourceURL, to: destinationURL)
+        }
+
+        // Save metadata
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let metadataData = try encoder.encode(metadata)
+        try metadataData.write(to: metadataURL)
+
+        engine.noteWrite(at: destinationURL, replacing: replaced)
+        AppLogger.videoCache.info("Cached video\(move ? " (moved)" : ""): \(videoId, privacy: .private) (\(format, privacy: .public))")
+        return destinationURL
+    }
+
+    // MARK: - Remove
+
     /// Remove a specific video from cache
     func removeVideo(videoId: String, format: String) {
         let fileURL = cacheFileURL(videoId: videoId, format: format)
         let metadataURL = metadataFileURL(videoId: videoId, format: format)
 
+        engine.noteRemoval(bytes: engine.sizeOnDisk(of: fileURL))
         try? fileManager.removeItem(at: fileURL)
         try? fileManager.removeItem(at: metadataURL)
     }
@@ -194,8 +216,9 @@ actor DiskVideoCache {
         let prefix = "\(videoId)_"
 
         // Remove from video cache
-        if let cacheContents = try? fileManager.contentsOfDirectory(at: cacheDirectory, includingPropertiesForKeys: nil) {
+        if let cacheContents = try? fileManager.contentsOfDirectory(at: engine.directory, includingPropertiesForKeys: nil) {
             for fileURL in cacheContents where fileURL.lastPathComponent.hasPrefix(prefix) {
+                engine.noteRemoval(bytes: engine.sizeOnDisk(of: fileURL))
                 try? fileManager.removeItem(at: fileURL)
                 AppLogger.videoCache.info("Removed cached video: \(fileURL.lastPathComponent, privacy: .public)")
             }
@@ -209,109 +232,22 @@ actor DiskVideoCache {
         }
     }
 
-    /// Get total cache size in bytes
-    private func getCacheSize() -> Int64 {
-        guard let enumerator = fileManager.enumerator(
-            at: cacheDirectory,
-            includingPropertiesForKeys: [.fileSizeKey],
-            options: [.skipsHiddenFiles]
-        ) else {
-            return 0
-        }
-
-        var totalSize: Int64 = 0
-        while let fileURL = enumerator.nextObject() as? URL {
-            if let resourceValues = try? fileURL.resourceValues(forKeys: [.fileSizeKey]),
-               let fileSize = resourceValues.fileSize {
-                totalSize += Int64(fileSize)
-            }
-        }
-        return totalSize
-    }
-
-    /// Cleanup cache if it exceeds max size (LRU eviction)
-    private func cleanupIfNeeded() {
-        let currentSize = getCacheSize()
-
-        guard currentSize > maxCacheSize else { return }
-
-        AppLogger.videoCache.notice("Cache size (\(currentSize / 1024 / 1024, privacy: .public) MB) exceeds limit, cleaning up...")
-
-        // Get all cached files with their modification dates
-        guard let enumerator = fileManager.enumerator(
-            at: cacheDirectory,
-            includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey],
-            options: [.skipsHiddenFiles]
-        ) else {
-            return
-        }
-
-        var files: [(url: URL, size: Int64, date: Date)] = []
-
-        while let fileURL = enumerator.nextObject() as? URL {
-            if let resourceValues = try? fileURL.resourceValues(
-                forKeys: [.fileSizeKey, .contentModificationDateKey]
-            ),
-               let fileSize = resourceValues.fileSize,
-               let modDate = resourceValues.contentModificationDate {
-                files.append((fileURL, Int64(fileSize), modDate))
-            }
-        }
-
-        // Sort by modification date (oldest first for LRU eviction)
-        files.sort { $0.date < $1.date }
-
-        // Remove oldest files until we're under 80% of max size
-        let targetSize = Int64(Double(maxCacheSize) * 0.8)
-        var freedSize: Int64 = 0
-        let sizeToFree = currentSize - targetSize
-
-        for file in files {
-            guard freedSize < sizeToFree else { break }
-
-            // Also remove corresponding metadata file
-            let videoFilename = file.url.deletingPathExtension().lastPathComponent
-            let metadataURL = metadataDirectory.appendingPathComponent("\(videoFilename).json")
-
-            do {
-                try fileManager.removeItem(at: file.url)
-                try? fileManager.removeItem(at: metadataURL)
-                freedSize += file.size
-            } catch {
-                AppLogger.videoCache.warning("Failed to remove file: \(error.localizedDescription, privacy: .public)")
-            }
-        }
-
-        AppLogger.videoCache.info("Freed \(freedSize / 1024 / 1024, privacy: .public) MB")
-    }
-
     /// Clear entire cache
     func clearCache() {
-        try? fileManager.removeItem(at: cacheDirectory)
+        engine.clear()
         try? fileManager.removeItem(at: metadataDirectory)
-        try? fileManager.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
         try? fileManager.createDirectory(at: metadataDirectory, withIntermediateDirectories: true)
-        AppLogger.videoCache.notice("Cache cleared")
+        LRUDiskCache.excludeFromBackup(metadataDirectory)
+    }
+
+    /// Re-check the budget (preset change) and evict if over.
+    func enforceBudget() {
+        engine.evictIfNeeded()
     }
 
     /// Get cache statistics
     func getCacheStats() -> (fileCount: Int, totalSize: Int64) {
-        guard let contents = try? fileManager.contentsOfDirectory(
-            at: cacheDirectory,
-            includingPropertiesForKeys: [.fileSizeKey]
-        ) else {
-            return (0, 0)
-        }
-
-        var totalSize: Int64 = 0
-        for fileURL in contents {
-            if let resourceValues = try? fileURL.resourceValues(forKeys: [.fileSizeKey]),
-               let fileSize = resourceValues.fileSize {
-                totalSize += Int64(fileSize)
-            }
-        }
-
-        return (contents.count, totalSize)
+        engine.stats()
     }
 
     /// List all cached videos

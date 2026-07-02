@@ -13,14 +13,6 @@ struct SettingsTabView: View {
     @Environment(MainWindowModel.self) private var windowModel
     @Environment(SceneDelegate.self) private var sceneDelegate: SceneDelegate?
     @Environment(\.openWindow) private var openWindow
-    @State private var imageCacheStats: (fileCount: Int, totalSize: Int64) = (0, 0)
-    @State private var videoCacheStats: (fileCount: Int, totalSize: Int64) = (0, 0)
-    @State private var backgroundRemovalCacheStats: (fileCount: Int, totalSize: Int64) = (0, 0)
-    @State private var gifHEVCCacheStats: (fileCount: Int, totalSize: Int64) = (0, 0)
-    @State private var isClearingImageCache = false
-    @State private var isClearingVideoCache = false
-    @State private var isClearingBackgroundRemovalCache = false
-    @State private var isClearingGIFHEVCCache = false
     @State private var showSaveGroupAlert = false
     @State private var newGroupName = ""
     @State private var showRenameGroupAlert = false
@@ -262,118 +254,7 @@ struct SettingsTabView: View {
                     }
                 }
 
-                Section("Cache") {
-                    HStack {
-                        Text("Images")
-                        Spacer()
-                        Text("\(imageCacheStats.fileCount) items, \(formatBytes(imageCacheStats.totalSize))")
-                            .foregroundColor(.secondary)
-                    }
-                    HStack {
-                        Text("Videos")
-                        Spacer()
-                        Text("\(videoCacheStats.fileCount) items, \(formatBytes(videoCacheStats.totalSize))")
-                            .foregroundColor(.secondary)
-                    }
-                    HStack {
-                        Text("Background Removal")
-                        Spacer()
-                        Text("\(backgroundRemovalCacheStats.fileCount) items, \(formatBytes(backgroundRemovalCacheStats.totalSize))")
-                            .foregroundColor(.secondary)
-                    }
-                    HStack {
-                        Text("Animated GIFs")
-                        Spacer()
-                        Text("\(gifHEVCCacheStats.fileCount) items, \(formatBytes(gifHEVCCacheStats.totalSize))")
-                            .foregroundColor(.secondary)
-                    }
-                    HStack {
-                        Text("Total")
-                        Spacer()
-                        Text(formatBytes(imageCacheStats.totalSize + videoCacheStats.totalSize + backgroundRemovalCacheStats.totalSize + gifHEVCCacheStats.totalSize))
-                            .foregroundColor(.secondary)
-                            .fontWeight(.medium)
-                    }
-                    Button(role: .destructive) {
-                        isClearingImageCache = true
-                        Task {
-                            await clearImageCache()
-                            await refreshCacheStats()
-                            isClearingImageCache = false
-                        }
-                    } label: {
-                        if isClearingImageCache {
-                            HStack {
-                                ProgressView()
-                                    .scaleEffect(0.8)
-                                Text("Clearing...")
-                            }
-                        } else {
-                            Text("Clear Image Cache")
-                        }
-                    }
-                    .disabled(isClearingImageCache || imageCacheStats.fileCount == 0)
-
-                    Button(role: .destructive) {
-                        isClearingVideoCache = true
-                        Task {
-                            await clearVideoCache()
-                            await refreshCacheStats()
-                            isClearingVideoCache = false
-                        }
-                    } label: {
-                        if isClearingVideoCache {
-                            HStack {
-                                ProgressView()
-                                    .scaleEffect(0.8)
-                                Text("Clearing...")
-                            }
-                        } else {
-                            Text("Clear Video Cache")
-                        }
-                    }
-                    .disabled(isClearingVideoCache || videoCacheStats.fileCount == 0)
-
-                    Button(role: .destructive) {
-                        isClearingBackgroundRemovalCache = true
-                        Task {
-                            await clearBackgroundRemovalCache()
-                            await refreshCacheStats()
-                            isClearingBackgroundRemovalCache = false
-                        }
-                    } label: {
-                        if isClearingBackgroundRemovalCache {
-                            HStack {
-                                ProgressView()
-                                    .scaleEffect(0.8)
-                                Text("Clearing...")
-                            }
-                        } else {
-                            Text("Clear Background Removal Cache")
-                        }
-                    }
-                    .disabled(isClearingBackgroundRemovalCache || backgroundRemovalCacheStats.fileCount == 0)
-
-                    Button(role: .destructive) {
-                        isClearingGIFHEVCCache = true
-                        Task {
-                            await DiskGIFHEVCCache.shared.clearCache()
-                            await refreshCacheStats()
-                            isClearingGIFHEVCCache = false
-                        }
-                    } label: {
-                        if isClearingGIFHEVCCache {
-                            HStack {
-                                ProgressView()
-                                    .scaleEffect(0.8)
-                                Text("Clearing...")
-                            }
-                        } else {
-                            Text("Clear Animated GIF Cache")
-                        }
-                    }
-                    .disabled(isClearingGIFHEVCCache || gifHEVCCacheStats.fileCount == 0)
-                }
+                CacheSettingsSection()
 
                 Section("Backup") {
                     Button {
@@ -550,7 +431,6 @@ struct SettingsTabView: View {
             }
             .navigationTitle("Settings")
             .task {
-                await refreshCacheStats()
                 depthModels.importInboxIfNeeded()
                 // Materialize an empty preference to the first installed model so
                 // the selector shows a real choice and Delete targets it.
@@ -704,27 +584,6 @@ struct SettingsTabView: View {
         } catch {
             AppLogger.settings.error("Connection failed: \(error.localizedDescription, privacy: .public)")
         }
-    }
-
-    private func refreshCacheStats() async {
-        imageCacheStats = await DiskImageCache.shared.getCacheStats()
-        videoCacheStats = await DiskVideoCache.shared.getCacheStats()
-        backgroundRemovalCacheStats = await BackgroundRemovalCache.shared.getCacheStats()
-        gifHEVCCacheStats = await DiskGIFHEVCCache.shared.getCacheStats()
-    }
-
-    private func clearImageCache() async {
-        await ImageLoader.shared.clearCache()
-        ThumbnailDioramaCache.shared.clearCache()
-    }
-
-    private func clearVideoCache() async {
-        await DiskVideoCache.shared.clearCache()
-    }
-
-    private func clearBackgroundRemovalCache() async {
-        await BackgroundRemovalCache.shared.clearCache()
-        ThumbnailDioramaCache.shared.clearCache()
     }
 
     private func formatBytes(_ bytes: Int64) -> String {

@@ -167,6 +167,46 @@ enum DepthCacheStore {
         directorySize(cacheDirectory)
     }
 
+    // MARK: Budget
+
+    /// Stamp an entry as recently used. DepthCacheReader calls this when
+    /// playback opens an entry, so `enforceBudget` evicts least-recently-
+    /// watched conversions first.
+    static func touch(_ entry: Entry) {
+        try? FileManager.default.setAttributes(
+            [.modificationDate: Date()], ofItemAtPath: entry.directory.path
+        )
+    }
+
+    /// LRU-evict completed entries when the depth cache exceeds its
+    /// CacheBudget share. Depth conversions are expensive to regenerate, so
+    /// unlike the Caches-directory caches this lives in Application Support
+    /// (never purged by the OS) and only this trims it. In-progress entries
+    /// and `activeIdentity` (converting or just completed) are never evicted.
+    static func enforceBudget(activeIdentity: String? = nil) {
+        var total = totalSize()
+        let cap = CacheBudget.cap(for: .depth, currentSize: total)
+        guard total > cap else { return }
+
+        let target = Int64(Double(cap) * 0.8)
+        let candidates = allEntries()
+            .filter { $0.meta.completed && $0.meta.videoIdentity != activeIdentity }
+            .map { entry -> (entry: Entry, date: Date) in
+                let date = (try? entry.directory.resourceValues(forKeys: [.contentModificationDateKey]))?
+                    .contentModificationDate ?? entry.meta.createdAt
+                return (entry, date)
+            }
+            .sorted { $0.date < $1.date }
+
+        for (entry, _) in candidates {
+            guard total > target else { break }
+            let size = entrySize(entry)
+            deleteEntry(at: entry.directory)
+            total -= size
+            AppLogger.videoCache.notice("Depth cache over budget: evicted \(entry.meta.title ?? entry.meta.videoIdentity, privacy: .private)")
+        }
+    }
+
     // MARK: Mutate
 
     static func writeMeta(_ meta: Meta, to directory: URL) throws {

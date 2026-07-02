@@ -63,6 +63,8 @@ final class DepthCacheReader: @unchecked Sendable {
     private let uvOffset: SIMD2<Float>
 
     init(entry: DepthCacheStore.Entry, device: MTLDevice) {
+        // LRU stamp: playback keeps this entry from budget eviction.
+        DepthCacheStore.touch(entry)
         self.directory = entry.directory
         self.depthVideoURL = entry.depthVideoURL
         self.meta = entry.meta

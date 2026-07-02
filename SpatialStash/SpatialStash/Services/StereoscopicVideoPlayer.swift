@@ -160,6 +160,13 @@ class StereoscopicVideoPlayer: ObservableObject {
 
                 AppLogger.stereoscopicPlayer.info("Download completed: \(localVideoURL.lastPathComponent)")
 
+                // Reserve cache capacity for the upcoming MV-HEVC output (the
+                // source size is the best estimate) so eviction makes room
+                // during the conversion instead of blowing past the cap.
+                let sourceSize = (try? FileManager.default.attributesOfItem(atPath: localVideoURL.path))?[.size] as? Int64 ?? 0
+                await videoCache.reserveCapacity(token: video.stashId, expectedBytes: sourceSize)
+                defer { Task { await self.videoCache.releaseReservation(token: video.stashId) } }
+
                 if Task.isCancelled {
                     AppLogger.stereoscopicPlayer.info("Task cancelled after download")
                     return

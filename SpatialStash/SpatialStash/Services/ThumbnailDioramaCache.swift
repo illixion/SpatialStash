@@ -45,20 +45,21 @@ final class ThumbnailDioramaCache {
     private var inFlight: [URL: Task<Pair?, Never>] = [:]
     private var diskLoads: [URL: Task<Pair?, Never>] = [:]
 
-    nonisolated private static let diskMaxBytes: Int64 = 150 * 1024 * 1024
+    /// Shared LRU engine (thread-safe) — the disk tier is written from
+    /// detached tasks. Budget-derived cap, incremental size tracking.
+    nonisolated private static let engine = LRUDiskCache(
+        directory: FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("ThumbnailDioramas", isDirectory: true),
+        domain: .thumbnailDioramas,
+        log: AppLogger.diskCache,
+        formatVersion: 1
+    )
 
-    nonisolated private static let cacheDirectory: URL = {
-        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
-        let dir = caches.appendingPathComponent("ThumbnailDioramas", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        // Purge entries from an older diorama-generation version.
-        DiskCacheVersion.enforce(1, at: dir)
-        var resourceValues = URLResourceValues()
-        resourceValues.isExcludedFromBackup = true
-        var mutable = dir
-        try? mutable.setResourceValues(resourceValues)
-        return dir
-    }()
+    nonisolated private static var cacheDirectory: URL { engine.directory }
+
+    /// Disk stats / budget re-check for the Settings cache manager.
+    nonisolated static func getCacheStats() -> (fileCount: Int, totalSize: Int64) { engine.stats() }
+    nonisolated static func enforceBudget() { engine.evictIfNeeded() }
 
     private init() {}
 
@@ -127,10 +128,7 @@ final class ThumbnailDioramaCache {
         inFlight.removeAll()
         diskLoads.values.forEach { $0.cancel() }
         diskLoads.removeAll()
-        let fm = FileManager.default
-        try? fm.removeItem(at: Self.cacheDirectory)
-        try? fm.createDirectory(at: Self.cacheDirectory, withIntermediateDirectories: true)
-        AppLogger.diskCache.notice("Thumbnail diorama cache cleared")
+        Self.engine.clear()
     }
 
     // MARK: - Disk persistence
@@ -166,9 +164,8 @@ final class ThumbnailDioramaCache {
             return nil
         }
         // Touch mtime for LRU.
-        let now = Date()
-        try? fm.setAttributes([.modificationDate: now], ofItemAtPath: fgURL.path)
-        try? fm.setAttributes([.modificationDate: now], ofItemAtPath: bgURL.path)
+        engine.touch(fgURL)
+        engine.touch(bgURL)
         return Pair(foreground: fgImage, backdrop: bgImage)
     }
 
@@ -178,10 +175,13 @@ final class ThumbnailDioramaCache {
               let bgData = encodeHeicData(from: pair.backdrop) else {
             return
         }
+        let replacedFg = engine.sizeOnDisk(of: fgURL)
+        let replacedBg = engine.sizeOnDisk(of: bgURL)
         do {
             try fgData.write(to: fgURL)
+            engine.noteWrite(at: fgURL, replacing: replacedFg)
             try bgData.write(to: bgURL)
-            cleanupIfNeeded()
+            engine.noteWrite(at: bgURL, replacing: replacedBg)
         } catch {
             AppLogger.diskCache.warning("Failed to persist thumbnail diorama: \(error.localizedDescription, privacy: .public)")
         }
@@ -201,42 +201,6 @@ final class ThumbnailDioramaCache {
         return data as Data
     }
 
-    nonisolated private static func cleanupIfNeeded() {
-        let fm = FileManager.default
-        guard let enumerator = fm.enumerator(
-            at: cacheDirectory,
-            includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey],
-            options: [.skipsHiddenFiles]
-        ) else { return }
-
-        var files: [(url: URL, size: Int64, date: Date)] = []
-        var total: Int64 = 0
-        while let fileURL = enumerator.nextObject() as? URL {
-            guard let values = try? fileURL.resourceValues(
-                forKeys: [.fileSizeKey, .contentModificationDateKey]
-            ),
-                  let size = values.fileSize,
-                  let date = values.contentModificationDate else { continue }
-            files.append((fileURL, Int64(size), date))
-            total += Int64(size)
-        }
-
-        guard total > diskMaxBytes else { return }
-
-        files.sort { $0.date < $1.date }
-        let target = Int64(Double(diskMaxBytes) * 0.8)
-        var freed: Int64 = 0
-        let toFree = total - target
-        for file in files {
-            guard freed < toFree else { break }
-            do {
-                try fm.removeItem(at: file.url)
-                freed += file.size
-            } catch {
-                // best-effort
-            }
-        }
-    }
 }
 
 private func approximateByteCount(_ image: UIImage) -> Int {

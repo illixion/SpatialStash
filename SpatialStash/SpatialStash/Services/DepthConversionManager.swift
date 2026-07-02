@@ -181,6 +181,12 @@ final class DepthConversionManager {
             }
             lastCompleted = CompletionEvent(videoIdentity: request.videoIdentity, date: Date())
             AppLogger.videoCache.info("Depth conversion finished for \(request.videoIdentity, privacy: .private)")
+            // The new entry may push the depth cache over its budget — trim
+            // the least-recently-watched conversions (never the new one).
+            let identity = request.videoIdentity
+            Task.detached(priority: .utility) {
+                DepthCacheStore.enforceBudget(activeIdentity: identity)
+            }
         } catch {
             if isCancellation(error) {
                 AppLogger.videoCache.info("Depth conversion cancelled for \(request.videoIdentity, privacy: .private)")

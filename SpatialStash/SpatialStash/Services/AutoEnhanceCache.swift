@@ -4,9 +4,11 @@
  Persistent cache for auto-enhanced images using Apple's Caches directory.
  The system can automatically clean this directory when storage is low.
  Mirrors the BackgroundRemovalCache pattern for consistent behavior.
+ Disk size accounting and LRU eviction live in the shared LRUDiskCache engine;
+ entries whose original has left the disk image cache are evicted first (an
+ enhanced render is useless without its source).
  */
 
-import CommonCrypto
 import Foundation
 import ImageIO
 import os
@@ -16,44 +18,35 @@ import UniformTypeIdentifiers
 actor AutoEnhanceCache {
     static let shared = AutoEnhanceCache()
 
-    private let cacheDirectory: URL
-    private let maxCacheSize: Int64
+    private let engine: LRUDiskCache
     private let fileManager = FileManager.default
     private let heicCompressionQuality: CGFloat = 0.95
 
     private init() {
-        let cachesDirectory = fileManager.urls(for: .cachesDirectory, in: .userDomainMask).first!
-        cacheDirectory = cachesDirectory.appendingPathComponent("AutoEnhanceCache", isDirectory: true)
-
-        // Default max size: 2000 MB
-        maxCacheSize = 2000 * 1024 * 1024
-
-        try? fileManager.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
-
-        // Purge entries from an older format/algorithm version.
-        DiskCacheVersion.enforce(1, at: cacheDirectory, fileManager: fileManager)
-
-        var resourceValues = URLResourceValues()
-        resourceValues.isExcludedFromBackup = true
-        var mutableCacheDir = cacheDirectory
-        try? mutableCacheDir.setResourceValues(resourceValues)
+        let caches = fileManager.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        let engine = LRUDiskCache(
+            directory: caches.appendingPathComponent("AutoEnhanceCache", isDirectory: true),
+            domain: .autoEnhance,
+            log: AppLogger.diskCache,
+            formatVersion: 1
+        )
+        // Prefer evicting renders whose original left the image cache.
+        engine.evictsFirst = { fileURL in
+            guard let originKey = LRUDiskCache.originKey(of: fileURL) else { return false }
+            let original = DiskImageCache.cacheDirectory.appendingPathComponent(originKey)
+            return !FileManager.default.fileExists(atPath: original.path)
+        }
+        self.engine = engine
     }
 
     // MARK: - Cache Key
 
     private func cacheKey(for url: URL) -> String {
-        let urlString = url.absoluteString + ":autoEnhanced"
-        let data = Data(urlString.utf8)
-        var hash = [UInt8](repeating: 0, count: 32)
-        data.withUnsafeBytes { bytes in
-            _ = CC_SHA256(bytes.baseAddress, CC_LONG(data.count), &hash)
-        }
-        return hash.map { String(format: "%02x", $0) }.joined()
+        LRUDiskCache.sha256Key(url.absoluteString + ":autoEnhanced")
     }
 
     private func cacheFileURL(for url: URL) -> URL {
-        let key = cacheKey(for: url)
-        return cacheDirectory.appendingPathComponent(key + ".heic")
+        engine.directory.appendingPathComponent(cacheKey(for: url) + ".heic")
     }
 
     // MARK: - Load / Save
@@ -70,10 +63,7 @@ actor AutoEnhanceCache {
         }
 
         // Update access time for LRU tracking
-        try? fileManager.setAttributes(
-            [.modificationDate: Date()],
-            ofItemAtPath: fileURL.path
-        )
+        engine.touch(fileURL)
 
         return data
     }
@@ -85,98 +75,42 @@ actor AutoEnhanceCache {
         }
 
         let fileURL = cacheFileURL(for: url)
+        let replaced = engine.sizeOnDisk(of: fileURL)
         do {
             try heicData.write(to: fileURL)
-            Task { [self] in self.cleanupIfNeeded() }
+            tagOrigin(of: fileURL, for: url)
+            engine.noteWrite(at: fileURL, replacing: replaced)
         } catch {
             AppLogger.diskCache.error("Failed to save auto-enhanced image: \(error.localizedDescription, privacy: .public)")
         }
     }
 
+    /// Link the entry to its source's image-cache key — but only when the
+    /// original is actually in the disk image cache. Local files never are, so
+    /// tagging them would mark every local render as an eviction-first orphan.
+    private func tagOrigin(of fileURL: URL, for url: URL) {
+        let originKey = DiskImageCache.cacheKey(for: url)
+        let original = DiskImageCache.cacheDirectory.appendingPathComponent(originKey)
+        guard fileManager.fileExists(atPath: original.path) else { return }
+        LRUDiskCache.setOriginKey(originKey, for: fileURL)
+    }
+
     // MARK: - Cache Management
 
     func clearCache() {
-        try? fileManager.removeItem(at: cacheDirectory)
-        try? fileManager.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
-        AppLogger.diskCache.notice("Auto-enhance cache cleared")
+        engine.clear()
+    }
+
+    /// Re-check the budget (preset change) and evict if over.
+    func enforceBudget() {
+        engine.evictIfNeeded()
     }
 
     func getCacheStats() -> (fileCount: Int, totalSize: Int64) {
-        guard let contents = try? fileManager.contentsOfDirectory(
-            at: cacheDirectory,
-            includingPropertiesForKeys: [.fileSizeKey]
-        ) else {
-            return (0, 0)
-        }
-
-        var totalSize: Int64 = 0
-        for fileURL in contents {
-            if let resourceValues = try? fileURL.resourceValues(forKeys: [.fileSizeKey]),
-               let fileSize = resourceValues.fileSize {
-                totalSize += Int64(fileSize)
-            }
-        }
-
-        return (contents.count, totalSize)
+        engine.stats()
     }
 
     // MARK: - Private
-
-    private func cleanupIfNeeded() {
-        let currentSize = getCacheSize()
-        guard currentSize > maxCacheSize else { return }
-
-        AppLogger.diskCache.notice("Auto-enhance cache size (\(currentSize / 1024 / 1024, privacy: .public) MB) exceeds limit, cleaning up...")
-
-        guard let enumerator = fileManager.enumerator(
-            at: cacheDirectory,
-            includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey],
-            options: [.skipsHiddenFiles]
-        ) else { return }
-
-        var files: [(url: URL, size: Int64, date: Date)] = []
-        while let fileURL = enumerator.nextObject() as? URL {
-            if let rv = try? fileURL.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]),
-               let fileSize = rv.fileSize, let modDate = rv.contentModificationDate {
-                files.append((fileURL, Int64(fileSize), modDate))
-            }
-        }
-
-        files.sort { $0.date < $1.date }
-
-        let targetSize = Int64(Double(maxCacheSize) * 0.8)
-        var freedSize: Int64 = 0
-        let sizeToFree = currentSize - targetSize
-
-        for file in files {
-            guard freedSize < sizeToFree else { break }
-            do {
-                try fileManager.removeItem(at: file.url)
-                freedSize += file.size
-            } catch {
-                AppLogger.diskCache.warning("Failed to remove auto-enhance cache file: \(error.localizedDescription, privacy: .public)")
-            }
-        }
-
-        AppLogger.diskCache.info("Auto-enhance cache freed \(freedSize / 1024 / 1024, privacy: .public) MB")
-    }
-
-    private func getCacheSize() -> Int64 {
-        guard let enumerator = fileManager.enumerator(
-            at: cacheDirectory,
-            includingPropertiesForKeys: [.fileSizeKey],
-            options: [.skipsHiddenFiles]
-        ) else { return 0 }
-
-        var totalSize: Int64 = 0
-        while let fileURL = enumerator.nextObject() as? URL {
-            if let rv = try? fileURL.resourceValues(forKeys: [.fileSizeKey]),
-               let fileSize = rv.fileSize {
-                totalSize += Int64(fileSize)
-            }
-        }
-        return totalSize
-    }
 
     private func encodeHeicData(from image: UIImage) -> Data? {
         guard let cgImage = image.cgImage else { return nil }
