@@ -199,6 +199,9 @@ final class Pseudo3DStereoEngine {
     private var endObserver: NSObjectProtocol?
     private var failureObserver: NSObjectProtocol?
     private var isRoomActive = true
+    /// Playback state captured at room exit; room re-entry restores it so a
+    /// manual pause survives focus/room flaps.
+    private var wasPlayingBeforeRoomExit = true
 
     // Off-main frame pump (owns all per-frame GPU work).
     private var pump: StereoPump?
@@ -211,6 +214,10 @@ final class Pseudo3DStereoEngine {
     @ObservationIgnored var videoEntity: Entity?
     @ObservationIgnored private var lastViewBounds: BoundingBox?
     @ObservationIgnored private var sizeSubscription: EventSubscription?
+    @ObservationIgnored private var refitBurstTask: Task<Void, Never>?
+    /// Decoded video dimensions from the pump's first frame — drives the
+    /// content-aware fit (the component's screen mesh doesn't reflect them).
+    @ObservationIgnored private var knownVideoSize: CGSize?
     @ObservationIgnored private var tapTargetInstalled = false
     /// While true, fade the video so an open menu/popover shows through it.
     @ObservationIgnored private var chromeOpen = false
@@ -280,6 +287,30 @@ final class Pseudo3DStereoEngine {
         installTapTarget()
     }
 
+    /// Re-fit once the real video size is known (from the pump's first decoded
+    /// frame). fitVideo runs content-aware from `knownVideoSize`, so the first
+    /// successful pass fixes the size; the brief retry loop only covers the
+    /// mesh having no bounds yet at that instant. Ends by rebuilding the tap
+    /// target, which may have been sized off the placeholder bounds.
+    private func scheduleRefitBurst() {
+        refitBurstTask?.cancel()
+        refitBurstTask = Task { [weak self] in
+            for _ in 0..<20 {
+                guard let self, !Task.isCancelled else { return }
+                self.refitVideo()
+                if let entity = self.videoEntity {
+                    let ext = entity.visualBounds(relativeTo: entity).extents
+                    if ext.x > 1e-4, ext.y > 1e-4 {
+                        self.tapTargetInstalled = false
+                        self.installTapTarget()
+                        return
+                    }
+                }
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+        }
+    }
+
     /// Give the video entity a collision shape + input target so a SpatialTapGesture
     /// can land on it (a 2D overlay can't catch gaze over a RealityView). Sized to
     /// the video plane in local space so the entity's fit-scale maps it correctly.
@@ -313,8 +344,26 @@ final class Pseudo3DStereoEngine {
               bounds.extents.x > 1e-4, bounds.extents.y > 1e-4 else { return }
         let unscaledX = extents.x / scale
         let unscaledY = extents.y / scale
-        let target = min(bounds.extents.x / unscaledX, bounds.extents.y / unscaledY)
+        // The component letterboxes the video inside its screen mesh on
+        // transparent bars — and for renderer-backed components the mesh can
+        // stay the 1×1 placeholder square forever (observed on visionOS 26:
+        // VideoSizeDidChange never re-shapes it). Fitting the MESH therefore
+        // fit the square, leaving the visible video undersized in big margins
+        // (worst for tall videos). Fit the video *content* rect inside the
+        // mesh instead; the transparent overflow is clipped by the window.
+        var contentX = unscaledX
+        var contentY = unscaledY
+        if let size = knownVideoSize, size.width > 0, size.height > 0 {
+            let videoAspect = Float(size.width / size.height)
+            if videoAspect > unscaledX / unscaledY {
+                contentY = unscaledX / videoAspect
+            } else {
+                contentX = unscaledY * videoAspect
+            }
+        }
+        let target = min(bounds.extents.x / contentX, bounds.extents.y / contentY)
         guard target.isFinite, target > 1e-4, abs(target - scale) > 0.02 else { return }
+        AppLogger.videoWindow.info("fitVideo: bounds \(bounds.extents.x)x\(bounds.extents.y), mesh \(unscaledX)x\(unscaledY), content \(contentX)x\(contentY), scale \(scale) → \(target)")
         entity.scale = SIMD3<Float>(repeating: target)
     }
 
@@ -436,6 +485,8 @@ final class Pseudo3DStereoEngine {
         cleanupPlayer()
         loadedURL = url
         isRoomActive = roomActive
+        knownVideoSize = nil
+        refitBurstTask?.cancel()
 
         // Diagnostic: prove the windowed-stereo plumbing in isolation, no
         // AVPlayer / decode / warp. See Pseudo3DDiagnostics.
@@ -496,7 +547,11 @@ final class Pseudo3DStereoEngine {
 
         // Hand the pump everything it needs; it runs entirely off the main thread.
         let sizeCallback: @Sendable (CGSize) -> Void = { [weak self] size in
-            Task { @MainActor in self?.onVideoSizeKnown?(size) }
+            Task { @MainActor in
+                self?.knownVideoSize = size
+                self?.onVideoSizeKnown?(size)
+                self?.scheduleRefitBurst()
+            }
         }
         // Cached depth: 60fps warp of pre-computed PTS-matched depth, no ANE.
         // Realtime: 30fps, synchronous inference gates each tick anyway.
@@ -543,7 +598,14 @@ final class Pseudo3DStereoEngine {
     func setRoomActive(_ active: Bool) {
         guard isRoomActive != active else { return }
         isRoomActive = active
-        if active { play() } else { pause() }
+        if active {
+            // Restore the state from room exit — a manual pause sticks across
+            // focus/room flaps; a playing (e.g. wall-snapped) window resumes.
+            if wasPlayingBeforeRoomExit { play() }
+        } else {
+            wasPlayingBeforeRoomExit = player?.timeControlStatus == .playing
+            pause()
+        }
     }
 
     private func handleTimeUpdate(_ seconds: Double) {
@@ -576,6 +638,8 @@ final class Pseudo3DStereoEngine {
     func cleanup() {
         sizeSubscription?.cancel()
         sizeSubscription = nil
+        refitBurstTask?.cancel()
+        refitBurstTask = nil
         videoEntity = nil
         lastViewBounds = nil
         tapTargetInstalled = false

@@ -439,6 +439,7 @@ struct VideoWindowView: View {
         let totalHeight = videoHeight + ornamentBottomPadding
         let windowSize = CGSize(width: videoWidth, height: totalHeight)
 
+        AppLogger.videoWindow.info("Aspect lock: video \(Int(videoSize.width))x\(Int(videoSize.height)), requesting window \(Int(windowSize.width))x\(Int(windowSize.height)) (pad \(Int(self.ornamentBottomPadding)))")
         UIView.performWithoutAnimation {
             windowScene.requestGeometryUpdate(.Vision(size: windowSize, resizingRestrictions: .uniform))
         }
@@ -455,6 +456,7 @@ struct VideoWindowView: View {
             try? await Task.sleep(for: .milliseconds(500))
             guard !Task.isCancelled, let scene = resolvedWindowScene else { return }
             let granted = scene.coordinateSpace.bounds.size
+            AppLogger.videoWindow.info("Aspect lock readback: granted \(Int(granted.width))x\(Int(granted.height))")
             guard granted.width > 0, granted.height > 0,
                   abs(granted.width - windowSize.width) > 2 || abs(granted.height - windowSize.height) > 2
             else { return }

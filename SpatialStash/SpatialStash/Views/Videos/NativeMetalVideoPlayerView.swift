@@ -139,6 +139,9 @@ struct NativeMetalVideoPlayerView: UIViewRepresentable {
         private var loopB: Double?
         private var intermediate: MTLTexture?
         private var isRoomActive = true
+        /// Playback state captured at room exit; room re-entry restores it so
+        /// a manual pause survives focus/room flaps.
+        private var wasPlayingBeforeRoomExit = true
 
         var currentTime: Double {
             player?.currentTime().seconds ?? 0
@@ -237,8 +240,14 @@ struct NativeMetalVideoPlayerView: UIViewRepresentable {
             guard isRoomActive != active else { return }
             isRoomActive = active
             if active {
-                play()
+                // Restore the state from when the room deactivated — a video
+                // the user manually paused must stay paused (focus flaps from
+                // other media / Mac Virtual Display would otherwise unpause
+                // it), while wall-snapped windows that were playing keep the
+                // auto-resume-on-room-entry behavior.
+                if wasPlayingBeforeRoomExit { play() }
             } else {
+                wasPlayingBeforeRoomExit = player?.timeControlStatus == .playing
                 pause()
             }
         }

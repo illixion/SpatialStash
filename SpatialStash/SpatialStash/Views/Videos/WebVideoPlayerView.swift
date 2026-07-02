@@ -201,26 +201,49 @@ struct WebVideoPlayerView: UIViewRepresentable {
                 coordinator.cancelSrcUnload()
 
                 if coordinator.isSourceUnloaded {
-                    // Restore src and play after it was unloaded
+                    // Restore src after unload; only resume playback if it was
+                    // playing at room exit (a manual pause sticks).
                     let js = """
                     (function() {
                         window._roomActive = true;
-                        window._autoResumeUntil = Date.now() + 3000;
                         var p = document.getElementById('player');
-                        if (p) { p.src = originalSrc; p.load(); p.play().catch(function() {}); }
+                        if (!p) { return; }
+                        p.src = originalSrc; p.load();
+                        if (window._resumeOnRoomActive !== false) {
+                            window._autoResumeUntil = Date.now() + 3000;
+                            p.play().catch(function() {});
+                        }
                     })();
                     """
                     webView.evaluateJavaScript(js)
                     coordinator.isSourceUnloaded = false
                 } else {
-                    // Room re-entered: open the auto-resume window briefly, then play.
-                    // Outside this window, user-initiated pauses (and audio interruptions) are respected.
-                    let js = "window._roomActive = true; window._autoResumeUntil = Date.now() + 3000; document.getElementById('player').play().catch(function() {});"
+                    // Room re-entered: restore the state from room exit. Only a
+                    // video that was playing then auto-resumes (brief auto-resume
+                    // window; outside it user pauses / audio interruptions are
+                    // respected). A manually paused video stays paused — focus
+                    // flaps from other media must not unpause it.
+                    let js = """
+                    (function() {
+                        window._roomActive = true;
+                        if (window._resumeOnRoomActive !== false) {
+                            window._autoResumeUntil = Date.now() + 3000;
+                            document.getElementById('player').play().catch(function() {});
+                        }
+                    })();
+                    """
                     webView.evaluateJavaScript(js)
                 }
             } else {
-                // Left room: disable auto-resume, pause, and schedule src unload
-                let js = "window._roomActive = false; document.getElementById('player').pause();"
+                // Left room: remember whether it was playing, disable
+                // auto-resume, pause, and schedule src unload.
+                let js = """
+                (function() {
+                    window._roomActive = false;
+                    var p = document.getElementById('player');
+                    if (p) { window._resumeOnRoomActive = !p.paused; p.pause(); }
+                })();
+                """
                 webView.evaluateJavaScript(js)
                 coordinator.scheduleSrcUnload(webView: webView)
             }

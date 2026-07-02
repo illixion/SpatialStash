@@ -12,14 +12,19 @@
  `lastError` for the ready pill and failure toast. Jobs are keyed by video
  identity; enqueueing an identity that's already active or pending is a no-op.
 
- If the app backgrounds mid-conversion the task suspends with the app and
- resumes on foreground (no background-processing entitlement); a partial entry
- is deleted on cancel/failure so it can never be mistaken for a complete cache.
+ Backgrounding kills conversions rather than pausing them: visionOS suspends
+ the app once its windows leave view, which invalidates the hardware HEVC
+ encoder session — on thaw every append fails ("Writer not ready"). So a job
+ active at didEnterBackground is *interrupted*: cancelled gracefully, remembered,
+ and restarted from scratch on foreground, with no error surfaced. A partial
+ entry is deleted on cancel/failure so it can never be mistaken for a complete
+ cache.
  */
 
 import Foundation
 import Observation
 import os
+import UIKit
 
 @MainActor
 @Observable
@@ -99,13 +104,55 @@ final class DepthConversionManager {
     @ObservationIgnored private var downloadTask: URLSessionDownloadTask?
     @ObservationIgnored private var downloadObservation: NSKeyValueObservation?
 
-    private init() {}
+    /// Job interrupted by app backgrounding (the background HEVC-encoder kill,
+    /// see the header) — restarted on foreground; its cancellation/failure is
+    /// suppressed instead of surfacing an error alert.
+    @ObservationIgnored private var interruptedRequest: Request?
+
+    private init() {
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
+        ) { _ in
+            MainActor.assumeIsolated { DepthConversionManager.shared.handleDidEnterBackground() }
+        }
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main
+        ) { _ in
+            MainActor.assumeIsolated { DepthConversionManager.shared.handleWillEnterForeground() }
+        }
+    }
+
+    private func handleDidEnterBackground() {
+        guard let job = activeJob else { return }
+        AppLogger.videoCache.notice("App backgrounded mid-conversion; interrupting \(job.request.videoIdentity, privacy: .private) for restart on foreground")
+        currentConverter?.cancel()
+        downloadTask?.cancel()
+        currentTask?.cancel()
+        // Set AFTER the cancels (public cancel(videoIdentity:) clears it).
+        interruptedRequest = job.request
+    }
+
+    private func handleWillEnterForeground() {
+        // The interrupted job usually finishes unwinding before the app
+        // foregrounds — restart it here. If it's still unwinding (activeJob
+        // set, so enqueue would no-op), run()'s defer restarts it instead.
+        guard activeJob == nil, let request = interruptedRequest else { return }
+        interruptedRequest = nil
+        AppLogger.videoCache.notice("Restarting depth conversion interrupted by backgrounding: \(request.videoIdentity, privacy: .private)")
+        enqueue(request)
+    }
 
     // MARK: Query
 
     func isProcessing(videoIdentity: String) -> Bool {
         activeJob?.request.videoIdentity == videoIdentity
             || pending.contains { $0.videoIdentity == videoIdentity }
+    }
+
+    /// Whether this video's conversion was interrupted by app backgrounding
+    /// and will restart on foreground (a gap `isProcessing` doesn't cover).
+    func willRestart(videoIdentity: String) -> Bool {
+        interruptedRequest?.videoIdentity == videoIdentity
     }
 
     /// The active job's phase for a specific video, or nil.
@@ -125,6 +172,11 @@ final class DepthConversionManager {
 
     /// Cancel the job for a video, whether active or still queued.
     func cancel(videoIdentity: String) {
+        // An explicit cancel also revokes a pending background-interruption
+        // restart for this video.
+        if interruptedRequest?.videoIdentity == videoIdentity {
+            interruptedRequest = nil
+        }
         pending.removeAll { $0.videoIdentity == videoIdentity }
         guard activeJob?.request.videoIdentity == videoIdentity else { return }
         currentConverter?.cancel()
@@ -154,6 +206,12 @@ final class DepthConversionManager {
             activeJob = nil
             conversionRate = 0
             lastFrontierSample = nil
+            // Interrupted job whose unwinding outlived the foreground
+            // transition (handleWillEnterForeground saw activeJob set).
+            if UIApplication.shared.applicationState == .active, let request = interruptedRequest {
+                interruptedRequest = nil
+                enqueue(request)
+            }
             startNextIfIdle()
         }
 
@@ -190,6 +248,13 @@ final class DepthConversionManager {
         } catch {
             if isCancellation(error) {
                 AppLogger.videoCache.info("Depth conversion cancelled for \(request.videoIdentity, privacy: .private)")
+            } else if interruptedRequest?.videoIdentity == request.videoIdentity
+                || UIApplication.shared.applicationState != .active {
+                // The background HEVC-encoder kill can surface as a writer
+                // failure before (or instead of) our cancellation — treat it
+                // as the interruption it is: restart on foreground, no alert.
+                AppLogger.videoCache.notice("Depth conversion interrupted by backgrounding for \(request.videoIdentity, privacy: .private): \(error.localizedDescription, privacy: .public)")
+                interruptedRequest = request
             } else {
                 AppLogger.videoCache.error("Depth conversion failed for \(request.videoIdentity, privacy: .private): \(error.localizedDescription, privacy: .public)")
                 lastError = FailureEvent(

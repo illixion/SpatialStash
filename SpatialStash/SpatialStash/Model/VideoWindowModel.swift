@@ -437,8 +437,14 @@ final class VideoWindowModel {
                 guard let self, !Task.isCancelled, self.video.stashId == identity else { return }
                 let manager = DepthConversionManager.shared
 
-                guard manager.isProcessing(videoIdentity: identity) else {
-                    if DepthCacheStore.entry(videoIdentity: identity) != nil {
+                // willRestart covers the gap while a conversion interrupted by
+                // app backgrounding waits to restart on foreground.
+                guard manager.isProcessing(videoIdentity: identity) || manager.willRestart(videoIdentity: identity) else {
+                    // Strict lookup: only the entry THIS conversion produced
+                    // counts. The lenient entry() would find an older model's
+                    // cache after a failed conversion and auto-engage it over
+                    // the failure alert.
+                    if DepthCacheStore.engageEntry(videoIdentity: identity) != nil {
                         // Completed. Engage if still watching plain 2D (the
                         // ready pill covers windows that moved on).
                         if !engagedProgressively, self.canAutoEngageProgressive3D {

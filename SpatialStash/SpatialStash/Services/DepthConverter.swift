@@ -725,7 +725,12 @@ extension DepthConverter {
         /// `lastAvailable` is the newest processed frame index.
         private func emit(center c: Int, lastAvailable: Int) throws {
             guard let writerInput, let adaptor, let pool = adaptor.pixelBufferPool else {
-                throw DepthConversionError.writerInitFailed("Writer not ready")
+                // A nil adaptor pool usually means the writer already failed —
+                // most commonly the hardware HEVC encoder session invalidated
+                // by app backgrounding (the manager restarts such jobs).
+                let detail = writer?.error?.localizedDescription
+                    ?? "Writer not ready (status \(writer?.status.rawValue ?? -1))"
+                throw DepthConversionError.writerInitFailed(detail)
             }
 
             // Window ±2 truncated at cuts: j joins iff no cutBefore flag lies
