@@ -53,8 +53,8 @@ enum Pseudo3DDiagnostics {
     static let useStaticTestPattern = false
 }
 
-/// CPU mirror of the Metal `VideoStereoUniforms` struct (8 floats + 2 float2s;
-/// the SIMD2s sit at offsets 32/40, matching Metal's float2 alignment).
+/// CPU mirror of the Metal `VideoStereoUniforms` struct (8 floats, 2 float2s at
+/// offsets 32/40 matching Metal's float2 alignment, then 2 more floats).
 private struct VideoStereoUniforms {
     var brightness: Float
     var contrast: Float
@@ -66,6 +66,8 @@ private struct VideoStereoUniforms {
     var useDepth: Float
     var depthUVScale: SIMD2<Float>
     var depthUVOffset: SIMD2<Float>
+    var depthValueScale: Float
+    var depthValueBias: Float
 }
 
 struct Pseudo3DVideoPlayerView: View {
@@ -77,6 +79,8 @@ struct Pseudo3DVideoPlayerView: View {
     var onVideoSizeKnown: ((CGSize) -> Void)? = nil
     var visualAdjustments: VisualAdjustments = VisualAdjustments()
     var settings: Pseudo3DSettings = .default
+    /// Realtime inference vs. pre-processed cached depth.
+    var depthMode: Pseudo3DDepthMode = .realtime
     var isFlipped: Bool = false
     var loopController: VideoLoopController? = nil
     var playbackModel: VideoWindowModel? = nil
@@ -99,7 +103,7 @@ struct Pseudo3DVideoPlayerView: View {
                 engine.onPlaybackError = onPlaybackError
                 content.add(engine.makeVideoEntity())
                 engine.observeVideoSize(content: content)
-                engine.load(url: videoURL, roomActive: isRoomActive)
+                engine.load(url: videoURL, roomActive: isRoomActive, depthMode: depthMode)
             } update: { content in
                 // Fit the video plane to the window (VideoPlayerComponent's screen
                 // defaults to ~2× the window otherwise).
@@ -122,7 +126,10 @@ struct Pseudo3DVideoPlayerView: View {
             )
         }
         .onChange(of: videoURL) { _, newURL in
-            engine.load(url: newURL, roomActive: isRoomActive)
+            engine.load(url: newURL, roomActive: isRoomActive, depthMode: depthMode)
+        }
+        .onChange(of: depthMode) { _, newMode in
+            engine.setDepthMode(newMode)
         }
         .onAppear {
             engine.bindCommands(loopController: loopController, playbackModel: playbackModel)
@@ -192,6 +199,9 @@ final class Pseudo3DStereoEngine {
     private var visualAdjustments = VisualAdjustments()
     private var settings = Pseudo3DSettings.default
     private var isFlipped = false
+    /// Where depth comes from: realtime inference (30fps) or a pre-processed
+    /// cache entry (60fps, exact PTS sync). Changing it reloads the pump.
+    private var depthMode: Pseudo3DDepthMode = .realtime
 
     // A-B loop
     private var loopA: Double?
@@ -347,13 +357,35 @@ final class Pseudo3DStereoEngine {
 
     var currentTime: Double { player?.currentTime().seconds ?? 0 }
 
-    func load(url: URL, roomActive: Bool) {
+    /// Switch depth mode; reloads the current video when it actually changes
+    /// (the pump's depth source and tick rate are fixed at load time).
+    func setDepthMode(_ mode: Pseudo3DDepthMode) {
+        guard depthMode != mode else { return }
+        depthMode = mode
+        if let url = loadedURL {
+            loadedURL = nil
+            load(url: url, roomActive: isRoomActive)
+        }
+    }
+
+    func load(url: URL, roomActive: Bool, depthMode requestedMode: Pseudo3DDepthMode? = nil) {
+        if let requestedMode { depthMode = requestedMode }
         guard loadedURL != url else { return }
 
-        // Fake-3D requires a depth model — there is no heuristic fallback. If
-        // none is available (e.g. a restored window whose model was since
+        // Cached mode plays back baked depth and needs no model; resolve its
+        // entry up front (a missing/deleted cache falls back to realtime).
+        var cacheEntry: DepthCacheStore.Entry?
+        if case .cached(let videoIdentity) = depthMode {
+            cacheEntry = DepthCacheStore.entry(videoIdentity: videoIdentity)
+            if cacheEntry == nil {
+                AppLogger.videoWindow.warning("Depth cache entry missing for \(videoIdentity, privacy: .private); falling back to realtime")
+            }
+        }
+
+        // Fake-3D requires real depth — there is no heuristic fallback. Without
+        // a cache entry or a model (e.g. a restored window whose model was since
         // deleted), fall back to the flat player rather than warping heuristically.
-        guard Pseudo3DDiagnostics.useStaticTestPattern || CoreMLDepthProvider.hasAvailableModel() else {
+        guard Pseudo3DDiagnostics.useStaticTestPattern || cacheEntry != nil || CoreMLDepthProvider.hasAvailableModel() else {
             Task { @MainActor in self.onPlaybackError?() }
             return
         }
@@ -423,11 +455,21 @@ final class Pseudo3DStereoEngine {
         let sizeCallback: @Sendable (CGSize) -> Void = { [weak self] size in
             Task { @MainActor in self?.onVideoSizeKnown?(size) }
         }
+        // Cached depth: 60fps warp of pre-computed PTS-matched depth, no ANE.
+        // Realtime: 30fps, synchronous inference gates each tick anyway.
+        let depthSource: PumpDepthSource?
+        if let cacheEntry {
+            depthSource = CachedDepthSource(entry: cacheEntry, device: renderer.device)
+        } else {
+            depthSource = RealtimeDepthSource(device: renderer.device)
+        }
         let pump = StereoPump(
             videoRenderer: videoRenderer,
             output: output,
             renderer: renderer,
             startHostTime: CACurrentMediaTime(),
+            depthSource: depthSource,
+            frameInterval: cacheEntry != nil ? 1.0 / 60.0 : 1.0 / 30.0,
             onVideoSizeKnown: sizeCallback
         )
         pump.updateConfig(makePumpConfig())
@@ -566,18 +608,26 @@ final class StereoPump: @unchecked Sendable {
     private var eyeDepthTextures: [MTLTexture?] = [nil, nil]
     /// Converts the BGRA warp output into the compositor's native 420v format.
     private let transferSession: VTPixelTransferSession
-    /// Core ML monocular depth (nil when no model is bundled → heuristic warp).
-    private let depthProvider: CoreMLDepthProvider?
+    /// Per-frame depth: realtime inference or PTS-matched cached depth (nil →
+    /// heuristic warp only, e.g. a restored window whose model vanished).
+    private let depthSource: PumpDepthSource?
     private var lastReportedSize: CGSize?
+    /// When the depth source last transitioned unavailable → available; drives
+    /// the flat→3D strength ramp in flatten mode (cached seek gaps, startup).
+    private var depthResumeTime: CFTimeInterval?
 
     private let configLock = NSLock()
     private var config = Config()
 
     private let signposter = AppLogger.pseudo3DSignposter
 
-    /// 30 fps is ample for the fake-3D effect and halves GPU load vs. display
-    /// rate; the pump only enqueues when a genuinely new decoded frame exists.
-    private let frameInterval: Double = 1.0 / 30.0
+    /// Tick rate. Realtime mode: 30fps — synchronous inference gates each tick
+    /// anyway, and this halves GPU load. Cached mode: 60fps — the warp is only
+    /// a few ms, so the pump follows the source up to 60. Either way a tick
+    /// only enqueues when a genuinely new decoded frame exists.
+    private let frameInterval: Double
+    /// Seconds to ramp depth strength back after a flat gap (avoids a 3D "pop").
+    private let depthRampDuration: Double = 0.15
     /// Bounds in-flight eye buffers so a stalled compositor can never make the
     /// pool allocate IOSurfaces without limit.
     private let maxInFlightBuffers = 8
@@ -587,6 +637,8 @@ final class StereoPump: @unchecked Sendable {
         output: AVPlayerItemVideoOutput,
         renderer: MetalImageRenderer,
         startHostTime: CFTimeInterval,
+        depthSource: PumpDepthSource?,
+        frameInterval: Double,
         onVideoSizeKnown: @escaping @Sendable (CGSize) -> Void
     ) {
         self.videoRenderer = videoRenderer
@@ -594,11 +646,12 @@ final class StereoPump: @unchecked Sendable {
         self.renderer = renderer
         self.commandQueue = renderer.device.makeCommandQueue() ?? renderer.commandQueue
         self.startHostTime = startHostTime
+        self.depthSource = depthSource
+        self.frameInterval = frameInterval
         self.onVideoSizeKnown = onVideoSizeKnown
         var session: VTPixelTransferSession?
         VTPixelTransferSessionCreate(allocator: kCFAllocatorDefault, pixelTransferSessionOut: &session)
         self.transferSession = session!
-        self.depthProvider = CoreMLDepthProvider(device: renderer.device)
         CVMetalTextureCacheCreate(nil, nil, renderer.device, nil, &textureCache)
     }
 
@@ -627,6 +680,7 @@ final class StereoPump: @unchecked Sendable {
         // Drain on the pump queue so no tick races teardown.
         queue.async { [weak self] in
             guard let self else { return }
+            depthSource?.invalidate()
             if let textureCache { CVMetalTextureCacheFlush(textureCache, 0) }
             self.bgraPool = nil
             self.outPool = nil
@@ -648,7 +702,7 @@ final class StereoPump: @unchecked Sendable {
         // Tag relative to the synchronizer's zero-based, host-driven timeline so
         // the frame presents immediately and in order.
         let pts = CMTime(seconds: hostTime - startHostTime, preferredTimescale: 90_000)
-        renderAndEnqueue(from: src, cache: textureCache, pts: pts)
+        renderAndEnqueue(from: src, itemTime: itemTime, cache: textureCache, pts: pts)
     }
 
     /// Warp the mono frame into two BGRA eye render targets, convert each to a
@@ -657,7 +711,7 @@ final class StereoPump: @unchecked Sendable {
     /// `recommendedPixelBufferAttributes` — the construction validated on-device.
     /// `CVMutablePixelBuffer` is noncopyable, so the two eye buffers stay local:
     /// borrowed by `transfer`, then consumed by `CVReadOnlyPixelBuffer`.
-    private func renderAndEnqueue(from src: CVPixelBuffer, cache: CVMetalTextureCache, pts: CMTime) {
+    private func renderAndEnqueue(from src: CVPixelBuffer, itemTime: CMTime, cache: CVMetalTextureCache, pts: CMTime) {
         let width = CVPixelBufferGetWidth(src)
         let height = CVPixelBufferGetHeight(src)
         guard width > 0, height > 0,
@@ -676,18 +730,31 @@ final class StereoPump: @unchecked Sendable {
               let rightTex = makeTexture(from: rightBGRA, cache: cache),
               let cmdBuf = commandQueue.makeCommandBuffer() else { return }
 
-        // Compute depth for THIS frame synchronously so the eyes are warped with
-        // a depth map matched to the exact frame being shown — no lag/ghosting
-        // from reusing a stale map. Slow inference just yields fewer rendered
-        // frames (this tick took longer), never a frame/depth mismatch.
+        // Depth matched to THIS exact frame: realtime inference blocks until the
+        // frame's own depth is ready (slow inference just yields fewer frames);
+        // cached mode looks the frame's depth up by presentation time. Either
+        // way, image and depth can never mismatch — no ghosting.
         let depthState = signposter.beginInterval("pump-depth")
-        let depthTex = depthProvider?.depth(for: src)
+        let frameDepth = depthSource?.frameDepth(itemTime: itemTime, frame: src)
         signposter.endInterval("pump-depth", depthState)
 
+        var cfg = currentConfig()
+        if depthSource?.flattensWhenUnavailable == true {
+            // Cached mode: a seek/startup gap renders FLAT (never the heuristic
+            // warp, never stale depth), then depth ramps back in to avoid a pop.
+            if frameDepth == nil {
+                depthResumeTime = nil
+                cfg.depthStrength = 0
+            } else {
+                let now = CACurrentMediaTime()
+                let since = depthResumeTime ?? { depthResumeTime = now; return now }()
+                cfg.depthStrength *= Float(min(1, (now - since) / depthRampDuration))
+            }
+        }
+
         let warpState = signposter.beginInterval("pump-warp")
-        let cfg = currentConfig()
-        encodeEye(into: leftTex, source: srcTexture, depth: depthTex, eyeSign: 1.0, config: cfg, commandBuffer: cmdBuf)
-        encodeEye(into: rightTex, source: srcTexture, depth: depthTex, eyeSign: -1.0, config: cfg, commandBuffer: cmdBuf)
+        encodeEye(into: leftTex, source: srcTexture, depth: frameDepth, eyeSign: 1.0, config: cfg, commandBuffer: cmdBuf)
+        encodeEye(into: rightTex, source: srcTexture, depth: frameDepth, eyeSign: -1.0, config: cfg, commandBuffer: cmdBuf)
         cmdBuf.commit()
         // Safe here: this runs on the background pump queue, never main. The warp
         // must complete before VTPixelTransferSession reads the BGRA surfaces.
@@ -756,20 +823,11 @@ final class StereoPump: @unchecked Sendable {
     private func encodeEye(
         into dest: MTLTexture,
         source: MTLTexture,
-        depth: MTLTexture?,
+        depth: PumpFrameDepth?,
         eyeSign: Float,
         config: Config,
         commandBuffer: MTLCommandBuffer
     ) {
-        // Depth is inferred on a `.scaleFit` letterbox of the frame; remap frame
-        // UVs into the content region (identity when there's no depth map).
-        let depthUV = depth.map {
-            CoreMLDepthProvider.letterboxUVTransform(
-                videoWidth: source.width, videoHeight: source.height,
-                depthWidth: $0.width, depthHeight: $0.height
-            )
-        } ?? (scale: SIMD2<Float>(1, 1), offset: SIMD2<Float>(0, 0))
-
         var uniforms = VideoStereoUniforms(
             brightness: config.brightness,
             contrast: config.contrast,
@@ -779,8 +837,10 @@ final class StereoPump: @unchecked Sendable {
             eyeSign: eyeSign,
             mirror: config.mirror ? 1.0 : 0.0,
             useDepth: depth != nil ? 1.0 : 0.0,
-            depthUVScale: depthUV.scale,
-            depthUVOffset: depthUV.offset
+            depthUVScale: depth?.uvScale ?? SIMD2(1, 1),
+            depthUVOffset: depth?.uvOffset ?? SIMD2(0, 0),
+            depthValueScale: depth?.valueScale ?? 1,
+            depthValueBias: depth?.valueBias ?? 0
         )
 
         // With a real depth map: occlusion-correct depth-displaced mesh. Without
@@ -803,7 +863,7 @@ final class StereoPump: @unchecked Sendable {
             encoder.setDepthStencilState(renderer.pseudo3DMeshDepthState)
             encoder.setVertexBuffer(renderer.pseudo3DGridPositions, offset: 0, index: 0)
             encoder.setVertexBytes(&uniforms, length: MemoryLayout<VideoStereoUniforms>.size, index: 1)
-            encoder.setVertexTexture(depth, index: 0)
+            encoder.setVertexTexture(depth.texture, index: 0)
             encoder.setFragmentTexture(source, index: 0)
             encoder.setFragmentBytes(&uniforms, length: MemoryLayout<VideoStereoUniforms>.size, index: 0)
             encoder.drawIndexedPrimitives(

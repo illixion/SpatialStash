@@ -117,6 +117,23 @@ enum DepthCacheStore {
         return Entry(directory: dir, meta: meta)
     }
 
+    /// The completed entry for a video regardless of which model produced it:
+    /// the currently selected model's entry when present, else any completed
+    /// current-version entry. Converted depth outlives model deletion — the
+    /// depth is baked, so playback doesn't need the model anymore.
+    static func entry(videoIdentity: String) -> Entry? {
+        if let model = CoreMLDepthProvider.resolvedModelName(),
+           let preferred = entry(videoIdentity: videoIdentity, modelName: model) {
+            return preferred
+        }
+        return allEntries().first {
+            $0.meta.completed
+                && $0.meta.version == pipelineVersion
+                && $0.meta.videoIdentity == videoIdentity
+                && FileManager.default.fileExists(atPath: $0.depthVideoURL.path)
+        }
+    }
+
     /// All entries with readable metadata (any version, including stale ones),
     /// for the Settings management list.
     static func allEntries() -> [Entry] {

@@ -13,6 +13,16 @@
 
 import Foundation
 
+/// How fake-3D gets its depth: live per-frame inference (30fps, instant) or a
+/// pre-processed DepthCacheStore entry (60fps, exact-frame sync, no ANE load).
+/// Not persisted — resolved each time the user engages Convert to 3D.
+enum Pseudo3DDepthMode: Equatable {
+    case realtime
+    /// The identity is the key DepthCacheStore entries were converted under
+    /// (stash ID / local-file identity).
+    case cached(videoIdentity: String)
+}
+
 struct Pseudo3DSettings: Codable, Hashable {
     /// Max per-eye horizontal disparity in UV space (fraction of frame width).
     /// Defaults to the Subtle preset: the *angular* separation the eyes see

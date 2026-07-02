@@ -184,6 +184,12 @@ struct VideoStereoUniforms {
     // frame UV lives at uv * scale + offset; identity when aspects match.
     float2 depthUVScale;
     float2 depthUVOffset;
+    // Maps the stored depth sample to display-normalized depth (near≈1):
+    // d = sample * valueScale + valueBias. Identity (1, 0) for realtime depth;
+    // cached depth bakes each frame's encode range + the lookahead-smoothed
+    // display range into this per-frame affine.
+    float depthValueScale;
+    float depthValueBias;
 };
 
 static inline float pseudo3DHeuristicDepth(texture2d<float> tex, sampler s, float2 uv) {
@@ -216,7 +222,8 @@ fragment float4 videoPseudo3DEyeFragmentShader(
     // unreachable — a real depth map always takes the mesh-warp path — but is
     // kept consistent with videoStereoMeshVertex's letterbox remap.)
     float depth = u.useDepth > 0.5
-        ? saturate(depthTex.sample(texSampler, uv * u.depthUVScale + u.depthUVOffset).r)
+        ? saturate(depthTex.sample(texSampler, uv * u.depthUVScale + u.depthUVOffset).r
+                   * u.depthValueScale + u.depthValueBias)
         : pseudo3DHeuristicDepth(tex, texSampler, uv);
     // Near objects (depth high) must get CROSSED disparity to read as "in front":
     // the left eye sees them shifted right, the right eye left. That means
@@ -266,7 +273,9 @@ vertex MeshVertexOut videoStereoMeshVertex(
     // depth was inferred on the unmirrored frame, so the letterbox remap applies
     // after the flip.
     float2 duv = uv * u.depthUVScale + u.depthUVOffset;
-    float depth = saturate(depthTex.sample(depthSampler, duv, level(0)).r); // near≈1
+    // near≈1 after the per-frame value mapping (identity for realtime depth)
+    float depth = saturate(depthTex.sample(depthSampler, duv, level(0)).r
+                           * u.depthValueScale + u.depthValueBias);
     float disparity = (depth - u.convergence) * u.depthStrength;
 
     float ndcX = grid.x * 2.0 - 1.0 + u.eyeSign * disparity * 2.0;

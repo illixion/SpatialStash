@@ -21,6 +21,7 @@
  still builds and runs without the (large) model asset.
  */
 
+import CoreMedia
 import CoreML
 import CoreVideo
 import Metal
@@ -33,6 +34,60 @@ protocol DepthProvider: AnyObject {
     /// its depth is ready — no lag/ghosting from reusing a stale map. Under slow
     /// inference the pump simply renders fewer frames rather than mismatching.
     func depth(for pixelBuffer: CVPixelBuffer) -> MTLTexture?
+}
+
+/// Everything the warp needs to use a depth map for one frame.
+struct PumpFrameDepth {
+    let texture: MTLTexture
+    /// Letterbox UV transform (frame UV → depth content region).
+    let uvScale: SIMD2<Float>
+    let uvOffset: SIMD2<Float>
+    /// Stored sample → display depth affine (identity for realtime inference;
+    /// cached depth bakes its per-frame encode + display ranges here).
+    let valueScale: Float
+    let valueBias: Float
+    /// Display-space median depth (auto-convergence); nil when unknown.
+    let median: Float?
+}
+
+/// StereoPump's per-frame depth supplier. Implementations are called only on
+/// the pump queue (including `invalidate`, from the stop-drain block).
+protocol PumpDepthSource: AnyObject {
+    /// Depth for the frame with presentation time `itemTime`, or nil when none
+    /// is available right now (inference failure / cache seek gap).
+    func frameDepth(itemTime: CMTime, frame: CVPixelBuffer) -> PumpFrameDepth?
+    /// True when missing depth should render FLAT (cached mode: a seek gap must
+    /// not fall back to the different-looking heuristic warp); false to use the
+    /// heuristic (realtime mode: an isolated inference hiccup).
+    var flattensWhenUnavailable: Bool { get }
+    /// Release decode/GPU resources; the pump is shutting down.
+    func invalidate()
+}
+
+/// Realtime source: synchronous same-frame Core ML inference (the 30fps path).
+final class RealtimeDepthSource: PumpDepthSource, @unchecked Sendable {
+    private let provider: CoreMLDepthProvider
+
+    init?(device: MTLDevice) {
+        guard let provider = CoreMLDepthProvider(device: device) else { return nil }
+        self.provider = provider
+    }
+
+    let flattensWhenUnavailable = false
+
+    func frameDepth(itemTime: CMTime, frame: CVPixelBuffer) -> PumpFrameDepth? {
+        guard let texture = provider.depth(for: frame) else { return nil }
+        let uv = CoreMLDepthProvider.letterboxUVTransform(
+            videoWidth: CVPixelBufferGetWidth(frame), videoHeight: CVPixelBufferGetHeight(frame),
+            depthWidth: texture.width, depthHeight: texture.height
+        )
+        return PumpFrameDepth(
+            texture: texture, uvScale: uv.scale, uvOffset: uv.offset,
+            valueScale: 1, valueBias: 0, median: nil
+        )
+    }
+
+    func invalidate() {}
 }
 
 /// CPU mirror of the Metal `DepthStabilizeParams` struct (int, 3 floats, uint).

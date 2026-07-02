@@ -320,6 +320,11 @@ final class VideoWindowModel {
     /// (there is no heuristic fallback), so the sheet gates first use.
     var showDepthModelSetup = false
 
+    /// Where fake-3D gets its depth: realtime inference (30fps, instant) or a
+    /// pre-processed cache entry (60fps, exact-frame sync). Resolved when the
+    /// user engages Convert to 3D.
+    var pseudo3DDepthMode: Pseudo3DDepthMode = .realtime
+
     /// ViewMode "Convert to 3D" entry point. Engages fake-3D when a depth model
     /// is installed; otherwise opens the setup sheet to download/choose one.
     func requestPseudo3D() {
