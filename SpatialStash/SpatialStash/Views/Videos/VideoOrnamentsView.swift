@@ -322,28 +322,18 @@ struct VideoOrnamentsView: View {
             // Pause auto-hide + flag chrome open (recedes fake-3D so this menu
             // isn't occluded), same pattern as the More menu.
             Group {
-            Button {
+            // The three modes behave like a radio group: exactly one carries
+            // the checkmark, selecting another switches directly (each engage
+            // path turns the other modes off), and re-selecting the active
+            // one is a no-op — leaving a mode means picking a different one.
+            modeButton("2D", mode: .flat) {
                 windowModel.set2DMode()
-            } label: {
-                HStack {
-                    Text("2D")
-                    if !windowModel.shouldUse3DMode {
-                        Image(systemName: "checkmark")
-                    }
-                }
             }
 
             Divider()
 
-            Button {
+            modeButton("3D", mode: .stereoscopic) {
                 Task { await windowModel.enable3DMode() }
-            } label: {
-                HStack {
-                    Text("3D")
-                    if windowModel.shouldUse3DMode {
-                        Image(systemName: "checkmark")
-                    }
-                }
             }
 
             if windowModel.shouldUse3DMode {
@@ -360,19 +350,8 @@ struct VideoOrnamentsView: View {
             // pre-processed cached depth. Only for AVFoundation-decodable sources.
             Divider()
 
-            Button {
-                if windowModel.shouldUsePseudo3D {
-                    windowModel.disablePseudo3D()
-                } else {
-                    windowModel.requestPseudo3D()
-                }
-            } label: {
-                HStack {
-                    Text("Convert to 3D (Beta)")
-                    if windowModel.shouldUsePseudo3D {
-                        Image(systemName: "checkmark")
-                    }
-                }
+            modeButton("Convert to 3D (Beta)", mode: .pseudo3D) {
+                windowModel.requestPseudo3D()
             }
             .disabled(windowModel.playbackRenderer != .nativeMetal)
 
@@ -399,11 +378,22 @@ struct VideoOrnamentsView: View {
                     depthButton("Medium", .medium)
                     depthButton("Strong", .strong)
                 }
+            }
 
-                // Switch the monocular depth model, or download a missing one
-                // (higher quality than the built-in heuristic). Applies on the
-                // next fake-3D video opened.
-                depthModelMenu
+            // Depth-model pickers, one per pipeline, shown whenever fake-3D
+            // is available. Real-Time live-reloads a playing fake-3D video;
+            // Pre-Process picks the model future conversions (and the engage
+            // flow's cache lookup) use — changing it here means the next
+            // Convert to 3D offers a fresh conversion with that model.
+            if windowModel.playbackRenderer == .nativeMetal {
+                depthModelMenu(
+                    "Depth Model (Real-Time)",
+                    preference: appModel.realtimeDepthModelName
+                ) { appModel.realtimeDepthModelName = $0 }
+                depthModelMenu(
+                    "Depth Model (Pre-Process)",
+                    preference: appModel.preprocessDepthModelName
+                ) { appModel.preprocessDepthModelName = $0 }
             }
             }
             .onAppear { chromeMenu(opened: true) }
@@ -448,30 +438,58 @@ struct VideoOrnamentsView: View {
         }
     }
 
-    /// Effective real-time model shown as selected: the explicit preference if
-    /// it's installed, otherwise the first installed model (what findModelURL
-    /// loads).
-    private var effectiveDepthModelName: String {
-        let pref = appModel.realtimeDepthModelName
-        if !pref.isEmpty, depthModels.installedNames.contains(pref) { return pref }
+    /// The three window viewing modes, mutually exclusive by construction
+    /// (shouldUsePseudo3D already excludes shouldUse3DMode).
+    private enum ViewMode {
+        case flat, stereoscopic, pseudo3D
+    }
+
+    private var currentViewMode: ViewMode {
+        if windowModel.shouldUse3DMode { return .stereoscopic }
+        if windowModel.shouldUsePseudo3D { return .pseudo3D }
+        return .flat
+    }
+
+    /// Radio-style mode item: checkmark on the active mode only; selecting
+    /// the already-active mode does nothing.
+    private func modeButton(_ title: String, mode: ViewMode, action: @escaping () -> Void) -> some View {
+        Button {
+            guard currentViewMode != mode else { return }
+            action()
+        } label: {
+            HStack {
+                Text(title)
+                if currentViewMode == mode {
+                    Image(systemName: "checkmark")
+                }
+            }
+        }
+    }
+
+    /// Effective model shown as selected for a role: the explicit preference
+    /// if it's installed, otherwise the first installed model (what
+    /// findModelURL loads).
+    private func effectiveDepthModelName(preference: String) -> String {
+        if !preference.isEmpty, depthModels.installedNames.contains(preference) { return preference }
         return depthModels.installedNames.first ?? ""
     }
 
-    /// Depth-model submenu: pick among installed models, and download any offered
-    /// variant that isn't installed yet. Switches the REAL-TIME model — that's
-    /// what live-reloads the playing video; the pre-process model is picked in
-    /// Settings → Display. (Only shown while fake-3D is active, which already
-    /// requires an installed model — so there's no heuristic entry.)
+    /// Depth-model submenu for one role: pick among installed models, and
+    /// download any offered variant that isn't installed yet.
     @ViewBuilder
-    private var depthModelMenu: some View {
-        Menu("Depth Model (Real-Time)") {
+    private func depthModelMenu(
+        _ title: String,
+        preference: String,
+        onSelect: @escaping (String) -> Void
+    ) -> some View {
+        Menu(title) {
             ForEach(depthModels.installedNames, id: \.self) { name in
                 Button {
-                    appModel.realtimeDepthModelName = name
+                    onSelect(name)
                 } label: {
                     HStack {
                         Text(DepthModelManager.displayName(for: name))
-                        if effectiveDepthModelName == name {
+                        if effectiveDepthModelName(preference: preference) == name {
                             Image(systemName: "checkmark")
                         }
                     }

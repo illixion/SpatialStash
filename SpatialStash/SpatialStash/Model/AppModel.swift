@@ -671,6 +671,20 @@ class AppModel {
         }
     }
 
+    /// When true, eligible videos (native-Metal-decodable, not genuinely
+    /// stereoscopic) open with fake-3D already engaged: this video's
+    /// pre-processed cache when the selected pre-process model has one, else
+    /// real-time inference. Requires an installed depth model — with none
+    /// installed videos open flat 2D as usual (no setup sheet is forced).
+    /// Applied by VideoWindowModel once the native renderer is confirmed.
+    var defaultRealtimePseudo3D: Bool {
+        didSet {
+            if defaultRealtimePseudo3D != oldValue {
+                UserDefaults.standard.set(defaultRealtimePseudo3D, forKey: "defaultRealtimePseudo3D")
+            }
+        }
+    }
+
     /// When true, per-image viewing enhancements (spatial 3D, background removal)
     /// are remembered and auto-restored on reopen.
     var rememberImageEnhancements: Bool {
@@ -1057,6 +1071,7 @@ class AppModel {
         let legacyDepthModelName = UserDefaults.standard.string(forKey: "preferredDepthModelName") ?? ""
         let loadedRealtimeDepthModelName = UserDefaults.standard.string(forKey: "realtimeDepthModelName") ?? legacyDepthModelName
         let loadedPreprocessDepthModelName = UserDefaults.standard.string(forKey: "preprocessDepthModelName") ?? legacyDepthModelName
+        let loadedDefaultRealtimePseudo3D = loadBool("defaultRealtimePseudo3D", default: false)
 
         // Load default image viewing mode (default: 2D / mono)
         let loadedDefaultImageViewingMode: DefaultImageViewingMode
@@ -1138,6 +1153,7 @@ class AppModel {
         self.enableStashTranscoding = loadedEnableStashTranscoding
         self.realtimeDepthModelName = loadedRealtimeDepthModelName
         self.preprocessDepthModelName = loadedPreprocessDepthModelName
+        self.defaultRealtimePseudo3D = loadedDefaultRealtimePseudo3D
         self.rememberImageEnhancements = loadedRememberImageEnhancements
         self.autoRestoreSpatial3D = loadedAutoRestoreSpatial3D
         self.fullyImmersive3DMode = loadedFullyImmersive3DMode

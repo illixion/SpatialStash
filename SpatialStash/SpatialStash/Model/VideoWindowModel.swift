@@ -582,8 +582,29 @@ final class VideoWindowModel {
             await MainActor.run {
                 guard let self, self.authenticatedStreamURL == url else { return }
                 self.playbackRenderer = isPlayable ? .nativeMetal : .webKit
+                if isPlayable { self.autoEngagePseudo3DIfPreferred() }
             }
         }
+    }
+
+    /// Settings → "Real-Time 3D for All Videos": engage fake-3D as soon as
+    /// the native renderer is confirmed (runs on open and on every video
+    /// switch), unless this window already has a mode — restored fake-3D or
+    /// genuine stereoscopic. Prefers this video's pre-processed cache (strict
+    /// engageEntry, so a deliberate pre-process model switch isn't silently
+    /// overridden by an old cache), else real-time inference; with no depth
+    /// model installed it stays 2D silently — never forces the setup sheet.
+    private func autoEngagePseudo3DIfPreferred() {
+        guard appModel.defaultRealtimePseudo3D,
+              !pseudo3DEnabled, !shouldUse3DMode else { return }
+        if DepthCacheStore.engageEntry(videoIdentity: video.stashId) != nil {
+            pseudo3DDepthMode = .cached(videoIdentity: video.stashId)
+        } else if CoreMLDepthProvider.hasAvailableModel(role: .realtime) {
+            pseudo3DDepthMode = .realtime
+        } else {
+            return
+        }
+        enablePseudo3D()
     }
 
     private func authenticatedURL(_ url: URL) -> URL {

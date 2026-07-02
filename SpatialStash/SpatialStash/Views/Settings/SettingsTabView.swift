@@ -109,7 +109,8 @@ struct SettingsTabView: View {
                         "Pre-Process 3D Depth Model",
                         selection: $appModel.preprocessDepthModelName
                     )
-                    Text("Convert to 3D uses these models: Real-Time for instant playback (fast model recommended), Pre-Process for background conversion (a larger model can be used). Manage installed models under Developer.")
+                    Toggle("Real-Time 3D for All Videos", isOn: $appModel.defaultRealtimePseudo3D)
+                    Text("Convert to 3D uses these models: Real-Time for instant playback (fast model recommended), Pre-Process for background conversion (a larger model can be used). Manage installed models under Developer. With Real-Time 3D for All Videos on, compatible videos open already converted — using this video's pre-processed conversion when available, otherwise real-time.")
                         .font(.caption)
                         .foregroundColor(.secondary)
 
