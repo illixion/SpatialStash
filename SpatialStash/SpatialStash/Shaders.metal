@@ -377,3 +377,92 @@ kernel void depthBlurVEMA(
     }
     emaNext.write(float4(out, 0.0, 0.0, 1.0), gid);
 }
+
+// MARK: - Offline Depth Conversion (per-frame stats + temporal encode)
+//
+// The offline "Convert to 3D" pre-processing pass computes robust per-frame
+// depth statistics on the GPU (min/max reduction feeding a 256-bin histogram
+// for percentiles/median), then encodes a lookahead-smoothed depth frame into
+// the cache video's luma plane. Raw model output has an arbitrary per-frame
+// scale, so all stats are in raw units; DepthConverter turns them into a
+// temporally stable display mapping in its post-pass.
+
+/// One (min, max) pair per 16×16 threadgroup; the CPU folds the partials.
+/// Must be dispatched with threadsPerThreadgroup = 16×16 (256 threads).
+kernel void depthMinMaxReduce(
+    texture2d<float, access::read> src [[texture(0)]],
+    device float2 *partials            [[buffer(0)]],
+    uint2 gid  [[thread_position_in_grid]],
+    uint  tix  [[thread_index_in_threadgroup]],
+    uint2 tgid [[threadgroup_position_in_grid]],
+    uint2 tgPerGrid [[threadgroups_per_grid]]
+) {
+    threadgroup float sMin[256];
+    threadgroup float sMax[256];
+    float lo = INFINITY;
+    float hi = -INFINITY;
+    if (gid.x < src.get_width() && gid.y < src.get_height()) {
+        const float d = src.read(gid).r;
+        if (isfinite(d)) { lo = d; hi = d; }
+    }
+    sMin[tix] = lo;
+    sMax[tix] = hi;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint stride = 128; stride > 0; stride >>= 1) {
+        if (tix < stride) {
+            sMin[tix] = min(sMin[tix], sMin[tix + stride]);
+            sMax[tix] = max(sMax[tix], sMax[tix + stride]);
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (tix == 0) {
+        partials[tgid.y * tgPerGrid.x + tgid.x] = float2(sMin[0], sMax[0]);
+    }
+}
+
+struct DepthHistogramParams {
+    float lo;      // histogram range start (raw units)
+    float invSpan; // 1 / (hi - lo)
+};
+
+kernel void depthHistogram256(
+    texture2d<float, access::read> src [[texture(0)]],
+    device atomic_uint *bins           [[buffer(0)]],
+    constant DepthHistogramParams &p   [[buffer(1)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    if (gid.x >= src.get_width() || gid.y >= src.get_height()) { return; }
+    const float d = src.read(gid).r;
+    if (!isfinite(d)) { return; }
+    const uint bin = uint(clamp((d - p.lo) * p.invSpan, 0.0f, 0.999999f) * 256.0f);
+    atomic_fetch_add_explicit(&bins[bin], 1u, memory_order_relaxed);
+}
+
+struct DepthEncodeParams {
+    float rangeLo;      // center frame's robust lo (raw units)
+    float rangeInvSpan; // 1 / (hi - lo)
+    float weights[5];   // temporal window weights, normalized; 0 for unused slots
+};
+
+/// Weighted temporal average of up to 5 blurred raw-depth maps (the center
+/// frame ±2, truncated at scene cuts), normalized into the center frame's
+/// robust range and written to the cache video's luma plane. Unused slots must
+/// still be bound (weight 0).
+kernel void depthTemporalEncode(
+    array<texture2d<float, access::sample>, 5> maps [[texture(0)]],
+    texture2d<float, access::write> outLuma [[texture(5)]],
+    constant DepthEncodeParams &p [[buffer(0)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    const uint W = outLuma.get_width();
+    const uint H = outLuma.get_height();
+    if (gid.x >= W || gid.y >= H) { return; }
+
+    constexpr sampler s(mag_filter::linear, min_filter::linear, address::clamp_to_edge);
+    const float2 uv = (float2(gid) + 0.5) / float2(W, H);
+    float acc = 0.0;
+    for (uint i = 0; i < 5; ++i) {
+        acc += p.weights[i] * maps[i].sample(s, uv).r;
+    }
+    outLuma.write(float4(saturate((acc - p.rangeLo) * p.rangeInvSpan), 0.0, 0.0, 1.0), gid);
+}

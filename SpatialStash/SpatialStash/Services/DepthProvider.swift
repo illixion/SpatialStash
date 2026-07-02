@@ -36,7 +36,8 @@ protocol DepthProvider: AnyObject {
 }
 
 /// CPU mirror of the Metal `DepthStabilizeParams` struct (int, 3 floats, uint).
-private struct DepthStabilizeParams {
+/// Internal (not private): the offline `DepthConverter` reuses the blur kernels.
+struct DepthStabilizeParams {
     var blurRadius: Int32
     var blurSigma: Float
     var baseAlpha: Float
@@ -49,6 +50,9 @@ final class CoreMLDepthProvider: DepthProvider, @unchecked Sendable {
     private let device: MTLDevice
     private let commandQueue: MTLCommandQueue
     private var textureCache: CVMetalTextureCache?
+    /// Base name of the loaded model (no extension) — identifies which model
+    /// produced a depth cache entry.
+    let modelName: String
 
     // Depth stabilization: a spatial gaussian low-pass band-limits the depth so
     // the coarser warp grid doesn't alias its detail into rippling waves, plus a
@@ -97,6 +101,7 @@ final class CoreMLDepthProvider: DepthProvider, @unchecked Sendable {
         self.request = request
         self.device = device
         self.commandQueue = queue
+        self.modelName = modelURL.deletingPathExtension().lastPathComponent
         self.blurHPipeline = Self.makeComputePipeline(device: device, function: "depthBlurH")
         self.blurVEMAPipeline = Self.makeComputePipeline(device: device, function: "depthBlurVEMA")
         CVMetalTextureCacheCreate(nil, nil, device, nil, &textureCache)
@@ -131,6 +136,12 @@ final class CoreMLDepthProvider: DepthProvider, @unchecked Sendable {
     /// Whether any depth model is available to load. Fake-3D needs one — the
     /// engine uses this to decline (fall back to 2D) rather than warp heuristically.
     static func hasAvailableModel() -> Bool { findModelURL() != nil }
+
+    /// Base name of the model `init?` would load, without loading it. Used to
+    /// key depth cache lookups before spinning up a provider.
+    static func resolvedModelName() -> String? {
+        findModelURL()?.deletingPathExtension().lastPathComponent
+    }
 
     /// Where `.scaleFit` anchors the frame inside the model's input. Vision
     /// doesn't document the padding placement; 0.5 = centered. If on-device
@@ -193,10 +204,36 @@ final class CoreMLDepthProvider: DepthProvider, @unchecked Sendable {
         return compiled
     }
 
-    func depth(for pixelBuffer: CVPixelBuffer) -> MTLTexture? {
-        let inferState = signposter.beginInterval("depth-inference")
+    /// Run the Vision request and return the first observation. One request
+    /// instance per provider — callers must not run concurrently (the realtime
+    /// pump and the offline converter each own their own provider).
+    private func performInference(on pixelBuffer: CVPixelBuffer) -> VNObservation? {
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .up, options: [:])
         try? handler.perform([request])
+        return request.results?.first
+    }
+
+    /// Raw model output for one frame: unstabilized and unnormalized (values in
+    /// the model's own arbitrary per-frame scale). For the offline converter,
+    /// which does its own normalization and temporal smoothing. The texture may
+    /// be a transient view — valid only while `keepAlive` is retained.
+    func inferRawDepth(from pixelBuffer: CVPixelBuffer) -> (texture: MTLTexture, keepAlive: [Any])? {
+        let inferState = signposter.beginInterval("depth-inference")
+        defer { signposter.endInterval("depth-inference", inferState) }
+        switch performInference(on: pixelBuffer) {
+        case let obs as VNPixelBufferObservation:
+            return transientTexture(from: obs.pixelBuffer)
+        case let obs as VNCoreMLFeatureValueObservation:
+            guard let array = obs.featureValue.multiArrayValue,
+                  let texture = rawTexture(from: array) else { return nil }
+            return (texture, [])
+        default:
+            return nil
+        }
+    }
+
+    func depth(for pixelBuffer: CVPixelBuffer) -> MTLTexture? {
+        let inferState = signposter.beginInterval("depth-inference")
 
         // When stabilization will run, the raw texture only needs to survive the
         // stabilize pass's synchronous wait (same call stack), so the pixel-buffer
@@ -205,7 +242,8 @@ final class CoreMLDepthProvider: DepthProvider, @unchecked Sendable {
         // and outlives this call (the warp reads it later), so it must be copied.
         let raw: MTLTexture?
         var keepAlive: [Any] = []
-        if let obs = request.results?.first as? VNPixelBufferObservation {
+        switch performInference(on: pixelBuffer) {
+        case let obs as VNPixelBufferObservation:
             if stabilizeEnabled, stabilizeAvailable,
                let transient = transientTexture(from: obs.pixelBuffer) {
                 raw = transient.texture
@@ -213,10 +251,9 @@ final class CoreMLDepthProvider: DepthProvider, @unchecked Sendable {
             } else {
                 raw = copiedTexture(from: obs.pixelBuffer)
             }
-        } else if let obs = request.results?.first as? VNCoreMLFeatureValueObservation,
-                  let array = obs.featureValue.multiArrayValue {
-            raw = makeTexture(from: array)
-        } else {
+        case let obs as VNCoreMLFeatureValueObservation:
+            raw = obs.featureValue.multiArrayValue.flatMap { makeTexture(from: $0) }
+        default:
             raw = nil
         }
         signposter.endInterval("depth-inference", inferState)
@@ -404,6 +441,45 @@ final class CoreMLDepthProvider: DepthProvider, @unchecked Sendable {
                             withBytes: bytes.baseAddress!, bytesPerRow: width * 2)
         }
         return texture
+    }
+
+    /// MLMultiArray output, raw: upload the model's values verbatim (no min/max
+    /// normalization — the offline converter normalizes with its own temporally
+    /// smoothed range). float16 → r16Float memcpy; float32/double → r32Float.
+    private func rawTexture(from array: MLMultiArray) -> MTLTexture? {
+        let shape = array.shape.map(\.intValue)
+        guard shape.count >= 2 else { return nil }
+        let height = shape[shape.count - 2]
+        let width = shape[shape.count - 1]
+        guard width > 0, height > 0 else { return nil }
+
+        func makeTexture(_ format: MTLPixelFormat, bytes: UnsafeRawPointer, bytesPerRow: Int) -> MTLTexture? {
+            let desc = MTLTextureDescriptor.texture2DDescriptor(
+                pixelFormat: format, width: width, height: height, mipmapped: false
+            )
+            desc.usage = [.shaderRead]
+            guard let texture = device.makeTexture(descriptor: desc) else { return nil }
+            texture.replace(region: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0,
+                            withBytes: bytes, bytesPerRow: bytesPerRow)
+            return texture
+        }
+
+        switch array.dataType {
+        case .float16:
+            return makeTexture(.r16Float, bytes: array.dataPointer, bytesPerRow: width * 2)
+        case .float32:
+            return makeTexture(.r32Float, bytes: array.dataPointer, bytesPerRow: width * 4)
+        case .double:
+            let count = width * height
+            let ptr = array.dataPointer.assumingMemoryBound(to: Double.self)
+            var values = [Float](repeating: 0, count: count)
+            for i in 0..<count { values[i] = Float(ptr[i]) }
+            return values.withUnsafeBytes { bytes in
+                makeTexture(.r32Float, bytes: bytes.baseAddress!, bytesPerRow: width * 4)
+            }
+        default:
+            return nil
+        }
     }
 
     // Minimal IEEE-754 half<->float helpers (avoids a Float16 platform dependency).
