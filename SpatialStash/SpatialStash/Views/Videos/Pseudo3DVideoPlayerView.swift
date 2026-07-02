@@ -288,26 +288,31 @@ final class Pseudo3DStereoEngine {
     }
 
     /// Re-fit once the real video size is known (from the pump's first decoded
-    /// frame). fitVideo runs content-aware from `knownVideoSize`, so the first
-    /// successful pass fixes the size; the brief retry loop only covers the
-    /// mesh having no bounds yet at that instant. Ends by rebuilding the tap
-    /// target, which may have been sized off the placeholder bounds.
+    /// frame) — fitVideo then scales from the video aspect, so the first pass
+    /// fixes the size. The loop afterwards waits for the screen mesh to settle
+    /// at its aspect-correct dims (it reads 1×1 until frames present, with no
+    /// event on the change) and then rebuilds the tap target, which would
+    /// otherwise keep the placeholder square's bounds; on timeout it rebuilds
+    /// anyway (a square target is a harmless superset).
     private func scheduleRefitBurst() {
         refitBurstTask?.cancel()
         refitBurstTask = Task { [weak self] in
-            for _ in 0..<20 {
-                guard let self, !Task.isCancelled else { return }
+            guard let self else { return }
+            let aspect = self.knownVideoSize.map { Float($0.width / max($0.height, 1)) }
+            for _ in 0..<30 {
+                guard !Task.isCancelled else { return }
                 self.refitVideo()
-                if let entity = self.videoEntity {
+                if let entity = self.videoEntity, let aspect {
                     let ext = entity.visualBounds(relativeTo: entity).extents
-                    if ext.x > 1e-4, ext.y > 1e-4 {
-                        self.tapTargetInstalled = false
-                        self.installTapTarget()
-                        return
+                    if ext.x > 1e-4, ext.y > 1e-4, abs(ext.x / ext.y - aspect) < aspect * 0.02 {
+                        break // mesh adopted the video dims
                     }
                 }
                 try? await Task.sleep(for: .milliseconds(100))
             }
+            guard !Task.isCancelled else { return }
+            self.tapTargetInstalled = false
+            self.installTapTarget()
         }
     }
 
@@ -344,26 +349,24 @@ final class Pseudo3DStereoEngine {
               bounds.extents.x > 1e-4, bounds.extents.y > 1e-4 else { return }
         let unscaledX = extents.x / scale
         let unscaledY = extents.y / scale
-        // The component letterboxes the video inside its screen mesh on
-        // transparent bars — and for renderer-backed components the mesh can
-        // stay the 1×1 placeholder square forever (observed on visionOS 26:
-        // VideoSizeDidChange never re-shapes it). Fitting the MESH therefore
-        // fit the square, leaving the visible video undersized in big margins
-        // (worst for tall videos). Fit the video *content* rect inside the
-        // mesh instead; the transparent overflow is clipped by the window.
-        var contentX = unscaledX
-        var contentY = unscaledY
+        // The component's screen mesh reads 1×1 until the first frames
+        // present, then settles at (videoAspect × 1)m — with no fit trigger:
+        // VideoSizeDidChange doesn't fire for renderer-backed components, so
+        // any scale derived from *measured* mesh bounds is computed against
+        // the stale square (observed on visionOS 26: tall videos ended up
+        // undersized, wide ones cropped by ~the aspect ratio, depending on
+        // which formula met the square). Derive the screen dims from the
+        // pump-reported video aspect instead — (a, 1) in mesh-local meters —
+        // and only fall back to measured bounds before the size is known.
+        let target: Float
         if let size = knownVideoSize, size.width > 0, size.height > 0 {
             let videoAspect = Float(size.width / size.height)
-            if videoAspect > unscaledX / unscaledY {
-                contentY = unscaledX / videoAspect
-            } else {
-                contentX = unscaledY * videoAspect
-            }
+            target = min(bounds.extents.x / videoAspect, bounds.extents.y)
+        } else {
+            target = min(bounds.extents.x / unscaledX, bounds.extents.y / unscaledY)
         }
-        let target = min(bounds.extents.x / contentX, bounds.extents.y / contentY)
         guard target.isFinite, target > 1e-4, abs(target - scale) > 0.02 else { return }
-        AppLogger.videoWindow.info("fitVideo: bounds \(bounds.extents.x)x\(bounds.extents.y), mesh \(unscaledX)x\(unscaledY), content \(contentX)x\(contentY), scale \(scale) → \(target)")
+        AppLogger.videoWindow.info("fitVideo: bounds \(bounds.extents.x)x\(bounds.extents.y), mesh \(unscaledX)x\(unscaledY), videoAspect \(self.knownVideoSize.map { Float($0.width / $0.height) } ?? -1), scale \(scale) → \(target)")
         entity.scale = SIMD3<Float>(repeating: target)
     }
 
