@@ -53,7 +53,8 @@ enum Pseudo3DDiagnostics {
     static let useStaticTestPattern = false
 }
 
-/// CPU mirror of the Metal `VideoStereoUniforms` struct (7 contiguous floats).
+/// CPU mirror of the Metal `VideoStereoUniforms` struct (8 floats + 2 float2s;
+/// the SIMD2s sit at offsets 32/40, matching Metal's float2 alignment).
 private struct VideoStereoUniforms {
     var brightness: Float
     var contrast: Float
@@ -63,6 +64,8 @@ private struct VideoStereoUniforms {
     var eyeSign: Float
     var mirror: Float
     var useDepth: Float
+    var depthUVScale: SIMD2<Float>
+    var depthUVOffset: SIMD2<Float>
 }
 
 struct Pseudo3DVideoPlayerView: View {
@@ -758,6 +761,15 @@ final class StereoPump: @unchecked Sendable {
         config: Config,
         commandBuffer: MTLCommandBuffer
     ) {
+        // Depth is inferred on a `.scaleFit` letterbox of the frame; remap frame
+        // UVs into the content region (identity when there's no depth map).
+        let depthUV = depth.map {
+            CoreMLDepthProvider.letterboxUVTransform(
+                videoWidth: source.width, videoHeight: source.height,
+                depthWidth: $0.width, depthHeight: $0.height
+            )
+        } ?? (scale: SIMD2<Float>(1, 1), offset: SIMD2<Float>(0, 0))
+
         var uniforms = VideoStereoUniforms(
             brightness: config.brightness,
             contrast: config.contrast,
@@ -766,7 +778,9 @@ final class StereoPump: @unchecked Sendable {
             convergence: config.convergence,
             eyeSign: eyeSign,
             mirror: config.mirror ? 1.0 : 0.0,
-            useDepth: depth != nil ? 1.0 : 0.0
+            useDepth: depth != nil ? 1.0 : 0.0,
+            depthUVScale: depthUV.scale,
+            depthUVOffset: depthUV.offset
         )
 
         // With a real depth map: occlusion-correct depth-displaced mesh. Without

@@ -174,11 +174,16 @@ struct VideoStereoUniforms {
     float brightness;
     float contrast;
     float saturation;
-    float depthStrength; // max horizontal disparity in UV (fraction of width)
-    float convergence;   // depth mapped to zero parallax (0 = far, 1 = near)
-    float eyeSign;       // +1 = left eye, -1 = right eye
-    float mirror;        // 1 = mirror horizontally (flip), 0 = normal
-    float useDepth;      // 1 = sample real depth from depthTex, 0 = heuristic
+    float depthStrength;  // max horizontal disparity in UV (fraction of width)
+    float convergence;    // depth mapped to zero parallax (0 = far, 1 = near)
+    float eyeSign;        // +1 = left eye, -1 = right eye
+    float mirror;         // 1 = mirror horizontally (flip), 0 = normal
+    float useDepth;       // 1 = sample real depth from depthTex, 0 = heuristic
+    // Maps frame UV into the content region of the depth map. Vision letterboxes
+    // the frame into the model's square input (.scaleFit), so the depth for
+    // frame UV lives at uv * scale + offset; identity when aspects match.
+    float2 depthUVScale;
+    float2 depthUVOffset;
 };
 
 static inline float pseudo3DHeuristicDepth(texture2d<float> tex, sampler s, float2 uv) {
@@ -207,9 +212,11 @@ fragment float4 videoPseudo3DEyeFragmentShader(
     if (u.mirror > 0.5) { uv.x = 1.0 - uv.x; }
 
     // Real Core ML depth when available (normalized inverse depth: near≈1,
-    // far≈0), otherwise the cheap heuristic.
+    // far≈0), otherwise the cheap heuristic. (The useDepth branch is currently
+    // unreachable — a real depth map always takes the mesh-warp path — but is
+    // kept consistent with videoStereoMeshVertex's letterbox remap.)
     float depth = u.useDepth > 0.5
-        ? saturate(depthTex.sample(texSampler, uv).r)
+        ? saturate(depthTex.sample(texSampler, uv * u.depthUVScale + u.depthUVOffset).r)
         : pseudo3DHeuristicDepth(tex, texSampler, uv);
     // Near objects (depth high) must get CROSSED disparity to read as "in front":
     // the left eye sees them shifted right, the right eye left. That means
@@ -255,7 +262,11 @@ vertex MeshVertexOut videoStereoMeshVertex(
     float2 uv = grid;
     if (u.mirror > 0.5) { uv.x = 1.0 - uv.x; }
 
-    float depth = saturate(depthTex.sample(depthSampler, uv, level(0)).r); // near≈1
+    // uv already indexes the source pixel being displayed (post-mirror), and
+    // depth was inferred on the unmirrored frame, so the letterbox remap applies
+    // after the flip.
+    float2 duv = uv * u.depthUVScale + u.depthUVOffset;
+    float depth = saturate(depthTex.sample(depthSampler, duv, level(0)).r); // near≈1
     float disparity = (depth - u.convergence) * u.depthStrength;
 
     float ndcX = grid.x * 2.0 - 1.0 + u.eyeSign * disparity * 2.0;

@@ -88,8 +88,11 @@ final class CoreMLDepthProvider: DepthProvider, @unchecked Sendable {
               let vnModel = try? VNCoreMLModel(for: mlModel) else { return nil }
 
         let request = VNCoreMLRequest(model: vnModel)
-        // The model fixes its own input size; Vision rescales the frame to it.
-        request.imageCropAndScaleOption = .scaleFill
+        // The model fixes its own (square) input size; Vision letterboxes the
+        // frame into it, preserving aspect. `.scaleFill` stretched non-square
+        // video, distorting depth — the warp remaps UVs into the content region
+        // via VideoStereoUniforms.depthUVScale/Offset (see depthUVTransform).
+        request.imageCropAndScaleOption = .scaleFit
 
         self.request = request
         self.device = device
@@ -128,6 +131,29 @@ final class CoreMLDepthProvider: DepthProvider, @unchecked Sendable {
     /// Whether any depth model is available to load. Fake-3D needs one — the
     /// engine uses this to decline (fall back to 2D) rather than warp heuristically.
     static func hasAvailableModel() -> Bool { findModelURL() != nil }
+
+    /// Where `.scaleFit` anchors the frame inside the model's input. Vision
+    /// doesn't document the padding placement; 0.5 = centered. If on-device
+    /// parallax reads vertically offset on non-square video, flip y to 0 (top)
+    /// or 1 (bottom).
+    private static let letterboxAnchor = SIMD2<Float>(0.5, 0.5)
+
+    /// UV transform mapping frame UV → the content region of a `.scaleFit`
+    /// letterboxed depth map: sample depth at `uv * scale + offset`. Identity
+    /// when the aspects already match. Shared by the realtime warp and the
+    /// offline depth converter so cached and live depth agree.
+    static func letterboxUVTransform(
+        videoWidth: Int, videoHeight: Int, depthWidth: Int, depthHeight: Int
+    ) -> (scale: SIMD2<Float>, offset: SIMD2<Float>) {
+        guard videoWidth > 0, videoHeight > 0, depthWidth > 0, depthHeight > 0 else {
+            return (SIMD2(1, 1), SIMD2(0, 0))
+        }
+        let vw = Float(videoWidth), vh = Float(videoHeight)
+        let dw = Float(depthWidth), dh = Float(depthHeight)
+        let s = min(dw / vw, dh / vh)
+        let content = SIMD2(vw * s / dw, vh * s / dh)
+        return (content, (SIMD2(1, 1) - content) * letterboxAnchor)
+    }
 
     /// The managed store, then the app bundle. Documents is intentionally NOT
     /// searched: it's only a drop-off inbox, drained into the store on launch
