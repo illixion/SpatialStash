@@ -11,8 +11,9 @@ set -euo pipefail
 #   ./scripts/push-depth-model.sh path/to/Model.mlpackage     # compiled on-device first launch
 #
 # A precompiled .mlmodelc loads immediately; an .mlpackage is compiled + cached
-# on the device on first launch. Generate a Base .mlpackage with
-# scripts/convert_depth_anything_base.py.
+# on the device on first launch. Generate Small/Base/Large .mlpackages at any
+# resolution with scripts/convert-depth-model.py (handles the fp16-overflow
+# wave artifact via a validated precision ladder).
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONF_FILE="$SCRIPT_DIR/build-signing.conf"
