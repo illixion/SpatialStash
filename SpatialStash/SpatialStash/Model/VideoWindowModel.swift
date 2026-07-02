@@ -362,12 +362,16 @@ final class VideoWindowModel {
     private static let depthReadyPromptTimeout: TimeInterval = 10
 
     /// ViewMode "Convert to 3D" entry point.
-    /// - A completed cache → engage pre-processed playback directly, no prompt.
+    /// - A completed cache from the selected pre-process model → engage
+    ///   pre-processed playback directly, no prompt.
     /// - No model installed (and no cache) → first-run model setup sheet.
     /// - Otherwise → ask Real-time vs Pre-process (unless a conversion for this
     ///   video is already running).
     func requestPseudo3D() {
-        if DepthCacheStore.entry(videoIdentity: video.stashId) != nil {
+        // Engage requires the *selected* pre-process model's cache (a different
+        // model's cache would silently override a deliberate model switch);
+        // engageEntry falls back to any cache only when no model is installed.
+        if DepthCacheStore.engageEntry(videoIdentity: video.stashId) != nil {
             engageCachedPseudo3D()
             return
         }

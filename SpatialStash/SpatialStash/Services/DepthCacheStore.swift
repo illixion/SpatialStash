@@ -134,6 +134,20 @@ enum DepthCacheStore {
         }
     }
 
+    /// The entry the *engage flow* accepts as "already converted": strictly the
+    /// selected pre-process model's entry while a model is installed — so
+    /// switching the pre-process model offers a fresh conversion instead of
+    /// silently reusing another model's baked depth. Only with no installed
+    /// model (nothing to convert with) does it fall back to any completed
+    /// entry, keeping old conversions playable after model deletion. Playback
+    /// lookups stay on the lenient `entry(videoIdentity:)`.
+    static func engageEntry(videoIdentity: String) -> Entry? {
+        if let model = CoreMLDepthProvider.resolvedModelName(role: .preprocess) {
+            return entry(videoIdentity: videoIdentity, modelName: model)
+        }
+        return entry(videoIdentity: videoIdentity)
+    }
+
     /// The still-growing (incomplete) entry for a video — progressive playback
     /// while DepthConversionManager is converting it. Callers must ensure a
     /// conversion is actually running: an *abandoned* partial entry would play

@@ -94,6 +94,16 @@ struct Pseudo3DVideoPlayerView: View {
     @Environment(AppModel.self) private var appModel
     @State private var engine = Pseudo3DStereoEngine()
 
+    /// Distance (points) the video plane is pulled back toward the window
+    /// glass. `.frame(depth: 0, alignment: .front)` pins the slab to the front
+    /// of the window's depth region, which on-device reads ~9cm in front of
+    /// the ornament / window-controls plane. Offsetting the whole assembly
+    /// (slab + its clip volume, via .offset(z:) on the GeometryReader3D, so
+    /// the internal fit math is unaffected) brings the video back to the
+    /// chrome's plane. ~10 points/cm; tune on device — 0 restores the old
+    /// front-of-region placement.
+    private static let videoPlaneZRecess: CGFloat = 90
+
     var body: some View {
         GeometryReader3D { geometry in
             RealityView { content in
@@ -115,10 +125,11 @@ struct Pseudo3DVideoPlayerView: View {
             }
             // Zero-depth slab keeps the video stable (nothing gets re-clipped
             // or culled). frame(depth:) defaults to .center alignment, which
-            // parks the slab at the middle of the window's depth region while
-            // the 2D control bar sits on the front glass — that half-depth gap
-            // was the "Flip3D" recession. Align the slab to .front so the video
-            // plane is coplanar with the chrome.
+            // parks the slab at the middle of the window's depth region — that
+            // half-depth gap was the "Flip3D" recession. Align the slab to
+            // .front; the videoPlaneZRecess offset below then pulls it back to
+            // the ornament/window-controls plane (front of the depth region
+            // measured ~9cm proud of the chrome on-device).
             .frame(depth: 0, alignment: .front)
             // Tapping the video toggles chrome. Targeted to the video entity's
             // tap-target collision (set up once the video size is known).
@@ -128,6 +139,8 @@ struct Pseudo3DVideoPlayerView: View {
                     .onEnded { _ in onToggleUI?() }
             )
         }
+        // Align the video plane with the chrome — see videoPlaneZRecess.
+        .offset(z: -Self.videoPlaneZRecess)
         .onChange(of: videoURL) { _, newURL in
             engine.load(url: newURL, roomActive: isRoomActive, depthMode: depthMode)
         }
@@ -400,8 +413,12 @@ final class Pseudo3DStereoEngine {
         var cacheEntry: DepthCacheStore.Entry?
         if case .cached(let videoIdentity) = depthMode {
             cacheEntry = DepthCacheStore.entry(videoIdentity: videoIdentity)
-            if cacheEntry == nil, DepthConversionManager.shared.isProcessing(videoIdentity: videoIdentity) {
-                cacheEntry = DepthCacheStore.inProgressEntry(videoIdentity: videoIdentity)
+            // A running conversion supersedes an older completed entry (e.g.
+            // re-converting with a newly selected pre-process model): follow
+            // the growing file so playback shows the depth just asked for.
+            if DepthConversionManager.shared.isProcessing(videoIdentity: videoIdentity),
+               let growing = DepthCacheStore.inProgressEntry(videoIdentity: videoIdentity) {
+                cacheEntry = growing
             }
             if cacheEntry == nil {
                 AppLogger.videoWindow.warning("Depth cache entry missing for \(videoIdentity, privacy: .private); falling back to realtime")

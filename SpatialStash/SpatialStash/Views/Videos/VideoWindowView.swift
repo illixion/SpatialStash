@@ -27,6 +27,10 @@ struct VideoWindowView: View {
     /// foreground-active scene.
     @Environment(SceneDelegate.self) private var sceneDelegate: SceneDelegate?
 
+    /// One-shot follow-up after an aspect-lock request: verifies what size the
+    /// system actually granted and re-locks if it was clamped (tall videos).
+    @State private var aspectRelockTask: Task<Void, Never>?
+
     /// Reserved space below the video so the bottom ornament (which floats at the
     /// window's bottom edge) doesn't overlap the video. Larger for fake-3D, whose
     /// two-row ornament is taller and needs more clearance from the video plane.
@@ -35,15 +39,14 @@ struct VideoWindowView: View {
     }
 
     /// Depth offset (points, toward the viewer) applied to the fake-3D chrome.
-    /// Kept at 0 so the ornament stays coplanar with the video AND the visionOS
-    /// window controls — all three on the window's front glass. The video plane
-    /// already sits on that glass because `Pseudo3DVideoPlayerView` pins it with
-    /// `.frame(depth: 0, alignment: .front)`; an earlier 20cm forward push
-    /// (added before that alignment fix) floated the whole ornament out in front
-    /// of that plane, which is what made the chrome "sit apart" from the video
-    /// and cast its silhouette over the window controls below. Tunable: nudge a
-    /// few points forward only if residual stereo pop-out makes the chrome read
-    /// as slightly behind near subjects.
+    /// Kept at 0 so the ornament stays coplanar with the visionOS window
+    /// controls on the window plane; the video is brought back to that same
+    /// plane by `Pseudo3DVideoPlayerView.videoPlaneZRecess` (its front-aligned
+    /// zero-depth slab measured ~9cm proud of the chrome on-device). An earlier
+    /// 20cm forward push here floated the ornament off the controls plane and
+    /// cast its silhouette over the window controls below. Tunable: nudge a few
+    /// points forward only if residual stereo pop-out makes the chrome read as
+    /// slightly behind near subjects.
     private let pseudo3DChromeZOffset: CGFloat = 0
 
     /// Upward lift (points) for the taller two-row fake-3D ornament so its lower
@@ -360,6 +363,7 @@ struct VideoWindowView: View {
             windowModel.start()
         }
         .onDisappear {
+            aspectRelockTask?.cancel()
             windowModel.cleanup()
             restoreWindowResizing()
         }
@@ -437,6 +441,35 @@ struct VideoWindowView: View {
 
         UIView.performWithoutAnimation {
             windowScene.requestGeometryUpdate(.Vision(size: windowSize, resizingRestrictions: .uniform))
+        }
+
+        // visionOS may clamp the granted size — portrait videos hit the
+        // platform's max window height long before landscape ones hit the
+        // width limit. A clamp under .uniform locks in a ratio that no longer
+        // matches the video: permanent letterbox bands between the video and
+        // the chrome, and no room left to enlarge. Read back what was actually
+        // granted and, if it differs, re-lock to a video-true size that fits
+        // inside the grant so the locked ratio always matches the content.
+        aspectRelockTask?.cancel()
+        aspectRelockTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled, let scene = resolvedWindowScene else { return }
+            let granted = scene.coordinateSpace.bounds.size
+            guard granted.width > 0, granted.height > 0,
+                  abs(granted.width - windowSize.width) > 2 || abs(granted.height - windowSize.height) > 2
+            else { return }
+            let availableHeight = max(granted.height - ornamentBottomPadding, 100)
+            let fit = min(granted.width / videoWidth, availableHeight / videoHeight)
+            let corrected = CGSize(
+                width: (videoWidth * fit).rounded(.down),
+                height: (videoHeight * fit + ornamentBottomPadding).rounded(.down)
+            )
+            AppLogger.videoWindow.info(
+                "Aspect lock clamped: requested \(Int(windowSize.width))x\(Int(windowSize.height)), granted \(Int(granted.width))x\(Int(granted.height)); re-locking to \(Int(corrected.width))x\(Int(corrected.height))"
+            )
+            UIView.performWithoutAnimation {
+                scene.requestGeometryUpdate(.Vision(size: corrected, resizingRestrictions: .uniform))
+            }
         }
     }
 
