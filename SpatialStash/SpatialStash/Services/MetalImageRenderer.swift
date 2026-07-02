@@ -49,6 +49,10 @@ final class MetalImageRenderer: Sendable {
     /// Shared grid geometry for the mesh warp ([0,1] positions + triangle
     /// indices). MTLBuffer isn't declared Sendable (unlike the pipeline/device
     /// types), but these are immutable thread-safe GPU resource handles.
+    /// Fake-3D warp grid density (vertices per axis).
+    static let pseudo3DGridColumns = 193
+    static let pseudo3DGridRows = 109
+
     nonisolated(unsafe) let pseudo3DGridPositions: MTLBuffer
     nonisolated(unsafe) let pseudo3DGridIndices: MTLBuffer
     let pseudo3DGridIndexCount: Int
@@ -137,8 +141,10 @@ final class MetalImageRenderer: Sendable {
         // Build the displaced-grid geometry once. A 193×109 vertex grid (192×108
         // cells) gives clean silhouettes without meaningful cost on Apple Silicon.
         // (A denser grid rendered the model's high-frequency depth detail as
-        // visible per-vertex wobble, so it stays moderate.)
-        let nx = 193, ny = 109
+        // visible per-vertex wobble, so it stays moderate. That predates the
+        // edge-aware/lookahead-smoothed cached depth — 257×145 is worth an
+        // on-device retest for that path; revert if silhouette wobble returns.)
+        let nx = Self.pseudo3DGridColumns, ny = Self.pseudo3DGridRows
         var gridPositions = [SIMD2<Float>](); gridPositions.reserveCapacity(nx * ny)
         for j in 0..<ny {
             for i in 0..<nx {

@@ -323,6 +323,7 @@ struct DepthStabilizeParams {
     float baseAlpha;   // temporal blend toward new map where depth is stable
     float motionGain;  // how fast the blend trusts the new map as depth changes
     uint  hasPrev;     // 1 when emaPrev holds a valid previous frame
+    float sigmaLuma;   // joint-bilateral luma sigma (bilateral kernels only)
 };
 
 // The gaussian is separable, so it runs as two 1D passes (H into a scratch
@@ -385,6 +386,94 @@ kernel void depthBlurVEMA(
         out = mix(prev, raw, alpha);
     }
     emaNext.write(float4(out, 0.0, 0.0, 1.0), gid);
+}
+
+// MARK: - Edge-Aware Depth Refinement (joint bilateral, offline conversion)
+//
+// Monocular depth edges rarely align exactly with image edges, and a plain
+// gaussian band-limit smears them further — visible as halos around crisp
+// silhouettes (worst on synthetic/CG content). The joint bilateral filter
+// weights each spatial tap by luma similarity to the center pixel, so depth
+// smooths within regions but snaps to image edges. Run as two 1D passes — an
+// approximation of the true 2D bilateral, standard for this use.
+
+struct DepthGuideParams {
+    // Letterbox transform: guide texel UV → source-video UV (the inverse of the
+    // warp's depthUVScale/Offset), so the guide aligns with the depth map.
+    float2 uvScale;
+    float2 uvOffset;
+};
+
+/// Downsample the video frame into a luma guide at depth resolution, laid out
+/// in the depth map's (letterboxed) UV space.
+kernel void depthGuideLuma(
+    texture2d<float, access::sample> video [[texture(0)]],
+    texture2d<float, access::write>  guide [[texture(1)]],
+    constant DepthGuideParams &p           [[buffer(0)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    const uint W = guide.get_width();
+    const uint H = guide.get_height();
+    if (gid.x >= W || gid.y >= H) { return; }
+    constexpr sampler s(mag_filter::linear, min_filter::linear, address::clamp_to_edge);
+    const float2 uv = (float2(gid) + 0.5) / float2(W, H);
+    const float2 videoUV = clamp((uv - p.uvOffset) / max(p.uvScale, float2(1e-5)), 0.0, 1.0);
+    const float luma = dot(video.sample(s, videoUV).rgb, float3(0.2126, 0.7152, 0.0722));
+    guide.write(float4(luma, 0.0, 0.0, 1.0), gid);
+}
+
+static inline float depthJointBilateral1D(
+    texture2d<float, access::sample> src,
+    texture2d<float, access::sample> guide,
+    sampler s, float2 uv, float2 texelStep, constant DepthStabilizeParams &p
+) {
+    if (p.blurRadius <= 0) { return src.sample(s, uv).r; }
+    const float inv2ss = 1.0 / (2.0 * p.blurSigma * p.blurSigma);
+    const float inv2sl = 1.0 / (2.0 * p.sigmaLuma * p.sigmaLuma);
+    const float g0 = guide.sample(s, uv).r;
+    float sum = 0.0, wsum = 0.0;
+    for (int d = -p.blurRadius; d <= p.blurRadius; ++d) {
+        const float2 tuv = uv + texelStep * float(d);
+        const float dg = guide.sample(s, tuv).r - g0;
+        const float w = exp(-float(d * d) * inv2ss - dg * dg * inv2sl);
+        sum += w * src.sample(s, tuv).r;
+        wsum += w;
+    }
+    return wsum > 1e-5 ? (sum / wsum) : src.sample(s, uv).r;
+}
+
+kernel void depthJointBilateralH(
+    texture2d<float, access::sample> rawDepth [[texture(0)]],
+    texture2d<float, access::sample> guide    [[texture(1)]],
+    texture2d<float, access::write>  dst      [[texture(2)]],
+    constant DepthStabilizeParams &p          [[buffer(0)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    const uint W = dst.get_width();
+    const uint H = dst.get_height();
+    if (gid.x >= W || gid.y >= H) { return; }
+    constexpr sampler s(mag_filter::linear, min_filter::linear, address::clamp_to_edge);
+    const float2 size = float2(W, H);
+    const float2 uv = (float2(gid) + 0.5) / size;
+    const float v = depthJointBilateral1D(rawDepth, guide, s, uv, float2(1.0 / size.x, 0.0), p);
+    dst.write(float4(v, 0.0, 0.0, 1.0), gid);
+}
+
+kernel void depthJointBilateralV(
+    texture2d<float, access::sample> blurredH [[texture(0)]],
+    texture2d<float, access::sample> guide    [[texture(1)]],
+    texture2d<float, access::write>  dst      [[texture(2)]],
+    constant DepthStabilizeParams &p          [[buffer(0)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    const uint W = dst.get_width();
+    const uint H = dst.get_height();
+    if (gid.x >= W || gid.y >= H) { return; }
+    constexpr sampler s(mag_filter::linear, min_filter::linear, address::clamp_to_edge);
+    const float2 size = float2(W, H);
+    const float2 uv = (float2(gid) + 0.5) / size;
+    const float v = depthJointBilateral1D(blurredH, guide, s, uv, float2(0.0, 1.0 / size.y), p);
+    dst.write(float4(v, 0.0, 0.0, 1.0), gid);
 }
 
 // MARK: - Offline Depth Conversion (per-frame stats + temporal encode)

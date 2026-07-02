@@ -222,6 +222,10 @@ struct VisualAdjustmentsPopover: View {
                     defaultValue: Pseudo3DSettings.default.depthStrength,
                     linear: true
                 )
+                // Auto: track the video's smoothed median depth as the
+                // zero-parallax plane (pre-processed fake-3D only).
+                Toggle("Auto Convergence", isOn: pseudo3DSettings.autoConvergence)
+                    .font(.caption)
                 adjustmentSlider(
                     label: "Convergence",
                     value: pseudo3DSettings.convergence,
@@ -229,6 +233,7 @@ struct VisualAdjustmentsPopover: View {
                     defaultValue: Pseudo3DSettings.default.convergence,
                     linear: true
                 )
+                .disabled(pseudo3DSettings.wrappedValue.autoConvergence)
             }
 
             Button("Reset") {
@@ -320,6 +325,8 @@ struct VisualAdjustmentsPopover: View {
                     defaultValue: Pseudo3DSettings.default.depthStrength,
                     linear: true
                 )
+                Toggle("Auto Convergence", isOn: globalPseudo3DSettings.autoConvergence)
+                    .font(.caption)
                 adjustmentSlider(
                     label: "Convergence",
                     value: globalPseudo3DSettings.convergence,
@@ -327,6 +334,7 @@ struct VisualAdjustmentsPopover: View {
                     defaultValue: Pseudo3DSettings.default.convergence,
                     linear: true
                 )
+                .disabled(globalPseudo3DSettings.wrappedValue.autoConvergence)
             }
 
             Button("Reset") {

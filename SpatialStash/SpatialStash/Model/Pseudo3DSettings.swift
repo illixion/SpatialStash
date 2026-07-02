@@ -32,6 +32,11 @@ struct Pseudo3DSettings: Codable, Hashable {
     var depthStrength: Double = 0.008
     /// Depth (0..1) that maps to zero parallax / the window plane.
     var convergence: Double = 0.45
+    /// Track the video's (lookahead-smoothed) median depth as the zero-parallax
+    /// plane, keeping the main subject on the window plane as scenes change.
+    /// Effective only for pre-processed fake-3D (realtime has no median); the
+    /// manual Convergence slider is disabled while on.
+    var autoConvergence: Bool = false
 
     /// Slider bounds for the Adjustments "Stereo Separation" control.
     static let depthStrengthRange: ClosedRange<Double> = 0.0...0.04
@@ -42,8 +47,28 @@ struct Pseudo3DSettings: Codable, Hashable {
     /// global fallback and to enable Reset, mirroring VisualAdjustments).
     var isModified: Bool { self != Pseudo3DSettings.default }
 
-    // Convenience depth presets surfaced in the ornament menu.
+    // Convenience depth presets surfaced in the ornament menu. Preset buttons
+    // must MUTATE strength/convergence rather than replace the struct, so
+    // toggles like autoConvergence survive a preset tap.
     static let subtle = Pseudo3DSettings(depthStrength: 0.008, convergence: 0.45)
     static let medium = Pseudo3DSettings(depthStrength: 0.018, convergence: 0.45)
     static let strong = Pseudo3DSettings(depthStrength: 0.03, convergence: 0.45)
+}
+
+extension Pseudo3DSettings {
+    private enum CodingKeys: String, CodingKey {
+        case depthStrength, convergence, autoConvergence
+    }
+
+    /// Hand-written so previously persisted JSON (UserDefaults global settings,
+    /// per-window VideoWindowValue) keeps decoding as fields are added —
+    /// synthesized Codable would throw on the missing key and silently reset
+    /// users to `.default`.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let defaults = Pseudo3DSettings()
+        depthStrength = try container.decodeIfPresent(Double.self, forKey: .depthStrength) ?? defaults.depthStrength
+        convergence = try container.decodeIfPresent(Double.self, forKey: .convergence) ?? defaults.convergence
+        autoConvergence = try container.decodeIfPresent(Bool.self, forKey: .autoConvergence) ?? defaults.autoConvergence
+    }
 }

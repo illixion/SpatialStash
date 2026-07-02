@@ -90,14 +90,17 @@ final class RealtimeDepthSource: PumpDepthSource, @unchecked Sendable {
     func invalidate() {}
 }
 
-/// CPU mirror of the Metal `DepthStabilizeParams` struct (int, 3 floats, uint).
-/// Internal (not private): the offline `DepthConverter` reuses the blur kernels.
+/// CPU mirror of the Metal `DepthStabilizeParams` struct (int, 3 floats, uint,
+/// float). Internal (not private): the offline `DepthConverter` reuses the
+/// blur/bilateral kernels.
 struct DepthStabilizeParams {
     var blurRadius: Int32
     var blurSigma: Float
     var baseAlpha: Float
     var motionGain: Float
     var hasPrev: UInt32
+    /// Joint-bilateral luma sigma; unused by the plain gaussian kernels.
+    var sigmaLuma: Float = 0
 }
 
 final class CoreMLDepthProvider: DepthProvider, @unchecked Sendable {

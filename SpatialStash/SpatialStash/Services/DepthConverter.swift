@@ -58,6 +58,12 @@ private struct DepthHistogramParams {
     var invSpan: Float
 }
 
+/// CPU mirror of the Metal `DepthGuideParams` struct (2 float2s).
+private struct DepthGuideParams {
+    var uvScale: SIMD2<Float>
+    var uvOffset: SIMD2<Float>
+}
+
 /// CPU mirror of the Metal `DepthEncodeParams` struct (2 floats + float[5]).
 private struct DepthEncodeParams {
     var rangeLo: Float
@@ -95,6 +101,12 @@ final class DepthConverter: @unchecked Sendable {
     /// Display-range smoothing half-width (frames) within a segment (~1s at 30fps
     /// each way). Wider = steadier range, slower adaptation to gradual changes.
     private static let rangeSmoothingRadius = 30
+    /// Edge-aware refinement: joint-bilateral radius/sigmas. The spatial term
+    /// band-limits depth for the warp grid; the luma term pins depth edges to
+    /// image edges (kills silhouette halos on crisp CG content).
+    private static let bilateralRadius: Int32 = 5
+    private static let bilateralSigmaSpatial: Float = 2.5
+    private static let bilateralSigmaLuma: Float = 0.06
     /// Scene-cut detection: total-variation distance between consecutive frames'
     /// normalized depth histograms, plus raw-range jump checks. A cut both
     /// truncates the temporal window and snaps the display range.
@@ -177,8 +189,9 @@ final class DepthConverter: @unchecked Sendable {
         let commandQueue: MTLCommandQueue
         let minMaxPipeline: MTLComputePipelineState
         let histogramPipeline: MTLComputePipelineState
-        let blurHPipeline: MTLComputePipelineState
-        let blurVEMAPipeline: MTLComputePipelineState
+        let guidePipeline: MTLComputePipelineState
+        let bilateralHPipeline: MTLComputePipelineState
+        let bilateralVPipeline: MTLComputePipelineState
         let encodePipeline: MTLComputePipelineState
         let textureCache: CVMetalTextureCache
     }
@@ -194,14 +207,16 @@ final class DepthConverter: @unchecked Sendable {
         CVMetalTextureCacheCreate(nil, nil, device, nil, &cache)
         guard let minMax = pipeline("depthMinMaxReduce"),
               let histogram = pipeline("depthHistogram256"),
-              let blurH = pipeline("depthBlurH"),
-              let blurV = pipeline("depthBlurVEMA"),
+              let guide = pipeline("depthGuideLuma"),
+              let bilateralH = pipeline("depthJointBilateralH"),
+              let bilateralV = pipeline("depthJointBilateralV"),
               let encode = pipeline("depthTemporalEncode"),
               let cache else { return nil }
         return GPUContext(
             device: device, commandQueue: commandQueue,
             minMaxPipeline: minMax, histogramPipeline: histogram,
-            blurHPipeline: blurH, blurVEMAPipeline: blurV, encodePipeline: encode,
+            guidePipeline: guide, bilateralHPipeline: bilateralH, bilateralVPipeline: bilateralV,
+            encodePipeline: encode,
             textureCache: cache
         )
     }
@@ -281,8 +296,10 @@ final class DepthConverter: @unchecked Sendable {
         // Per-video state; the writer and GPU scratch are sized from the first
         // frame (decode dims and model output dims aren't known until then).
         var stats: [FrameStat] = []
-        var ring: [MTLTexture] = []          // 5-slot blurred raw-depth ring
+        var ring: [MTLTexture] = []          // 5-slot refined raw-depth ring
         var scratch: MTLTexture?
+        var guideTex: MTLTexture?            // luma guide for the joint bilateral
+        var guideParams = DepthGuideParams(uvScale: SIMD2(1, 1), uvOffset: SIMD2(0, 0))
         var partialsBuffer: MTLBuffer?
         var partialsCount = 0
         guard let binsBuffer = gpu.device.makeBuffer(length: 256 * MemoryLayout<UInt32>.stride, options: .storageModeShared) else {
@@ -380,32 +397,54 @@ final class DepthConverter: @unchecked Sendable {
             return hi
         }
 
-        /// Separable blur of the raw map into a ring slot (no temporal EMA — the
-        /// temporal window is applied at encode time with lookahead).
-        func blur(rawTex: MTLTexture, into dest: MTLTexture) throws {
-            guard let scratch,
+        /// Edge-aware refinement of the raw map into a ring slot: luma guide
+        /// from the video frame, then a separable joint bilateral — smooths
+        /// depth within regions while pinning its edges to image edges. (No
+        /// temporal EMA here; the temporal window is applied at encode time
+        /// with lookahead.)
+        func refine(rawTex: MTLTexture, videoFrame: CVPixelBuffer, into dest: MTLTexture) throws {
+            guard let scratch, let guideTex,
                   let cmd = gpu.commandQueue.makeCommandBuffer(),
                   let enc = cmd.makeComputeCommandEncoder() else {
                 throw DepthConversionError.gpuSetupFailed
             }
+            // BGRA texture view of the decoded frame (kept alive across the wait).
+            var cvVideoTexture: CVMetalTexture?
+            let videoWidth = CVPixelBufferGetWidth(videoFrame)
+            let videoHeight = CVPixelBufferGetHeight(videoFrame)
+            guard CVMetalTextureCacheCreateTextureFromImage(
+                nil, gpu.textureCache, videoFrame, nil, .bgra8Unorm, videoWidth, videoHeight, 0, &cvVideoTexture
+            ) == kCVReturnSuccess, let cvVideoTexture, let videoTex = CVMetalTextureGetTexture(cvVideoTexture) else {
+                throw DepthConversionError.gpuSetupFailed
+            }
+
             var params = DepthStabilizeParams(
-                blurRadius: 6, blurSigma: 3.0, baseAlpha: 1, motionGain: 0, hasPrev: 0
+                blurRadius: Self.bilateralRadius, blurSigma: Self.bilateralSigmaSpatial,
+                baseAlpha: 1, motionGain: 0, hasPrev: 0, sigmaLuma: Self.bilateralSigmaLuma
             )
-            enc.setComputePipelineState(gpu.blurHPipeline)
+            enc.setComputePipelineState(gpu.guidePipeline)
+            enc.setTexture(videoTex, index: 0)
+            enc.setTexture(guideTex, index: 1)
+            enc.setBytes(&guideParams, length: MemoryLayout<DepthGuideParams>.stride, index: 0)
+            dispatch2D(enc, width: depthWidth, height: depthHeight)
+
+            enc.setComputePipelineState(gpu.bilateralHPipeline)
             enc.setTexture(rawTex, index: 0)
-            enc.setTexture(scratch, index: 1)
+            enc.setTexture(guideTex, index: 1)
+            enc.setTexture(scratch, index: 2)
             enc.setBytes(&params, length: MemoryLayout<DepthStabilizeParams>.stride, index: 0)
             dispatch2D(enc, width: depthWidth, height: depthHeight)
 
-            enc.setComputePipelineState(gpu.blurVEMAPipeline)
+            enc.setComputePipelineState(gpu.bilateralVPipeline)
             enc.setTexture(scratch, index: 0)
-            enc.setTexture(scratch, index: 1) // emaPrev unused (hasPrev = 0)
+            enc.setTexture(guideTex, index: 1)
             enc.setTexture(dest, index: 2)
             enc.setBytes(&params, length: MemoryLayout<DepthStabilizeParams>.stride, index: 0)
             dispatch2D(enc, width: depthWidth, height: depthHeight)
             enc.endEncoding()
             cmd.commit()
             cmd.waitUntilCompleted()
+            withExtendedLifetime(cvVideoTexture) {}
         }
 
         /// Emit the temporally smoothed depth frame centered on stats index `c`.
@@ -537,7 +576,15 @@ final class DepthConverter: @unchecked Sendable {
                         ring.append(tex)
                     }
                     scratch = gpu.device.makeTexture(descriptor: desc)
-                    guard scratch != nil else { throw DepthConversionError.gpuSetupFailed }
+                    guideTex = gpu.device.makeTexture(descriptor: desc)
+                    guard scratch != nil, guideTex != nil else { throw DepthConversionError.gpuSetupFailed }
+                    // Guide kernel maps depth UV back into video UV (inverse of
+                    // the warp's letterbox transform).
+                    let uv = CoreMLDepthProvider.letterboxUVTransform(
+                        videoWidth: decodedWidth, videoHeight: decodedHeight,
+                        depthWidth: depthWidth, depthHeight: depthHeight
+                    )
+                    guideParams = DepthGuideParams(uvScale: uv.scale, uvOffset: uv.offset)
                     (writer, writerInput, adaptor) = try makeWriter(
                         directory: directory, width: evenWidth, height: evenHeight, firstPTS: pts
                     )
@@ -567,7 +614,7 @@ final class DepthConverter: @unchecked Sendable {
                 }
                 prevShape = shape
 
-                try blur(rawTex: rawTex, into: ring[frameIndex % ring.count])
+                try refine(rawTex: rawTex, videoFrame: pixelBuffer, into: ring[frameIndex % ring.count])
                 withExtendedLifetime(keepAlive) {}
 
                 stats.append(FrameStat(pts: pts, lo: p02, hi: p98, median: p50, cutBefore: cutBefore))

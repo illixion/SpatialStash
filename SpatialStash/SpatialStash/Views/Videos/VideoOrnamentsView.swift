@@ -414,7 +414,9 @@ struct VideoOrnamentsView: View {
     @ViewBuilder
     private func depthButton(_ title: String, _ preset: Pseudo3DSettings) -> some View {
         Button {
-            windowModel.pseudo3DSettings = preset
+            // Mutate rather than replace so toggles (autoConvergence) survive.
+            windowModel.pseudo3DSettings.depthStrength = preset.depthStrength
+            windowModel.pseudo3DSettings.convergence = preset.convergence
         } label: {
             HStack {
                 Text(title)
