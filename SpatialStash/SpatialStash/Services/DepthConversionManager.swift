@@ -40,8 +40,12 @@ final class DepthConversionManager {
 
         var label: String {
             switch self {
-            case .downloading(let p): return "Downloading… \(Int(p * 100))%"
-            case .converting(let p): return "Converting… \(Int(p * 100))%"
+            case .downloading(let p):
+                // Live-transcode downloads are chunked (no Content-Length), so
+                // the fraction stays 0 — don't show a stuck "0%".
+                return p > 0.001 ? "Downloading… \(Int(p * 100))%" : "Downloading…"
+            case .converting(let p):
+                return "Converting… \(Int(p * 100))%"
             }
         }
     }

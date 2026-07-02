@@ -383,9 +383,29 @@ final class VideoWindowModel {
         DepthConversionManager.shared.enqueue(DepthConversionManager.Request(
             videoIdentity: video.stashId,
             title: video.title ?? video.fileName,
-            sourceURL: authenticatedStreamURL,
+            sourceURL: depthConversionSourceURL,
             apiKey: appModel.stashAPIKey.isEmpty ? nil : appModel.stashAPIKey
         ))
+    }
+
+    /// A downloadable, AVAssetReader-readable source for depth conversion.
+    /// WebM sources route playback through Stash's HLS live transcode
+    /// (`/stream.m3u8`) — downloading that URL yields a playlist text file, not
+    /// video ("No video track found"). Swap it for the server's `/stream.mp4`
+    /// transcode: AVPlayer rejects it as a *stream* (non-seekable chunked pipe),
+    /// but downloaded to completion it's a normal fragmented MP4 that
+    /// AVAssetReader reads fine. Non-HLS sources download the original file.
+    private var depthConversionSourceURL: URL {
+        let stream = video.streamURL
+        let hlsSuffix = "/stream.m3u8"
+        if stream.path.hasSuffix(hlsSuffix),
+           var components = URLComponents(url: stream, resolvingAgainstBaseURL: false) {
+            components.path = String(components.path.dropLast(hlsSuffix.count)) + "/stream.mp4"
+            if let mp4 = components.url {
+                return authenticatedURL(mp4)
+            }
+        }
+        return authenticatedStreamURL
     }
 
     /// Called when the conversion manager reports a completion for this video.

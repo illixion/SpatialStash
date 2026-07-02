@@ -89,6 +89,7 @@ struct Pseudo3DVideoPlayerView: View {
     /// target because a 2D overlay can't catch gaze over a RealityView.
     var onToggleUI: (() -> Void)? = nil
 
+    @Environment(AppModel.self) private var appModel
     @State private var engine = Pseudo3DStereoEngine()
 
     var body: some View {
@@ -130,6 +131,11 @@ struct Pseudo3DVideoPlayerView: View {
         }
         .onChange(of: depthMode) { _, newMode in
             engine.setDepthMode(newMode)
+        }
+        // Depth model switched (ViewMode menu or Settings): rebuild the pump so
+        // the new model applies to THIS video immediately, keeping position.
+        .onChange(of: appModel.preferredDepthModelName) { _, _ in
+            engine.reloadDepthPipeline()
         }
         .onAppear {
             engine.bindCommands(loopController: loopController, playbackModel: playbackModel)
@@ -363,10 +369,21 @@ final class Pseudo3DStereoEngine {
     func setDepthMode(_ mode: Pseudo3DDepthMode) {
         guard depthMode != mode else { return }
         depthMode = mode
-        if let url = loadedURL {
-            loadedURL = nil
-            load(url: url, roomActive: isRoomActive)
-        }
+        reloadDepthPipeline()
+    }
+
+    /// Rebuild the pump — and with it the depth provider / cache reader — for
+    /// the currently loaded video, preserving position and pause state. Used
+    /// when the preferred depth model changes so a switch applies to the video
+    /// being watched, not just the next one opened.
+    func reloadDepthPipeline() {
+        guard let url = loadedURL else { return }
+        let resumeTime = currentTime
+        let wasPaused = player?.timeControlStatus != .playing
+        loadedURL = nil
+        load(url: url, roomActive: isRoomActive)
+        if resumeTime > 0 { seek(to: resumeTime) }
+        if wasPaused { pause() }
     }
 
     func load(url: URL, roomActive: Bool, depthMode requestedMode: Pseudo3DDepthMode? = nil) {
