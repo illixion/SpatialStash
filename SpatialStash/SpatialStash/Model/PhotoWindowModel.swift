@@ -221,6 +221,14 @@ class PhotoWindowModel {
     /// Debounce task for reloading ImagePresentationComponent with adjustments
     var adjustments3DReloadTask: Task<Void, Never>?
 
+    /// Deferred teardown of the 3D component when entering the 2D adjustment
+    /// preview. Removal must wait for any in-flight generate() to settle —
+    /// RealityKit crashes if the component is destroyed while its internal
+    /// progress callback is still firing. The debounced regen task awaits
+    /// this before installing a replacement component so ordering between
+    /// old-component removal and new-component creation stays deterministic.
+    var adjustmentPreviewTeardownTask: Task<Void, Never>?
+
     /// Snapshot of the adjustments that were last baked into the current
     /// `spatial3DImage`. `reloadImagePresentationWithAdjustments` consults
     /// this to skip the regen dance when only render-time fields (opacity,
@@ -1058,6 +1066,8 @@ class PhotoWindowModel {
         resizeDebounceTask = nil
         adjustments3DReloadTask?.cancel()
         adjustments3DReloadTask = nil
+        adjustmentPreviewTeardownTask?.cancel()
+        adjustmentPreviewTeardownTask = nil
 
         // If 3D generation is in progress, we CANNOT remove the
         // ImagePresentationComponent — RealityKit's generate() ignores Swift

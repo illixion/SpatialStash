@@ -42,6 +42,23 @@ extension PhotoWindowModel {
         showAutoRestorePrompt = false
     }
 
+    // MARK: - Generation Settling
+
+    /// Cancel any in-flight spatial 3D generation and wait for it to actually
+    /// finish. RealityKit's generate() ignores Swift cooperative cancellation
+    /// and crashes (dangling component dereference in its internal progress
+    /// callback) if the ImagePresentationComponent is removed or replaced
+    /// while generation is still running — always await this before tearing
+    /// down or swapping the component / spatial3DImage.
+    func settleActiveGeneration() async {
+        guard let task = generateTask else { return }
+        task.cancel()
+        await task.value
+        // A new generation may have started while we were suspended —
+        // only clear the reference if it's still the task we settled.
+        if generateTask == task { generateTask = nil }
+    }
+
     // MARK: - 3D Mode Activation
 
     /// Activate RealityKit 3D mode. Loads the full-resolution ImagePresentationComponent
@@ -87,14 +104,8 @@ extension PhotoWindowModel {
         }
 
         // If generation is in progress, we MUST wait for it to finish before
-        // removing ImagePresentationComponent. RealityKit's generate() ignores
-        // Swift cooperative cancellation and crashes if the component is removed
-        // while its internal progress callback is still firing.
-        if let task = generateTask {
-            task.cancel()
-            await task.value  // Wait for generate() to actually finish
-            generateTask = nil
-        }
+        // removing ImagePresentationComponent.
+        await settleActiveGeneration()
 
         // Release 3D resources — safe now that generate() has completed
         spatial3DImage = nil
@@ -428,11 +439,7 @@ extension PhotoWindowModel {
 
         // Cancel any in-flight generation before tearing down the component —
         // generate() ignores cancellation and crashes if its target is removed.
-        if let task = generateTask {
-            task.cancel()
-            await task.value
-            generateTask = nil
-        }
+        await settleActiveGeneration()
 
         // Tear down current 3D state and re-build at the new source resolution.
         contentEntity.components.remove(ImagePresentationComponent.self)

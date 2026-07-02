@@ -388,10 +388,22 @@ extension PhotoWindowModel {
             // continuous-drag MainActor traffic. The debounce + regen
             // setup below this block still runs.
             if displayImage != nil {
-                contentEntity.components.remove(ImagePresentationComponent.self)
-                spatial3DImage = nil
-                spatial3DImageState = .notGenerated
+                // Flip to the 2D preview branch immediately for instant
+                // feedback, but defer the component teardown until any
+                // in-flight generate() has settled — destroying the
+                // component mid-generation crashes in RealityKit's internal
+                // progress callback. Rapid successive adjustments hit this:
+                // the previous regen's generation is still running when the
+                // next slider change re-enters the preview.
                 is3DMode = false
+                adjustmentPreviewTeardownTask = Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    await self.settleActiveGeneration()
+                    guard self.isShowingAdjustmentPreview else { return }
+                    self.contentEntity.components.remove(ImagePresentationComponent.self)
+                    self.spatial3DImage = nil
+                    self.spatial3DImageState = .notGenerated
+                }
             } else {
 
             // Stage the preview thumbnail *before* flipping is3DMode so
@@ -403,7 +415,7 @@ extension PhotoWindowModel {
             // yet (no displayTexture on hand).
             let url = imageURL
             let imageData = currentImageData
-            Task { @MainActor [weak self] in
+            adjustmentPreviewTeardownTask = Task { @MainActor [weak self] in
                 guard let self, self.isShowingAdjustmentPreview else { return }
 
                 // Resolve a byte source for the thumbnail. Entering 3D
@@ -444,6 +456,12 @@ extension PhotoWindowModel {
 
                 guard self.isShowingAdjustmentPreview else { return }
 
+                // Wait for any in-flight generate() before removing the
+                // component below — removal mid-generation crashes in
+                // RealityKit's progress callback.
+                await self.settleActiveGeneration()
+                guard self.isShowingAdjustmentPreview else { return }
+
                 // Commit the transition atomically: 2D thumbnail in
                 // place first, then tear down RealityKit and flip the
                 // mode so PhotoDisplayView re-evaluates with the
@@ -466,6 +484,17 @@ extension PhotoWindowModel {
             // a continuous drag still coalesces into one regen.
             try? await Task.sleep(for: .milliseconds(500))
             guard !Task.isCancelled, let self, self.isShowingAdjustmentPreview else { return }
+
+            // Wait for the preview-entry teardown (which itself waits out any
+            // in-flight generate()) so the old component is fully released
+            // before a replacement is installed — components.set() destroys
+            // the old component just like removal and crashes mid-generation.
+            if let teardown = self.adjustmentPreviewTeardownTask {
+                await teardown.value
+                self.adjustmentPreviewTeardownTask = nil
+            }
+            await self.settleActiveGeneration()
+            guard !Task.isCancelled, self.isShowingAdjustmentPreview else { return }
 
             let adj = self.effectiveAdjustments
             let isIdentity = !adj.isModified || (!adj.isAutoEnhanced && adj.brightness == 0.0 && adj.contrast == 1.0 && adj.saturation == 1.0)
@@ -541,8 +570,11 @@ extension PhotoWindowModel {
                 }
             }
 
-            // Determine whether to re-generate 3D after restoring the component
+            // Determine whether to re-generate 3D after restoring the component.
+            // .generating counts too: entering the preview mid-generation
+            // cancels that generation, but the user clearly wanted 3D.
             let shouldRegenerate3D = self.prePreviewSpatial3DState == .generated
+                || self.prePreviewSpatial3DState == .generating
 
             // Switch back to 3D mode — RealityView will be recreated.
             // For identity adjustments, the RealityView init calls createImagePresentationComponent().
