@@ -6,13 +6,12 @@
  fake-3D warp (videoPseudo3DEyeFragmentShader samples it when `useDepth` is set).
 
  Design:
- - Inference runs on its own background queue, off the frame pump and off main.
- - It self-throttles: `submit` is a no-op while an inference is in flight, so
-   depth is produced as fast as the ANE allows (depth changes slowly, so the
-   warp reusing a slightly stale map between updates is fine).
- - The depth result is copied into a private texture the provider owns, so the
-   value the warp reads is stable even as the next inference overwrites Vision's
-   output buffer.
+ - `depth(for:)` is fully synchronous and runs on the pump queue (never main):
+   the frame isn't shown until its depth is ready, so image and depth always
+   match exactly — slow inference yields fewer frames, never ghosting.
+ - The returned texture is provider-owned (a stabilize ping-pong buffer, or a
+   blitted copy when stabilization is unavailable), so it stays valid while the
+   warp reads it even as the next inference overwrites Vision's output buffer.
 
  The model is loaded by name from the managed store (Application Support, via
  DepthModelStore) — any Depth Anything V2 variant, since the I/O is identical
@@ -54,8 +53,11 @@ final class CoreMLDepthProvider: DepthProvider, @unchecked Sendable {
     // Depth stabilization: a spatial gaussian low-pass band-limits the depth so
     // the coarser warp grid doesn't alias its detail into rippling waves, plus a
     // motion-adaptive temporal EMA that damps frame-to-frame jitter without
-    // ghosting on motion. Runs at the model's native depth resolution.
-    private let stabilizePipeline: MTLComputePipelineState?
+    // ghosting on motion. Runs at the model's native depth resolution as two
+    // separable 1D passes (H → scratch → V+EMA) in one command buffer.
+    private let blurHPipeline: MTLComputePipelineState?
+    private let blurVEMAPipeline: MTLComputePipelineState?
+    private var stabilizeAvailable: Bool { blurHPipeline != nil && blurVEMAPipeline != nil }
     private let stabilizeEnabled = true
     /// Spatial low-pass radius/sigma (depth texels). Band-limits depth for the
     /// 193-wide warp grid (which samples ~every 2.7 texels of the 518-wide map).
@@ -67,10 +69,14 @@ final class CoreMLDepthProvider: DepthProvider, @unchecked Sendable {
     private let emaMotionGain: Float = 4.0
     private var emaTexA: MTLTexture?
     private var emaTexB: MTLTexture?
+    /// Intermediate target for the horizontal blur pass.
+    private var blurScratchTex: MTLTexture?
     private var emaWidth = 0
     private var emaHeight = 0
     private var writeA = true
     private var hasPrevDepth = false
+
+    private let signposter = AppLogger.pseudo3DSignposter
 
     init?(device: MTLDevice) {
         guard let modelURL = Self.findModelURL(),
@@ -88,9 +94,10 @@ final class CoreMLDepthProvider: DepthProvider, @unchecked Sendable {
         self.request = request
         self.device = device
         self.commandQueue = queue
-        self.stabilizePipeline = Self.makeComputePipeline(device: device, function: "depthStabilize")
+        self.blurHPipeline = Self.makeComputePipeline(device: device, function: "depthBlurH")
+        self.blurVEMAPipeline = Self.makeComputePipeline(device: device, function: "depthBlurVEMA")
         CVMetalTextureCacheCreate(nil, nil, device, nil, &textureCache)
-        AppLogger.videoWindow.info("CoreMLDepthProvider loaded model: \(modelURL.lastPathComponent, privacy: .public), stabilize=\(self.stabilizePipeline != nil)")
+        AppLogger.videoWindow.info("CoreMLDepthProvider loaded model: \(modelURL.lastPathComponent, privacy: .public), stabilize=\(self.stabilizeAvailable)")
     }
 
     private static func makeComputePipeline(device: MTLDevice, function: String) -> MTLComputePipelineState? {
@@ -161,23 +168,45 @@ final class CoreMLDepthProvider: DepthProvider, @unchecked Sendable {
     }
 
     func depth(for pixelBuffer: CVPixelBuffer) -> MTLTexture? {
+        let inferState = signposter.beginInterval("depth-inference")
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .up, options: [:])
         try? handler.perform([request])
 
+        // When stabilization will run, the raw texture only needs to survive the
+        // stabilize pass's synchronous wait (same call stack), so the pixel-buffer
+        // path can use a zero-copy texture-cache view with keep-alives instead of
+        // an owned blit copy. Without stabilization the raw texture IS the result
+        // and outlives this call (the warp reads it later), so it must be copied.
         let raw: MTLTexture?
+        var keepAlive: [Any] = []
         if let obs = request.results?.first as? VNPixelBufferObservation {
-            raw = stableTexture(from: obs.pixelBuffer)
+            if stabilizeEnabled, stabilizeAvailable,
+               let transient = transientTexture(from: obs.pixelBuffer) {
+                raw = transient.texture
+                keepAlive = transient.keepAlive
+            } else {
+                raw = copiedTexture(from: obs.pixelBuffer)
+            }
         } else if let obs = request.results?.first as? VNCoreMLFeatureValueObservation,
                   let array = obs.featureValue.multiArrayValue {
             raw = makeTexture(from: array)
         } else {
             raw = nil
         }
+        signposter.endInterval("depth-inference", inferState)
         guard let raw else { return nil }
 
         // Band-limit + temporally smooth to remove ripple (spatial aliasing) and
         // wobble (temporal jitter). Falls back to the raw map if unavailable.
-        return stabilizeEnabled ? (stabilize(rawDepth: raw) ?? raw) : raw
+        guard stabilizeEnabled else { return raw }
+        let stabilizeState = signposter.beginInterval("depth-stabilize")
+        defer { signposter.endInterval("depth-stabilize", stabilizeState) }
+        let stabilized = stabilize(rawDepth: raw)
+        withExtendedLifetime(keepAlive) {}
+        // If stabilize failed, only the owned-copy path may be returned raw; a
+        // transient view would dangle once Vision recycles its buffer.
+        if stabilized == nil, !keepAlive.isEmpty { return nil }
+        return stabilized ?? raw
     }
 
     // MARK: - Depth stabilization
@@ -187,10 +216,11 @@ final class CoreMLDepthProvider: DepthProvider, @unchecked Sendable {
     /// pair; safe to publish because the next call writes the *other* buffer,
     /// never the one the warp may currently be reading.
     private func stabilize(rawDepth: MTLTexture) -> MTLTexture? {
-        guard let stabilizePipeline else { return nil }
+        guard let blurHPipeline, let blurVEMAPipeline else { return nil }
         let w = rawDepth.width, h = rawDepth.height
         guard w > 0, h > 0,
               ensureEMATextures(width: w, height: h),
+              let scratch = blurScratchTex,
               let prev = writeA ? emaTexB : emaTexA,
               let next = writeA ? emaTexA : emaTexB,
               let cmd = commandQueue.makeCommandBuffer(),
@@ -203,13 +233,22 @@ final class CoreMLDepthProvider: DepthProvider, @unchecked Sendable {
             motionGain: emaMotionGain,
             hasPrev: hasPrevDepth ? 1 : 0
         )
-        enc.setComputePipelineState(stabilizePipeline)
+        let tg = MTLSize(width: 8, height: 8, depth: 1)
+        let groups = MTLSize(width: (w + 7) / 8, height: (h + 7) / 8, depth: 1)
+
+        // Separable gaussian: H pass into the scratch, then V pass + EMA. Both
+        // textures are hazard-tracked, so Metal orders the two dispatches.
+        enc.setComputePipelineState(blurHPipeline)
         enc.setTexture(rawDepth, index: 0)
+        enc.setTexture(scratch, index: 1)
+        enc.setBytes(&params, length: MemoryLayout<DepthStabilizeParams>.stride, index: 0)
+        enc.dispatchThreadgroups(groups, threadsPerThreadgroup: tg)
+
+        enc.setComputePipelineState(blurVEMAPipeline)
+        enc.setTexture(scratch, index: 0)
         enc.setTexture(prev, index: 1)
         enc.setTexture(next, index: 2)
         enc.setBytes(&params, length: MemoryLayout<DepthStabilizeParams>.stride, index: 0)
-        let tg = MTLSize(width: 8, height: 8, depth: 1)
-        let groups = MTLSize(width: (w + 7) / 8, height: (h + 7) / 8, depth: 1)
         enc.dispatchThreadgroups(groups, threadsPerThreadgroup: tg)
         enc.endEncoding()
         cmd.commit()
@@ -221,7 +260,7 @@ final class CoreMLDepthProvider: DepthProvider, @unchecked Sendable {
     }
 
     private func ensureEMATextures(width: Int, height: Int) -> Bool {
-        if emaTexA != nil, emaTexB != nil, emaWidth == width, emaHeight == height {
+        if emaTexA != nil, emaTexB != nil, blurScratchTex != nil, emaWidth == width, emaHeight == height {
             return true
         }
         let desc = MTLTextureDescriptor.texture2DDescriptor(
@@ -230,9 +269,11 @@ final class CoreMLDepthProvider: DepthProvider, @unchecked Sendable {
         desc.usage = [.shaderRead, .shaderWrite]
         desc.storageMode = .private
         guard let a = device.makeTexture(descriptor: desc),
-              let b = device.makeTexture(descriptor: desc) else { return false }
+              let b = device.makeTexture(descriptor: desc),
+              let scratch = device.makeTexture(descriptor: desc) else { return false }
         emaTexA = a
         emaTexB = b
+        blurScratchTex = scratch
         emaWidth = width
         emaHeight = height
         writeA = true
@@ -242,29 +283,41 @@ final class CoreMLDepthProvider: DepthProvider, @unchecked Sendable {
 
     // MARK: - Output → texture
 
-    /// Image output: import via the texture cache, then blit into a private
-    /// texture the provider owns so it stays valid after Vision recycles its buffer.
-    private func stableTexture(from pixelBuffer: CVPixelBuffer) -> MTLTexture? {
+    private static func depthPixelFormat(for pixelBuffer: CVPixelBuffer) -> MTLPixelFormat {
+        switch CVPixelBufferGetPixelFormatType(pixelBuffer) {
+        case kCVPixelFormatType_OneComponent8:
+            return .r8Unorm
+        case kCVPixelFormatType_OneComponent32Float, kCVPixelFormatType_DepthFloat32:
+            return .r32Float
+        default: // OneComponent16Half / DepthFloat16 and friends
+            return .r16Float
+        }
+    }
+
+    /// Image output, zero-copy: a texture-cache view of Vision's buffer, valid
+    /// only while `keepAlive` is retained (until the stabilize pass's synchronous
+    /// wait returns, on the same call stack). Never return this texture itself.
+    private func transientTexture(from pixelBuffer: CVPixelBuffer) -> (texture: MTLTexture, keepAlive: [Any])? {
         guard let cache = textureCache else { return nil }
         let width = CVPixelBufferGetWidth(pixelBuffer)
         let height = CVPixelBufferGetHeight(pixelBuffer)
-        let pixelFormat: MTLPixelFormat
-        switch CVPixelBufferGetPixelFormatType(pixelBuffer) {
-        case kCVPixelFormatType_OneComponent8:
-            pixelFormat = .r8Unorm
-        case kCVPixelFormatType_OneComponent32Float, kCVPixelFormatType_DepthFloat32:
-            pixelFormat = .r32Float
-        default: // OneComponent16Half / DepthFloat16 and friends
-            pixelFormat = .r16Float
-        }
-
         var cvTexture: CVMetalTexture?
         guard CVMetalTextureCacheCreateTextureFromImage(
-            nil, cache, pixelBuffer, nil, pixelFormat, width, height, 0, &cvTexture
-        ) == kCVReturnSuccess, let cvTexture, let transient = CVMetalTextureGetTexture(cvTexture) else { return nil }
+            nil, cache, pixelBuffer, nil, Self.depthPixelFormat(for: pixelBuffer), width, height, 0, &cvTexture
+        ) == kCVReturnSuccess, let cvTexture, let texture = CVMetalTextureGetTexture(cvTexture) else { return nil }
+        return (texture, [cvTexture, pixelBuffer])
+    }
 
+    /// Image output, owned copy: import via the texture cache, then blit into a
+    /// private texture the provider owns so it stays valid after Vision recycles
+    /// its buffer. Fallback for when stabilization can't run (the raw texture is
+    /// then returned to the warp directly and must outlive this call).
+    private func copiedTexture(from pixelBuffer: CVPixelBuffer) -> MTLTexture? {
+        guard let (transient, keepAlive) = transientTexture(from: pixelBuffer) else { return nil }
+        let width = transient.width
+        let height = transient.height
         let desc = MTLTextureDescriptor.texture2DDescriptor(
-            pixelFormat: pixelFormat, width: width, height: height, mipmapped: false
+            pixelFormat: transient.pixelFormat, width: width, height: height, mipmapped: false
         )
         desc.usage = [.shaderRead]
         desc.storageMode = .private
@@ -279,6 +332,7 @@ final class CoreMLDepthProvider: DepthProvider, @unchecked Sendable {
         blit.endEncoding()
         cmdBuf.commit()
         cmdBuf.waitUntilCompleted()
+        withExtendedLifetime(keepAlive) {}
         return dest
     }
 

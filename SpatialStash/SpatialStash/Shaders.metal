@@ -305,8 +305,45 @@ struct DepthStabilizeParams {
     uint  hasPrev;     // 1 when emaPrev holds a valid previous frame
 };
 
-kernel void depthStabilize(
+// The gaussian is separable, so it runs as two 1D passes (H into a scratch
+// texture, then V) — 2·(2r+1) taps per texel instead of (2r+1)², a 6.5× tap
+// reduction at the default radius 6. The EMA rides the tail of the V pass so
+// the whole stabilization is still one command buffer.
+
+static inline float depthGaussian1D(
+    texture2d<float, access::sample> src, sampler s,
+    float2 uv, float2 texelStep, constant DepthStabilizeParams &p
+) {
+    if (p.blurRadius <= 0) { return src.sample(s, uv).r; }
+    const float inv2s2 = 1.0 / (2.0 * p.blurSigma * p.blurSigma);
+    float sum = 0.0, wsum = 0.0;
+    for (int d = -p.blurRadius; d <= p.blurRadius; ++d) {
+        const float w = exp(-float(d * d) * inv2s2);
+        sum += w * src.sample(s, uv + texelStep * float(d)).r;
+        wsum += w;
+    }
+    return wsum > 1e-5 ? (sum / wsum) : src.sample(s, uv).r;
+}
+
+kernel void depthBlurH(
     texture2d<float, access::sample> rawDepth [[texture(0)]],
+    texture2d<float, access::write>  blurred  [[texture(1)]],
+    constant DepthStabilizeParams &p          [[buffer(0)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    const uint W = blurred.get_width();
+    const uint H = blurred.get_height();
+    if (gid.x >= W || gid.y >= H) { return; }
+
+    constexpr sampler s(mag_filter::linear, min_filter::linear, address::clamp_to_edge);
+    const float2 size = float2(W, H);
+    const float2 uv = (float2(gid) + 0.5) / size;
+    const float raw = depthGaussian1D(rawDepth, s, uv, float2(1.0 / size.x, 0.0), p);
+    blurred.write(float4(raw, 0.0, 0.0, 1.0), gid);
+}
+
+kernel void depthBlurVEMA(
+    texture2d<float, access::sample> blurredH [[texture(0)]],
     texture2d<float, access::sample> emaPrev  [[texture(1)]],
     texture2d<float, access::write>  emaNext  [[texture(2)]],
     constant DepthStabilizeParams &p          [[buffer(0)]],
@@ -319,23 +356,7 @@ kernel void depthStabilize(
     constexpr sampler s(mag_filter::linear, min_filter::linear, address::clamp_to_edge);
     const float2 size = float2(W, H);
     const float2 uv = (float2(gid) + 0.5) / size;
-
-    // Spatial gaussian low-pass to band-limit the depth for the warp grid.
-    float raw;
-    if (p.blurRadius > 0) {
-        const float inv2s2 = 1.0 / (2.0 * p.blurSigma * p.blurSigma);
-        float sum = 0.0, wsum = 0.0;
-        for (int dy = -p.blurRadius; dy <= p.blurRadius; ++dy) {
-            for (int dx = -p.blurRadius; dx <= p.blurRadius; ++dx) {
-                const float w = exp(-float(dx * dx + dy * dy) * inv2s2);
-                sum += w * rawDepth.sample(s, uv + float2(dx, dy) / size).r;
-                wsum += w;
-            }
-        }
-        raw = wsum > 1e-5 ? (sum / wsum) : rawDepth.sample(s, uv).r;
-    } else {
-        raw = rawDepth.sample(s, uv).r;
-    }
+    const float raw = depthGaussian1D(blurredH, s, uv, float2(0.0, 1.0 / size.y), p);
 
     float out = raw;
     if (p.hasPrev != 0) {

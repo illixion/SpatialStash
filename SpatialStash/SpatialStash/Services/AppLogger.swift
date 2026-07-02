@@ -103,4 +103,11 @@ enum AppLogger {
 
     /// Remote API viewer (slideshow, WebSocket, API)
     static let remoteViewer = Logger(subsystem: subsystem, category: "RemoteViewer")
+
+    // MARK: - Signposters
+
+    /// Per-stage intervals for the fake-3D pipeline (inference, stabilize, warp,
+    /// transfer) — view in Instruments' os_signpost track to see where a pump
+    /// tick or a depth-conversion frame spends its time.
+    static let pseudo3DSignposter = OSSignposter(subsystem: subsystem, category: "Pseudo3D")
 }

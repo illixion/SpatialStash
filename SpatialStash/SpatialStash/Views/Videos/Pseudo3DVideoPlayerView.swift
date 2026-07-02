@@ -36,6 +36,7 @@ import AVFoundation
 import CoreMedia
 import CoreVideo
 import Metal
+import os
 import QuartzCore
 import RealityKit
 import SwiftUI
@@ -569,6 +570,8 @@ final class StereoPump: @unchecked Sendable {
     private let configLock = NSLock()
     private var config = Config()
 
+    private let signposter = AppLogger.pseudo3DSignposter
+
     /// 30 fps is ample for the fake-3D effect and halves GPU load vs. display
     /// rate; the pump only enqueues when a genuinely new decoded frame exists.
     private let frameInterval: Double = 1.0 / 30.0
@@ -674,8 +677,11 @@ final class StereoPump: @unchecked Sendable {
         // a depth map matched to the exact frame being shown — no lag/ghosting
         // from reusing a stale map. Slow inference just yields fewer rendered
         // frames (this tick took longer), never a frame/depth mismatch.
+        let depthState = signposter.beginInterval("pump-depth")
         let depthTex = depthProvider?.depth(for: src)
+        signposter.endInterval("pump-depth", depthState)
 
+        let warpState = signposter.beginInterval("pump-warp")
         let cfg = currentConfig()
         encodeEye(into: leftTex, source: srcTexture, depth: depthTex, eyeSign: 1.0, config: cfg, commandBuffer: cmdBuf)
         encodeEye(into: rightTex, source: srcTexture, depth: depthTex, eyeSign: -1.0, config: cfg, commandBuffer: cmdBuf)
@@ -683,10 +689,13 @@ final class StereoPump: @unchecked Sendable {
         // Safe here: this runs on the background pump queue, never main. The warp
         // must complete before VTPixelTransferSession reads the BGRA surfaces.
         cmdBuf.waitUntilCompleted()
+        signposter.endInterval("pump-warp", warpState)
 
         // 2. Convert each BGRA eye → 420v from the recommended-attributes pool,
         // carrying the source's color tags so the compositor reads gamma/range
         // correctly (untagged YCbCr was being misinterpreted = washed out).
+        let transferState = signposter.beginInterval("pump-transfer")
+        defer { signposter.endInterval("pump-transfer", transferState) }
         guard let left = try? outPool.makeMutablePixelBuffer() else { return }
         guard transfer(from: leftBGRA, to: left) else { return }
         tagColor(left, from: src)
