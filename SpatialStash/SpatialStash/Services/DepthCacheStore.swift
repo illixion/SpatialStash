@@ -24,7 +24,9 @@ enum DepthCacheStore {
     /// Bump when the conversion pipeline changes in a way that should invalidate
     /// previously converted caches (they stop matching and can be re-converted;
     /// stale entries remain listed in Settings for manual cleanup).
-    static let pipelineVersion = 1
+    /// v2: joint-bilateral widened (σ 2.5→5, r 5→12) to suppress the DINOv2
+    /// patch-grid "wavy glass" ripple on low-texture content.
+    static let pipelineVersion = 2
 
     static let depthVideoFilename = "depth.mov"
     static let metaFilename = "meta.json"

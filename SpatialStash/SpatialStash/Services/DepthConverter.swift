@@ -107,8 +107,17 @@ final class DepthConverter: @unchecked Sendable {
     /// Edge-aware refinement: joint-bilateral radius/sigmas. The spatial term
     /// band-limits depth for the warp grid; the luma term pins depth edges to
     /// image edges (kills silhouette halos on crisp CG content).
-    fileprivate static let bilateralRadius: Int32 = 5
-    fileprivate static let bilateralSigmaSpatial: Float = 2.5
+    ///
+    /// The spatial sigma is sized to suppress the DINOv2 patch-grid artifact:
+    /// DA2 depth carries a stationary ripple at the ViT patch pitch (14px in
+    /// the depth map, any model size), worst on low-texture CG content, which
+    /// warps as a fixed "wavy glass" pattern. Gaussian attenuation of a
+    /// wavelength-λ ripple is exp(-2π²σ²/λ²): σ=2.5 leaves ~53% of it — still
+    /// visible; σ=5 leaves ~8%. The luma term keeps real edges pinned despite
+    /// the wide support, so only depth detail in luma-flat regions (which DA2
+    /// can't measure reliably anyway) is traded away.
+    fileprivate static let bilateralRadius: Int32 = 12
+    fileprivate static let bilateralSigmaSpatial: Float = 5.0
     fileprivate static let bilateralSigmaLuma: Float = 0.06
     /// Scene-cut detection: total-variation distance between consecutive frames'
     /// normalized depth histograms, plus raw-range jump checks. A cut both
