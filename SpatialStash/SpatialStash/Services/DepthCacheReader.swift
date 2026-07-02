@@ -31,8 +31,16 @@ final class DepthCacheReader: @unchecked Sendable {
     /// Cap on retained decoded-but-not-yet-displayed frames.
     private static let maxLookahead = 8
 
-    private let entry: DepthCacheStore.Entry
-    private let asset: AVURLAsset
+    private let directory: URL
+    private let depthVideoURL: URL
+    /// Refreshed from disk while the entry is still growing (progressive).
+    private var meta: DepthCacheStore.Meta
+    /// True while the conversion is still writing this entry: the fragmented
+    /// file grows, so EOF means "no more frames YET" — rebuild with a fresh
+    /// asset (throttled) to pick up new fragments, and re-read meta.json.
+    private var progressive: Bool
+    private var lastGrowingRebuild: CFTimeInterval = 0
+    private var asset: AVURLAsset
     private var textureCache: CVMetalTextureCache?
 
     private var track: AVAssetTrack?
@@ -55,7 +63,10 @@ final class DepthCacheReader: @unchecked Sendable {
     private let uvOffset: SIMD2<Float>
 
     init(entry: DepthCacheStore.Entry, device: MTLDevice) {
-        self.entry = entry
+        self.directory = entry.directory
+        self.depthVideoURL = entry.depthVideoURL
+        self.meta = entry.meta
+        self.progressive = !entry.meta.completed
         self.asset = AVURLAsset(url: entry.depthVideoURL)
         CVMetalTextureCacheCreate(nil, nil, device, nil, &textureCache)
         uvScale = SIMD2(entry.meta.uvScaleX, entry.meta.uvScaleY)
@@ -88,11 +99,17 @@ final class DepthCacheReader: @unchecked Sendable {
 
         let oldest = lookahead.first?.pts.seconds
         let newest = lookahead.last?.pts.seconds
+        // Progressive: EOF just means the conversion hasn't written this far
+        // yet — a (throttled) rebuild with a fresh asset picks up new fragments.
+        let growingCatchUp = readerAtEnd && progressive
+            && (newest.map { t > $0 + halfFrame } ?? true)
+            && CACurrentMediaTime() - lastGrowingRebuild > 2
         let needsRebuild =
             (reader == nil && !readerAtEnd)                              // first use
             || (oldest.map { t < $0 - halfFrame } ?? false)              // backward jump
             || (newest.map { t - $0 > Self.forwardRebuildGap } ?? false) // forward jump
             || (readerAtEnd && (newest.map { t < $0 - halfFrame } ?? true)) // seek after EOF (A-B loop / restart)
+            || growingCatchUp
         if needsRebuild {
             rebuild(at: t)
         }
@@ -151,7 +168,6 @@ final class DepthCacheReader: @unchecked Sendable {
 
     private func frameDepth(for decoded: DecodedDepth) -> PumpFrameDepth {
         // Per-frame display mapping by nearest PTS (binary search).
-        let meta = entry.meta
         var valueScale: Float = 1
         var valueBias: Float = 0
         var median: Float?
@@ -198,7 +214,7 @@ final class DepthCacheReader: @unchecked Sendable {
         semaphore.wait()
         track = box.value
         if track == nil {
-            AppLogger.videoCache.error("Depth cache video has no readable track: \(self.entry.depthVideoURL.lastPathComponent, privacy: .public)")
+            AppLogger.videoCache.error("Depth cache video has no readable track: \(self.depthVideoURL.lastPathComponent, privacy: .public)")
         }
         return track != nil
     }
@@ -209,6 +225,21 @@ final class DepthCacheReader: @unchecked Sendable {
         readerOutput = nil
         lookahead.removeAll()
         readerAtEnd = false
+
+        // A growing entry needs a FRESH asset each rebuild — AVURLAsset caches
+        // the container structure at parse time and never sees later fragments.
+        // Also refresh meta.json (new display-mapping frames; completed flag).
+        if progressive {
+            lastGrowingRebuild = CACurrentMediaTime()
+            asset = AVURLAsset(url: depthVideoURL)
+            track = nil
+            trackLoadAttempted = false
+            guard ensureTrack() else { return }
+            if let fresh = DepthCacheStore.readMeta(in: directory) {
+                meta = fresh
+                progressive = !fresh.completed
+            }
+        }
 
         guard let track, let newReader = try? AVAssetReader(asset: asset) else { return }
         let output = AVAssetReaderTrackOutput(track: track, outputSettings: [

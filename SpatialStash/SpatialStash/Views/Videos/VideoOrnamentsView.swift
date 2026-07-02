@@ -118,6 +118,27 @@ struct VideoOrnamentsView: View {
                     .foregroundColor(.secondary)
                     .lineLimit(1)
             }
+
+            // Depth-conversion status for THIS video — visible at a glance
+            // without keeping the ViewMode menu open.
+            if let phase = DepthConversionManager.shared.phase(for: video.stashId) {
+                Divider()
+                    .frame(height: 24)
+                HStack(spacing: 6) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(phase.label)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+            } else if DepthConversionManager.shared.isProcessing(videoIdentity: video.stashId) {
+                Divider()
+                    .frame(height: 24)
+                Text("Conversion queued")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)

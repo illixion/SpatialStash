@@ -116,6 +116,15 @@ final class DepthConverter: @unchecked Sendable {
     /// Depth is smooth, low-entropy content; 2 Mbps HEVC at ~518px is generous.
     /// (If banding ever shows on-device, bump to 10-bit x420 instead of bitrate.)
     private static let depthVideoBitrate = 2_000_000
+    /// Write the depth video as a fragmented QuickTime so it's readable while
+    /// still being written — progressive playback engages mid-conversion.
+    private static let movieFragmentSeconds = 2.0
+    /// Provisional meta.json cadence (emitted frames): first write early so a
+    /// progressive engage has metadata to load, then periodically. The display
+    /// mapping for late frames is recomputed by every write and finalized by
+    /// the completed pass.
+    private static let provisionalMetaFirstFrames = 150
+    private static let provisionalMetaEveryFrames = 300
 
     private let queue = DispatchQueue(label: "com.spatialstash.depth-converter", qos: .utility)
     private let cancelLock = NSLock()
@@ -137,10 +146,15 @@ final class DepthConverter: @unchecked Sendable {
 
     // MARK: Entry point
 
-    /// Convert a local video into a depth cache entry. Progress is 0-1 across
-    /// the whole conversion. Throws `DepthConversionError.cancelled` on cancel;
-    /// the partial entry directory is always removed on failure/cancel.
-    func convert(request: Request, progress: @escaping @Sendable (Double) -> Void) async throws -> Output {
+    /// Progress: fraction 0-1 across the conversion, plus the frontier — the
+    /// presentation time (seconds) depth has been *emitted* up to, which is what
+    /// drives the progressive-engage math.
+    typealias ProgressHandler = @Sendable (_ fraction: Double, _ frontierSeconds: Double) -> Void
+
+    /// Convert a local video into a depth cache entry. Throws
+    /// `DepthConversionError.cancelled` on cancel; the partial entry directory
+    /// is always removed on failure/cancel.
+    func convert(request: Request, progress: @escaping ProgressHandler) async throws -> Output {
         // Async metadata loads up front; the frame loop itself is synchronous on
         // the converter queue.
         let asset = AVURLAsset(url: request.localFileURL)
@@ -231,7 +245,7 @@ final class DepthConverter: @unchecked Sendable {
         var cutBefore: Bool
     }
 
-    private func run(_ plan: Plan, progress: @escaping @Sendable (Double) -> Void) throws -> Output {
+    private func run(_ plan: Plan, progress: @escaping ProgressHandler) throws -> Output {
         guard let gpu = makeGPUContext() else { throw DepthConversionError.gpuSetupFailed }
         guard let provider = CoreMLDepthProvider(device: gpu.device) else {
             throw DepthConversionError.noDepthModel
@@ -263,7 +277,7 @@ final class DepthConverter: @unchecked Sendable {
         provider: CoreMLDepthProvider,
         gpu: GPUContext,
         directory: URL,
-        progress: @escaping @Sendable (Double) -> Void
+        progress: @escaping ProgressHandler
     ) throws -> Output {
         // Reader: BGRA, downscaled at decode time (aspect-preserving, no upscale).
         let reader: AVAssetReader
@@ -316,6 +330,7 @@ final class DepthConverter: @unchecked Sendable {
         var writerInput: AVAssetWriterInput?
         var adaptor: AVAssetWriterInputPixelBufferAdaptor?
         var nextEmit = 0
+        var lastMetaEmitCount = 0
 
         let totalFrames = max(1, Int(plan.duration.seconds * plan.frameRate))
 
@@ -626,8 +641,23 @@ final class DepthConverter: @unchecked Sendable {
                 nextEmit += 1
             }
 
+            // Provisional metadata (completed: false) so a progressive engage
+            // mid-conversion has display mappings to load; each write recomputes
+            // over all stats so far and the final pass overwrites everything.
+            if (lastMetaEmitCount == 0 && nextEmit >= Self.provisionalMetaFirstFrames)
+                || nextEmit - lastMetaEmitCount >= Self.provisionalMetaEveryFrames {
+                lastMetaEmitCount = nextEmit
+                let provisional = buildMeta(
+                    plan: plan, provider: provider, stats: stats, completed: false,
+                    decodedWidth: decodedWidth, decodedHeight: decodedHeight,
+                    depthWidth: depthWidth, depthHeight: depthHeight
+                )
+                try? DepthCacheStore.writeMeta(provisional, to: directory)
+            }
+
             if stats.count % 10 == 0 {
-                progress(min(0.98 * Double(stats.count) / Double(totalFrames), 0.98))
+                let frontier = nextEmit > 0 ? stats[nextEmit - 1].pts.seconds : 0
+                progress(min(0.98 * Double(stats.count) / Double(totalFrames), 0.98), frontier)
             }
         }
 
@@ -653,7 +683,7 @@ final class DepthConverter: @unchecked Sendable {
 
         // Post-pass: lookahead-smoothed display mapping + median, then metadata.
         let meta = buildMeta(
-            plan: plan, provider: provider, stats: stats,
+            plan: plan, provider: provider, stats: stats, completed: true,
             decodedWidth: decodedWidth, decodedHeight: decodedHeight,
             depthWidth: depthWidth, depthHeight: depthHeight
         )
@@ -662,7 +692,7 @@ final class DepthConverter: @unchecked Sendable {
         } catch {
             throw DepthConversionError.encodingFailed("Metadata write failed: \(error.localizedDescription)")
         }
-        progress(1.0)
+        progress(1.0, plan.duration.seconds)
         AppLogger.videoCache.info("Depth conversion complete: \(stats.count, privacy: .public) frames for \(plan.request.videoIdentity, privacy: .private)")
         return Output(directory: directory, meta: meta)
     }
@@ -688,6 +718,9 @@ final class DepthConverter: @unchecked Sendable {
                 AVVideoAverageBitRateKey: Self.depthVideoBitrate
             ]
         ]
+        // Fragmented QuickTime: the growing file is readable up to the last
+        // fragment boundary, enabling progressive playback mid-conversion.
+        writer.movieFragmentInterval = CMTime(seconds: Self.movieFragmentSeconds, preferredTimescale: 600)
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
         input.expectsMediaDataInRealTime = false
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(
@@ -722,6 +755,7 @@ final class DepthConverter: @unchecked Sendable {
         plan: Plan,
         provider: CoreMLDepthProvider,
         stats: [FrameStat],
+        completed: Bool,
         decodedWidth: Int, decodedHeight: Int,
         depthWidth: Int, depthHeight: Int
     ) -> DepthCacheStore.Meta {
@@ -788,7 +822,7 @@ final class DepthConverter: @unchecked Sendable {
             uvOffsetY: uv.offset.y,
             frameCount: n,
             duration: plan.duration.seconds,
-            completed: true,
+            completed: completed,
             createdAt: Date(),
             framePTS: stats.map { $0.pts.seconds },
             displayScale: displayScale,

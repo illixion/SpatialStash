@@ -53,6 +53,9 @@ final class DepthConversionManager {
     struct ActiveJob {
         let request: Request
         var phase: Phase
+        /// Presentation time (seconds) depth has been emitted up to — the
+        /// readable frontier of the growing cache entry.
+        var frontierSeconds: Double = 0
     }
 
     struct CompletionEvent: Equatable {
@@ -74,6 +77,22 @@ final class DepthConversionManager {
     private(set) var lastError: FailureEvent?
 
     var isConverting: Bool { activeJob != nil }
+
+    /// Measured conversion speed in video-seconds per wall-second (EMA); 0
+    /// until enough samples exist.
+    private(set) var conversionRate: Double = 0
+    @ObservationIgnored private var lastFrontierSample: (wall: CFAbsoluteTime, frontier: Double)?
+
+    /// Frontier + rate for the progressive-engage math, or nil unless this
+    /// video is actively converting with a usable rate estimate.
+    func progressiveStatus(videoIdentity: String) -> (frontier: Double, rate: Double)? {
+        guard let activeJob,
+              activeJob.request.videoIdentity == videoIdentity,
+              case .converting = activeJob.phase,
+              activeJob.frontierSeconds > 0,
+              conversionRate > 0 else { return nil }
+        return (activeJob.frontierSeconds, conversionRate)
+    }
 
     @ObservationIgnored private var currentTask: Task<Void, Never>?
     @ObservationIgnored private var currentConverter: DepthConverter?
@@ -133,6 +152,8 @@ final class DepthConversionManager {
             downloadTask = nil
             downloadObservation = nil
             activeJob = nil
+            conversionRate = 0
+            lastFrontierSample = nil
             startNextIfIdle()
         }
 
@@ -153,10 +174,9 @@ final class DepthConversionManager {
                 title: request.title,
                 localFileURL: localURL
             )
-            _ = try await converter.convert(request: converterRequest) { progress in
+            _ = try await converter.convert(request: converterRequest) { progress, frontier in
                 Task { @MainActor in
-                    guard self.activeJob?.request.videoIdentity == request.videoIdentity else { return }
-                    self.activeJob?.phase = .converting(progress)
+                    self.updateConversionProgress(identity: request.videoIdentity, fraction: progress, frontier: frontier)
                 }
             }
             lastCompleted = CompletionEvent(videoIdentity: request.videoIdentity, date: Date())
@@ -172,6 +192,25 @@ final class DepthConversionManager {
                     date: Date()
                 )
             }
+        }
+    }
+
+    private func updateConversionProgress(identity: String, fraction: Double, frontier: Double) {
+        guard activeJob?.request.videoIdentity == identity else { return }
+        activeJob?.phase = .converting(fraction)
+        activeJob?.frontierSeconds = frontier
+        // Rate EMA over ≥0.5s windows — smooth enough for the engage math,
+        // responsive enough to notice thermal slowdown.
+        let now = CFAbsoluteTimeGetCurrent()
+        if let last = lastFrontierSample {
+            let dt = now - last.wall
+            if dt >= 0.5, frontier > last.frontier {
+                let instant = (frontier - last.frontier) / dt
+                conversionRate = conversionRate == 0 ? instant : conversionRate * 0.7 + instant * 0.3
+                lastFrontierSample = (now, frontier)
+            }
+        } else {
+            lastFrontierSample = (now, frontier)
         }
     }
 

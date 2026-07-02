@@ -220,6 +220,8 @@ final class VideoWindowModel {
     func cleanup() {
         cancelAutoHideTimer()
         dismissDepthReadyPrompt()
+        progressiveEngageTask?.cancel()
+        progressiveEngageTask = nil
         playbackRendererTask?.cancel()
         playbackRendererTask = nil
         loopController.reset()
@@ -265,6 +267,9 @@ final class VideoWindowModel {
         video3DSettings = nil
         pseudo3DEnabled = false
         pseudo3DDepthMode = .realtime
+        pseudo3DEngageResumeTime = nil
+        progressiveEngageTask?.cancel()
+        progressiveEngageTask = nil
         dismissDepthReadyPrompt()
         pseudo3DSettings = .default
         isFlipped = false
@@ -342,6 +347,17 @@ final class VideoWindowModel {
     var showDepthReadyPrompt = false
     /// Non-nil while the conversion-failed alert is up.
     var depthConversionFailureMessage: String?
+    /// Playhead captured when fake-3D is engaged so the stereo player resumes
+    /// where the 2D player was instead of restarting.
+    var pseudo3DEngageResumeTime: Double?
+    /// Polls for the safe point to auto-engage 3D playback mid-conversion.
+    @ObservationIgnored private var progressiveEngageTask: Task<Void, Never>?
+    /// The frontier must lead the playhead by at least this much before
+    /// engaging — covers fragment/meta write latency (~4s) plus rebuild gaps.
+    private static let progressiveMinLeadSeconds: Double = 10
+    /// Fraction of the measured conversion rate we rely on — headroom for
+    /// thermal throttling. Underruns degrade to flat depth, not stutter.
+    private static let progressiveSafetyFactor: Double = 0.8
     @ObservationIgnored private var depthReadyPromptDismissTask: Task<Void, Never>?
     private static let depthReadyPromptTimeout: TimeInterval = 10
 
@@ -366,19 +382,23 @@ final class VideoWindowModel {
     /// Engage the realtime (synchronous inference) fake-3D path. Never starts a
     /// background conversion — it would fight the live inference for the ANE.
     func engageRealtimePseudo3D() {
+        pseudo3DEngageResumeTime = currentTime
         pseudo3DDepthMode = .realtime
         enablePseudo3D()
     }
 
-    /// Engage fake-3D from this video's pre-processed depth cache.
+    /// Engage fake-3D from this video's depth cache (complete, or still growing
+    /// when the conversion is running — progressive playback).
     func engageCachedPseudo3D() {
         dismissDepthReadyPrompt()
+        pseudo3DEngageResumeTime = currentTime
         pseudo3DDepthMode = .cached(videoIdentity: video.stashId)
         enablePseudo3D()
     }
 
-    /// Kick off the background depth conversion (the window stays 2D; a "3D
-    /// ready" pill appears when it finishes).
+    /// Kick off the background depth conversion. The window keeps playing 2D,
+    /// then auto-engages 3D at the safe point mid-conversion (see
+    /// startProgressiveEngageMonitor) or on completion.
     func startDepthPreprocessing() {
         DepthConversionManager.shared.enqueue(DepthConversionManager.Request(
             videoIdentity: video.stashId,
@@ -386,6 +406,67 @@ final class VideoWindowModel {
             sourceURL: depthConversionSourceURL,
             apiKey: appModel.stashAPIKey.isEmpty ? nil : appModel.stashAPIKey
         ))
+        startProgressiveEngageMonitor()
+    }
+
+    /// Whether this window is plain-2D and eligible to be auto-switched into
+    /// cached fake-3D (never override an explicit 3D/realtime choice).
+    private var canAutoEngageProgressive3D: Bool {
+        !shouldUse3DMode && !pseudo3DEnabled && playbackRenderer == .nativeMetal
+    }
+
+    /// While this video converts, poll for the point where 3D playback can
+    /// start without ever catching the conversion frontier: the remaining
+    /// conversion must finish within the remaining playback at the measured
+    /// rate (with headroom for throttling), and the frontier must lead the
+    /// playhead by a buffer. Auto-engages cached fake-3D there (or on
+    /// completion if the safe point never arrives). Stops when the user picks
+    /// another viewing mode or navigates away; drops back to 2D if the
+    /// conversion is cancelled or fails mid-progressive-playback.
+    private func startProgressiveEngageMonitor() {
+        progressiveEngageTask?.cancel()
+        let identity = video.stashId
+        progressiveEngageTask = Task { [weak self] in
+            var engagedProgressively = false
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                guard let self, !Task.isCancelled, self.video.stashId == identity else { return }
+                let manager = DepthConversionManager.shared
+
+                guard manager.isProcessing(videoIdentity: identity) else {
+                    if DepthCacheStore.entry(videoIdentity: identity) != nil {
+                        // Completed. Engage if still watching plain 2D (the
+                        // ready pill covers windows that moved on).
+                        if !engagedProgressively, self.canAutoEngageProgressive3D {
+                            self.engageCachedPseudo3D()
+                        }
+                    } else if engagedProgressively, self.pseudo3DEnabled,
+                              case .cached = self.pseudo3DDepthMode {
+                        // Cancelled/failed mid-progressive-playback: the depth
+                        // file stops growing (or vanishes) — back to 2D.
+                        self.disablePseudo3D()
+                    }
+                    self.progressiveEngageTask = nil
+                    return
+                }
+
+                guard !engagedProgressively else { continue }
+                guard self.canAutoEngageProgressive3D,
+                      let status = manager.progressiveStatus(videoIdentity: identity),
+                      self.duration > 0 else { continue }
+
+                let playhead = self.currentTime
+                let lead = status.frontier - playhead
+                let remainingPlayback = max(self.duration - playhead, 0)
+                let remainingConversion = max(self.duration - status.frontier, 0)
+                if lead >= Self.progressiveMinLeadSeconds,
+                   remainingConversion <= status.rate * remainingPlayback * Self.progressiveSafetyFactor {
+                    AppLogger.videoWindow.info("Progressive 3D engage: frontier \(status.frontier, privacy: .public)s, rate \(status.rate, privacy: .public)x, playhead \(playhead, privacy: .public)s")
+                    self.engageCachedPseudo3D()
+                    engagedProgressively = true
+                }
+            }
+        }
     }
 
     /// A downloadable, AVAssetReader-readable source for depth conversion.

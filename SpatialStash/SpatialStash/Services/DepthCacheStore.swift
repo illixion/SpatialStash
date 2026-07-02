@@ -134,6 +134,18 @@ enum DepthCacheStore {
         }
     }
 
+    /// The still-growing (incomplete) entry for a video — progressive playback
+    /// while DepthConversionManager is converting it. Callers must ensure a
+    /// conversion is actually running: an *abandoned* partial entry would play
+    /// flat past its last written fragment. Never returned by `entry()`.
+    static func inProgressEntry(videoIdentity: String) -> Entry? {
+        allEntries().first {
+            $0.meta.version == pipelineVersion
+                && $0.meta.videoIdentity == videoIdentity
+                && FileManager.default.fileExists(atPath: $0.depthVideoURL.path)
+        }
+    }
+
     /// All entries with readable metadata (any version, including stale ones),
     /// for the Settings management list.
     static func allEntries() -> [Entry] {
@@ -177,7 +189,9 @@ enum DepthCacheStore {
 
     // MARK: Private
 
-    private static func readMeta(in directory: URL) -> Meta? {
+    /// Internal (not private): DepthCacheReader re-reads metadata while a
+    /// progressive entry grows.
+    static func readMeta(in directory: URL) -> Meta? {
         guard let data = try? Data(contentsOf: directory.appendingPathComponent(metaFilename)) else { return nil }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601

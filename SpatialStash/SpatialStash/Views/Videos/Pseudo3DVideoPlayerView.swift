@@ -81,6 +81,8 @@ struct Pseudo3DVideoPlayerView: View {
     var settings: Pseudo3DSettings = .default
     /// Realtime inference vs. pre-processed cached depth.
     var depthMode: Pseudo3DDepthMode = .realtime
+    /// Resume position (seconds) captured from the 2D player at engage time.
+    var startAtSeconds: Double? = nil
     var isFlipped: Bool = false
     var loopController: VideoLoopController? = nil
     var playbackModel: VideoWindowModel? = nil
@@ -104,7 +106,7 @@ struct Pseudo3DVideoPlayerView: View {
                 engine.onPlaybackError = onPlaybackError
                 content.add(engine.makeVideoEntity())
                 engine.observeVideoSize(content: content)
-                engine.load(url: videoURL, roomActive: isRoomActive, depthMode: depthMode)
+                engine.load(url: videoURL, roomActive: isRoomActive, depthMode: depthMode, startAt: startAtSeconds)
             } update: { content in
                 // Fit the video plane to the window (VideoPlayerComponent's screen
                 // defaults to ~2× the window otherwise).
@@ -386,15 +388,20 @@ final class Pseudo3DStereoEngine {
         if wasPaused { pause() }
     }
 
-    func load(url: URL, roomActive: Bool, depthMode requestedMode: Pseudo3DDepthMode? = nil) {
+    func load(url: URL, roomActive: Bool, depthMode requestedMode: Pseudo3DDepthMode? = nil, startAt: Double? = nil) {
         if let requestedMode { depthMode = requestedMode }
         guard loadedURL != url else { return }
 
         // Cached mode plays back baked depth and needs no model; resolve its
-        // entry up front (a missing/deleted cache falls back to realtime).
+        // entry up front (a missing/deleted cache falls back to realtime). A
+        // still-converting entry is accepted too — progressive playback; the
+        // reader follows the growing file.
         var cacheEntry: DepthCacheStore.Entry?
         if case .cached(let videoIdentity) = depthMode {
             cacheEntry = DepthCacheStore.entry(videoIdentity: videoIdentity)
+            if cacheEntry == nil, DepthConversionManager.shared.isProcessing(videoIdentity: videoIdentity) {
+                cacheEntry = DepthCacheStore.inProgressEntry(videoIdentity: videoIdentity)
+            }
             if cacheEntry == nil {
                 AppLogger.videoWindow.warning("Depth cache entry missing for \(videoIdentity, privacy: .private); falling back to realtime")
             }
@@ -494,6 +501,9 @@ final class Pseudo3DStereoEngine {
         pump.start()
         self.pump = pump
 
+        // Resume where the previous (2D) player left off when the caller says
+        // so — engaging fake-3D mid-watch shouldn't restart the video.
+        if let startAt, startAt > 1 { seek(to: startAt) }
         if isRoomActive { play() }
     }
 
