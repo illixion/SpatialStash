@@ -15,8 +15,9 @@
  the spring settles.
 
  Playback path (mirrors VideoWindowView):
-   - Default: `NativeMetalVideoPlayerView` (AVFoundation → Metal). Loops and
-     starts muted. Falls back to WebKit on decode failure.
+   - Default: `NativeMetalVideoPlayerView` (AVFoundation → Metal). Loops; the
+     initial mute state follows Settings ("Mute Videos on Open"). Falls back
+     to WebKit on decode failure.
    - `WebVideoPlayerView` fallback for codecs AVFoundation can't decode.
    - `Pseudo3DVideoPlayerView` (realtime depth) when the user converts to 3D;
      gated on the native renderer + an installed real-time depth model.
@@ -103,7 +104,7 @@ struct VideoQuickLookView: View {
     }
 
     private var isMuted: Bool {
-        playbackModel?.isMuted ?? true
+        playbackModel?.isMuted ?? appModel.videoAutoplayMuted
     }
 
     /// Real-time fake-3D needs the native decoder and an installed model.
@@ -212,6 +213,8 @@ struct VideoQuickLookView: View {
                 depthMode: .realtime,
                 startAtSeconds: playbackModel?.currentTime,
                 playbackModel: playbackModel,
+                // Keep the user's current mute choice across the 3D switch.
+                startMuted: isMuted,
                 onPlaybackError: {
                     // No usable depth (model missing / load failed) — drop back
                     // to flat playback.
@@ -225,13 +228,15 @@ struct VideoQuickLookView: View {
                 showControls: false,
                 onVideoSizeKnown: updateAspect,
                 loop: true,
-                playbackModel: playbackModel
+                playbackModel: playbackModel,
+                startMuted: isMuted
             )
         } else {
             NativeMetalVideoPlayerView(
                 videoURL: previewURL,
                 onVideoSizeKnown: updateAspect,
                 playbackModel: playbackModel,
+                startMuted: isMuted,
                 onPlaybackError: { useWebKit = true }
             )
         }

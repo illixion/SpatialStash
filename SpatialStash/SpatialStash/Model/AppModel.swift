@@ -685,6 +685,17 @@ class AppModel {
         }
     }
 
+    /// When true (default), videos open with audio muted; autoplay always
+    /// starts playback either way. Off = videos open with sound. Applies to
+    /// the video player windows and the gallery long-press quick look.
+    var videoAutoplayMuted: Bool {
+        didSet {
+            if videoAutoplayMuted != oldValue {
+                UserDefaults.standard.set(videoAutoplayMuted, forKey: "videoAutoplayMuted")
+            }
+        }
+    }
+
     /// When true, per-image viewing enhancements (spatial 3D, background removal)
     /// are remembered and auto-restored on reopen.
     var rememberImageEnhancements: Bool {
@@ -1072,6 +1083,7 @@ class AppModel {
         let loadedRealtimeDepthModelName = UserDefaults.standard.string(forKey: "realtimeDepthModelName") ?? legacyDepthModelName
         let loadedPreprocessDepthModelName = UserDefaults.standard.string(forKey: "preprocessDepthModelName") ?? legacyDepthModelName
         let loadedDefaultRealtimePseudo3D = loadBool("defaultRealtimePseudo3D", default: false)
+        let loadedVideoAutoplayMuted = loadBool("videoAutoplayMuted", default: true)
 
         // Load default image viewing mode (default: 2D / mono)
         let loadedDefaultImageViewingMode: DefaultImageViewingMode
@@ -1154,6 +1166,7 @@ class AppModel {
         self.realtimeDepthModelName = loadedRealtimeDepthModelName
         self.preprocessDepthModelName = loadedPreprocessDepthModelName
         self.defaultRealtimePseudo3D = loadedDefaultRealtimePseudo3D
+        self.videoAutoplayMuted = loadedVideoAutoplayMuted
         self.rememberImageEnhancements = loadedRememberImageEnhancements
         self.autoRestoreSpatial3D = loadedAutoRestoreSpatial3D
         self.fullyImmersive3DMode = loadedFullyImmersive3DMode

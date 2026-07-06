@@ -32,6 +32,9 @@ struct NativeMetalVideoPlayerView: UIViewRepresentable {
     var visualAdjustments: VisualAdjustments = VisualAdjustments()
     var loopController: VideoLoopController? = nil
     var playbackModel: VideoWindowModel? = nil
+    /// Initial mute state applied when a video loads (autoplay always starts
+    /// playback; this only controls whether it opens with audio).
+    var startMuted: Bool = true
     var onPlaybackError: (() -> Void)? = nil
 
     func makeCoordinator() -> Coordinator {
@@ -64,6 +67,7 @@ struct NativeMetalVideoPlayerView: UIViewRepresentable {
         coordinator.visualAdjustments = visualAdjustments
         coordinator.onVideoSizeKnown = onVideoSizeKnown
         coordinator.onPlaybackError = onPlaybackError
+        coordinator.startMuted = startMuted
 
         if let loopController {
             loopController.queryCurrentTime = { [weak coordinator] in
@@ -126,6 +130,7 @@ struct NativeMetalVideoPlayerView: UIViewRepresentable {
         var onVideoSizeKnown: ((CGSize) -> Void)?
         var onPlaybackUpdate: ((PlaybackState) -> Void)?
         var onPlaybackError: (() -> Void)?
+        var startMuted = true
 
         private var player: AVPlayer?
         private var playerItem: AVPlayerItem?
@@ -168,7 +173,7 @@ struct NativeMetalVideoPlayerView: UIViewRepresentable {
             item.add(output)
 
             let player = AVPlayer(playerItem: item)
-            player.isMuted = true
+            player.isMuted = startMuted
             player.automaticallyWaitsToMinimizeStalling = true
 
             self.player = player
@@ -247,7 +252,11 @@ struct NativeMetalVideoPlayerView: UIViewRepresentable {
                 // auto-resume-on-room-entry behavior.
                 if wasPlayingBeforeRoomExit { play() }
             } else {
-                wasPlayingBeforeRoomExit = player?.timeControlStatus == .playing
+                // `!= .paused` (not `== .playing`): a just-opened player is
+                // still .waitingToPlayAtSpecifiedRate while buffering, and the
+                // transient inactive flap at window open would otherwise
+                // capture it as "paused" and kill autoplay for good.
+                wasPlayingBeforeRoomExit = player?.timeControlStatus != .paused
                 pause()
             }
         }

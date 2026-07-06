@@ -41,6 +41,10 @@ struct WebVideoPlayerView: UIViewRepresentable {
     /// it (driving the custom SwiftUI control bar). nil for callers that don't
     /// need custom controls (animated GIFs, remote slideshow, stereoscopic fallback).
     var playbackModel: VideoWindowModel? = nil
+    /// Initial mute state for the <video> element (autoplay always starts
+    /// playback; this only controls whether it opens with audio). Callers
+    /// without a mute UI (GIFs, remote slideshow) keep the muted default.
+    var startMuted: Bool = true
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -392,6 +396,9 @@ struct WebVideoPlayerView: UIViewRepresentable {
         // controls never flash on load before the JS toggle can hide them.
         let controlsAttr = showControls ? "controls " : ""
         let loopAttr = loop ? "loop " : ""
+        // Unmuted autoplay is allowed here: the WKWebView is configured with
+        // mediaTypesRequiringUserActionForPlayback = [].
+        let mutedAttr = startMuted ? "muted " : ""
         let initialAdjustments = visualAdjustments ?? VisualAdjustments()
         let initialFilter = initialAdjustments.cssFilterString()
         let fallbackVideoSrcLiteral = Self.javascriptStringLiteral(fallbackVideoSrc ?? "")
@@ -447,7 +454,7 @@ struct WebVideoPlayerView: UIViewRepresentable {
         </head>
         <body>
             <div class="video-container">
-                <video id="player" \(controlsAttr)autoplay playsinline \(loopAttr)muted src="\(videoSrc)">
+                <video id="player" \(controlsAttr)autoplay playsinline \(loopAttr)\(mutedAttr)src="\(videoSrc)">
                     Your browser does not support video playback.
                 </video>
                 <canvas id="sharpen-canvas"></canvas>

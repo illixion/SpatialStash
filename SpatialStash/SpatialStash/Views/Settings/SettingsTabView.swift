@@ -97,6 +97,11 @@ struct SettingsTabView: View {
 
                     Toggle("Fully Immersive 3D Mode", isOn: $appModel.fullyImmersive3DMode)
 
+                    Toggle("Mute Videos on Open", isOn: $appModel.videoAutoplayMuted)
+                    Text("Videos always start playing automatically; turn this off to open them with sound. Applies to video windows and the gallery long-press preview.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
                     // Fake-3D depth models, per pipeline: real-time inference
                     // gates every frame (keep this fast), while pre-process
                     // conversion can afford a slower, higher-quality model.

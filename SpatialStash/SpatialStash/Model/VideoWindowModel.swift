@@ -103,7 +103,8 @@ final class VideoWindowModel {
     var currentTime: Double = 0
     var duration: Double = 0
     var isPaused: Bool = true
-    /// HTML autoplay starts muted; the user can unmute via the control bar.
+    /// Seeded from AppModel.videoAutoplayMuted in init (autoplay defaults to
+    /// muted unless the setting says otherwise); toggled via the control bar.
     var isMuted: Bool = true
     /// End of the last buffered range (seconds).
     var bufferedEnd: Double = 0
@@ -177,6 +178,7 @@ final class VideoWindowModel {
         self.video3DSettings = windowValue.video3DSettings
         self.pseudo3DEnabled = windowValue.pseudo3DEnabled
         self.pseudo3DSettings = windowValue.pseudo3DSettings ?? .default
+        self.isMuted = appModel.videoAutoplayMuted
 
         // Snapshot the browse list + pagination so prev/next navigate over this
         // window's own copy (parallels PhotoWindowModel.init). A window value may
@@ -277,11 +279,12 @@ final class VideoWindowModel {
         loopController.reset()
         resolvePlaybackRenderer()
 
-        // Reset playback state (web view reloads as a fresh muted autoplay)
+        // Reset playback state (the player reloads as a fresh autoplay at the
+        // default mute state)
         currentTime = 0
         duration = 0
         isPaused = true
-        isMuted = true
+        isMuted = appModel.videoAutoplayMuted
         bufferedEnd = 0
         isScrubbing = false
     }

@@ -86,6 +86,9 @@ struct Pseudo3DVideoPlayerView: View {
     var isFlipped: Bool = false
     var loopController: VideoLoopController? = nil
     var playbackModel: VideoWindowModel? = nil
+    /// Initial mute state applied when a video loads (autoplay always starts
+    /// playback; this only controls whether it opens with audio).
+    var startMuted: Bool = true
     var onPlaybackError: (() -> Void)? = nil
     /// Tap on the video surface (toggles chrome) — handled as a RealityKit tap
     /// target because a 2D overlay can't catch gaze over a RealityView.
@@ -114,6 +117,7 @@ struct Pseudo3DVideoPlayerView: View {
                 )
                 engine.onVideoSizeKnown = onVideoSizeKnown
                 engine.onPlaybackError = onPlaybackError
+                engine.startMuted = startMuted
                 content.add(engine.makeVideoEntity())
                 engine.observeVideoSize(content: content)
                 engine.load(url: videoURL, roomActive: isRoomActive, depthMode: depthMode, startAt: startAtSeconds)
@@ -154,6 +158,7 @@ struct Pseudo3DVideoPlayerView: View {
             engine.reloadDepthPipeline()
         }
         .onAppear {
+            engine.startMuted = startMuted
             engine.bindCommands(loopController: loopController, playbackModel: playbackModel)
             engine.configure(visualAdjustments: visualAdjustments, settings: settings, isFlipped: isFlipped)
             engine.setRoomActive(isRoomActive)
@@ -236,6 +241,9 @@ final class Pseudo3DStereoEngine {
     // A-B loop
     private var loopA: Double?
     private var loopB: Double?
+
+    /// Initial mute state applied to a freshly loaded player.
+    @ObservationIgnored var startMuted = true
 
     // Callbacks
     @ObservationIgnored var onVideoSizeKnown: ((CGSize) -> Void)?
@@ -448,11 +456,13 @@ final class Pseudo3DStereoEngine {
     func reloadDepthPipeline() {
         guard let url = loadedURL else { return }
         let resumeTime = currentTime
-        let wasPaused = player?.timeControlStatus != .playing
+        let wasPaused = player?.timeControlStatus == .paused
+        let wasMuted = player?.isMuted ?? startMuted
         loadedURL = nil
         load(url: url, roomActive: isRoomActive)
         if resumeTime > 0 { seek(to: resumeTime) }
         if wasPaused { pause() }
+        setMuted(wasMuted)
     }
 
     func load(url: URL, roomActive: Bool, depthMode requestedMode: Pseudo3DDepthMode? = nil, startAt: Double? = nil) {
@@ -517,7 +527,7 @@ final class Pseudo3DStereoEngine {
         item.add(output)
 
         let player = AVPlayer(playerItem: item)
-        player.isMuted = true
+        player.isMuted = startMuted
         player.automaticallyWaitsToMinimizeStalling = true
 
         self.player = player
@@ -610,7 +620,10 @@ final class Pseudo3DStereoEngine {
             // focus/room flaps; a playing (e.g. wall-snapped) window resumes.
             if wasPlayingBeforeRoomExit { play() }
         } else {
-            wasPlayingBeforeRoomExit = player?.timeControlStatus == .playing
+            // `!= .paused`: a still-buffering player (.waitingToPlay…) counts
+            // as playing, so the transient inactive flap at window open
+            // doesn't capture it as "paused" and kill autoplay.
+            wasPlayingBeforeRoomExit = player?.timeControlStatus != .paused
             pause()
         }
     }
