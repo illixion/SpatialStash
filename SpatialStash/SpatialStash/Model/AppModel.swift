@@ -37,6 +37,16 @@ class AppModel {
 
     var stashAPIKey: String {
         didSet {
+            // Sanitize pasted keys: stray whitespace/newlines are invisible and
+            // pernicious — HTTP header values get trimmed by the URL loading
+            // system (so GraphQL works), but a query param is percent-encoded
+            // verbatim (`%0A`), and Stash 401s a present-but-invalid apikey
+            // even when guest access is allowed. Result: every URL the app
+            // appends the key to (scene previews, screenshots) fails with
+            // NSURLError -1013 while everything else looks healthy.
+            // Assigning inside didSet does not re-trigger the observer.
+            let trimmed = stashAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed != stashAPIKey { stashAPIKey = trimmed }
             if stashAPIKey != oldValue {
                 UserDefaults.standard.set(stashAPIKey, forKey: "stashAPIKey")
                 updateAPIClient()
@@ -968,7 +978,10 @@ class AppModel {
         let defaultSlideshowDelay: TimeInterval = 5.0
 
         let loadedServerURL = UserDefaults.standard.string(forKey: "stashServerURL") ?? defaultServerURL
-        let loadedAPIKey = UserDefaults.standard.string(forKey: "stashAPIKey") ?? defaultAPIKey
+        // Trim persisted keys too — pre-fix installs (and restored backups) may
+        // have stored a key with trailing whitespace; see stashAPIKey.didSet.
+        let loadedAPIKey = (UserDefaults.standard.string(forKey: "stashAPIKey") ?? defaultAPIKey)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
 
         // Load auto-hide delay (0 means disabled, use default if not set)
         let savedAutoHideDelay = UserDefaults.standard.double(forKey: "autoHideDelay")
