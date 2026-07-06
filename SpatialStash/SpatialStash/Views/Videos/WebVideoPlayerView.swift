@@ -240,12 +240,19 @@ struct WebVideoPlayerView: UIViewRepresentable {
                 }
             } else {
                 // Left room: remember whether it was playing, disable
-                // auto-resume, pause, and schedule src unload.
+                // auto-resume, pause, and schedule src unload. A video whose
+                // autoplay hasn't produced frames yet still reports paused —
+                // count "never started" as playing so the open-time scene-phase
+                // flap doesn't permanently defeat autoplay (mirrors the
+                // .waitingToPlayAtSpecifiedRate handling in the AVPlayer paths).
                 let js = """
                 (function() {
                     window._roomActive = false;
                     var p = document.getElementById('player');
-                    if (p) { window._resumeOnRoomActive = !p.paused; p.pause(); }
+                    if (p) {
+                        window._resumeOnRoomActive = !p.paused || !window.__playbackEverStarted;
+                        p.pause();
+                    }
                 })();
                 """
                 webView.evaluateJavaScript(js)
@@ -772,6 +779,12 @@ struct WebVideoPlayerView: UIViewRepresentable {
                 // Reset retry count on successful playback
                 video.addEventListener('playing', function() {
                     retryCount = 0;
+                    // Autoplay has genuinely begun. Until this flips, the
+                    // room-exit capture treats the video as "was playing":
+                    // <video>.paused stays true while autoplay is still
+                    // buffering, so a scene-phase flap right at window open
+                    // would otherwise record "user paused" and kill autoplay.
+                    window.__playbackEverStarted = true;
                 });
 
                 // ----- Custom controls bridge -----
