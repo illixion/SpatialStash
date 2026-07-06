@@ -6,6 +6,13 @@
  PTS matches the frame the pump just pulled — exact image/depth sync at any
  frame rate, no inference.
 
+ An entry holds one or two depth files: two-pass (high-frame-rate) conversions
+ write the even half of the frames to depth.mov and the odd half to depth-b.mov
+ (see DepthConverter). Each file is decoded by its own sequential stream and the
+ reader merges them by PTS. While only pass 1 exists, the gaps are served with
+ the nearest earlier depth frame — ≤1 frame of depth lag, never wrong-scene
+ depth (the lattice is uniform, so the neighbor is always 1 frame away).
+
  Decode is sequential (AVAssetReader), which linear playback loves; a seek
  outside the small lookahead window tears the reader down and rebuilds it at the
  target time (~50-100ms once). During that gap the source reports "no depth" and
@@ -25,40 +32,55 @@ final class DepthCacheReader: @unchecked Sendable {
     /// Forward PTS gap beyond which decoding through is slower than rebuilding
     /// the reader at the target time.
     private static let forwardRebuildGap = 1.5
-    /// Bound on decode work per pump tick (a rebuild lands near the target, so
-    /// this is only a runaway guard).
+    /// Bound on decode work per stream per pump tick (a rebuild lands near the
+    /// target, so this is only a runaway guard).
     private static let maxDecodesPerCall = 120
-    /// Cap on retained decoded-but-not-yet-displayed frames.
+    /// Cap on retained decoded-but-not-yet-displayed frames per stream.
     private static let maxLookahead = 8
-
-    private let directory: URL
-    private let depthVideoURL: URL
-    /// Refreshed from disk while the entry is still growing (progressive).
-    private var meta: DepthCacheStore.Meta
-    /// True while the conversion is still writing this entry: the fragmented
-    /// file grows, so EOF means "no more frames YET" — rebuild with a fresh
-    /// asset (throttled) to pick up new fragments, and re-read meta.json.
-    private var progressive: Bool
-    private var lastGrowingRebuild: CFTimeInterval = 0
-    private var asset: AVURLAsset
-    private var textureCache: CVMetalTextureCache?
-
-    private var track: AVAssetTrack?
-    private var trackLoadAttempted = false
-    private var reader: AVAssetReader?
-    private var readerOutput: AVAssetReaderTrackOutput?
-    private var readerAtEnd = false
+    /// Throttle for growing-entry refreshes: fresh-asset rebuilds, meta.json
+    /// re-reads, and probing for the second pass's file appearing.
+    private static let growingRefreshInterval: CFTimeInterval = 2
 
     private struct DecodedDepth {
         let pts: CMTime
         let texture: MTLTexture
         let keepAlive: [Any]
     }
-    /// Decoded frames, ascending PTS.
-    private var lookahead: [DecodedDepth] = []
+
+    /// Sequential decode state for one depth file. Two-pass entries have two
+    /// streams (even/odd frame lattices) merged by PTS; single-pass entries one.
+    private final class Stream {
+        let url: URL
+        var asset: AVURLAsset
+        var track: AVAssetTrack?
+        var trackLoadAttempted = false
+        var reader: AVAssetReader?
+        var readerOutput: AVAssetReaderTrackOutput?
+        var readerAtEnd = false
+        /// Decoded frames, ascending PTS.
+        var lookahead: [DecodedDepth] = []
+        var lastGrowingRebuild: CFTimeInterval = 0
+
+        init(url: URL) {
+            self.url = url
+            self.asset = AVURLAsset(url: url)
+        }
+    }
+
+    private let directory: URL
+    /// Refreshed from disk while the entry is still growing (progressive).
+    private var meta: DepthCacheStore.Meta
+    /// True while the conversion is still writing this entry: the fragmented
+    /// files grow, so EOF means "no more frames YET" — rebuild with a fresh
+    /// asset (throttled) to pick up new fragments, re-read meta.json, and
+    /// watch for the second pass's file appearing.
+    private var progressive: Bool
+    private var streams: [Stream]
+    private var lastSecondaryProbe: CFTimeInterval = 0
+    private var textureCache: CVMetalTextureCache?
 
     /// Half of the typical frame duration — the PTS match tolerance.
-    private let halfFrame: Double
+    private var halfFrame: Double
     private let uvScale: SIMD2<Float>
     private let uvOffset: SIMD2<Float>
 
@@ -66,23 +88,27 @@ final class DepthCacheReader: @unchecked Sendable {
         // LRU stamp: playback keeps this entry from budget eviction.
         DepthCacheStore.touch(entry)
         self.directory = entry.directory
-        self.depthVideoURL = entry.depthVideoURL
         self.meta = entry.meta
         self.progressive = !entry.meta.completed
-        self.asset = AVURLAsset(url: entry.depthVideoURL)
+        self.streams = [Stream(url: entry.depthVideoURL)]
+        if FileManager.default.fileExists(atPath: entry.secondaryDepthVideoURL.path) {
+            streams.append(Stream(url: entry.secondaryDepthVideoURL))
+        }
         CVMetalTextureCacheCreate(nil, nil, device, nil, &textureCache)
         uvScale = SIMD2(entry.meta.uvScaleX, entry.meta.uvScaleY)
         uvOffset = SIMD2(entry.meta.uvOffsetX, entry.meta.uvOffsetY)
+        halfFrame = Self.halfFrame(for: entry.meta)
+    }
 
-        let pts = entry.meta.framePTS
+    private static func halfFrame(for meta: DepthCacheStore.Meta) -> Double {
+        let pts = meta.framePTS
         if pts.count > 1 {
             let deltas = zip(pts.dropFirst(), pts).map(-).filter { $0 > 0 }.sorted()
-            halfFrame = deltas.isEmpty ? 1.0 / 60 : deltas[deltas.count / 2] / 2
-        } else if entry.meta.frameCount > 0, entry.meta.duration > 0 {
-            halfFrame = entry.meta.duration / Double(entry.meta.frameCount) / 2
-        } else {
-            halfFrame = 1.0 / 60
+            return deltas.isEmpty ? 1.0 / 60 : deltas[deltas.count / 2] / 2
+        } else if meta.frameCount > 0, meta.duration > 0 {
+            return meta.duration / Double(meta.frameCount) / 2
         }
+        return 1.0 / 60
     }
 
     // MARK: Lookup (pump queue)
@@ -92,79 +118,117 @@ final class DepthCacheReader: @unchecked Sendable {
     /// (entries are only pruned then), which outlives the pump tick's warp wait.
     func depth(at itemTime: CMTime) -> PumpFrameDepth? {
         let t = itemTime.seconds
-        guard t.isFinite, ensureTrack() else { return nil }
+        guard t.isFinite else { return nil }
 
-        if let match = match(t) {
-            prune(before: t)
+        discoverSecondaryIfNeeded()
+        for stream in streams {
+            advance(stream, to: t)
+        }
+
+        let decoded = streams.flatMap(\.lookahead)
+        // 1.5x tolerance: on a full-rate lattice neighbors sit at 2x halfFrame
+        // (no false cross-frame match), while on a half-rate first pass the
+        // in-between video frames sit at exactly 1x halfFrame from both
+        // neighbors — bare halfFrame would make that a float coin-flip.
+        if let match = decoded
+            .filter({ abs($0.pts.seconds - t) <= halfFrame * 1.5 })
+            .min(by: { abs($0.pts.seconds - t) < abs($1.pts.seconds - t) }) {
+            // Prune relative to the served frame, never past it — its texture
+            // must stay retained until the pump's warp is done with it.
+            prune(before: match.pts.seconds)
             return frameDepth(for: match)
         }
-
-        let oldest = lookahead.first?.pts.seconds
-        let newest = lookahead.last?.pts.seconds
-        // Progressive: EOF just means the conversion hasn't written this far
-        // yet — a (throttled) rebuild with a fresh asset picks up new fragments.
-        let growingCatchUp = readerAtEnd && progressive
-            && (newest.map { t > $0 + halfFrame } ?? true)
-            && CACurrentMediaTime() - lastGrowingRebuild > 2
-        let needsRebuild =
-            (reader == nil && !readerAtEnd)                              // first use
-            || (oldest.map { t < $0 - halfFrame } ?? false)              // backward jump
-            || (newest.map { t - $0 > Self.forwardRebuildGap } ?? false) // forward jump
-            || (readerAtEnd && (newest.map { t < $0 - halfFrame } ?? true)) // seek after EOF (A-B loop / restart)
-            || growingCatchUp
-        if needsRebuild {
-            rebuild(at: t)
+        // Decoded past t without a match (a PTS gap, or a half-rate first
+        // pass) — serve the newest frame at/before t rather than dropping
+        // depth. Requires a frame beyond t so a progressive underrun at the
+        // frontier still degrades to flat instead of holding stale depth.
+        if decoded.contains(where: { $0.pts.seconds > t + halfFrame }) {
+            if let previous = decoded
+                .filter({ $0.pts.seconds <= t + halfFrame })
+                .max(by: { $0.pts.seconds < $1.pts.seconds }) {
+                prune(before: previous.pts.seconds)
+                return frameDepth(for: previous)
+            }
+            return nil
         }
-
-        var iterations = 0
-        while iterations < Self.maxDecodesPerCall {
-            if let match = match(t) {
-                prune(before: t)
-                return frameDepth(for: match)
-            }
-            // Decoded past t without a match (PTS gap) — serve the newest frame
-            // at/before t rather than dropping depth for a frame.
-            if let last = lookahead.last, last.pts.seconds > t + halfFrame {
-                if let previous = lookahead.last(where: { $0.pts.seconds <= t + halfFrame }) {
-                    prune(before: previous.pts.seconds)
-                    return frameDepth(for: previous)
-                }
-                return nil
-            }
-            if readerAtEnd {
-                // Hold the final frame briefly past the end (container rounding).
-                if let last = lookahead.last, t - last.pts.seconds < halfFrame * 4 {
-                    return frameDepth(for: last)
-                }
-                return nil
-            }
-            decodeNext()
-            iterations += 1
+        // Hold the final frame briefly past the end (container rounding).
+        if streams.allSatisfy(\.readerAtEnd),
+           let last = decoded.max(by: { $0.pts.seconds < $1.pts.seconds }),
+           t - last.pts.seconds < halfFrame * 4 {
+            return frameDepth(for: last)
         }
         return nil
     }
 
-    /// Pump is shutting down — release the reader and decoded frames.
+    /// Pump is shutting down — release the readers and decoded frames.
     func invalidate() {
-        reader?.cancelReading()
-        reader = nil
-        readerOutput = nil
-        lookahead.removeAll()
+        for stream in streams {
+            stream.reader?.cancelReading()
+            stream.reader = nil
+            stream.readerOutput = nil
+            stream.lookahead.removeAll()
+        }
         if let textureCache { CVMetalTextureCacheFlush(textureCache, 0) }
     }
 
     // MARK: Internals
 
-    private func match(_ t: Double) -> DecodedDepth? {
-        lookahead
-            .filter { abs($0.pts.seconds - t) <= halfFrame }
-            .min { abs($0.pts.seconds - t) < abs($1.pts.seconds - t) }
+    /// While the entry is growing, a two-pass conversion's second file can
+    /// appear at any time — pick it up so already-running playback upgrades
+    /// to full-rate depth as the frames stream in.
+    private func discoverSecondaryIfNeeded() {
+        guard progressive, streams.count == 1 else { return }
+        let now = CACurrentMediaTime()
+        guard now - lastSecondaryProbe > Self.growingRefreshInterval else { return }
+        lastSecondaryProbe = now
+        let url = directory.appendingPathComponent(DepthCacheStore.secondaryDepthVideoFilename)
+        if FileManager.default.fileExists(atPath: url.path) {
+            streams.append(Stream(url: url))
+        }
+    }
+
+    /// Rebuild if `t` left the stream's window, then decode until the stream
+    /// has a frame past `t` (or hits EOF / the per-tick budget).
+    private func advance(_ stream: Stream, to t: Double) {
+        guard ensureTrack(stream) else { return }
+
+        let oldest = stream.lookahead.first?.pts.seconds
+        let newest = stream.lookahead.last?.pts.seconds
+        // Progressive: EOF just means the conversion hasn't written this far
+        // yet — a (throttled) rebuild with a fresh asset picks up new fragments.
+        let growingCatchUp = stream.readerAtEnd && progressive
+            && (newest.map { t > $0 + halfFrame } ?? true)
+            && CACurrentMediaTime() - stream.lastGrowingRebuild > Self.growingRefreshInterval
+        // Seek after EOF (A-B loop / restart). Empty-lookahead EOF on a
+        // growing file means "ahead of the frontier" — that belongs to the
+        // throttled catch-up below, or an underrun would rebuild a fresh
+        // asset on every pump tick.
+        let seekAfterEOF = stream.readerAtEnd
+            && (newest.map { t < $0 - halfFrame } ?? !progressive)
+        let needsRebuild =
+            (stream.reader == nil && !stream.readerAtEnd)                // first use
+            || (oldest.map { t < $0 - halfFrame } ?? false)              // backward jump
+            || (newest.map { t - $0 > Self.forwardRebuildGap } ?? false) // forward jump
+            || seekAfterEOF
+            || growingCatchUp
+        if needsRebuild {
+            rebuild(stream, at: t)
+        }
+
+        var iterations = 0
+        while iterations < Self.maxDecodesPerCall, !stream.readerAtEnd {
+            if let last = stream.lookahead.last, last.pts.seconds > t + halfFrame { break }
+            decodeNext(stream)
+            iterations += 1
+        }
     }
 
     private func prune(before t: Double) {
-        lookahead.removeAll { $0.pts.seconds < t - halfFrame }
-        if lookahead.count > Self.maxLookahead {
-            lookahead.removeFirst(lookahead.count - Self.maxLookahead)
+        for stream in streams {
+            stream.lookahead.removeAll { $0.pts.seconds < t - halfFrame }
+            if stream.lookahead.count > Self.maxLookahead {
+                stream.lookahead.removeFirst(stream.lookahead.count - Self.maxLookahead)
+            }
         }
     }
 
@@ -200,50 +264,51 @@ final class DepthCacheReader: @unchecked Sendable {
 
     /// One-time synchronous bridge for the async track load (pump queue only;
     /// the load itself runs on AVFoundation's queues, so no deadlock).
-    private func ensureTrack() -> Bool {
-        if track != nil { return true }
-        guard !trackLoadAttempted else { return false }
-        trackLoadAttempted = true
+    private func ensureTrack(_ stream: Stream) -> Bool {
+        if stream.track != nil { return true }
+        guard !stream.trackLoadAttempted else { return false }
+        stream.trackLoadAttempted = true
 
         final class Box: @unchecked Sendable { var value: AVAssetTrack? }
         let box = Box()
         let semaphore = DispatchSemaphore(value: 0)
-        let asset = self.asset
+        let asset = stream.asset
         Task.detached {
             box.value = try? await asset.loadTracks(withMediaType: .video).first
             semaphore.signal()
         }
         semaphore.wait()
-        track = box.value
-        if track == nil {
-            AppLogger.videoCache.error("Depth cache video has no readable track: \(self.depthVideoURL.lastPathComponent, privacy: .public)")
+        stream.track = box.value
+        if stream.track == nil {
+            AppLogger.videoCache.error("Depth cache video has no readable track: \(stream.url.lastPathComponent, privacy: .public)")
         }
-        return track != nil
+        return stream.track != nil
     }
 
-    private func rebuild(at t: Double) {
-        reader?.cancelReading()
-        reader = nil
-        readerOutput = nil
-        lookahead.removeAll()
-        readerAtEnd = false
+    private func rebuild(_ stream: Stream, at t: Double) {
+        stream.reader?.cancelReading()
+        stream.reader = nil
+        stream.readerOutput = nil
+        stream.lookahead.removeAll()
+        stream.readerAtEnd = false
 
         // A growing entry needs a FRESH asset each rebuild — AVURLAsset caches
         // the container structure at parse time and never sees later fragments.
         // Also refresh meta.json (new display-mapping frames; completed flag).
         if progressive {
-            lastGrowingRebuild = CACurrentMediaTime()
-            asset = AVURLAsset(url: depthVideoURL)
-            track = nil
-            trackLoadAttempted = false
-            guard ensureTrack() else { return }
+            stream.lastGrowingRebuild = CACurrentMediaTime()
+            stream.asset = AVURLAsset(url: stream.url)
+            stream.track = nil
+            stream.trackLoadAttempted = false
+            guard ensureTrack(stream) else { return }
             if let fresh = DepthCacheStore.readMeta(in: directory) {
                 meta = fresh
                 progressive = !fresh.completed
+                halfFrame = Self.halfFrame(for: fresh)
             }
         }
 
-        guard let track, let newReader = try? AVAssetReader(asset: asset) else { return }
+        guard let track = stream.track, let newReader = try? AVAssetReader(asset: stream.asset) else { return }
         let output = AVAssetReaderTrackOutput(track: track, outputSettings: [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
             kCVPixelBufferMetalCompatibilityKey as String: true,
@@ -257,19 +322,19 @@ final class DepthCacheReader: @unchecked Sendable {
         let start = CMTime(seconds: max(0, t - halfFrame * 2), preferredTimescale: 90_000)
         newReader.timeRange = CMTimeRange(start: start, duration: .positiveInfinity)
         guard newReader.startReading() else { return }
-        reader = newReader
-        readerOutput = output
+        stream.reader = newReader
+        stream.readerOutput = output
     }
 
-    private func decodeNext() {
-        guard let readerOutput, let textureCache else {
-            readerAtEnd = true
+    private func decodeNext(_ stream: Stream) {
+        guard let readerOutput = stream.readerOutput, let textureCache else {
+            stream.readerAtEnd = true
             return
         }
         guard let sample = readerOutput.copyNextSampleBuffer() else {
-            readerAtEnd = true
-            if reader?.status == .failed {
-                AppLogger.videoCache.error("Depth cache decode failed: \(self.reader?.error?.localizedDescription ?? "unknown", privacy: .public)")
+            stream.readerAtEnd = true
+            if stream.reader?.status == .failed {
+                AppLogger.videoCache.error("Depth cache decode failed: \(stream.reader?.error?.localizedDescription ?? "unknown", privacy: .public)")
             }
             return
         }
@@ -283,7 +348,7 @@ final class DepthCacheReader: @unchecked Sendable {
             nil, textureCache, pixelBuffer, nil, .r8Unorm, width, height, 0, &cvTexture
         ) == kCVReturnSuccess, let cvTexture, let texture = CVMetalTextureGetTexture(cvTexture) else { return }
 
-        lookahead.append(DecodedDepth(pts: pts, texture: texture, keepAlive: [cvTexture, pixelBuffer]))
+        stream.lookahead.append(DecodedDepth(pts: pts, texture: texture, keepAlive: [cvTexture, pixelBuffer]))
     }
 }
 

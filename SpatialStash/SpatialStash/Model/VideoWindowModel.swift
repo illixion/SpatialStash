@@ -379,7 +379,14 @@ final class VideoWindowModel {
             showDepthModelSetup = true
             return
         }
-        guard !DepthConversionManager.shared.isProcessing(videoIdentity: video.stashId) else { return }
+        guard !DepthConversionManager.shared.isProcessing(videoIdentity: video.stashId) else {
+            // Already converting (e.g. started from a previous window of this
+            // video): monitor it so this window auto-engages at the safe point
+            // — immediately, once a two-pass conversion's first sweep has made
+            // the entry playable end to end.
+            startProgressiveEngageMonitor()
+            return
+        }
         showPseudo3DModePrompt = true
     }
 

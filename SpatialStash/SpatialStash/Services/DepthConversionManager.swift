@@ -42,6 +42,10 @@ final class DepthConversionManager {
     enum Phase: Equatable {
         case downloading(Double)
         case converting(Double)
+        /// Two-pass conversion's second sweep: the entry is already playable
+        /// end to end at half depth rate; the remaining work fills in the
+        /// skipped frames.
+        case refining(Double)
 
         var label: String {
             switch self {
@@ -51,6 +55,8 @@ final class DepthConversionManager {
                 return p > 0.001 ? "Downloading… \(Int(p * 100))%" : "Downloading…"
             case .converting(let p):
                 return "Converting… \(Int(p * 100))%"
+            case .refining(let p):
+                return "Refining 3D… \(Int(p * 100))%"
             }
         }
     }
@@ -89,14 +95,21 @@ final class DepthConversionManager {
     @ObservationIgnored private var lastFrontierSample: (wall: CFAbsoluteTime, frontier: Double)?
 
     /// Frontier + rate for the progressive-engage math, or nil unless this
-    /// video is actively converting with a usable rate estimate.
+    /// video is actively converting with a usable rate estimate. During a
+    /// two-pass conversion's refining sweep the frontier is the full duration
+    /// (the half-rate entry covers the whole timeline), so the engage
+    /// condition passes immediately.
     func progressiveStatus(videoIdentity: String) -> (frontier: Double, rate: Double)? {
         guard let activeJob,
               activeJob.request.videoIdentity == videoIdentity,
-              case .converting = activeJob.phase,
               activeJob.frontierSeconds > 0,
               conversionRate > 0 else { return nil }
-        return (activeJob.frontierSeconds, conversionRate)
+        switch activeJob.phase {
+        case .converting, .refining:
+            return (activeJob.frontierSeconds, conversionRate)
+        case .downloading:
+            return nil
+        }
     }
 
     @ObservationIgnored private var currentTask: Task<Void, Never>?
@@ -232,9 +245,11 @@ final class DepthConversionManager {
                 title: request.title,
                 localFileURL: localURL
             )
-            _ = try await converter.convert(request: converterRequest) { progress, frontier in
+            _ = try await converter.convert(request: converterRequest) { progress, frontier, refining in
                 Task { @MainActor in
-                    self.updateConversionProgress(identity: request.videoIdentity, fraction: progress, frontier: frontier)
+                    self.updateConversionProgress(
+                        identity: request.videoIdentity, fraction: progress, frontier: frontier, refining: refining
+                    )
                 }
             }
             lastCompleted = CompletionEvent(videoIdentity: request.videoIdentity, date: Date())
@@ -266,10 +281,13 @@ final class DepthConversionManager {
         }
     }
 
-    private func updateConversionProgress(identity: String, fraction: Double, frontier: Double) {
+    private func updateConversionProgress(identity: String, fraction: Double, frontier: Double, refining: Bool) {
         guard activeJob?.request.videoIdentity == identity else { return }
-        activeJob?.phase = .converting(fraction)
+        activeJob?.phase = refining ? .refining(fraction) : .converting(fraction)
         activeJob?.frontierSeconds = frontier
+        // While refining, the frontier is pinned at the duration — there's no
+        // rate signal in it (and the pin would register as one giant sample).
+        guard !refining else { return }
         // Rate EMA over ≥0.5s windows — smooth enough for the engage math,
         // responsive enough to notice thermal slowdown.
         let now = CFAbsoluteTimeGetCurrent()

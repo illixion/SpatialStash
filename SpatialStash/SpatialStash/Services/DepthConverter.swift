@@ -22,6 +22,18 @@
  temporal encode) and the HEVC append. The ANE and GPU run concurrently on
  different frames, so total time is roughly pure inference time rather than the
  serial sum of every stage.
+
+ High-frame-rate sources (≥ twoPassMinFrameRate) convert in two passes so the
+ video becomes watchable in half the time without paying any extra inference:
+ pass 1 infers every other frame and writes a complete half-rate depth.mov
+ (playable immediately — DepthCacheReader serves the nearest earlier depth frame
+ in the gaps, ≤1 frame of depth lag, the same temporal depth resolution the
+ realtime path has); pass 2 infers only the skipped frames into a secondary
+ depth-b.mov (a finished AVAssetWriter file can't accept interleaved PTS) and
+ finalizes metadata merged across both passes, so the display-range smoothing
+ can never diverge between the even/odd lattices (which would shimmer at 60Hz).
+ The entry stays `completed: false` until pass 2 finishes — an interrupted
+ pass 2 never leaves a half-rate cache masquerading as a finished conversion.
  */
 
 import AVFoundation
@@ -137,6 +149,11 @@ final class DepthConverter: @unchecked Sendable {
     /// the completed pass.
     fileprivate static let provisionalMetaFirstFrames = 150
     fileprivate static let provisionalMetaEveryFrames = 300
+    /// Sources at/above this frame rate convert in two passes (half-rate sweep
+    /// first, then the skipped frames). Below it a single full sweep runs:
+    /// half-rate depth on 24/30fps content would update at 12-15Hz — visible
+    /// halo pulsing on motion — and those conversions are already 2x faster.
+    fileprivate static let twoPassMinFrameRate: Double = 48
 
     private let queue = DispatchQueue(label: "com.spatialstash.depth-converter", qos: .utility)
     private let cancelLock = NSLock()
@@ -160,8 +177,10 @@ final class DepthConverter: @unchecked Sendable {
 
     /// Progress: fraction 0-1 across the conversion, plus the frontier — the
     /// presentation time (seconds) depth has been *emitted* up to, which is what
-    /// drives the progressive-engage math.
-    typealias ProgressHandler = @Sendable (_ fraction: Double, _ frontierSeconds: Double) -> Void
+    /// drives the progressive-engage math. `refining` is true during a two-pass
+    /// conversion's second sweep: the entry is fully playable (frontier =
+    /// duration) and the remaining work only fills in the skipped frames.
+    typealias ProgressHandler = @Sendable (_ fraction: Double, _ frontierSeconds: Double, _ refining: Bool) -> Void
 
     /// Convert a local video into a depth cache entry. Throws
     /// `DepthConversionError.cancelled` on cancel; the partial entry directory
@@ -257,6 +276,34 @@ final class DepthConverter: @unchecked Sendable {
         var cutBefore: Bool
     }
 
+    /// One decode-infer-encode sweep over the source. A single-pass conversion
+    /// is one sweep with stride 1; a two-pass conversion is two stride-2 sweeps
+    /// (parity 0 then 1).
+    fileprivate struct SweepPlan {
+        let stride: Int
+        let parity: Int
+        let outputFilename: String
+        /// The prior sweep's frames — merged into this sweep's metadata so the
+        /// display-range smoothing spans both half-rate lattices.
+        let base: SweepResult?
+        /// This sweep's slice of the whole conversion's progress fraction.
+        let progressBase: Double
+        let progressSpan: Double
+        /// Reported instead of the emit frontier (pass 2: the half-rate entry
+        /// already covers the whole timeline).
+        let frontierOverride: Double?
+        let completedOnFinish: Bool
+        let refining: Bool
+    }
+
+    fileprivate struct SweepResult {
+        let stats: [FrameStat]
+        let decodedWidth: Int
+        let decodedHeight: Int
+        let depthWidth: Int
+        let depthHeight: Int
+    }
+
     private func run(_ plan: Plan, progress: @escaping ProgressHandler) throws -> Output {
         guard let gpu = makeGPUContext() else { throw DepthConversionError.gpuSetupFailed }
         guard let provider = CoreMLDepthProvider(device: gpu.device, role: .preprocess) else {
@@ -275,21 +322,53 @@ final class DepthConverter: @unchecked Sendable {
         }
 
         do {
-            let output = try runConversion(plan, provider: provider, gpu: gpu, directory: directory, progress: progress)
-            return output
+            let finalMeta: DepthCacheStore.Meta
+            if plan.frameRate >= Self.twoPassMinFrameRate {
+                let first = try runSweep(plan, provider: provider, gpu: gpu, directory: directory, sweep: SweepPlan(
+                    stride: 2, parity: 0,
+                    outputFilename: DepthCacheStore.depthVideoFilename,
+                    base: nil,
+                    progressBase: 0, progressSpan: 0.49,
+                    frontierOverride: nil,
+                    completedOnFinish: false, refining: false
+                ), progress: progress)
+                // The half-rate entry now covers the whole timeline — playable
+                // end to end while pass 2 fills in the skipped frames.
+                progress(0.49, plan.duration.seconds, true)
+                finalMeta = try runSweep(plan, provider: provider, gpu: gpu, directory: directory, sweep: SweepPlan(
+                    stride: 2, parity: 1,
+                    outputFilename: DepthCacheStore.secondaryDepthVideoFilename,
+                    base: first.result,
+                    progressBase: 0.49, progressSpan: 0.49,
+                    frontierOverride: plan.duration.seconds,
+                    completedOnFinish: true, refining: true
+                ), progress: progress).meta
+            } else {
+                finalMeta = try runSweep(plan, provider: provider, gpu: gpu, directory: directory, sweep: SweepPlan(
+                    stride: 1, parity: 0,
+                    outputFilename: DepthCacheStore.depthVideoFilename,
+                    base: nil,
+                    progressBase: 0, progressSpan: 0.98,
+                    frontierOverride: nil,
+                    completedOnFinish: true, refining: false
+                ), progress: progress).meta
+            }
+            progress(1.0, plan.duration.seconds, false)
+            return Output(directory: directory, meta: finalMeta)
         } catch {
             try? fm.removeItem(at: directory)
             throw error
         }
     }
 
-    private func runConversion(
+    private func runSweep(
         _ plan: Plan,
         provider: CoreMLDepthProvider,
         gpu: GPUContext,
         directory: URL,
+        sweep: SweepPlan,
         progress: @escaping ProgressHandler
-    ) throws -> Output {
+    ) throws -> (result: SweepResult, meta: DepthCacheStore.Meta) {
         // Reader: BGRA, downscaled at decode time (aspect-preserving, no upscale).
         let reader: AVAssetReader
         do {
@@ -325,7 +404,7 @@ final class DepthConverter: @unchecked Sendable {
         // frame pins its decoded pixel buffer and inference output (keepAlive
         // retains the backing buffers, so nothing is recycled under stage B).
         let post = try PostStage(
-            gpu: gpu, provider: provider, plan: plan, directory: directory,
+            gpu: gpu, provider: provider, plan: plan, directory: directory, sweep: sweep,
             progress: progress, isCancelled: { [weak self] in self?.isCancelled ?? true }
         )
         let postQueue = DispatchQueue(label: "com.spatialstash.depth-converter.post", qos: .utility)
@@ -334,6 +413,7 @@ final class DepthConverter: @unchecked Sendable {
 
         // MARK: frame loop (stage A)
 
+        var sampleIndex = -1
         while true {
             if isCancelled || post.failure != nil {
                 reader.cancelReading()
@@ -342,6 +422,11 @@ final class DepthConverter: @unchecked Sendable {
             }
             guard let sample = readerOutput.copyNextSampleBuffer() else { break }
             guard let pixelBuffer = CMSampleBufferGetImageBuffer(sample) else { continue }
+            sampleIndex += 1
+            // Two-pass: each sweep only infers its own parity; the other
+            // parity is decoded (the reader is sequential) and dropped —
+            // decode is cheap next to inference.
+            if sampleIndex % sweep.stride != sweep.parity { continue }
             let pts = CMSampleBufferGetPresentationTimeStamp(sample)
 
             // ANE inference on this thread, concurrent with stage B's GPU work
@@ -371,11 +456,10 @@ final class DepthConverter: @unchecked Sendable {
             throw DepthConversionError.readerInitFailed(reader.error?.localizedDescription ?? "Reader failed")
         }
 
-        // Tail flush + final metadata (stage B is idle after the drain barrier).
+        // Tail flush + sweep metadata (stage B is idle after the drain barrier).
         let meta = try post.finish()
-        progress(1.0, plan.duration.seconds)
-        AppLogger.videoCache.info("Depth conversion complete: \(post.frameCount, privacy: .public) frames for \(plan.request.videoIdentity, privacy: .private)")
-        return Output(directory: directory, meta: meta)
+        AppLogger.videoCache.info("Depth sweep \(sweep.parity + 1, privacy: .public)/\(sweep.stride, privacy: .public) complete: \(post.frameCount, privacy: .public) frames for \(plan.request.videoIdentity, privacy: .private)")
+        return (post.makeResult(), meta)
     }
 }
 
@@ -395,6 +479,7 @@ extension DepthConverter {
         private let provider: CoreMLDepthProvider
         private let plan: Plan
         private let directory: URL
+        private let sweep: SweepPlan
         private let progress: ProgressHandler
         private let isCancelled: @Sendable () -> Bool
         private let totalFrames: Int
@@ -430,6 +515,7 @@ extension DepthConverter {
             provider: CoreMLDepthProvider,
             plan: Plan,
             directory: URL,
+            sweep: SweepPlan,
             progress: @escaping ProgressHandler,
             isCancelled: @escaping @Sendable () -> Bool
         ) throws {
@@ -440,10 +526,27 @@ extension DepthConverter {
             self.provider = provider
             self.plan = plan
             self.directory = directory
+            self.sweep = sweep
             self.progress = progress
             self.isCancelled = isCancelled
-            self.totalFrames = max(1, Int(plan.duration.seconds * plan.frameRate))
+            self.totalFrames = max(1, Int(plan.duration.seconds * plan.frameRate) / sweep.stride)
             self.binsBuffer = bins
+            // Pass 2 inherits pass 1's dimensions so a first-frame inference
+            // hiccup or an empty sweep can't produce mismatched metadata.
+            if let base = sweep.base {
+                decodedWidth = base.decodedWidth
+                decodedHeight = base.decodedHeight
+                depthWidth = base.depthWidth
+                depthHeight = base.depthHeight
+            }
+        }
+
+        func makeResult() -> SweepResult {
+            SweepResult(
+                stats: mergedStats(),
+                decodedWidth: decodedWidth, decodedHeight: decodedHeight,
+                depthWidth: depthWidth, depthHeight: depthHeight
+            )
         }
 
         /// The first error stage B hit; stage A polls this to abort the read loop.
@@ -476,10 +579,14 @@ extension DepthConverter {
             let frameIndex = stats.count
             if let (rawTex, keepAlive) = inferred {
                 if frameIndex == 0 {
-                    decodedWidth = CVPixelBufferGetWidth(pixelBuffer)
-                    decodedHeight = CVPixelBufferGetHeight(pixelBuffer)
-                    depthWidth = rawTex.width
-                    depthHeight = rawTex.height
+                    if decodedWidth == 0 { // not inherited from a prior sweep
+                        decodedWidth = CVPixelBufferGetWidth(pixelBuffer)
+                        decodedHeight = CVPixelBufferGetHeight(pixelBuffer)
+                        depthWidth = rawTex.width
+                        depthHeight = rawTex.height
+                    } else if rawTex.width != depthWidth || rawTex.height != depthHeight {
+                        throw DepthConversionError.encodingFailed("Depth dimensions changed between passes")
+                    }
                     evenWidth = depthWidth & ~1
                     evenHeight = depthHeight & ~1
                     guard evenWidth > 0, evenHeight > 0 else {
@@ -569,31 +676,43 @@ extension DepthConverter {
             }
 
             if stats.count % 10 == 0 {
-                let frontier = nextEmit > 0 ? stats[nextEmit - 1].pts.seconds : 0
-                progress(min(0.98 * Double(stats.count) / Double(totalFrames), 0.98), frontier)
+                let frontier = sweep.frontierOverride
+                    ?? (nextEmit > 0 ? stats[nextEmit - 1].pts.seconds : 0)
+                let fraction = sweep.progressBase
+                    + sweep.progressSpan * min(Double(stats.count) / Double(totalFrames), 1)
+                progress(fraction, frontier, sweep.refining)
             }
         }
 
         /// Flush the tail (truncated temporal windows), finish the file, and
-        /// write the final metadata. Stage A calls this after the drain barrier.
+        /// write the sweep's metadata. Stage A calls this after the drain barrier.
         func finish() throws -> DepthCacheStore.Meta {
-            guard !stats.isEmpty, let writer, let writerInput else {
-                throw DepthConversionError.encodingFailed("No frames decoded")
-            }
-            while nextEmit < stats.count {
-                try emit(center: nextEmit, lastAvailable: stats.count - 1)
-                nextEmit += 1
-            }
-            writerInput.markAsFinished()
-            let semaphore = DispatchSemaphore(value: 0)
-            writer.finishWriting { semaphore.signal() }
-            semaphore.wait()
-            guard writer.status == .completed else {
-                throw DepthConversionError.encodingFailed(writer.error?.localizedDescription ?? "Writer failed")
+            if stats.isEmpty {
+                // This sweep saw no frames of its parity (e.g. a single-frame
+                // video's odd sweep). No file was created, but the merged
+                // metadata still needs finalizing.
+                guard sweep.base?.stats.isEmpty == false else {
+                    throw DepthConversionError.encodingFailed("No frames decoded")
+                }
+            } else {
+                guard let writer, let writerInput else {
+                    throw DepthConversionError.encodingFailed("No frames decoded")
+                }
+                while nextEmit < stats.count {
+                    try emit(center: nextEmit, lastAvailable: stats.count - 1)
+                    nextEmit += 1
+                }
+                writerInput.markAsFinished()
+                let semaphore = DispatchSemaphore(value: 0)
+                writer.finishWriting { semaphore.signal() }
+                semaphore.wait()
+                guard writer.status == .completed else {
+                    throw DepthConversionError.encodingFailed(writer.error?.localizedDescription ?? "Writer failed")
+                }
             }
 
             // Post-pass: lookahead-smoothed display mapping + median, then metadata.
-            let meta = buildMeta(completed: true)
+            let meta = buildMeta(completed: sweep.completedOnFinish)
             do {
                 try DepthCacheStore.writeMeta(meta, to: directory)
             } catch {
@@ -817,7 +936,7 @@ extension DepthConverter {
         private func makeWriter(
             width: Int, height: Int, firstPTS: CMTime
         ) throws -> (AVAssetWriter, AVAssetWriterInput, AVAssetWriterInputPixelBufferAdaptor) {
-            let outputURL = directory.appendingPathComponent(DepthCacheStore.depthVideoFilename)
+            let outputURL = directory.appendingPathComponent(sweep.outputFilename)
             try? FileManager.default.removeItem(at: outputURL)
             let writer: AVAssetWriter
             do {
@@ -861,15 +980,36 @@ extension DepthConverter {
 
         // MARK: Post-pass
 
-        /// Turn per-frame raw stats into the final display mapping: within each
-        /// cut-delimited segment, the display range is a centered moving average of
-        /// the per-frame robust ranges (lookahead smoothing — no pumping, no lag);
-        /// across cuts it snaps. Each frame's stored-luma → display-depth affine
-        /// (scale/bias) bakes both its encode range and the display range.
+        /// This sweep's stats merged with the prior sweep's, ascending PTS —
+        /// the display mapping must smooth over ONE timeline, or the even/odd
+        /// lattices would get slightly different display ranges (60Hz shimmer).
+        private func mergedStats() -> [FrameStat] {
+            guard let base = sweep.base, !base.stats.isEmpty else { return stats }
+            var merged = (base.stats + stats).sorted { $0.pts.seconds < $1.pts.seconds }
+            // Each half-rate lattice flags its first frame at/after a true cut,
+            // so one cut lands on two adjacent merged frames — keeping only the
+            // earlier flag recovers the exact cut position.
+            var i = merged.count - 1
+            while i >= 1 {
+                if merged[i].cutBefore, merged[i - 1].cutBefore {
+                    merged[i].cutBefore = false
+                }
+                i -= 1
+            }
+            return merged
+        }
+
+        /// Turn per-frame raw stats (merged across sweeps) into the final
+        /// display mapping: within each cut-delimited segment, the display
+        /// range is a centered moving average of the per-frame robust ranges
+        /// (lookahead smoothing — no pumping, no lag); across cuts it snaps.
+        /// Each frame's stored-luma → display-depth affine (scale/bias) bakes
+        /// both its encode range and the display range.
         private func buildMeta(completed: Bool) -> DepthCacheStore.Meta {
-            let n = stats.count
+            let frames = mergedStats()
+            let n = frames.count
             var segmentStarts = [0]
-            for i in 1..<max(n, 1) where stats[i].cutBefore {
+            for i in 1..<max(n, 1) where frames[i].cutBefore {
                 segmentStarts.append(i)
             }
             segmentStarts.append(n)
@@ -890,15 +1030,15 @@ extension DepthConverter {
                     var sumLo: Float = 0
                     var sumHi: Float = 0
                     for j in w0...w1 {
-                        sumLo += stats[j].lo
-                        sumHi += stats[j].hi
+                        sumLo += frames[j].lo
+                        sumHi += frames[j].hi
                     }
                     let count = Float(w1 - w0 + 1)
                     let dispLo = sumLo / count
                     let span = max(sumHi / count - dispLo, 1e-5)
-                    displayScale[i] = (stats[i].hi - stats[i].lo) / span
-                    displayBias[i] = (stats[i].lo - dispLo) / span
-                    rawMedianNorm[i - start] = min(max((stats[i].median - dispLo) / span, 0), 1)
+                    displayScale[i] = (frames[i].hi - frames[i].lo) / span
+                    displayBias[i] = (frames[i].lo - dispLo) / span
+                    rawMedianNorm[i - start] = min(max((frames[i].median - dispLo) / span, 0), 1)
                 }
                 // Smooth the median over the same window so auto-convergence drifts
                 // rather than tracking per-frame jitter.
@@ -932,7 +1072,7 @@ extension DepthConverter {
                 duration: plan.duration.seconds,
                 completed: completed,
                 createdAt: Date(),
-                framePTS: stats.map { $0.pts.seconds },
+                framePTS: frames.map { $0.pts.seconds },
                 displayScale: displayScale,
                 displayBias: displayBias,
                 displayMedian: displayMedian

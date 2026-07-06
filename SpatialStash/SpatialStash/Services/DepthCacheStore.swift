@@ -29,6 +29,11 @@ enum DepthCacheStore {
     static let pipelineVersion = 2
 
     static let depthVideoFilename = "depth.mov"
+    /// Two-pass (high-frame-rate) conversions write the second pass's frames
+    /// (the odd half of the lattice) here — a finished AVAssetWriter file
+    /// can't accept interleaved PTS. DepthCacheReader merges both files by
+    /// PTS; single-pass entries simply have no secondary file.
+    static let secondaryDepthVideoFilename = "depth-b.mov"
     static let metaFilename = "meta.json"
 
     /// Everything cached playback needs, written by DepthConverter at the end of
@@ -71,6 +76,7 @@ enum DepthCacheStore {
         let directory: URL
         let meta: Meta
         var depthVideoURL: URL { directory.appendingPathComponent(DepthCacheStore.depthVideoFilename) }
+        var secondaryDepthVideoURL: URL { directory.appendingPathComponent(DepthCacheStore.secondaryDepthVideoFilename) }
     }
 
     // MARK: Directories & keys
