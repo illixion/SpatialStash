@@ -228,8 +228,9 @@ final class Pseudo3DStereoEngine {
     private var visualAdjustments = VisualAdjustments()
     private var settings = Pseudo3DSettings.default
     private var isFlipped = false
-    /// Where depth comes from: realtime inference (30fps) or a pre-processed
-    /// cache entry (60fps, exact PTS sync). Changing it reloads the pump.
+    /// Where depth comes from: realtime inference (~30Hz, held for in-between
+    /// frames at 60fps video) or a pre-processed cache entry (exact PTS sync).
+    /// Changing it reloads the pump.
     private var depthMode: Pseudo3DDepthMode = .realtime
 
     // A-B loop
@@ -557,7 +558,10 @@ final class Pseudo3DStereoEngine {
             }
         }
         // Cached depth: 60fps warp of pre-computed PTS-matched depth, no ANE.
-        // Realtime: 30fps, synchronous inference gates each tick anyway.
+        // Realtime: also 60fps video — RealtimeDepthSource infers at ~30Hz and
+        // holds the map for the in-between frame (≤1 frame of depth age);
+        // slow inference still gates its own tick, so this degrades to the
+        // old 30fps cadence when the model can't keep up.
         let depthSource: PumpDepthSource?
         if let cacheEntry {
             depthSource = CachedDepthSource(entry: cacheEntry, device: renderer.device)
@@ -570,7 +574,7 @@ final class Pseudo3DStereoEngine {
             renderer: renderer,
             startHostTime: CACurrentMediaTime(),
             depthSource: depthSource,
-            frameInterval: cacheEntry != nil ? 1.0 / 60.0 : 1.0 / 30.0,
+            frameInterval: 1.0 / 60.0,
             onVideoSizeKnown: sizeCallback
         )
         pump.updateConfig(makePumpConfig())
@@ -737,10 +741,12 @@ final class StereoPump: @unchecked Sendable {
 
     private let signposter = AppLogger.pseudo3DSignposter
 
-    /// Tick rate. Realtime mode: 30fps — synchronous inference gates each tick
-    /// anyway, and this halves GPU load. Cached mode: 60fps — the warp is only
-    /// a few ms, so the pump follows the source up to 60. Either way a tick
-    /// only enqueues when a genuinely new decoded frame exists.
+    /// Tick rate: 60fps in both modes — the warp is only a few ms, so the pump
+    /// follows the source up to 60. Cached mode looks depth up by PTS; realtime
+    /// mode infers at ~30Hz and holds the map for the in-between frame (see
+    /// RealtimeDepthSource), with a slow inference gating its own tick so the
+    /// cadence self-throttles. Either way a tick only enqueues when a genuinely
+    /// new decoded frame exists.
     private let frameInterval: Double
     /// Seconds to ramp depth strength back after a flat gap (avoids a 3D "pop").
     private let depthRampDuration: Double = 0.15

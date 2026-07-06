@@ -79,9 +79,25 @@ enum DepthModelRole: String, Sendable {
     }
 }
 
-/// Realtime source: synchronous same-frame Core ML inference (the 30fps path).
+/// Realtime source: synchronous same-frame Core ML inference. High-frame-rate
+/// sources render video at full rate with depth inferred at ~half rate: a frame
+/// arriving sooner than `reinferInterval` after the last inference reuses the
+/// held map. That's a *bounded* ≤1-frame depth age (same as cached playback of
+/// a two-pass conversion's first sweep), not the unbounded staleness of an
+/// async-decoupled pump — and it keeps ANE load unchanged while the video
+/// doubles in fluidity. ≤30fps content never holds: every frame spacing
+/// exceeds the interval, so it stays fully lock-step as before.
 final class RealtimeDepthSource: PumpDepthSource, @unchecked Sendable {
     private let provider: CoreMLDepthProvider
+    /// Video-timeline spacing below which a frame reuses the held depth.
+    /// 1/35s: 48-60fps content alternates infer/hold (24-30Hz inference);
+    /// 24/30fps frame spacing exceeds it, so those always re-infer.
+    private static let reinferInterval = 1.0 / 35.0
+    /// Held map is safe to reuse until the next inference: the provider's
+    /// ping-pong output isn't rewritten in between, and the pump's previous
+    /// warp has fully completed before the next tick.
+    private var held: PumpFrameDepth?
+    private var heldItemSeconds = -Double.infinity
 
     init?(device: MTLDevice) {
         guard let provider = CoreMLDepthProvider(device: device, role: .realtime) else { return nil }
@@ -91,18 +107,35 @@ final class RealtimeDepthSource: PumpDepthSource, @unchecked Sendable {
     let flattensWhenUnavailable = false
 
     func frameDepth(itemTime: CMTime, frame: CVPixelBuffer) -> PumpFrameDepth? {
-        guard let texture = provider.depth(for: frame) else { return nil }
+        let t = itemTime.seconds
+        // Reuse only across a small forward step; a seek (backward or a jump)
+        // always re-infers so held depth can never cross a discontinuity.
+        if let held, t.isFinite, t >= heldItemSeconds, t - heldItemSeconds < Self.reinferInterval {
+            return held
+        }
+        guard let texture = provider.depth(for: frame) else {
+            // Inference hiccup: don't hold through it — the next frame should
+            // try again rather than extend a map of unknown age.
+            held = nil
+            heldItemSeconds = -.infinity
+            return nil
+        }
         let uv = CoreMLDepthProvider.letterboxUVTransform(
             videoWidth: CVPixelBufferGetWidth(frame), videoHeight: CVPixelBufferGetHeight(frame),
             depthWidth: texture.width, depthHeight: texture.height
         )
-        return PumpFrameDepth(
+        let depth = PumpFrameDepth(
             texture: texture, uvScale: uv.scale, uvOffset: uv.offset,
             valueScale: 1, valueBias: 0, median: nil
         )
+        held = depth
+        heldItemSeconds = t.isFinite ? t : -.infinity
+        return depth
     }
 
-    func invalidate() {}
+    func invalidate() {
+        held = nil
+    }
 }
 
 /// CPU mirror of the Metal `DepthStabilizeParams` struct (int, 3 floats, uint,

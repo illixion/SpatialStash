@@ -413,6 +413,8 @@ final class DepthConverter: @unchecked Sendable {
 
         // MARK: frame loop (stage A)
 
+        let motionGate = FrameChangeDetector()
+        var skippedInferences = 0
         var sampleIndex = -1
         while true {
             if isCancelled || post.failure != nil {
@@ -433,7 +435,23 @@ final class DepthConverter: @unchecked Sendable {
             // on earlier frames. The transient output texture survives the
             // hand-off because keepAlive retains its backing buffer (a pooled
             // buffer is never recycled while externally retained).
-            let inferred = autoreleasepool { provider.inferRawDepth(from: pixelBuffer) }
+            //
+            // Motion-adaptive skip: a frame whose sparse luma signature matches
+            // the last inferred frame hands off nil, which stage B already
+            // treats as "repeat the previous frame's depth" — exact when
+            // nothing moved, and zero ANE work.
+            let inferred: (texture: MTLTexture, keepAlive: [Any])?
+            if motionGate.shouldReuseDepth(for: pixelBuffer) {
+                inferred = nil
+                skippedInferences += 1
+            } else {
+                inferred = autoreleasepool { provider.inferRawDepth(from: pixelBuffer) }
+                if inferred == nil {
+                    // Genuine inference hiccup: don't let later frames match
+                    // against a reference whose depth was never produced.
+                    motionGate.invalidateReference()
+                }
+            }
 
             inFlight.wait()
             postQueue.async {
@@ -458,8 +476,87 @@ final class DepthConverter: @unchecked Sendable {
 
         // Tail flush + sweep metadata (stage B is idle after the drain barrier).
         let meta = try post.finish()
-        AppLogger.videoCache.info("Depth sweep \(sweep.parity + 1, privacy: .public)/\(sweep.stride, privacy: .public) complete: \(post.frameCount, privacy: .public) frames for \(plan.request.videoIdentity, privacy: .private)")
+        AppLogger.videoCache.info("Depth sweep \(sweep.parity + 1, privacy: .public)/\(sweep.stride, privacy: .public) complete: \(post.frameCount, privacy: .public) frames (\(skippedInferences, privacy: .public) static, inference skipped) for \(plan.request.videoIdentity, privacy: .private)")
         return (post.makeResult(), meta)
+    }
+}
+
+// MARK: - Motion gate
+
+/// Cheap static-scene gate for the converter: a sparse luma signature per
+/// decoded frame, compared against the last *inferred* frame — so slow motion
+/// accumulates into the diff and re-infers, instead of creeping past a
+/// frame-to-frame threshold one sub-threshold step at a time.
+private final class FrameChangeDetector {
+    /// Samples per side of the sparse grid (48x48 = 2304 points, ~µs to read).
+    private static let gridSize = 48
+    /// Mean absolute luma delta (0-255 scale) below which the frame counts as
+    /// unchanged. Sensor grain on real footage typically measures 2-4, so it
+    /// never skips there (no harm); CG stills and freeze frames measure <0.5.
+    private static let threshold: Float = 1.0
+    /// Staleness bound: re-infer after this many consecutive skips regardless,
+    /// covering the (rare) case of depth-relevant change with near-constant
+    /// luma — e.g. a slow defocus pull.
+    private static let maxConsecutiveSkips = 60
+
+    private var reference: [Float] = []
+    private var consecutiveSkips = 0
+
+    /// True when `frame` is static relative to the last inferred frame and its
+    /// depth can be reused. On false, the sampled signature becomes the new
+    /// reference and the caller must infer.
+    func shouldReuseDepth(for frame: CVPixelBuffer) -> Bool {
+        guard let signature = Self.signature(of: frame) else {
+            reference = []
+            return false
+        }
+        if reference.count == signature.count, consecutiveSkips < Self.maxConsecutiveSkips {
+            var sum: Float = 0
+            for i in 0..<signature.count {
+                sum += abs(signature[i] - reference[i])
+            }
+            if sum / Float(signature.count) < Self.threshold {
+                consecutiveSkips += 1
+                return true
+            }
+        }
+        reference = signature
+        consecutiveSkips = 0
+        return false
+    }
+
+    /// The current reference frame's inference failed — stop matching
+    /// against it (there's no depth to reuse behind it).
+    func invalidateReference() {
+        reference = []
+        consecutiveSkips = 0
+    }
+
+    /// Sparse grid of luma samples from the decoded BGRA frame.
+    private static func signature(of frame: CVPixelBuffer) -> [Float]? {
+        guard CVPixelBufferGetPixelFormatType(frame) == kCVPixelFormatType_32BGRA,
+              CVPixelBufferLockBaseAddress(frame, .readOnly) == kCVReturnSuccess else { return nil }
+        defer { CVPixelBufferUnlockBaseAddress(frame, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddress(frame) else { return nil }
+        let width = CVPixelBufferGetWidth(frame)
+        let height = CVPixelBufferGetHeight(frame)
+        guard width >= gridSize, height >= gridSize else { return nil }
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(frame)
+        let ptr = base.assumingMemoryBound(to: UInt8.self)
+
+        var signature = [Float](repeating: 0, count: gridSize * gridSize)
+        for gy in 0..<gridSize {
+            let y = gy * (height - 1) / (gridSize - 1)
+            let row = ptr + y * bytesPerRow
+            for gx in 0..<gridSize {
+                let x = gx * (width - 1) / (gridSize - 1)
+                let px = row + x * 4 // BGRA
+                // Integer luma approximation: (B + 2G + R) / 4.
+                let luma = UInt16(px[0]) + 2 * UInt16(px[1]) + UInt16(px[2])
+                signature[gy * gridSize + gx] = Float(luma) * 0.25
+            }
+        }
+        return signature
     }
 }
 
