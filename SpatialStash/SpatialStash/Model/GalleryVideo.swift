@@ -16,6 +16,10 @@ struct GalleryVideo: Identifiable, Equatable, Hashable, Codable {
     /// Original direct Stash stream URL, used as fallback when a preferred
     /// server-side transcode cannot be played.
     let fallbackStreamURL: URL?
+    /// Short auto-generated Stash scene preview clip (`/scene/{id}/preview`,
+    /// typically 640×360 h264). Drives the gallery long-press quick look.
+    /// `nil` for sources with no server-side preview (e.g. local files).
+    let previewURL: URL?
     let title: String?
     let duration: TimeInterval?
 
@@ -41,6 +45,7 @@ struct GalleryVideo: Identifiable, Equatable, Hashable, Codable {
         thumbnailURL: URL,
         streamURL: URL,
         fallbackStreamURL: URL? = nil,
+        previewURL: URL? = nil,
         title: String? = nil,
         duration: TimeInterval? = nil,
         isStereoscopic: Bool = false,
@@ -57,6 +62,7 @@ struct GalleryVideo: Identifiable, Equatable, Hashable, Codable {
         self.thumbnailURL = thumbnailURL
         self.streamURL = streamURL
         self.fallbackStreamURL = fallbackStreamURL
+        self.previewURL = previewURL
         self.title = title
         self.duration = duration
         self.isStereoscopic = isStereoscopic

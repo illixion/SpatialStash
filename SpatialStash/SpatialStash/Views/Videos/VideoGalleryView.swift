@@ -13,6 +13,12 @@ struct VideoGalleryView: View {
     @Environment(\.openWindow) private var openWindow
 
     @State private var showBulkDeleteConfirmation = false
+    @State private var quickLookVideo: GalleryVideo?
+    /// Snapshot of the source cell's loaded thumbnail at long-press time.
+    /// Seeds the quick look's poster so the pop never starts on an empty frame.
+    @State private var quickLookSeedImage: UIImage?
+    @State private var cellFrames: [UUID: CGRect] = [:]
+    private let gallerySpace = "videoGallery"
 
     private let gridSpacing: CGFloat = 16
     /// Target cell width; the column count is chosen to keep cells near this.
@@ -97,6 +103,44 @@ struct VideoGalleryView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .coordinateSpace(name: gallerySpace)
+        .onPreferenceChange(CellFramePreferenceKey.self) { cellFrames = $0 }
+        .overlay {
+            // Outer GeometryReader resolves container size on the same render
+            // commit the quick look is inserted, so its first paint already
+            // has correct geometry (no layout-settle flicker).
+            GeometryReader { geo in
+                if let quickLookVideo {
+                    let useScalePop = !appModel.effectiveReduceMotion
+                    let sourceFrame = cellFrames[quickLookVideo.id]
+                    VideoQuickLookView(
+                        video: quickLookVideo,
+                        sourceFrame: sourceFrame,
+                        containerSize: geo.size,
+                        useScalePop: useScalePop,
+                        initialImage: quickLookSeedImage,
+                        onOpenFull: { video in
+                            var t = Transaction()
+                            t.disablesAnimations = true
+                            withTransaction(t) {
+                                self.quickLookVideo = nil
+                                self.quickLookSeedImage = nil
+                            }
+                            openVideoDetail(video)
+                        },
+                        onDismiss: {
+                            var t = Transaction()
+                            t.disablesAnimations = true
+                            withTransaction(t) {
+                                self.quickLookVideo = nil
+                                self.quickLookSeedImage = nil
+                            }
+                        }
+                    )
+                    .zIndex(10)
+                }
+            }
+        }
         .safeAreaInset(edge: .bottom) {
             if appModel.isSelectingVideos {
                 selectionToolbar
@@ -155,10 +199,18 @@ struct VideoGalleryView: View {
                     }
                 }
         } else {
-            VideoThumbnailView(video: video)
-                .onTapGesture {
-                    openVideoDetail(video)
-                }
+            VideoThumbnailView(
+                video: video,
+                onLongPress: { thumb in
+                    quickLookSeedImage = thumb
+                    quickLookVideo = video
+                },
+                quickLookActive: quickLookVideo?.id == video.id,
+                cellCoordinateSpace: gallerySpace
+            )
+            .onTapGesture {
+                openVideoDetail(video)
+            }
         }
     }
 

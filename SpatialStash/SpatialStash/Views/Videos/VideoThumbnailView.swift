@@ -14,9 +14,38 @@ struct VideoThumbnailView: View {
     static let thumbnailMaxSize: CGFloat = 384
 
     let video: GalleryVideo
+    /// Fires when the cell's long-press grow-and-pop gesture completes.
+    /// Receives the cell's already-loaded thumbnail bitmap (if any) so the
+    /// quick look preview can use it as an instant poster seed while the
+    /// preview clip buffers. Mirrors `GalleryThumbnailView.onLongPress`.
+    var onLongPress: ((UIImage?) -> Void)? = nil
+    /// Hides the cell while its quick look preview is up.
+    var quickLookActive: Bool = false
+    /// Coordinate space name used by the gallery grid to publish the cell's
+    /// frame via `CellFramePreferenceKey` for the scale-from-cell transition.
+    var cellCoordinateSpace: String? = nil
     @State private var loadedImage: UIImage?
     @State private var isLoading = true
     @State private var loadFailed = false
+    @State private var pressPhase: PressPhase = .idle
+    @State private var growthTask: Task<Void, Never>?
+
+    private enum PressPhase: Equatable {
+        case idle
+        /// Initial press-down ("button press" feedback).
+        case pressed
+        /// Slow grow toward a slightly-larger-than-natural size that
+        /// telegraphs the impending quick look pop.
+        case anticipating
+    }
+
+    private var pressScale: CGFloat {
+        switch pressPhase {
+        case .idle: return 1.0
+        case .pressed: return 0.92
+        case .anticipating: return 1.08
+        }
+    }
 
     private var displayName: String {
         if let title = video.title, !title.isEmpty {
@@ -124,6 +153,40 @@ struct VideoThumbnailView: View {
         .drawingGroup()
         .contentShape(Rectangle())
         .hoverEffect(ScaleHoverEffect())
+        .scaleEffect(pressScale)
+        .opacity(quickLookActive ? 0 : 1)
+        // The cell-hide / cell-show flip happens in the same render commit as
+        // the quick look preview's appear/disappear. Any inherited animation
+        // context would smear the opacity change across a settling spring.
+        .animation(nil, value: quickLookActive)
+        .background(cellFrameProbe)
+        .onLongPressGesture(
+            minimumDuration: 0.65,
+            perform: {
+                growthTask?.cancel()
+                onLongPress?(loadedImage)
+                withAnimation(.easeOut(duration: 0.15)) { pressPhase = .idle }
+            },
+            onPressingChanged: { isPressing in
+                growthTask?.cancel()
+                if isPressing {
+                    withAnimation(.easeOut(duration: 0.08)) {
+                        pressPhase = .pressed
+                    }
+                    growthTask = Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 120_000_000)
+                        guard !Task.isCancelled else { return }
+                        withAnimation(.easeInOut(duration: 0.55)) {
+                            pressPhase = .anticipating
+                        }
+                    }
+                } else {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                        pressPhase = .idle
+                    }
+                }
+            }
+        )
         .task {
             await loadThumbnail()
         }
@@ -131,6 +194,20 @@ struct VideoThumbnailView: View {
             loadedImage = nil
             isLoading = true
             loadFailed = false
+        }
+    }
+
+    @ViewBuilder
+    private var cellFrameProbe: some View {
+        if let space = cellCoordinateSpace {
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: CellFramePreferenceKey.self,
+                    value: [video.id: proxy.frame(in: .named(space))]
+                )
+            }
+        } else {
+            Color.clear
         }
     }
 

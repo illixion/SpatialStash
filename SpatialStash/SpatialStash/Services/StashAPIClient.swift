@@ -537,6 +537,9 @@ actor StashAPIClient {
     struct StashScenePaths: Decodable {
         let screenshot: String?
         let stream: String?
+        /// Short auto-generated scene preview clip (`/scene/{id}/preview`),
+        /// used for the gallery long-press quick look.
+        let preview: String?
     }
 
     struct StashSceneFile: Decodable {
@@ -571,6 +574,7 @@ actor StashAPIClient {
                     paths {
                         screenshot
                         stream
+                        preview
                     }
                     files {
                         path

@@ -61,6 +61,13 @@ final class GraphQLVideoSource: VideoSource, @unchecked Sendable {
             )
             let fallbackStreamURL = streamURL == directStreamURL ? nil : directStreamURL
 
+            // Prefer the server-reported preview path; otherwise derive it as a
+            // sibling of the screenshot (`/scene/{id}/screenshot` → `/preview`),
+            // which matches Stash's default route layout.
+            let previewURL: URL? = scene.paths.preview
+                .flatMap { URL(string: $0) }
+                ?? Self.derivedPreviewURL(fromScreenshot: thumbnailURL)
+
             // Detect stereoscopic format from tags
             let tagNames = scene.tags?.map { $0.name } ?? []
             let (isStereoscopic, stereoscopicFormat) = StereoscopicFormat.detect(from: tagNames)
@@ -79,6 +86,7 @@ final class GraphQLVideoSource: VideoSource, @unchecked Sendable {
                 thumbnailURL: thumbnailURL,
                 streamURL: streamURL,
                 fallbackStreamURL: fallbackStreamURL,
+                previewURL: previewURL,
                 title: scene.title,
                 duration: duration,
                 isStereoscopic: isStereoscopic,
@@ -141,5 +149,21 @@ final class GraphQLVideoSource: VideoSource, @unchecked Sendable {
         }
 
         return directStreamURL
+    }
+
+    /// Fallback preview URL when the server didn't report `paths.preview`.
+    /// Stash serves the preview as a sibling of the screenshot, so swap a
+    /// trailing `/screenshot` path component for `/preview`, preserving the
+    /// query string (e.g. the apikey). Returns `nil` for file URLs or paths
+    /// that don't match the expected shape.
+    private static func derivedPreviewURL(fromScreenshot screenshot: URL) -> URL? {
+        guard !screenshot.isFileURL,
+              var components = URLComponents(url: screenshot, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+        let suffix = "/screenshot"
+        guard components.path.hasSuffix(suffix) else { return nil }
+        components.path = String(components.path.dropLast(suffix.count)) + "/preview"
+        return components.url
     }
 }
