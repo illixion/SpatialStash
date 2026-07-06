@@ -14,7 +14,7 @@ A visionOS app for Apple Vision Pro that transforms your 2D images into immersiv
 - **Rating & O-Count** - View and edit image ratings and O-count directly from the viewer
 - **Video Playback** - Stream videos directly from your Stash server or play local files
 - **Stereoscopic 3D Video** - Automatically detects SBS/OU stereoscopic formats from tags, converts to MV-HEVC, and plays in full immersive mode
-- **Real-time Pseudo 3D Video** - Converts any flat video into stereoscopic 3D on the fly in an ordinary window — no pre-compute, no immersive space. Each decoded frame is warped per-eye in a Metal shader (with optional Core ML monocular depth), with adjustable depth strength and convergence and Subtle/Medium/Strong presets
+- **Pseudo 3D Video Conversion** - Converts flat videos into windowed stereoscopic 3D using Core ML monocular depth (Depth Anything V2). Choose between **real-time** (instant, 30fps inference-bound) or **pre-processed** (background conversion for exact-frame 60fps playback with offline-optimized depth quality). Adjustable depth strength, convergence, and Subtle/Medium/Strong presets. Models downloaded on-demand from Apple's Hugging Face repo, switchable and deletable from the view-mode menu. With "Real-Time 3D for All Videos" enabled in Settings, eligible videos auto-engage 3D on open
 - **Unlimited Windows** - Open multiple image viewer windows that persist in your space
 - **Memory Management** - Lightweight 2D display by default with automatic downsampling, configurable dynamic image resolution, and memory-aware window management
 - **Demo Mode** - Try the app with bundled sample images without server setup
@@ -86,11 +86,25 @@ Browse your image gallery in a grid view. Tap any image to open it in the viewer
 - The window automatically adjusts to match image aspect ratios
 
 ### Videos Tab
-Browse and play videos. Tap the **view-mode** button in the ornament to switch between flat 2D, real-time **Pseudo 3D**, and (for tagged SBS/OU sources) full immersive **Stereoscopic 3D**:
-- **Pseudo 3D** converts any flat video to windowed stereoscopic 3D in real time — no conversion step or immersive space required. Pick a Subtle/Medium/Strong depth preset from the menu, and fine-tune **Stereo Separation** and **Convergence** in the Adjustments window (which opens as its own repositionable window so it never sits behind the 3D video)
-  - Pseudo 3D uses a **monocular depth model** for an occlusion-correct depth warp. The first time you convert a video, a setup sheet lets you download one on demand — straight from Apple's Hugging Face repo, ~19–50 MB depending on variant (larger = better, smaller = quicker). After that, installed models can be switched between and deleted from the view-mode menu or Settings, and you can add your own custom model
-- **Stereoscopic 3D** videos are automatically detected from Stash tags and play in full immersive mode after conversion to MV-HEVC format
-- Playback transport (play/pause, scrubber, A-B loop, mute) lives in a custom control bar; in Pseudo 3D it is folded into the ornament so it shares the video's depth
+Browse and play videos. Tap the **view-mode** button in the ornament to switch between flat **2D**, **Pseudo 3D** (2D→3D conversion), and (for tagged SBS/OU sources) full immersive **Stereoscopic 3D**:
+
+#### Pseudo 3D Conversion
+Converts any flat video into windowed stereoscopic 3D using **Core ML monocular depth** (Depth Anything V2):
+- **Real-Time mode** - Instant, 30fps
+- **Pre-Processed mode** - Background conversion for 60fps cached playback: downloads a low-res copy of your video, infers depth for every frame offline, applies advanced filtering and temporal smoothing, and caches the depth in a compact HEVC sidecar. You can watch the video in 2D while the conversion runs in the background, then switch to 3D playback once it's ready (or let it auto-engage mid-conversion). Future plays use the cached depth at full framerate with zero ANE load. Conversion time is ~0.5–1× realtime depending on video length and your system
+  - The first time you access 3D conversion, a setup sheet lets you download a depth model on-demand — straight from Apple's Hugging Face repo, ~19–50 MB depending on the variant (Depth Anything V2 Small in F16, INT8, 6-bit, or 8-bit palettized; larger variants yield better depth quality)
+  - Installed models can be switched, deleted, or supplemented with your own custom model via `scripts/convert-depth-model.py`
+  - Both **Depth Model (Real-Time)** and **Depth Model (Pre-Process)** submenus appear in the view-mode menu, letting you pick the model for each pipeline without visiting Settings (real-time model changes apply to the playing video immediately; pre-process model applies to future conversions and cache lookups)
+- Pick Subtle/Medium/Strong depth presets from the menu, and fine-tune **Stereo Separation**, **Convergence**, and (in pre-process) **Auto Convergence** in the Adjustments window (which opens as its own repositionable window so it never sits behind the 3D video)
+- Settings → Display → "Real-Time 3D for All Videos" enables auto-engagement: eligible videos (native-Metal playable, not genuinely stereoscopic) open with Pseudo 3D already engaged — prefers the cached pre-process depth when available, otherwise uses real-time inference
+
+#### Stereoscopic 3D
+Videos automatically detected from Stash tags (SBS/Over-Under format) are converted to MV-HEVC and play in full immersive mode.
+
+#### Playback
+- Custom control bar (play/pause, scrubber with buffered range, A-B loop, mute) for flat 2D videos
+- In Pseudo 3D mode, transport controls fold into the ornament so all chrome shares the video's depth plane
+- Full window aspect ratio locking ensures videos maintain their proper proportions
 
 ### Filters Tab
 Create complex queries to filter your media (Stash server only):
@@ -105,9 +119,12 @@ Create complex queries to filter your media (Stash server only):
 - **Dynamic Image Resolution** - Toggle automatic image downsampling based on window size (on by default, turn off for full-resolution display)
 - **Auto-hide Controls** - Configure how long ornament controls stay visible
 - **Slideshow Delay** - Set the interval between slideshow images
-- **Stash Server** - Configure server URL and API key
-- **3D Depth Model** (Developer) - Download, switch between, or delete the optional monocular depth models used by Pseudo 3D video. Models are fetched directly from Apple's Hugging Face repo and stored internally; a model pushed to the app's Documents folder (via `scripts/push-depth-model.sh`) is imported automatically on launch
+- **Real-Time 3D Depth Model** / **Pre-Process 3D Depth Model** - Select which installed monocular depth model each pipeline uses. Models are downloaded on-demand from Apple's Hugging Face repo (~19–50 MB each) and stored internally. Real-time model changes apply immediately to the playing video; pre-process model changes apply to future conversions. Switched or deleted via the view-mode menu or these Display settings
+- **Real-Time 3D for All Videos** - When enabled, eligible videos (native-Metal playable) auto-engage Pseudo 3D on open, using cached pre-processed depth when available or real-time inference otherwise
+- **3D Depth Model Manager** (Developer) - Download, switch between, or delete the monocular depth models. Models are fetched directly from Apple's Hugging Face repo and stored internally; a custom model pushed to the app's Documents folder (via `scripts/convert-depth-model.py`) is imported automatically on launch
+- **Converted 3D Videos** (Developer) - Manage pre-processed depth caches: view size and conversion model per video, delete individual entries, or clear all
 - **Cache Management** - View and clear image/video disk caches
+- **Stash Server** - Configure server URL and API key
 
 ### Remote API Viewer (Developer)
 A slideshow viewer for displaying images from a [RoboFrame](https://github.com/illixion/RoboFrame) proxy API, with WebSocket-based remote control and Home Assistant sensor integration. Enable in Settings → Developer → Enable Remote API Viewer.
@@ -134,6 +151,9 @@ The app follows a SwiftUI architecture with:
 - RealityKit integration via `ImagePresentationComponent` for spatial photos
 - `StereoscopicVideoPlayer` + `MVHEVCConverter` for stereoscopic 3D video conversion and immersive playback
 - `Pseudo3DVideoPlayerView` + `StereoPump` + `CoreMLDepthProvider` for real-time, windowed 2D→3D video conversion (per-eye Metal warp off the main thread)
+- `DepthConverter` + `DepthCacheStore` + `DepthCacheReader` for offline depth conversion pipeline: per-frame monocular depth inference with joint-bilateral luma-guided filtering, temporal lookahead smoothing, and compact HEVC depth sidecar + metadata storage
+- `DepthConversionManager` for background conversion job queue with progress tracking, progressive playback (auto-engage 3D mid-conversion when safe), and resumption after app backgrounding
+- `Pseudo3DStereoEngine` configurable for real-time or cached depth source, both at exact-frame PTS matching for zero ghosting
 
 ## License
 
