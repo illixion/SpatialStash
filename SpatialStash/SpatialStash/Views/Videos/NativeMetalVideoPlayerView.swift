@@ -215,7 +215,7 @@ struct NativeMetalVideoPlayerView: UIViewRepresentable {
                 let message = observedItem.error?.localizedDescription ?? "unknown error"
                 Task { @MainActor [weak self] in
                     guard let self, self.playerItem === observedItem else { return }
-                    AppLogger.videoWindow.error("Native player item failed for \(self.loadedURL?.absoluteString ?? "?", privacy: .private): \(message, privacy: .public)")
+                    AppLogger.videoWindow.error("Native player item failed for \(self.loadedURL?.loggableDescription ?? "?", privacy: .public): \(message, privacy: .public)")
                     self.onPlaybackError?()
                 }
             }

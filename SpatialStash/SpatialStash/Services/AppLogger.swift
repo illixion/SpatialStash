@@ -111,3 +111,21 @@ enum AppLogger {
     /// tick or a depth-conversion frame spends its time.
     static let pseudo3DSignposter = OSSignposter(subsystem: subsystem, category: "Pseudo3D")
 }
+
+extension URL {
+    /// URL string safe to log at `privacy: .public`: sensitive query values
+    /// (the Stash apikey) are replaced with a placeholder. Needed because
+    /// `.private` interpolation renders as `<private>` in Console, which made
+    /// media-load failures undiagnosable on device.
+    var loggableDescription: String {
+        guard var components = URLComponents(url: self, resolvingAgainstBaseURL: false),
+              var items = components.queryItems, !items.isEmpty else {
+            return absoluteString
+        }
+        for index in items.indices where items[index].name.lowercased() == "apikey" {
+            items[index].value = "REDACTED"
+        }
+        components.queryItems = items
+        return components.url?.absoluteString ?? absoluteString
+    }
+}

@@ -170,7 +170,7 @@ struct VideoQuickLookView: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
                 dismissEnabled = true
             }
-            AppLogger.videoWindow.info("Video quick look opened; preview URL: \(previewURL.absoluteString, privacy: .private)")
+            AppLogger.videoWindow.info("Video quick look opened; preview URL: \(previewURL.loggableDescription, privacy: .public)")
         }
         .task {
             await loadFullPoster()

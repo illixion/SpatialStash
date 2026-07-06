@@ -556,7 +556,7 @@ final class Pseudo3DStereoEngine {
             let message = observedItem.error?.localizedDescription ?? "unknown error"
             Task { @MainActor [weak self] in
                 guard let self, self.playerItem === observedItem else { return }
-                AppLogger.videoWindow.error("Pseudo-3D player item failed for \(self.loadedURL?.absoluteString ?? "?", privacy: .private): \(message, privacy: .public)")
+                AppLogger.videoWindow.error("Pseudo-3D player item failed for \(self.loadedURL?.loggableDescription ?? "?", privacy: .public): \(message, privacy: .public)")
                 self.onPlaybackError?()
             }
         }
