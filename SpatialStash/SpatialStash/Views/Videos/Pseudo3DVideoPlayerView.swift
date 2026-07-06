@@ -203,6 +203,7 @@ final class Pseudo3DStereoEngine {
     private var timeObserver: Any?
     private var endObserver: NSObjectProtocol?
     private var failureObserver: NSObjectProtocol?
+    private var statusObservation: NSKeyValueObservation?
     private var isRoomActive = true
     /// Playback state captured at room exit; room re-entry restores it so a
     /// manual pause survives focus/room flaps.
@@ -547,6 +548,18 @@ final class Pseudo3DStereoEngine {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.onPlaybackError?() }
         }
+        // Load failures (bad URL/auth/TLS/container) set item.status = .failed
+        // without ever firing FailedToPlayToEndTime — observe it so the caller's
+        // fallback (flat player / 2D) engages instead of a silent black plane.
+        statusObservation = item.observe(\.status, options: [.new]) { [weak self] observedItem, _ in
+            guard observedItem.status == .failed else { return }
+            let message = observedItem.error?.localizedDescription ?? "unknown error"
+            Task { @MainActor [weak self] in
+                guard let self, self.playerItem === observedItem else { return }
+                AppLogger.videoWindow.error("Pseudo-3D player item failed for \(self.loadedURL?.absoluteString ?? "?", privacy: .private): \(message, privacy: .public)")
+                self.onPlaybackError?()
+            }
+        }
         timeObserver = player.addPeriodicTimeObserver(
             forInterval: CMTime(value: 1, timescale: 30), queue: .main
         ) { [weak self] time in
@@ -682,6 +695,8 @@ final class Pseudo3DStereoEngine {
         if let timeObserver, let player { player.removeTimeObserver(timeObserver) }
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
         if let failureObserver { NotificationCenter.default.removeObserver(failureObserver) }
+        statusObservation?.invalidate()
+        statusObservation = nil
         player?.pause()
         if let videoOutput { playerItem?.remove(videoOutput) }
         timeObserver = nil

@@ -20,8 +20,14 @@ struct GalleryImage: Identifiable, Equatable, Hashable {
     let fileName: String?
     /// Stash visual file GraphQL typename (e.g. ImageFile, VideoFile)
     let visualFileType: String?
+    /// Native pixel dimensions reported by the server (visual_files). Used to
+    /// seed the quick look's aspect ratio before the real image loads, so the
+    /// pop frame is correctly sized from the first frame instead of assuming
+    /// the (possibly cropped) cell thumbnail's aspect.
+    let sourceWidth: Int?
+    let sourceHeight: Int?
 
-    init(id: UUID = UUID(), stashId: String? = nil, thumbnailURL: URL, fullSizeURL: URL, title: String? = nil, rating100: Int? = nil, oCounter: Int? = nil, source: String = "stash", fileName: String? = nil, visualFileType: String? = nil) {
+    init(id: UUID = UUID(), stashId: String? = nil, thumbnailURL: URL, fullSizeURL: URL, title: String? = nil, rating100: Int? = nil, oCounter: Int? = nil, source: String = "stash", fileName: String? = nil, visualFileType: String? = nil, sourceWidth: Int? = nil, sourceHeight: Int? = nil) {
         self.id = id
         self.stashId = stashId
         self.thumbnailURL = thumbnailURL
@@ -32,10 +38,12 @@ struct GalleryImage: Identifiable, Equatable, Hashable {
         self.source = source
         self.fileName = fileName
         self.visualFileType = visualFileType
+        self.sourceWidth = sourceWidth
+        self.sourceHeight = sourceHeight
     }
 
     /// Convenience initializer when thumbnail and full-size are the same URL
-    init(id: UUID = UUID(), stashId: String? = nil, url: URL, title: String? = nil, rating100: Int? = nil, oCounter: Int? = nil, source: String = "stash", fileName: String? = nil, visualFileType: String? = nil) {
+    init(id: UUID = UUID(), stashId: String? = nil, url: URL, title: String? = nil, rating100: Int? = nil, oCounter: Int? = nil, source: String = "stash", fileName: String? = nil, visualFileType: String? = nil, sourceWidth: Int? = nil, sourceHeight: Int? = nil) {
         self.id = id
         self.stashId = stashId
         self.thumbnailURL = url
@@ -46,6 +54,8 @@ struct GalleryImage: Identifiable, Equatable, Hashable {
         self.source = source
         self.fileName = fileName
         self.visualFileType = visualFileType
+        self.sourceWidth = sourceWidth
+        self.sourceHeight = sourceHeight
     }
 }
 
@@ -91,7 +101,9 @@ extension GalleryImage {
             oCounter: oCounter,
             source: source,
             fileName: fileName,
-            visualFileType: visualFileType
+            visualFileType: visualFileType,
+            sourceWidth: sourceWidth,
+            sourceHeight: sourceHeight
         )
     }
 }
@@ -110,6 +122,8 @@ extension GalleryImage: Codable {
         case source
         case fileName
         case visualFileType
+        case sourceWidth
+        case sourceHeight
     }
 
     init(from decoder: Decoder) throws {
@@ -127,6 +141,8 @@ extension GalleryImage: Codable {
         source = try container.decodeIfPresent(String.self, forKey: .source) ?? "stash"
         fileName = try container.decodeIfPresent(String.self, forKey: .fileName)
         visualFileType = try container.decodeIfPresent(String.self, forKey: .visualFileType)
+        sourceWidth = try container.decodeIfPresent(Int.self, forKey: .sourceWidth)
+        sourceHeight = try container.decodeIfPresent(Int.self, forKey: .sourceHeight)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -142,6 +158,8 @@ extension GalleryImage: Codable {
         try container.encode(source, forKey: .source)
         try container.encodeIfPresent(fileName, forKey: .fileName)
         try container.encodeIfPresent(visualFileType, forKey: .visualFileType)
+        try container.encodeIfPresent(sourceWidth, forKey: .sourceWidth)
+        try container.encodeIfPresent(sourceHeight, forKey: .sourceHeight)
     }
 }
 

@@ -9,6 +9,7 @@
 import AVFoundation
 import CoreVideo
 import MetalKit
+import os
 import SwiftUI
 
 private struct VideoRCASUniforms {
@@ -139,6 +140,7 @@ struct NativeMetalVideoPlayerView: UIViewRepresentable {
         private var timeObserver: Any?
         private var endObserver: NSObjectProtocol?
         private var failureObserver: NSObjectProtocol?
+        private var statusObservation: NSKeyValueObservation?
         private var lastReportedSize: CGSize?
         private var loopA: Double?
         private var loopB: Double?
@@ -200,6 +202,21 @@ struct NativeMetalVideoPlayerView: UIViewRepresentable {
             ) { [weak self] _ in
                 MainActor.assumeIsolated {
                     self?.onPlaybackError?()
+                }
+            }
+
+            // FailedToPlayToEndTime only fires for failures DURING playback.
+            // A load failure (bad URL, auth, TLS, unsupported container) sets
+            // item.status = .failed and would otherwise be swallowed silently:
+            // the view just stays transparent forever. Observe it so the
+            // fallback path (WebKit) actually engages and the reason is logged.
+            statusObservation = item.observe(\.status, options: [.new]) { [weak self] observedItem, _ in
+                guard observedItem.status == .failed else { return }
+                let message = observedItem.error?.localizedDescription ?? "unknown error"
+                Task { @MainActor [weak self] in
+                    guard let self, self.playerItem === observedItem else { return }
+                    AppLogger.videoWindow.error("Native player item failed for \(self.loadedURL?.absoluteString ?? "?", privacy: .private): \(message, privacy: .public)")
+                    self.onPlaybackError?()
                 }
             }
 
@@ -282,6 +299,8 @@ struct NativeMetalVideoPlayerView: UIViewRepresentable {
             if let failureObserver {
                 NotificationCenter.default.removeObserver(failureObserver)
             }
+            statusObservation?.invalidate()
+            statusObservation = nil
             player?.pause()
             if let videoOutput {
                 playerItem?.remove(videoOutput)

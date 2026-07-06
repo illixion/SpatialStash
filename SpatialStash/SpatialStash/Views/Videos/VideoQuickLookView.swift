@@ -70,6 +70,13 @@ struct VideoQuickLookView: View {
     /// Throwaway per-preview model used only to carry the players' mute command
     /// and playback clock (see file header). Created in `onAppear`.
     @State private var playbackModel: VideoWindowModel?
+    /// Poster shown behind the player. Starts as the cell's (16:9-cropped,
+    /// low-res) thumbnail seed, then upgrades to the uncropped full screenshot
+    /// so non-16:9 videos aren't shown as a zoomed crop while the clip buffers.
+    @State private var posterImage: UIImage?
+    /// True once a decoded frame reported the real video size — from then on
+    /// the poster's aspect must not override it.
+    @State private var videoAspectKnown = false
 
     init(
         video: GalleryVideo,
@@ -163,6 +170,26 @@ struct VideoQuickLookView: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
                 dismissEnabled = true
             }
+            AppLogger.videoWindow.info("Video quick look opened; preview URL: \(previewURL.absoluteString, privacy: .private)")
+        }
+        .task {
+            await loadFullPoster()
+        }
+    }
+
+    /// Upgrade the poster from the cell's cropped thumbnail to the uncropped
+    /// scene screenshot. The screenshot matches the video's true aspect, so
+    /// this also corrects the pop frame for non-16:9 videos while the clip
+    /// loads (unless a decoded frame already reported the real size).
+    private func loadFullPoster() async {
+        let url = video.thumbnailURL
+        guard !url.isFileURL else { return }
+        guard let image = try? await ImageLoader.shared.loadImage(from: url) else { return }
+        posterImage = image
+        if !videoAspectKnown, video.sourceWidth == nil, image.size.height > 0 {
+            var t = Transaction()
+            t.disablesAnimations = true
+            withTransaction(t) { aspectRatio = image.size.width / image.size.height }
         }
     }
 
@@ -174,8 +201,8 @@ struct VideoQuickLookView: View {
             // Poster seed behind the player — instant first paint while the
             // clip buffers (the Metal/Web players are transparent until frames
             // arrive).
-            if let initialImage {
-                Image(uiImage: initialImage)
+            if let poster = posterImage ?? initialImage {
+                Image(uiImage: poster)
                     .resizable()
                     .scaledToFill()
                     .frame(width: size.width, height: size.height)
@@ -244,6 +271,7 @@ struct VideoQuickLookView: View {
 
     private func updateAspect(_ size: CGSize) {
         guard size.width > 0, size.height > 0 else { return }
+        videoAspectKnown = true
         let ratio = size.width / size.height
         guard abs(ratio - aspectRatio) > 0.001 else { return }
         var t = Transaction()

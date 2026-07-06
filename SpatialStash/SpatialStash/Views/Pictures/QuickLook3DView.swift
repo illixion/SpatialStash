@@ -102,10 +102,15 @@ struct QuickLook3DView: View {
         self.initialImage = initialImage
         self.onDismiss = onDismiss
         // Seed @State from the cell's bitmap so the first paint is
-        // the actual thumbnail, not a placeholder. aspectRatio also
-        // seeds from it so `fitted` is correct on frame 0.
+        // the actual thumbnail, not a placeholder. aspectRatio seeds
+        // from the server-reported native dimensions when available —
+        // the cell bitmap may be a square/16:9 crop whose aspect would
+        // wrongly size (and zoom) the pop frame until the real image
+        // loads — falling back to the seed bitmap's aspect.
         _loadedImage = State(initialValue: initialImage)
-        if let initialImage, initialImage.size.height > 0 {
+        if let w = image.sourceWidth, let h = image.sourceHeight, w > 0, h > 0 {
+            _aspectRatio = State(initialValue: CGFloat(w) / CGFloat(h))
+        } else if let initialImage, initialImage.size.height > 0 {
             _aspectRatio = State(initialValue: initialImage.size.width / initialImage.size.height)
         }
     }

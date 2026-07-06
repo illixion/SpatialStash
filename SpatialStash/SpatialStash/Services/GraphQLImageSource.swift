@@ -48,6 +48,7 @@ final class GraphQLImageSource: ImageSource, @unchecked Sendable {
                 .map { ($0 as NSString).lastPathComponent }
 
             let visualFileType = stashImage.visual_files?.first?.typename
+            let firstFile = stashImage.files?.first
 
             return GalleryImage(
                 stashId: stashImage.id,
@@ -57,7 +58,9 @@ final class GraphQLImageSource: ImageSource, @unchecked Sendable {
                 rating100: stashImage.rating100,
                 oCounter: stashImage.o_counter,
                 fileName: fileName,
-                visualFileType: visualFileType
+                visualFileType: visualFileType,
+                sourceWidth: firstFile?.width,
+                sourceHeight: firstFile?.height
             )
         }
 
