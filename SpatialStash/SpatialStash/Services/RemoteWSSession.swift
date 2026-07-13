@@ -47,6 +47,11 @@ final class RemoteWSSession {
         client?.sendVisibilityChange(deviceId: deviceId, visible: visible)
     }
 
+    func sendPresenceChange(deviceId: String, present: Bool) {
+        // present is keyed on deviceId at the server, no sessionId.
+        client?.sendPresenceChange(deviceId: deviceId, present: present)
+    }
+
     func sendBlock(postId: Int) {
         client?.sendBlock(postId: postId)
     }

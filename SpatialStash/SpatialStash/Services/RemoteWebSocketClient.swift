@@ -260,11 +260,23 @@ class RemoteWebSocketClient {
     }
 
     /// Notify the server about a device's active/background state
-    /// (used by the RoboFrame server for in-home location tracking).
+    /// (used by the RoboFrame server for in-home location tracking → the HA
+    /// motion sensor). Telemetry only — it no longer drives the slideshow.
     func sendVisibilityChange(deviceId: String, visible: Bool) {
         sendJSON([
             "action": "visibility",
             "payload": ["deviceId": deviceId, "visible": visible]
+        ])
+    }
+
+    /// Report whether a display on this `deviceId` is live and showing the
+    /// slideshow. This is the signal that drives playback: when every source
+    /// on a deviceId is absent the server dark-advances one post and parks,
+    /// so the next arrival sees a fresh image (no client-side wake-advance).
+    func sendPresenceChange(deviceId: String, present: Bool) {
+        sendJSON([
+            "action": "present",
+            "payload": ["deviceId": deviceId, "present": present]
         ])
     }
 

@@ -221,7 +221,10 @@ class RemoteViewerModel: SlideshowEngine {
         ratioResendTask = nil
         visibilityDebounce?.cancel()
         visibilityDebounce = nil
+        presenceDebounce?.cancel()
+        presenceDebounce = nil
         lastSentVisibility = nil
+        lastSentPresence = nil
         videoDurationTimeoutTask?.cancel()
         videoDurationTimeoutTask = nil
         pendingVideoImageReadyPost = nil
@@ -233,50 +236,44 @@ class RemoteViewerModel: SlideshowEngine {
         // lets a healthy socket prove itself; only a missing pong
         // forces a reconnect.
         wsSession?.probeOrReconnect()
-        scheduleVisibilityReport(effectiveVisible)
-        // While HA holds the panel off, the channel stays paused: reporting
-        // visible or rejoining the barrier here would resume a slideshow the
+        scheduleSceneStateReport(effectiveVisible)
+        // While HA holds the panel off, the channel stays parked: reporting
+        // present or rejoining the barrier here would resume a slideshow the
         // user explicitly switched off. The displayState(on) frame is what
         // lifts the hold.
         guard effectiveVisible else { return }
         rejoinReadinessBarrier()
-        // Per protocol §"Visibility never resets the timer": the server
-        // resumes the channel's wall-clock dwell on visibility=true.
-        // No client-side wake-advance (requestNext on stale playback) —
-        // that races the server's resume and is explicitly forbidden.
-        // If a reconnect happens, the channel-rejoin path will re-send
-        // slideshowConfig on its own.
+        // Per protocol §"Presence drives freshness; the client never
+        // wake-advances": reporting present=true makes the server commit a
+        // fresh post (it dark-advanced while we were away) and broadcast it —
+        // we adopt that via the normal playback path. No client-side
+        // requestNext here; the server already refreshed on our behalf.
     }
 
     override func onEnteredBackground() {
-        scheduleVisibilityReport(false)
+        scheduleSceneStateReport(false)
     }
 
     /// HA-driven panel state addressed to this window's deviceId
-    /// (`displayState` frames). While off, the slideshow pauses server-side —
-    /// we report visibility=false so the channel parks its dwell — but the
+    /// (`displayState` frames). While off, this session reports present=false
+    /// so the channel dark-advances one post and parks server-side — but the
     /// window keeps the current image rendered and decoded, so the PIR/HA
-    /// wake that follows resumes the same frame with no pop-in.
+    /// wake that follows shows the fresh post without a pop-in.
     private var remotePanelOff = false
-    /// The visibility this session should present to the server: the room
+    /// Whether this session should report itself present/visible: the room
     /// must be active AND the panel not held off by HA. Also gates
-    /// imageReady — a hidden session is outside the readiness barrier, and
+    /// imageReady — an absent session is outside the readiness barrier, and
     /// reporting would drive the channel forward for a panel nobody sees.
     private var effectiveVisible: Bool { isRoomActive && !remotePanelOff }
 
-    /// Catch up after this session becomes effectively visible again: pull
-    /// the server's current post if it advanced while we were hidden, and —
-    /// when the server is still parked on the post we already have on
-    /// screen — re-report imageReady. Becoming visible re-included this
-    /// session in the readiness barrier, and the report for this post was
-    /// suppressed while hidden, so without a re-send the channel would wait
-    /// on a window that's already showing the frame.
+    /// Catch up after this session becomes present again. Reporting
+    /// present=true (see the caller) makes the server commit the post it
+    /// dark-advanced to while we were away and broadcast it; we adopt that
+    /// fresh post through the normal playback path (which re-reports
+    /// imageReady on render). We just nudge reconciliation in case a
+    /// `playback` frame already landed. No client-side wake-advance.
     private func rejoinReadinessBarrier() {
         reconcileWithServer()
-        if !isApplyingIncomingSync, let post = currentPost,
-           serverCurrentPost?._id == post._id {
-            reportImageReady(for: post)
-        }
     }
 
     /// A `displayState` frame addressed to this window's deviceId.
@@ -285,7 +282,7 @@ class RemoteViewerModel: SlideshowEngine {
         guard off != remotePanelOff else { return }
         remotePanelOff = off
         AppLogger.remoteViewer.info("displayState \(on ? "on" : "off", privacy: .public) for deviceId=\(self.config.wsDeviceId, privacy: .public)")
-        scheduleVisibilityReport(effectiveVisible)
+        scheduleSceneStateReport(effectiveVisible)
         if effectiveVisible { rejoinReadinessBarrier() }
     }
 
@@ -298,6 +295,30 @@ class RemoteViewerModel: SlideshowEngine {
     /// a dozen WS frames before settling.
     private var visibilityDebounce: Task<Void, Never>?
 
+    /// Last `present` value we told the server; mirrors lastSentVisibility.
+    private var lastSentPresence: Bool?
+    private var presenceDebounce: Task<Void, Never>?
+
+    /// Report this window's scene state to the server. `present` drives the
+    /// slideshow — while every display on this deviceId is absent the server
+    /// dark-advances one post and parks, so the next arrival sees a fresh
+    /// image (no client-side wake-advance). `visibility` is home-location
+    /// telemetry (the HA motion sensor). For a VP window both track the same
+    /// condition — the window is showing the slideshow iff someone's here to
+    /// see it — so we report them together.
+    private func scheduleSceneStateReport(_ active: Bool) {
+        schedulePresenceReport(active)
+        scheduleVisibilityReport(active)
+    }
+
+    /// Clear the last-sent snapshots so the next report is not suppressed by
+    /// the debouncers — used after a reconnect, since the server forgets our
+    /// prior visibility/presence when the socket dies.
+    private func resetSceneStateSnapshots() {
+        lastSentVisibility = nil
+        lastSentPresence = nil
+    }
+
     private func scheduleVisibilityReport(_ visible: Bool) {
         visibilityDebounce?.cancel()
         visibilityDebounce = Task { [weak self] in
@@ -307,6 +328,18 @@ class RemoteViewerModel: SlideshowEngine {
             self.lastSentVisibility = visible
             AppLogger.remoteViewer.info("WS tx visibility deviceId=\(self.config.wsDeviceId, privacy: .public) visible=\(visible, privacy: .public)")
             self.wsSession?.sendVisibilityChange(deviceId: self.config.wsDeviceId, visible: visible)
+        }
+    }
+
+    private func schedulePresenceReport(_ present: Bool) {
+        presenceDebounce?.cancel()
+        presenceDebounce = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled, let self else { return }
+            guard self.lastSentPresence != present else { return }
+            self.lastSentPresence = present
+            AppLogger.remoteViewer.info("WS tx present deviceId=\(self.config.wsDeviceId, privacy: .public) present=\(present, privacy: .public)")
+            self.wsSession?.sendPresenceChange(deviceId: self.config.wsDeviceId, present: present)
         }
     }
 
@@ -778,18 +811,16 @@ class RemoteViewerModel: SlideshowEngine {
             guard let self else { return }
             self.sendSlideshowConfigToServer()
             // Report the actual current scene state, not a blanket `true`.
-            // If the WS reconnects while the window is backgrounded (e.g.
-            // server-killed connection during sleep), an unconditional
-            // visibility=true here overwrites the prior false and the
-            // orchestrator resumes the dwell timer for a window the user
-            // can't see — playback frames keep arriving and the channel
-            // effectively never pauses.
+            // If the WS reconnects while the window is backgrounded or the HA
+            // panel is held off (e.g. server-killed connection during sleep),
+            // an unconditional present=true here would un-dark a slideshow the
+            // user can't see. effectiveVisible captures both cases.
             //
-            // Clear lastSentVisibility so the post-reconnect send is not
-            // suppressed by the debouncer: the server forgot our prior
-            // report when the ws died, so we have to re-state it.
-            self.lastSentVisibility = nil
-            self.scheduleVisibilityReport(self.state != .backgrounded)
+            // Reset the last-sent snapshots so the post-reconnect send is not
+            // suppressed by the debouncers: the server forgot our prior
+            // reports when the ws died, so we have to re-state them.
+            self.resetSceneStateSnapshots()
+            self.scheduleSceneStateReport(self.effectiveVisible)
         }
         wsSession = session
 
@@ -799,8 +830,8 @@ class RemoteViewerModel: SlideshowEngine {
         // gets our slideshowConfig immediately.
         if session.isConnected {
             sendSlideshowConfigToServer()
-            lastSentVisibility = nil
-            scheduleVisibilityReport(state != .backgrounded)
+            resetSceneStateSnapshots()
+            scheduleSceneStateReport(effectiveVisible)
         }
 
         // Push later switches from the shared ModTagManager out to this
