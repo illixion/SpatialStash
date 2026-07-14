@@ -120,31 +120,12 @@ struct VideoOrnamentsView: View {
             }
 
             // Depth-conversion status for THIS video — visible at a glance
-            // without keeping the ViewMode menu open. The label carries a live
-            // percentage; pin it to a fixed width (and monospace the digits) so
-            // the growing number ("9%" → "100%") can't reflow the ornament and
-            // shift the buttons out from under a tap.
-            if let phase = DepthConversionManager.shared.phase(for: video.stashId) {
-                Divider()
-                    .frame(height: 24)
-                HStack(spacing: 6) {
-                    ProgressView()
-                        .controlSize(.small)
-                    Text(phase.label)
-                        .font(.caption)
-                        .monospacedDigit()
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                }
-                .frame(width: 160, alignment: .leading)
-            } else if DepthConversionManager.shared.isProcessing(videoIdentity: video.stashId) {
-                Divider()
-                    .frame(height: 24)
-                Text("Conversion queued")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .frame(width: 160, alignment: .leading)
-            }
+            // without keeping the ViewMode menu open. Isolated in its own view
+            // so its continuous observation of DepthConversionManager doesn't
+            // re-run THIS body (which holds the Menu) — a parent that observes
+            // the manager recreates the Menu ~30-60×/sec, refreshing the open
+            // dropdown and dropping taps.
+            ConversionStatusRow(videoStashId: video.stashId)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
@@ -362,18 +343,12 @@ struct VideoOrnamentsView: View {
             .disabled(windowModel.playbackRenderer != .nativeMetal)
 
             // Background depth conversion for THIS video: status + cancel.
-            // NOTE: use the phase *kind* only (no live percentage) here. The
-            // per-tick percentage relays out the menu item while it's open,
-            // shifting tap targets so gaze taps miss. The live percentage
-            // lives in the ornament row instead (outside the menu).
-            if let status = conversionMenuStatusLabel {
-                Text(status)
-                Button(role: .destructive) {
-                    DepthConversionManager.shared.cancel(videoIdentity: video.stashId)
-                } label: {
-                    Label("Cancel Conversion", systemImage: "xmark.circle")
-                }
-            }
+            // Isolated in its own view so its observation of the (continuously
+            // updating) DepthConversionManager doesn't re-run this menu's body
+            // — that recreates the whole Menu and makes the open dropdown drop
+            // taps. The subview shows the phase *kind* only (no live %) so even
+            // its own updates don't reflow the menu items.
+            ConversionMenuStatus(videoStashId: video.stashId)
 
             if windowModel.shouldUsePseudo3D {
                 Menu("3D Depth") {
@@ -421,23 +396,6 @@ struct VideoOrnamentsView: View {
         .menuStyle(.button)
         .buttonStyle(.borderless)
         .help("View Mode")
-    }
-
-    /// Conversion status for the ViewMode menu — phase *kind* only, never the
-    /// live percentage. A per-tick numeric label relays out the open menu and
-    /// makes taps miss; the live percentage is shown in the ornament row.
-    private var conversionMenuStatusLabel: String? {
-        if let phase = DepthConversionManager.shared.phase(for: video.stashId) {
-            switch phase {
-            case .downloading: return "Downloading…"
-            case .converting: return "Converting to 3D…"
-            case .refining: return "Refining 3D…"
-            }
-        }
-        if DepthConversionManager.shared.isProcessing(videoIdentity: video.stashId) {
-            return "Conversion queued"
-        }
-        return nil
     }
 
     @ViewBuilder
@@ -542,5 +500,70 @@ struct VideoOrnamentsView: View {
         if windowModel.shouldUse3DMode { return "inset.filled.pano" }
         if windowModel.shouldUsePseudo3D { return "spatial.capture.fill" }
         return "view.3d"
+    }
+}
+
+/// Ornament-row depth-conversion status (spinner + live label). Kept in its own
+/// view so that observing the continuously-updating DepthConversionManager
+/// invalidates only this small view, not the parent ornament that holds the
+/// ViewMode Menu (a parent that re-renders recreates the Menu and drops taps on
+/// the open dropdown).
+private struct ConversionStatusRow: View {
+    let videoStashId: String
+    @State private var conversions = DepthConversionManager.shared
+
+    var body: some View {
+        if let phase = conversions.phase(for: videoStashId) {
+            Divider()
+                .frame(height: 24)
+            HStack(spacing: 6) {
+                ProgressView()
+                    .controlSize(.small)
+                Text(phase.label)
+                    .font(.caption)
+                    .monospacedDigit()
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+            }
+        } else if conversions.isProcessing(videoIdentity: videoStashId) {
+            Divider()
+                .frame(height: 24)
+            Text("Conversion queued")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+    }
+}
+
+/// In-menu depth-conversion status + cancel, isolated for the same reason as
+/// ConversionStatusRow. Shows the phase *kind* only (no live percentage) so its
+/// own updates never reflow the surrounding menu items.
+private struct ConversionMenuStatus: View {
+    let videoStashId: String
+    @State private var conversions = DepthConversionManager.shared
+
+    private var statusLabel: String? {
+        if let phase = conversions.phase(for: videoStashId) {
+            switch phase {
+            case .downloading: return "Downloading…"
+            case .converting: return "Converting to 3D…"
+            case .refining: return "Refining 3D…"
+            }
+        }
+        if conversions.isProcessing(videoIdentity: videoStashId) {
+            return "Conversion queued"
+        }
+        return nil
+    }
+
+    var body: some View {
+        if let statusLabel {
+            Text(statusLabel)
+            Button(role: .destructive) {
+                conversions.cancel(videoIdentity: videoStashId)
+            } label: {
+                Label("Cancel Conversion", systemImage: "xmark.circle")
+            }
+        }
     }
 }
