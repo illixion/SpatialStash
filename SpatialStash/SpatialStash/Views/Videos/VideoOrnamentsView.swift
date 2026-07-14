@@ -355,16 +355,13 @@ struct VideoOrnamentsView: View {
             }
             .disabled(windowModel.playbackRenderer != .nativeMetal)
 
-            // Background depth conversion for THIS video: live progress + cancel.
-            if let phase = DepthConversionManager.shared.phase(for: video.stashId) {
-                Text(phase.label)
-                Button(role: .destructive) {
-                    DepthConversionManager.shared.cancel(videoIdentity: video.stashId)
-                } label: {
-                    Label("Cancel Conversion", systemImage: "xmark.circle")
-                }
-            } else if DepthConversionManager.shared.isProcessing(videoIdentity: video.stashId) {
-                Text("Conversion queued")
+            // Background depth conversion for THIS video: status + cancel.
+            // NOTE: use the phase *kind* only (no live percentage) here. The
+            // per-tick percentage relays out the menu item while it's open,
+            // shifting tap targets so gaze taps miss. The live percentage
+            // lives in the ornament row instead (outside the menu).
+            if let status = conversionMenuStatusLabel {
+                Text(status)
                 Button(role: .destructive) {
                     DepthConversionManager.shared.cancel(videoIdentity: video.stashId)
                 } label: {
@@ -421,6 +418,29 @@ struct VideoOrnamentsView: View {
                 in: .rect(cornerRadius: 8)
             )
         }
+        // Match the other borderless ornament buttons: the default Menu style
+        // renders a raised glass capsule that reads as "always highlighted"
+        // (with a tiny disclosure glyph) even in 2D. Borderless keeps it flat,
+        // so the only highlight comes from the active-mode background above.
+        .menuStyle(.button)
+        .buttonStyle(.borderless)
+    }
+
+    /// Conversion status for the ViewMode menu — phase *kind* only, never the
+    /// live percentage. A per-tick numeric label relays out the open menu and
+    /// makes taps miss; the live percentage is shown in the ornament row.
+    private var conversionMenuStatusLabel: String? {
+        if let phase = DepthConversionManager.shared.phase(for: video.stashId) {
+            switch phase {
+            case .downloading: return "Downloading…"
+            case .converting: return "Converting to 3D…"
+            case .refining: return "Refining 3D…"
+            }
+        }
+        if DepthConversionManager.shared.isProcessing(videoIdentity: video.stashId) {
+            return "Conversion queued"
+        }
+        return nil
     }
 
     @ViewBuilder

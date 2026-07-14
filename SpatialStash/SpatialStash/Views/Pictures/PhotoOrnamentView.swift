@@ -120,14 +120,6 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
                 windowModel.clearAdjustmentPreviewIfUnused()
             }
         }
-        .onChange(of: show3DPopover) { _, isOpen in
-            if isOpen { windowModel.cancelAutoHideTimer() }
-            else { windowModel.startAutoHideTimer() }
-        }
-        .onChange(of: showResolutionPopover) { _, isOpen in
-            if isOpen { windowModel.cancelAutoHideTimer() }
-            else { windowModel.startAutoHideTimer() }
-        }
     }
 
     // MARK: - Navigation Controls
@@ -202,11 +194,73 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
 
     // MARK: - 3D Menu
 
-    @State private var show3DPopover = false
-
     private var threeDMenu: some View {
-        Button {
-            show3DPopover.toggle()
+        Menu {
+            // .onAppear/.onDisappear pause the host's auto-hide while the menu
+            // is open (same pattern as VideoOrnamentsView).
+            Group {
+                nativeMenuButton(
+                    title: "3D",
+                    icon: "spatial.capture.fill",
+                    isChecked: windowModel.desiredViewingMode == .spatial3D,
+                    isDisabled: windowModel.isAnimatedImage || (windowModel.spatial3DImageState == .generating && windowModel.desiredViewingMode != .spatial3DImmersive)
+                ) {
+                    Task {
+                        if windowModel.desiredViewingMode == .spatial3D {
+                            await windowModel.switchToViewingMode(.mono)
+                        } else {
+                            await windowModel.switchToViewingMode(.spatial3D)
+                        }
+                    }
+                }
+
+                nativeMenuButton(
+                    title: "Immersive 3D",
+                    icon: "inset.filled.pano",
+                    isChecked: windowModel.desiredViewingMode == .spatial3DImmersive,
+                    isDisabled: windowModel.isAnimatedImage || (windowModel.spatial3DImageState == .generating && windowModel.desiredViewingMode != .spatial3D)
+                ) {
+                    Task {
+                        if windowModel.desiredViewingMode == .spatial3DImmersive {
+                            await windowModel.switchToViewingMode(.mono)
+                        } else {
+                            await windowModel.switchToViewingMode(.spatial3DImmersive)
+                        }
+                    }
+                }
+
+                nativeMenuButton(
+                    title: "Diorama",
+                    icon: "spatial.capture.on.hexagon",
+                    isChecked: windowModel.isDioramaMode,
+                    isDisabled: windowModel.isAnimatedImage || windowModel.isRealityKitDisplay || windowModel.isProcessingDiorama
+                ) {
+                    Task {
+                        await windowModel.toggleDiorama()
+                    }
+                }
+
+                if isAnyAlternateModeActive {
+                    Divider()
+
+                    nativeMenuButton(
+                        title: "2D",
+                        icon: "rectangle",
+                        isChecked: false
+                    ) {
+                        Task {
+                            if windowModel.isDioramaMode {
+                                await windowModel.setDioramaMode(false)
+                            }
+                            if windowModel.desiredViewingMode != .mono {
+                                await windowModel.switchToViewingMode(.mono)
+                            }
+                        }
+                    }
+                }
+            }
+            .onAppear { updateOrnamentMenuCount(opened: true) }
+            .onDisappear { updateOrnamentMenuCount(opened: false) }
         } label: {
             Group {
                 if windowModel.spatial3DImageState == .generating {
@@ -225,84 +279,10 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
             .padding(6)
             .background(isAnyAlternateModeActive ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
         }
+        .menuStyle(.button)
         .buttonStyle(.borderless)
         .disabled(windowModel.isAnimatedImage)
         .help("3D")
-        .onChange(of: show3DPopover) { _, isOpen in
-            updateOrnamentMenuCount(opened: isOpen)
-        }
-        .popover(isPresented: $show3DPopover) {
-            VStack(spacing: 4) {
-                popoverMenuButton(
-                    title: "3D",
-                    icon: "spatial.capture.fill",
-                    isChecked: windowModel.desiredViewingMode == .spatial3D,
-                    isDisabled: windowModel.isAnimatedImage || (windowModel.spatial3DImageState == .generating && windowModel.desiredViewingMode != .spatial3DImmersive)
-                ) {
-                    show3DPopover = false
-                    Task {
-                        if windowModel.desiredViewingMode == .spatial3D {
-                            await windowModel.switchToViewingMode(.mono)
-                        } else {
-                            await windowModel.switchToViewingMode(.spatial3D)
-                        }
-                    }
-                }
-
-                Divider()
-
-                popoverMenuButton(
-                    title: "Immersive 3D",
-                    icon: "inset.filled.pano",
-                    isChecked: windowModel.desiredViewingMode == .spatial3DImmersive,
-                    isDisabled: windowModel.isAnimatedImage || (windowModel.spatial3DImageState == .generating && windowModel.desiredViewingMode != .spatial3D)
-                ) {
-                    show3DPopover = false
-                    Task {
-                        if windowModel.desiredViewingMode == .spatial3DImmersive {
-                            await windowModel.switchToViewingMode(.mono)
-                        } else {
-                            await windowModel.switchToViewingMode(.spatial3DImmersive)
-                        }
-                    }
-                }
-
-                Divider()
-
-                popoverMenuButton(
-                    title: "Diorama",
-                    icon: "spatial.capture.on.hexagon",
-                    isChecked: windowModel.isDioramaMode,
-                    isDisabled: windowModel.isAnimatedImage || windowModel.isRealityKitDisplay || windowModel.isProcessingDiorama
-                ) {
-                    show3DPopover = false
-                    Task {
-                        await windowModel.toggleDiorama()
-                    }
-                }
-
-                if isAnyAlternateModeActive {
-                    Divider()
-
-                    popoverMenuButton(
-                        title: "2D",
-                        icon: "rectangle",
-                        isChecked: false
-                    ) {
-                        show3DPopover = false
-                        Task {
-                            if windowModel.isDioramaMode {
-                                await windowModel.setDioramaMode(false)
-                            }
-                            if windowModel.desiredViewingMode != .mono {
-                                await windowModel.switchToViewingMode(.mono)
-                            }
-                        }
-                    }
-                }
-            }
-            .padding(8)
-        }
     }
 
     private var is3DModeActive: Bool {
@@ -324,35 +304,18 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
 
     // MARK: - Resolution Menu
 
-    @State private var showResolutionPopover = false
-
     private var resolutionMenu: some View {
         let is3D = windowModel.is3DMode
         let activeOverride = is3D ? windowModel.spatial3DResolutionOverride : windowModel.resolutionOverride
         let displayResolution = is3D ? windowModel.currentSpatial3DSourceDimension : windowModel.currentDisplayResolution
         let helpPrefix = is3D ? "3D Source Resolution" : "Image Resolution"
 
-        return Button {
-            showResolutionPopover.toggle()
-        } label: {
-            Text("\(displayResolution)px")
-                .font(.caption)
-                .monospacedDigit()
-                .foregroundColor(activeOverride != nil ? .accentColor : .secondary)
-        }
-        .buttonStyle(.borderless)
-        .disabled(windowModel.isLoadingDetailImage)
-        .help(activeOverride != nil ? "\(helpPrefix) Override: \(resolutionOverrideLabel)" : helpPrefix)
-        .onChange(of: showResolutionPopover) { _, isOpen in
-            updateOrnamentMenuCount(opened: isOpen)
-        }
-        .popover(isPresented: $showResolutionPopover) {
-            VStack(spacing: 4) {
-                popoverMenuButton(
+        return Menu {
+            Group {
+                nativeMenuButton(
                     title: "Auto",
                     isChecked: activeOverride == nil
                 ) {
-                    showResolutionPopover = false
                     Task {
                         if is3D {
                             await windowModel.applySpatial3DResolutionOverride(nil)
@@ -365,11 +328,10 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
                 Divider()
 
                 ForEach(AppModel.maxImageResolutionOptions, id: \.value) { option in
-                    popoverMenuButton(
+                    nativeMenuButton(
                         title: option.label,
                         isChecked: activeOverride == option.value
                     ) {
-                        showResolutionPopover = false
                         Task {
                             if is3D {
                                 await windowModel.applySpatial3DResolutionOverride(option.value)
@@ -380,8 +342,18 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
                     }
                 }
             }
-            .padding(8)
+            .onAppear { updateOrnamentMenuCount(opened: true) }
+            .onDisappear { updateOrnamentMenuCount(opened: false) }
+        } label: {
+            Text("\(displayResolution)px")
+                .font(.caption)
+                .monospacedDigit()
+                .foregroundColor(activeOverride != nil ? .accentColor : .secondary)
         }
+        .menuStyle(.button)
+        .buttonStyle(.borderless)
+        .disabled(windowModel.isLoadingDetailImage)
+        .help(activeOverride != nil ? "\(helpPrefix) Override: \(resolutionOverrideLabel)" : helpPrefix)
     }
 
     /// Label for the current resolution override setting
@@ -565,10 +537,12 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
         }
     }
 
-    // MARK: - Popover Menu Button Helper
+    // MARK: - Native Menu Item Helper
 
-    /// Reusable button styled to match native visionOS menu item sizing.
-    private func popoverMenuButton(
+    /// Radio-style item for a native visionOS `Menu`: leading icon (optional),
+    /// title, and a trailing checkmark on the selected entry. Matches the item
+    /// style used by VideoOrnamentsView's ViewMode menu.
+    private func nativeMenuButton(
         title: String,
         icon: String? = nil,
         isChecked: Bool,
@@ -576,24 +550,17 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            HStack(spacing: 12) {
+            HStack {
                 if let icon {
-                    Image(systemName: icon)
-                        .frame(width: 24)
+                    Label(title, systemImage: icon)
+                } else {
+                    Text(title)
                 }
-                Text(title)
-                Spacer()
                 if isChecked {
                     Image(systemName: "checkmark")
-                        .foregroundColor(.accentColor)
                 }
             }
-            .font(.body)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.borderless)
         .disabled(isDisabled)
     }
 }
