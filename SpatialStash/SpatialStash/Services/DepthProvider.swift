@@ -56,9 +56,11 @@ protocol PumpDepthSource: AnyObject {
     /// Depth for the frame with presentation time `itemTime`, or nil when none
     /// is available right now (inference failure / cache seek gap).
     func frameDepth(itemTime: CMTime, frame: CVPixelBuffer) -> PumpFrameDepth?
-    /// True when missing depth should render FLAT (cached mode: a seek gap must
-    /// not fall back to the different-looking heuristic warp); false to use the
-    /// heuristic (realtime mode: an isolated inference hiccup).
+    /// True when missing depth should render FLAT (with the pump's strength
+    /// ramp back). Both real sources set this: falling back to the
+    /// different-looking heuristic warp for a cache seek gap or an isolated
+    /// realtime inference hiccup is a visible one-frame depth pop. False only
+    /// makes sense for a source that is heuristic-adjacent to begin with.
     var flattensWhenUnavailable: Bool { get }
     /// True to warp with the dense mesh grid. Cached depth is edge-aware
     /// (joint-bilateral) + lookahead-smoothed, so it both tolerates and needs
@@ -111,7 +113,9 @@ final class RealtimeDepthSource: PumpDepthSource, @unchecked Sendable {
         self.provider = provider
     }
 
-    let flattensWhenUnavailable = false
+    /// An inference hiccup renders flat (+ ramp back) rather than swapping in
+    /// the heuristic warp for one frame — a visible depth pop.
+    let flattensWhenUnavailable = true
     let prefersDenseWarpGrid = false
 
     func frameDepth(itemTime: CMTime, frame: CVPixelBuffer) -> PumpFrameDepth? {

@@ -192,6 +192,17 @@ struct VideoStereoUniforms {
     float depthValueBias;
 };
 
+// Stereo-window guard: feather disparity to zero over the outer few percent of
+// frame width. Without it, near (popped-out) content cut by the frame edge is a
+// classic window violation, and the warp's clamp_to_edge sampling paints
+// per-eye-different strips along the borders — both read as binocular rivalry
+// and get markedly worse at higher depth strengths. Applied in display space
+// (pre-mirror), symmetric so the flip doesn't matter.
+static inline float pseudo3DEdgeFeather(float x) {
+    const float feather = 0.05;
+    return smoothstep(0.0, feather, x) * (1.0 - smoothstep(1.0 - feather, 1.0, x));
+}
+
 static inline float pseudo3DHeuristicDepth(texture2d<float> tex, sampler s, float2 uv) {
     float2 px = float2(1.0) / float2(tex.get_width(0), tex.get_height(0));
     float3 c  = tex.sample(s, uv).rgb;
@@ -230,7 +241,8 @@ fragment float4 videoPseudo3DEyeFragmentShader(
     // sampling the source toward the OPPOSITE side of the shift — hence the
     // minus. (The previous `+` gave uncrossed disparity, pushing near objects
     // behind = inverted/weak depth that won't fuse.)
-    float disparity = (depth - u.convergence) * u.depthStrength;
+    float disparity = (depth - u.convergence) * u.depthStrength
+                      * pseudo3DEdgeFeather(in.texCoord.x);
     float2 warpedUV = float2(uv.x - u.eyeSign * disparity, uv.y);
 
     float4 color = tex.sample(texSampler, warpedUV);
@@ -276,7 +288,8 @@ vertex MeshVertexOut videoStereoMeshVertex(
     // near≈1 after the per-frame value mapping (identity for realtime depth)
     float depth = saturate(depthTex.sample(depthSampler, duv, level(0)).r
                            * u.depthValueScale + u.depthValueBias);
-    float disparity = (depth - u.convergence) * u.depthStrength;
+    float disparity = (depth - u.convergence) * u.depthStrength
+                      * pseudo3DEdgeFeather(grid.x);
 
     float ndcX = grid.x * 2.0 - 1.0 + u.eyeSign * disparity * 2.0;
     float ndcY = 1.0 - grid.y * 2.0;

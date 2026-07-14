@@ -238,6 +238,10 @@ final class Pseudo3DStereoEngine {
     /// frames at 60fps video) or a pre-processed cache entry (exact PTS sync).
     /// Changing it reloads the pump.
     private var depthMode: Pseudo3DDepthMode = .realtime
+    /// Physical width of the fitted video plane in meters (videoAspect × entity
+    /// scale, tracked by fitVideo). Drives plane-size disparity normalization —
+    /// see makePumpConfig.
+    @ObservationIgnored private var planeWidthMeters: Float?
 
     // A-B loop
     private var loopA: Double?
@@ -375,6 +379,18 @@ final class Pseudo3DStereoEngine {
         } else {
             target = min(bounds.extents.x / unscaledX, bounds.extents.y / unscaledY)
         }
+        // Track the plane's physical width (the mesh is videoAspect × 1 m
+        // pre-scale) and re-normalize disparity when it changes meaningfully.
+        // Before the |target − scale| guard: the width must be known even when
+        // the scale itself doesn't need re-applying.
+        if let size = knownVideoSize, size.width > 0, size.height > 0,
+           target.isFinite, target > 1e-4 {
+            let width = Float(size.width / size.height) * target
+            if abs((planeWidthMeters ?? 0) - width) > 0.01 {
+                planeWidthMeters = width
+                pump?.updateConfig(makePumpConfig())
+            }
+        }
         guard target.isFinite, target > 1e-4, abs(target - scale) > 0.02 else { return }
         AppLogger.videoWindow.info("fitVideo: bounds \(bounds.extents.x)x\(bounds.extents.y), mesh \(unscaledX)x\(unscaledY), videoAspect \(self.knownVideoSize.map { Float($0.width / $0.height) } ?? -1), scale \(scale) → \(target)")
         entity.scale = SIMD3<Float>(repeating: target)
@@ -404,12 +420,29 @@ final class Pseudo3DStereoEngine {
         videoEntity?.components.set(OpacityComponent(opacity: chromeOpen ? chromeDimOpacity : 1.0))
     }
 
+    /// Plane width (meters) at which `depthStrength` applies verbatim. The warp
+    /// bakes disparity as a fraction of frame width, so the physical separation
+    /// it demands of the eyes grows with the window — a Medium that fuses fine
+    /// on a small window exceeds the ~1° vergence comfort zone on a large one.
+    /// Normalizing by the fitted plane's width makes a preset mean the same
+    /// physical on-plane disparity at every window size.
+    private static let referencePlaneWidthMeters: Float = 1.0
+
     private func makePumpConfig() -> StereoPump.Config {
-        StereoPump.Config(
+        var strength = Float(settings.depthStrength)
+        if let planeWidth = planeWidthMeters, planeWidth > 0.05 {
+            // Clamped to the slider ceiling so a very small window can't push
+            // the UV disparity past what the presets were ever tuned for.
+            strength = min(
+                strength * Self.referencePlaneWidthMeters / planeWidth,
+                Float(Pseudo3DSettings.depthStrengthRange.upperBound)
+            )
+        }
+        return StereoPump.Config(
             brightness: Float(visualAdjustments.brightness),
             contrast: Float(visualAdjustments.contrast),
             saturation: Float(visualAdjustments.saturation),
-            depthStrength: Float(settings.depthStrength),
+            depthStrength: strength,
             convergence: Float(settings.convergence),
             autoConvergence: settings.autoConvergence,
             mirror: isFlipped
@@ -722,7 +755,9 @@ final class StereoPump: @unchecked Sendable {
         var brightness: Float = 0
         var contrast: Float = 1
         var saturation: Float = 1
-        var depthStrength: Float = 0.03
+        /// Matches Pseudo3DSettings' Subtle default — always overwritten by
+        /// makePumpConfig, but a missed config path should fail conservative.
+        var depthStrength: Float = 0.008
         var convergence: Float = 0.45
         /// Use the depth source's per-frame median as the zero-parallax plane
         /// when it provides one (cached mode); falls back to `convergence`.
