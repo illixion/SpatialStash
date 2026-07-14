@@ -24,12 +24,12 @@ enum Pseudo3DDepthMode: Equatable {
 }
 
 struct Pseudo3DSettings: Codable, Hashable {
-    /// Max per-eye horizontal disparity in UV space (fraction of frame width),
-    /// as it applies at a 1 m-wide video plane. The engine normalizes it by the
-    /// fitted plane's physical width (Pseudo3DStereoEngine.makePumpConfig), so
-    /// a preset means the same physical on-plane disparity — and roughly the
-    /// same vergence demand — at every window size, instead of a large window
-    /// silently amplifying it past the comfort zone. Defaults to Subtle.
+    /// Max per-eye horizontal disparity in UV space (fraction of frame width).
+    /// Applies verbatim up to a 1 m-wide video plane; on larger planes the
+    /// engine attenuates it (Pseudo3DStereoEngine.makePumpConfig) so the
+    /// physical on-plane disparity — and the vergence demand — stops growing
+    /// with the window instead of silently amplifying past the comfort zone.
+    /// Defaults to Subtle.
     var depthStrength: Double = 0.008
     /// Depth (0..1) that maps to zero parallax / the window plane.
     var convergence: Double = 0.45

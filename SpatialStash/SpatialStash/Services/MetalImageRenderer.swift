@@ -59,15 +59,19 @@ final class MetalImageRenderer: Sendable {
     /// - Moderate (193×109): realtime depth. Denser grids rendered the model's
     ///   high-frequency depth detail as visible per-vertex wobble, so the live
     ///   (gaussian-stabilized but unrefined) path stays moderate.
-    /// - Dense (385×217): cached depth. Pre-processed depth is edge-aware
+    /// - Dense (769×433): cached depth. Pre-processed depth is edge-aware
     ///   (joint-bilateral) + lookahead-smoothed, so the wobble objection doesn't
-    ///   apply — and the moderate grid's ~20px cell pitch (at 4K) quantizes
-    ///   sharp depth edges into visible stairsteps along smooth silhouettes.
-    ///   Halving the pitch puts the grid near the depth map's own resolution.
+    ///   apply — and a coarse grid's cell pitch quantizes sharp depth edges into
+    ///   visible stairsteps along smooth silhouettes (per-grid-row steps, worst
+    ///   on CG content at high strength). 769 columns oversample the 518-wide
+    ///   depth map (~0.67 texel/cell), so the grid stops being the limiter and
+    ///   silhouettes are bounded by the depth map's own (bilinear-smoothed)
+    ///   resolution. ~333k verts/eye at 60fps is trivial vertex load on Apple
+    ///   Silicon. (385×217 still stepped visibly at 1080p on Blender renders.)
     static let pseudo3DGridColumns = 193
     static let pseudo3DGridRows = 109
-    static let pseudo3DDenseGridColumns = 385
-    static let pseudo3DDenseGridRows = 217
+    static let pseudo3DDenseGridColumns = 769
+    static let pseudo3DDenseGridRows = 433
 
     nonisolated(unsafe) let pseudo3DGridPositions: MTLBuffer
     nonisolated(unsafe) let pseudo3DGridIndices: MTLBuffer

@@ -420,23 +420,22 @@ final class Pseudo3DStereoEngine {
         videoEntity?.components.set(OpacityComponent(opacity: chromeOpen ? chromeDimOpacity : 1.0))
     }
 
-    /// Plane width (meters) at which `depthStrength` applies verbatim. The warp
+    /// Plane width (meters) above which `depthStrength` is attenuated. The warp
     /// bakes disparity as a fraction of frame width, so the physical separation
     /// it demands of the eyes grows with the window — a Medium that fuses fine
     /// on a small window exceeds the ~1° vergence comfort zone on a large one.
-    /// Normalizing by the fitted plane's width makes a preset mean the same
-    /// physical on-plane disparity at every window size.
+    /// Attenuation-ONLY (min(1, ref/width)): a preset means at most its UV value,
+    /// capped to a constant physical disparity once the plane exceeds the
+    /// reference. Never amplify on small windows — an earlier symmetric version
+    /// scaled small-window strength up into the 0.04 ceiling, which collapsed
+    /// Medium and Strong into the same (excessive) disparity and re-amplified
+    /// silhouette stairstepping.
     private static let referencePlaneWidthMeters: Float = 1.0
 
     private func makePumpConfig() -> StereoPump.Config {
         var strength = Float(settings.depthStrength)
         if let planeWidth = planeWidthMeters, planeWidth > 0.05 {
-            // Clamped to the slider ceiling so a very small window can't push
-            // the UV disparity past what the presets were ever tuned for.
-            strength = min(
-                strength * Self.referencePlaneWidthMeters / planeWidth,
-                Float(Pseudo3DSettings.depthStrengthRange.upperBound)
-            )
+            strength *= min(1, Self.referencePlaneWidthMeters / planeWidth)
         }
         return StereoPump.Config(
             brightness: Float(visualAdjustments.brightness),
