@@ -188,7 +188,13 @@ struct VideoWindowView: View {
                     // The pseudo-3D RealityView can't be toggled by a 2D overlay
                     // (gaze targets the 3D plane), so it carries its own tap
                     // target via onToggleUI instead.
-                    if !appModel.allWindowsHidden, !windowModel.shouldUsePseudo3D {
+                    //
+                    // Exclude 3D (MV-HEVC) mode too: its in-window content is only
+                    // progress/error/loading overlays (the video itself plays in the
+                    // immersive space). The error overlay carries interactive Retry /
+                    // Play as 2D buttons, and a tap target stacked above them would
+                    // swallow those taps into a UI toggle instead.
+                    if !appModel.allWindowsHidden, !windowModel.shouldUsePseudo3D, !windowModel.shouldUse3DMode {
                         Color.clear
                             .contentShape(.rect)
                             .onTapGesture {
