@@ -141,6 +141,7 @@ struct NativeMetalVideoPlayerView: UIViewRepresentable {
         private var endObserver: NSObjectProtocol?
         private var failureObserver: NSObjectProtocol?
         private var statusObservation: NSKeyValueObservation?
+        private var timeControlObservation: NSKeyValueObservation?
         private var lastReportedSize: CGSize?
         private var loopA: Double?
         private var loopB: Double?
@@ -176,7 +177,16 @@ struct NativeMetalVideoPlayerView: UIViewRepresentable {
 
             let player = AVPlayer(playerItem: item)
             player.isMuted = startMuted
-            player.automaticallyWaitsToMinimizeStalling = true
+            // Keep this OFF: with it on, AVPlayer parks itself in
+            // .waitingToPlayAtSpecifiedRate whenever it decides the decode/buffer
+            // isn't "comfortable" (heavy 4K HEVC trips this even for a local file
+            // that has nothing to buffer). In this pull-based AVPlayerItemVideoOutput
+            // setup the parked player never resumes on its own — itemTime stops
+            // advancing so hasNewPixelBuffer() never fires again and the frame
+            // freezes ~1s in. play() at rate 1 is what un-sticks it. Off = play
+            // immediately and let us drive display; state changes are reported via
+            // the timeControlStatus observer below.
+            player.automaticallyWaitsToMinimizeStalling = false
 
             self.player = player
             self.playerItem = item
@@ -220,6 +230,17 @@ struct NativeMetalVideoPlayerView: UIViewRepresentable {
                 }
             }
 
+            // The periodic time observer only fires while the timeline is
+            // advancing, so it can't report a pause/stall (time stops). Observe
+            // timeControlStatus directly so windowModel.isPaused stays truthful
+            // through every transition — without this the play/pause button
+            // desyncs (shows "pause" over a frozen frame) and needs two taps.
+            timeControlObservation = player.observe(\.timeControlStatus, options: [.new]) { [weak self] _, _ in
+                Task { @MainActor [weak self] in
+                    self?.reportPlaybackState()
+                }
+            }
+
             timeObserver = player.addPeriodicTimeObserver(
                 forInterval: CMTime(value: 1, timescale: 30),
                 queue: .main
@@ -237,10 +258,12 @@ struct NativeMetalVideoPlayerView: UIViewRepresentable {
         func play() {
             isRoomActive = true
             player?.play()
+            reportPlaybackState()
         }
 
         func pause() {
             player?.pause()
+            reportPlaybackState()
         }
 
         func seek(to seconds: Double) {
@@ -301,6 +324,8 @@ struct NativeMetalVideoPlayerView: UIViewRepresentable {
             }
             statusObservation?.invalidate()
             statusObservation = nil
+            timeControlObservation?.invalidate()
+            timeControlObservation = nil
             player?.pause()
             if let videoOutput {
                 playerItem?.remove(videoOutput)
