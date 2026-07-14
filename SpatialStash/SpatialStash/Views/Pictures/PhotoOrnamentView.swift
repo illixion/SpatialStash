@@ -210,8 +210,13 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
         } label: {
             Group {
                 if windowModel.spatial3DImageState == .generating {
+                    // Constrain the spinner to the icon's footprint. scaleEffect
+                    // only scales rendering, not layout, so without a fixed frame
+                    // the default ProgressView is taller than the .title3 icon and
+                    // grows the ornament's height while converting.
                     ProgressView()
-                        .scaleEffect(0.8)
+                        .controlSize(.small)
+                        .frame(width: 22, height: 22)
                 } else {
                     Image(systemName: threeDMenuIcon)
                 }
