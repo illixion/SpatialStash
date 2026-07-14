@@ -104,6 +104,9 @@ enum AppLogger {
     /// Remote API viewer (slideshow, WebSocket, API)
     static let remoteViewer = Logger(subsystem: subsystem, category: "RemoteViewer")
 
+    /// Streamable-URL handoff (custom scheme, URL classification, web-yt-dlp proxy)
+    static let streamURL = Logger(subsystem: subsystem, category: "StreamURL")
+
     // MARK: - Signposters
 
     /// Per-stage intervals for the fake-3D pipeline (inference, stabilize, warp,

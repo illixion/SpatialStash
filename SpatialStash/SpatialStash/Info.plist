@@ -58,6 +58,23 @@
 			</array>
 		</dict>
 	</array>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<!-- Custom scheme for handing a video/page URL from Safari (via a
+			     Shortcut or bookmarklet) into the in-app player, e.g.
+			     spatialstash://play?url=<percent-encoded URL>. Routed in
+			     SpatialStashApp.handleIncomingURL. -->
+			<key>CFBundleURLName</key>
+			<string>com.illixion.spatialstash.play</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>spatialstash</string>
+			</array>
+		</dict>
+	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationPreferredDefaultSceneSessionRole</key>

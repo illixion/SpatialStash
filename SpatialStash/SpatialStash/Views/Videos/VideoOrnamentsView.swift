@@ -20,6 +20,7 @@ struct VideoOrnamentsView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismissWindow) private var dismissWindow
+    @Environment(\.openURL) private var openURL
     @State private var depthModels = DepthModelManager.shared
 
     /// When true, stack the playback transport (VideoControlBar) above the button
@@ -247,6 +248,18 @@ struct VideoOrnamentsView: View {
                         Label("Pop Out", systemImage: "rectangle.portrait.and.arrow.forward")
                     }
                 }
+
+                // Last-resort fallback for a web-sourced stream the in-app
+                // players (native + WebKit) can't decode — open it in Safari.
+                if isRemoteStream {
+                    Divider()
+
+                    Button {
+                        openURL(windowModel.video.streamURL)
+                    } label: {
+                        Label("Open in Safari", systemImage: "safari")
+                    }
+                }
             }
             .onAppear { chromeMenu(opened: true) }
             .onDisappear { chromeMenu(opened: false) }
@@ -259,6 +272,12 @@ struct VideoOrnamentsView: View {
         .menuStyle(.button)
         .buttonStyle(.borderless)
         .help("More")
+    }
+
+    /// Whether this window is playing a remote http(s) stream (vs a local file).
+    private var isRemoteStream: Bool {
+        let scheme = windowModel.video.streamURL.scheme?.lowercased()
+        return scheme == "http" || scheme == "https"
     }
 
     /// Whether the More menu button should show a highlight

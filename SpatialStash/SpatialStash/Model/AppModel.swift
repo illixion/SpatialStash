@@ -807,6 +807,43 @@ class AppModel {
         }
     }
 
+    /// When true, web-page URLs handed to the app (via the `spatialstash://play`
+    /// scheme) are resolved through a self-hosted web-yt-dlp proxy so the
+    /// pseudo-3D pipeline can play e.g. YouTube. Direct stream URLs play without
+    /// this. See WebYTDLPClient / StreamableURLResolver.
+    var webYTDLPEnabled: Bool {
+        didSet {
+            if webYTDLPEnabled != oldValue {
+                UserDefaults.standard.set(webYTDLPEnabled, forKey: "webYTDLPEnabled")
+            }
+        }
+    }
+
+    /// Base URL of the web-yt-dlp instance (e.g. https://yt.bjorkbox.com).
+    var webYTDLPEndpoint: String {
+        didSet {
+            if webYTDLPEndpoint != oldValue {
+                UserDefaults.standard.set(webYTDLPEndpoint, forKey: "webYTDLPEndpoint")
+            }
+        }
+    }
+
+    /// Auth token for the web-yt-dlp instance (sent as a `?token=` query param).
+    var webYTDLPToken: String {
+        didSet {
+            let trimmed = webYTDLPToken.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed != webYTDLPToken { webYTDLPToken = trimmed }
+            if webYTDLPToken != oldValue {
+                UserDefaults.standard.set(webYTDLPToken, forKey: "webYTDLPToken")
+            }
+        }
+    }
+
+    /// Convenience client built from the persisted web-yt-dlp settings.
+    var webYTDLPClient: WebYTDLPClient {
+        WebYTDLPClient(endpoint: webYTDLPEndpoint, token: webYTDLPToken)
+    }
+
     /// Saved remote viewer configurations
     var savedRemoteConfigs: [RemoteViewerConfig] = [] {
         didSet {
@@ -1126,6 +1163,11 @@ class AppModel {
         // Load debug console visibility (default: false)
         let loadedShowDebugConsole = UserDefaults.standard.bool(forKey: "showDebugConsole")
 
+        // Load web-yt-dlp settings (default: disabled, empty endpoint/token)
+        let loadedWebYTDLPEnabled = UserDefaults.standard.bool(forKey: "webYTDLPEnabled")
+        let loadedWebYTDLPEndpoint = UserDefaults.standard.string(forKey: "webYTDLPEndpoint") ?? ""
+        let loadedWebYTDLPToken = UserDefaults.standard.string(forKey: "webYTDLPToken") ?? ""
+
         // Load respect memory alerts (default: true)
         let loadedRespectMemoryAlerts = UserDefaults.standard.object(forKey: "respectMemoryAlerts") != nil
             ? UserDefaults.standard.bool(forKey: "respectMemoryAlerts")
@@ -1186,6 +1228,9 @@ class AppModel {
         self.defaultImageViewingMode = loadedDefaultImageViewingMode
         self.enableRemoteViewer = loadedEnableRemoteViewer
         self.showDebugConsole = loadedShowDebugConsole
+        self.webYTDLPEnabled = loadedWebYTDLPEnabled
+        self.webYTDLPEndpoint = loadedWebYTDLPEndpoint
+        self.webYTDLPToken = loadedWebYTDLPToken
         self.respectMemoryAlerts = loadedRespectMemoryAlerts
         self.useLossyTextureCompression = loadedUseLossyTextureCompression
         self.globalVisualAdjustments = loadedGlobalVisualAdjustments
@@ -1740,6 +1785,9 @@ class AppModel {
             showDebugConsole: showDebugConsole,
             respectMemoryAlerts: respectMemoryAlerts,
             enableRemoteViewer: enableRemoteViewer,
+            webYTDLPEnabled: webYTDLPEnabled,
+            webYTDLPEndpoint: webYTDLPEndpoint,
+            webYTDLPToken: webYTDLPToken,
             savedViews: savedViews,
             savedVideoViews: savedVideoViews,
             savedWindowGroups: savedWindowGroups,
@@ -1790,6 +1838,9 @@ class AppModel {
         if let v = backup.showDebugConsole { showDebugConsole = v }
         if let v = backup.respectMemoryAlerts { respectMemoryAlerts = v }
         if let v = backup.enableRemoteViewer { enableRemoteViewer = v }
+        if let v = backup.webYTDLPEnabled { webYTDLPEnabled = v }
+        if let v = backup.webYTDLPEndpoint { webYTDLPEndpoint = v }
+        if let v = backup.webYTDLPToken { webYTDLPToken = v }
 
         // Complex settings
         if let v = backup.savedViews {

@@ -186,6 +186,63 @@ private struct MainWindowView: View {
     }
 
     private func handleIncomingURL(_ url: URL) async {
+        // Custom handoff scheme: spatialstash://play?url=<percent-encoded URL>
+        if url.scheme?.lowercased() == "spatialstash" {
+            guard let target = Self.playTargetURL(from: url) else {
+                AppLogger.streamURL.error("spatialstash:// URL had no valid 'url' parameter: \(url.absoluteString, privacy: .public)")
+                return
+            }
+            await route(target)
+            return
+        }
+        await route(url)
+    }
+
+    /// Route an incoming URL. Remote http(s) URLs try the rich video pipeline
+    /// (direct stream) or web-yt-dlp (web page); everything else (local files)
+    /// uses the shared-media cache path.
+    private func route(_ url: URL) async {
+        let scheme = url.scheme?.lowercased()
+        if scheme == "http" || scheme == "https" {
+            switch await StreamableURLResolver.classify(url) {
+            case .directVideo(let videoURL):
+                openStreamVideo(videoURL, identitySource: url)
+            case .webPage(let pageURL):
+                guard appModel.webYTDLPEnabled else {
+                    AppLogger.streamURL.info("Web page received but web-yt-dlp disabled; ignoring: \(pageURL.absoluteString, privacy: .public)")
+                    return
+                }
+                guard let stream = appModel.webYTDLPClient.streamURL(forPage: pageURL) else {
+                    AppLogger.streamURL.error("web-yt-dlp endpoint not configured; cannot play: \(pageURL.absoluteString, privacy: .public)")
+                    return
+                }
+                // Identity keys off the original page URL (stable per video, so
+                // depth caches persist), but playback uses the proxied stream.
+                openStreamVideo(stream, identitySource: pageURL)
+            case .notPlayable:
+                AppLogger.streamURL.info("Remote URL not playable as video; ignoring: \(url.absoluteString, privacy: .public)")
+            }
+        } else {
+            await handleSharedFile(url)
+        }
+    }
+
+    /// Open a streamable video URL in the rich pipeline (native-Metal / pseudo-3D
+    /// aware). `identitySource` is the URL used to derive the stable per-video id.
+    private func openStreamVideo(_ streamURL: URL, identitySource: URL) {
+        let video = GalleryVideo(
+            stashId: StreamableURLResolver.stableIdentity(for: identitySource),
+            thumbnailURL: streamURL,   // placeholder; no gallery grid on direct-open
+            streamURL: streamURL,
+            title: StreamableURLResolver.displayTitle(for: identitySource)
+        )
+        openWindow(id: "video-detail", value: VideoWindowValue(video: video, galleryVideos: [video]))
+        AppLogger.streamURL.info("Opened stream video window: \(video.stashId, privacy: .public)")
+    }
+
+    /// Local file shares (file:// URLs): cache to app storage, then open images
+    /// in the shared-photo viewer and videos in the rich video pipeline.
+    private func handleSharedFile(_ url: URL) async {
         let mediaType = SharedMediaItem.SharedMediaType.from(url: url)
 
         guard let result = await SharedMediaCache.shared.cacheSharedFile(
@@ -196,20 +253,29 @@ private struct MainWindowView: View {
             return
         }
 
-        let item = SharedMediaItem(
-            id: result.windowId,
-            cachedFileURL: result.cachedURL,
-            originalFileName: url.lastPathComponent,
-            mediaType: mediaType
-        )
-
         switch mediaType {
         case .image:
+            let item = SharedMediaItem(
+                id: result.windowId,
+                cachedFileURL: result.cachedURL,
+                originalFileName: url.lastPathComponent,
+                mediaType: mediaType
+            )
             openWindow(id: "shared-photo", value: item)
         case .video:
-            openWindow(id: "shared-video", value: item)
+            // Route shared video files through the rich pipeline so pseudo-3D
+            // and adjustments are available (was: flat shared-video player).
+            openStreamVideo(result.cachedURL, identitySource: url)
         }
 
         AppLogger.sharedMedia.info("Opened shared \(mediaType.rawValue, privacy: .public): \(url.lastPathComponent, privacy: .public)")
+    }
+
+    /// Extract the inner target from `spatialstash://play?url=<encoded>`.
+    private static func playTargetURL(from url: URL) -> URL? {
+        guard let comps = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let raw = comps.queryItems?.first(where: { $0.name == "url" })?.value,
+              !raw.isEmpty else { return nil }
+        return URL(string: raw)
     }
 }

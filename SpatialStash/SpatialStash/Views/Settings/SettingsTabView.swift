@@ -346,6 +346,23 @@ struct SettingsTabView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
 
+                    Toggle("Web yt-dlp Support", isOn: $appModel.webYTDLPEnabled)
+                    if appModel.webYTDLPEnabled {
+                        TextField("Endpoint URL", text: $appModel.webYTDLPEndpoint)
+                            .textContentType(.URL)
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.never)
+                            .keyboardType(.URL)
+                        SecureField("Token", text: $appModel.webYTDLPToken)
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.never)
+                        Link("web-yt-dlp on GitHub", destination: URL(string: "https://github.com/illixion/web-yt-dlp")!)
+                            .font(.caption)
+                    }
+                    Text("Play web videos (e.g. YouTube) in 3D by routing page links through a self-hosted web-yt-dlp proxy. Hand a link to the app with a Shortcut or bookmarklet opening spatialstash://play?url=… — see the repo README. Direct stream links (MP4/HLS) play without this.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
                     Toggle("Respect System Memory Alerts", isOn: $appModel.respectMemoryAlerts)
                     Text("When disabled, the app will not unload images or downscale windows in response to system memory pressure.")
                         .font(.caption)
