@@ -346,8 +346,11 @@ final class VideoWindowModel {
     /// with no cache yet (same alert pattern as the window Summon/Copy prompts).
     var showPseudo3DModePrompt = false
 
-    /// "3D ready" pill shown when this video's background conversion completes.
+    /// "3D ready" pill shown when this video's background conversion completes,
+    /// or on open when a completed conversion already exists (restore).
     var showDepthReadyPrompt = false
+    /// Pill label — "ready" (conversion just finished) vs "available" (restore).
+    var depthReadyPromptMessage = "3D version ready"
     /// Non-nil while the conversion-failed alert is up.
     var depthConversionFailureMessage: String?
     /// Playhead captured when fake-3D is engaged so the stereo player resumes
@@ -496,10 +499,12 @@ final class VideoWindowModel {
         authenticatedURL(video.transcodedDownloadURL)
     }
 
-    /// Called when the conversion manager reports a completion for this video.
-    func presentDepthReadyPrompt() {
+    /// Called when the conversion manager reports a completion for this video,
+    /// or with the "available" message when opening an already-converted video.
+    func presentDepthReadyPrompt(message: String = "3D version ready") {
         // Already watching from the cache — nothing to offer.
         if shouldUsePseudo3D, case .cached = pseudo3DDepthMode { return }
+        depthReadyPromptMessage = message
         showDepthReadyPrompt = true
         depthReadyPromptDismissTask?.cancel()
         depthReadyPromptDismissTask = Task { [weak self] in
@@ -579,7 +584,10 @@ final class VideoWindowModel {
             await MainActor.run {
                 guard let self, self.authenticatedStreamURL == url else { return }
                 self.playbackRenderer = isPlayable ? .nativeMetal : .webKit
-                if isPlayable { self.autoEngagePseudo3DIfPreferred() }
+                if isPlayable {
+                    self.autoEngagePseudo3DIfPreferred()
+                    self.offerCached3DIfAvailable()
+                }
             }
         }
     }
@@ -602,6 +610,19 @@ final class VideoWindowModel {
             return
         }
         enablePseudo3D()
+    }
+
+    /// Mirror of the photo viewer's auto-3D restore pill: a video that already
+    /// has a completed pre-processed conversion offers "Watch in 3D" on open /
+    /// gallery switch instead of hiding it behind the ViewMode menu. Runs after
+    /// autoEngagePseudo3DIfPreferred, whose engagement (or a restored fake-3D
+    /// window, or genuine stereoscopic) suppresses it. An in-progress
+    /// conversion can't trigger it — engageEntry only returns completed
+    /// entries, and completion has its own prompt.
+    private func offerCached3DIfAvailable() {
+        guard !pseudo3DEnabled, !shouldUse3DMode,
+              DepthCacheStore.engageEntry(videoIdentity: video.stashId) != nil else { return }
+        presentDepthReadyPrompt(message: "3D version available")
     }
 
     private func authenticatedURL(_ url: URL) -> URL {

@@ -131,15 +131,28 @@ final class DepthConverter: @unchecked Sendable {
     fileprivate static let bilateralRadius: Int32 = 12
     fileprivate static let bilateralSigmaSpatial: Float = 5.0
     fileprivate static let bilateralSigmaLuma: Float = 0.06
+    /// Encode the depth video at this multiple of the model's output resolution,
+    /// joint-bilaterally upsampled (same kernels, radius/sigma below, guided by
+    /// a decode-resolution luma guide). At 1× the depth texel lattice is the
+    /// silhouette quantizer — ~3.7px per texel at 1080p, and the warp's bilinear
+    /// reconstruction of an edge-snapped depth step wiggles the displaced
+    /// silhouette with exactly that period (visible stairsteps, scaling with
+    /// strength). 2× matches maxDecodeDimension (the guide's true fidelity —
+    /// beyond it there is no new edge information), halving the step period
+    /// while the guided upsample re-pins the edge sub-texel to the image edge.
+    fileprivate static let encodeUpsampleFactor = 2
+    fileprivate static let upsampleRadius: Int32 = 6
+    fileprivate static let upsampleSigmaSpatial: Float = 3.0
     /// Scene-cut detection: total-variation distance between consecutive frames'
     /// normalized depth histograms, plus raw-range jump checks. A cut both
     /// truncates the temporal window and snaps the display range.
     fileprivate static let cutShapeDistance: Float = 0.5
     fileprivate static let cutRangeRatioBounds: ClosedRange<Float> = 0.6...1.667
     fileprivate static let cutRangeLoJump: Float = 0.35
-    /// Depth is smooth, low-entropy content; 2 Mbps HEVC at ~518px is generous.
+    /// Depth is smooth, low-entropy content; 4 Mbps HEVC at ~1036px (2× the
+    /// model output, see encodeUpsampleFactor) is generous.
     /// (If banding ever shows on-device, bump to 10-bit x420 instead of bitrate.)
-    fileprivate static let depthVideoBitrate = 2_000_000
+    fileprivate static let depthVideoBitrate = 4_000_000
     /// Write the depth video as a fragmented QuickTime so it's readable while
     /// still being written — progressive playback engages mid-conversion.
     fileprivate static let movieFragmentSeconds = 2.0
@@ -583,9 +596,14 @@ extension DepthConverter {
         private let binsBuffer: MTLBuffer
 
         private var stats: [FrameStat] = []
-        private var ring: [MTLTexture] = []          // 5-slot refined raw-depth ring
-        private var scratch: MTLTexture?
-        private var guideTex: MTLTexture?            // luma guide for the joint bilateral
+        /// 5-slot ring of refined depth at ENCODE (hi-res) resolution: bilateral
+        /// at model res, then joint-bilaterally upsampled ×encodeUpsampleFactor.
+        private var ring: [MTLTexture] = []
+        private var scratch: MTLTexture?             // bilateral H target (model res)
+        private var midTex: MTLTexture?              // bilateral V target (model res)
+        private var guideTex: MTLTexture?            // luma guide, model res
+        private var hiGuideTex: MTLTexture?          // luma guide, encode res
+        private var hiScratch: MTLTexture?           // upsample H target (encode res)
         private var guideParams = DepthGuideParams(uvScale: SIMD2(1, 1), uvOffset: SIMD2(0, 0))
         private var partialsBuffer: MTLBuffer?
         private var partialsCount = 0
@@ -684,25 +702,34 @@ extension DepthConverter {
                     } else if rawTex.width != depthWidth || rawTex.height != depthHeight {
                         throw DepthConversionError.encodingFailed("Depth dimensions changed between passes")
                     }
-                    evenWidth = depthWidth & ~1
-                    evenHeight = depthHeight & ~1
+                    let hiWidth = depthWidth * DepthConverter.encodeUpsampleFactor
+                    let hiHeight = depthHeight * DepthConverter.encodeUpsampleFactor
+                    evenWidth = hiWidth & ~1
+                    evenHeight = hiHeight & ~1
                     guard evenWidth > 0, evenHeight > 0 else {
                         throw DepthConversionError.inferenceFailed
                     }
-                    let desc = MTLTextureDescriptor.texture2DDescriptor(
-                        pixelFormat: .r16Float, width: depthWidth, height: depthHeight, mipmapped: false
-                    )
-                    desc.usage = [.shaderRead, .shaderWrite]
-                    desc.storageMode = .private
+                    func makeTex(width: Int, height: Int) -> MTLTexture? {
+                        let desc = MTLTextureDescriptor.texture2DDescriptor(
+                            pixelFormat: .r16Float, width: width, height: height, mipmapped: false
+                        )
+                        desc.usage = [.shaderRead, .shaderWrite]
+                        desc.storageMode = .private
+                        return gpu.device.makeTexture(descriptor: desc)
+                    }
                     for _ in 0..<(2 * DepthConverter.temporalRadius + 1) {
-                        guard let tex = gpu.device.makeTexture(descriptor: desc) else {
+                        guard let tex = makeTex(width: hiWidth, height: hiHeight) else {
                             throw DepthConversionError.gpuSetupFailed
                         }
                         ring.append(tex)
                     }
-                    scratch = gpu.device.makeTexture(descriptor: desc)
-                    guideTex = gpu.device.makeTexture(descriptor: desc)
-                    guard scratch != nil, guideTex != nil else { throw DepthConversionError.gpuSetupFailed }
+                    scratch = makeTex(width: depthWidth, height: depthHeight)
+                    midTex = makeTex(width: depthWidth, height: depthHeight)
+                    guideTex = makeTex(width: depthWidth, height: depthHeight)
+                    hiGuideTex = makeTex(width: hiWidth, height: hiHeight)
+                    hiScratch = makeTex(width: hiWidth, height: hiHeight)
+                    guard scratch != nil, midTex != nil, guideTex != nil,
+                          hiGuideTex != nil, hiScratch != nil else { throw DepthConversionError.gpuSetupFailed }
                     // Guide kernel maps depth UV back into video UV (inverse of
                     // the warp's letterbox transform).
                     let uv = CoreMLDepthProvider.letterboxUVTransform(
@@ -896,13 +923,16 @@ extension DepthConverter {
             return hi
         }
 
-        /// Edge-aware refinement of the raw map into a ring slot: luma guide
-        /// from the video frame, then a separable joint bilateral — smooths
-        /// depth within regions while pinning its edges to image edges. (No
-        /// temporal EMA here; the temporal window is applied at encode time
+        /// Edge-aware refinement of the raw map into a (hi-res) ring slot: luma
+        /// guide from the video frame, a separable joint bilateral at model res
+        /// (ripple suppression + edge snap), then a joint-bilateral ×2 upsample
+        /// guided at decode fidelity — the same kernels, whose normalized-UV
+        /// sampling makes coarse→fine src reads a built-in bilinear lift while
+        /// the guide term re-pins the depth edge sub-texel to the image edge.
+        /// (No temporal EMA here; the temporal window is applied at encode time
         /// with lookahead.)
         private func refine(rawTex: MTLTexture, videoFrame: CVPixelBuffer, into dest: MTLTexture) throws {
-            guard let scratch, let guideTex,
+            guard let scratch, let midTex, let guideTex, let hiGuideTex, let hiScratch,
                   let cmd = gpu.commandQueue.makeCommandBuffer(),
                   let enc = cmd.makeComputeCommandEncoder() else {
                 throw DepthConversionError.gpuSetupFailed
@@ -921,12 +951,23 @@ extension DepthConverter {
                 blurRadius: DepthConverter.bilateralRadius, blurSigma: DepthConverter.bilateralSigmaSpatial,
                 baseAlpha: 1, motionGain: 0, hasPrev: 0, sigmaLuma: DepthConverter.bilateralSigmaLuma
             )
+            var upsampleParams = DepthStabilizeParams(
+                blurRadius: DepthConverter.upsampleRadius, blurSigma: DepthConverter.upsampleSigmaSpatial,
+                baseAlpha: 1, motionGain: 0, hasPrev: 0, sigmaLuma: DepthConverter.bilateralSigmaLuma
+            )
+            let hiWidth = dest.width
+            let hiHeight = dest.height
+
+            // Luma guides at both resolutions (same kernel; UV-space params).
             enc.setComputePipelineState(gpu.guidePipeline)
             enc.setTexture(videoTex, index: 0)
             enc.setTexture(guideTex, index: 1)
             enc.setBytes(&guideParams, length: MemoryLayout<DepthGuideParams>.stride, index: 0)
             dispatch2D(enc, width: depthWidth, height: depthHeight)
+            enc.setTexture(hiGuideTex, index: 1)
+            dispatch2D(enc, width: hiWidth, height: hiHeight)
 
+            // Joint bilateral at model res: ripple suppression + edge snap.
             enc.setComputePipelineState(gpu.bilateralHPipeline)
             enc.setTexture(rawTex, index: 0)
             enc.setTexture(guideTex, index: 1)
@@ -937,9 +978,24 @@ extension DepthConverter {
             enc.setComputePipelineState(gpu.bilateralVPipeline)
             enc.setTexture(scratch, index: 0)
             enc.setTexture(guideTex, index: 1)
-            enc.setTexture(dest, index: 2)
+            enc.setTexture(midTex, index: 2)
             enc.setBytes(&params, length: MemoryLayout<DepthStabilizeParams>.stride, index: 0)
             dispatch2D(enc, width: depthWidth, height: depthHeight)
+
+            // Guided ×2 upsample into the encode-res ring slot.
+            enc.setComputePipelineState(gpu.bilateralHPipeline)
+            enc.setTexture(midTex, index: 0)
+            enc.setTexture(hiGuideTex, index: 1)
+            enc.setTexture(hiScratch, index: 2)
+            enc.setBytes(&upsampleParams, length: MemoryLayout<DepthStabilizeParams>.stride, index: 0)
+            dispatch2D(enc, width: hiWidth, height: hiHeight)
+
+            enc.setComputePipelineState(gpu.bilateralVPipeline)
+            enc.setTexture(hiScratch, index: 0)
+            enc.setTexture(hiGuideTex, index: 1)
+            enc.setTexture(dest, index: 2)
+            enc.setBytes(&upsampleParams, length: MemoryLayout<DepthStabilizeParams>.stride, index: 0)
+            dispatch2D(enc, width: hiWidth, height: hiHeight)
             enc.endEncoding()
             cmd.commit()
             cmd.waitUntilCompleted()
@@ -1148,9 +1204,16 @@ extension DepthConverter {
                 }
             }
 
+            // The encoded file's dims (model output × upsample, even-rounded) —
+            // recompute rather than read evenWidth so an empty pass-2 sweep
+            // (which inherits depth dims but never created a writer) still
+            // records the right values. Same aspect as the model output, so the
+            // letterbox transform is unchanged by the upsample.
+            let encodeWidth = (depthWidth * DepthConverter.encodeUpsampleFactor) & ~1
+            let encodeHeight = (depthHeight * DepthConverter.encodeUpsampleFactor) & ~1
             let uv = CoreMLDepthProvider.letterboxUVTransform(
                 videoWidth: decodedWidth, videoHeight: decodedHeight,
-                depthWidth: depthWidth, depthHeight: depthHeight
+                depthWidth: encodeWidth, depthHeight: encodeHeight
             )
             return DepthCacheStore.Meta(
                 version: DepthCacheStore.pipelineVersion,
@@ -1159,8 +1222,8 @@ extension DepthConverter {
                 title: plan.request.title,
                 sourceWidth: decodedWidth,
                 sourceHeight: decodedHeight,
-                depthWidth: depthWidth,
-                depthHeight: depthHeight,
+                depthWidth: encodeWidth,
+                depthHeight: encodeHeight,
                 uvScaleX: uv.scale.x,
                 uvScaleY: uv.scale.y,
                 uvOffsetX: uv.offset.x,

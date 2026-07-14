@@ -237,7 +237,7 @@ struct VideoWindowView: View {
                 VStack {
                     Spacer()
                     HStack(spacing: 12) {
-                        Text("3D version ready")
+                        Text(windowModel.depthReadyPromptMessage)
                             .font(.callout)
                             .lineLimit(1)
 

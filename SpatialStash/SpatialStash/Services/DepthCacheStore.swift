@@ -26,7 +26,10 @@ enum DepthCacheStore {
     /// stale entries remain listed in Settings for manual cleanup).
     /// v2: joint-bilateral widened (σ 2.5→5, r 5→12) to suppress the DINOv2
     /// patch-grid "wavy glass" ripple on low-texture content.
-    static let pipelineVersion = 2
+    /// v3: depth encoded at 2× model resolution via guided joint-bilateral
+    /// upsample (silhouette stairstepping — the 1× depth texel lattice
+    /// quantized the warped edge position; see encodeUpsampleFactor).
+    static let pipelineVersion = 3
 
     static let depthVideoFilename = "depth.mov"
     /// Two-pass (high-frame-rate) conversions write the second pass's frames
