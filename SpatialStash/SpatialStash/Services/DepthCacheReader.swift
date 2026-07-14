@@ -362,6 +362,7 @@ final class CachedDepthSource: PumpDepthSource, @unchecked Sendable {
 
     /// A seek gap must render flat, not fall back to the heuristic warp.
     let flattensWhenUnavailable = true
+    let prefersDenseWarpGrid = true
 
     func frameDepth(itemTime: CMTime, frame: CVPixelBuffer) -> PumpFrameDepth? {
         reader.depth(at: itemTime)

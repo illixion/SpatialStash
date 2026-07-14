@@ -753,7 +753,12 @@ final class StereoPump: @unchecked Sendable {
     /// [1]=right). Separate textures because both eyes render in one command
     /// buffer; sharing one depth attachment let the right eye (2nd pass) test
     /// against the left eye's geometry, warping it more than the left.
+    /// Multisampled + memoryless when MSAA is on (tile memory only, no backing).
     private var eyeDepthTextures: [MTLTexture?] = [nil, nil]
+    /// Per-eye multisampled color targets for the MSAA mesh pass, resolved into
+    /// the eye buffer by the render pass. Memoryless — only the resolve output
+    /// (the eye buffer itself) is ever stored.
+    private var eyeMSAAColorTextures: [MTLTexture?] = [nil, nil]
     /// Converts the BGRA warp output into the compositor's native 420v format.
     private let transferSession: VTPixelTransferSession
     /// Per-frame depth: realtime inference or PTS-matched cached depth (nil →
@@ -835,6 +840,7 @@ final class StereoPump: @unchecked Sendable {
             self.bgraPool = nil
             self.outPool = nil
             self.eyeDepthTextures = [nil, nil]
+            self.eyeMSAAColorTextures = [nil, nil]
         }
     }
 
@@ -1003,25 +1009,41 @@ final class StereoPump: @unchecked Sendable {
         let eyeIndex = eyeSign > 0 ? 0 : 1
         if let depth, let depthAttachment = ensureDepthTexture(width: dest.width, height: dest.height, eye: eyeIndex) {
             let desc = MTLRenderPassDescriptor()
-            desc.colorAttachments[0].texture = dest
+            // MSAA: rasterize into a memoryless multisampled target and resolve
+            // into the eye buffer — the mesh's occlusion boundaries are raster
+            // edges with no texture-side AA and stairstep without it. The
+            // pipeline is built at pseudo3DMSAASampleCount, so the attachments
+            // must match; if the transient MSAA target can't be made (never
+            // observed — memoryless has no memory backing), skip the frame.
+            if renderer.pseudo3DMSAASampleCount > 1 {
+                guard let msaaColor = ensureMSAAColorTexture(width: dest.width, height: dest.height, eye: eyeIndex) else { return }
+                desc.colorAttachments[0].texture = msaaColor
+                desc.colorAttachments[0].resolveTexture = dest
+                desc.colorAttachments[0].storeAction = .multisampleResolve
+            } else {
+                desc.colorAttachments[0].texture = dest
+                desc.colorAttachments[0].storeAction = .store
+            }
             desc.colorAttachments[0].loadAction = .clear
             desc.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
-            desc.colorAttachments[0].storeAction = .store
             desc.depthAttachment.texture = depthAttachment
             desc.depthAttachment.loadAction = .clear
             desc.depthAttachment.clearDepth = 1.0
             desc.depthAttachment.storeAction = .dontCare
             guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: desc) else { return }
+            // Grid density per depth source: dense for cached (edge-aware) depth,
+            // moderate for realtime — see PumpDepthSource.prefersDenseWarpGrid.
+            let dense = depthSource?.prefersDenseWarpGrid == true
             encoder.setRenderPipelineState(renderer.pseudo3DMeshPipelineState)
             encoder.setDepthStencilState(renderer.pseudo3DMeshDepthState)
-            encoder.setVertexBuffer(renderer.pseudo3DGridPositions, offset: 0, index: 0)
+            encoder.setVertexBuffer(dense ? renderer.pseudo3DDenseGridPositions : renderer.pseudo3DGridPositions, offset: 0, index: 0)
             encoder.setVertexBytes(&uniforms, length: MemoryLayout<VideoStereoUniforms>.size, index: 1)
             encoder.setVertexTexture(depth.texture, index: 0)
             encoder.setFragmentTexture(source, index: 0)
             encoder.setFragmentBytes(&uniforms, length: MemoryLayout<VideoStereoUniforms>.size, index: 0)
             encoder.drawIndexedPrimitives(
-                type: .triangle, indexCount: renderer.pseudo3DGridIndexCount,
-                indexType: .uint32, indexBuffer: renderer.pseudo3DGridIndices, indexBufferOffset: 0
+                type: .triangle, indexCount: dense ? renderer.pseudo3DDenseGridIndexCount : renderer.pseudo3DGridIndexCount,
+                indexType: .uint32, indexBuffer: dense ? renderer.pseudo3DDenseGridIndices : renderer.pseudo3DGridIndices, indexBufferOffset: 0
             )
             encoder.endEncoding()
             return
@@ -1044,14 +1066,44 @@ final class StereoPump: @unchecked Sendable {
         if let existing = eyeDepthTextures[eye], existing.width == width, existing.height == height {
             return existing
         }
-        let desc = MTLTextureDescriptor.texture2DDescriptor(
-            pixelFormat: .depth32Float, width: width, height: height, mipmapped: false
-        )
-        desc.usage = [.renderTarget]
-        desc.storageMode = .private
-        let texture = renderer.device.makeTexture(descriptor: desc)
+        let texture = renderer.device.makeTexture(descriptor: transientAttachmentDescriptor(
+            pixelFormat: .depth32Float, width: width, height: height
+        ))
         eyeDepthTextures[eye] = texture
         return texture
+    }
+
+    /// Multisampled color target for the MSAA mesh pass (resolved into the eye
+    /// buffer). Only called when pseudo3DMSAASampleCount > 1.
+    private func ensureMSAAColorTexture(width: Int, height: Int, eye: Int) -> MTLTexture? {
+        if let existing = eyeMSAAColorTextures[eye], existing.width == width, existing.height == height {
+            return existing
+        }
+        let texture = renderer.device.makeTexture(descriptor: transientAttachmentDescriptor(
+            pixelFormat: .bgra8Unorm, width: width, height: height
+        ))
+        eyeMSAAColorTextures[eye] = texture
+        return texture
+    }
+
+    /// Descriptor for a load-clear/store-discard render attachment: multisampled
+    /// at the mesh pipeline's sample count and memoryless (tile memory only —
+    /// contents never survive the pass, which is all the mesh pass needs from
+    /// its depth buffer and its pre-resolve color).
+    private func transientAttachmentDescriptor(pixelFormat: MTLPixelFormat, width: Int, height: Int) -> MTLTextureDescriptor {
+        let desc = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: pixelFormat, width: width, height: height, mipmapped: false
+        )
+        desc.usage = [.renderTarget]
+        let samples = renderer.pseudo3DMSAASampleCount
+        if samples > 1 {
+            desc.textureType = .type2DMultisample
+            desc.sampleCount = samples
+            desc.storageMode = .memoryless
+        } else {
+            desc.storageMode = .private
+        }
+        return desc
     }
 
     // MARK: GPU helpers

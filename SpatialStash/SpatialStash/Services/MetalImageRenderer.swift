@@ -42,20 +42,39 @@ final class MetalImageRenderer: Sendable {
     /// when no depth map is available).
     let pseudo3DEyePipelineState: MTLRenderPipelineState
     /// Pseudo-3D depth-displaced mesh pipeline (occlusion-correct, used when a
-    /// real depth map is available). Renders into bgra8 with a depth attachment.
+    /// real depth map is available). Renders into bgra8 with a depth attachment,
+    /// multisampled at `pseudo3DMSAASampleCount` and resolved into the eye buffer.
     let pseudo3DMeshPipelineState: MTLRenderPipelineState
     /// Depth-test state for the mesh pipeline (nearer geometry wins).
     let pseudo3DMeshDepthState: MTLDepthStencilState
+    /// Mesh-pass multisample count. The displaced mesh's occlusion boundaries
+    /// (near geometry covering far after displacement) are rasterized edges with
+    /// no texture-side AA — without MSAA they stairstep, worst on crisp CG
+    /// silhouettes. 4× is effectively free on Apple TBDR tile memory.
+    let pseudo3DMSAASampleCount: Int
     /// Shared grid geometry for the mesh warp ([0,1] positions + triangle
     /// indices). MTLBuffer isn't declared Sendable (unlike the pipeline/device
     /// types), but these are immutable thread-safe GPU resource handles.
-    /// Fake-3D warp grid density (vertices per axis).
+    /// Fake-3D warp grid density (vertices per axis). Two densities:
+    /// - Moderate (193×109): realtime depth. Denser grids rendered the model's
+    ///   high-frequency depth detail as visible per-vertex wobble, so the live
+    ///   (gaussian-stabilized but unrefined) path stays moderate.
+    /// - Dense (385×217): cached depth. Pre-processed depth is edge-aware
+    ///   (joint-bilateral) + lookahead-smoothed, so the wobble objection doesn't
+    ///   apply — and the moderate grid's ~20px cell pitch (at 4K) quantizes
+    ///   sharp depth edges into visible stairsteps along smooth silhouettes.
+    ///   Halving the pitch puts the grid near the depth map's own resolution.
     static let pseudo3DGridColumns = 193
     static let pseudo3DGridRows = 109
+    static let pseudo3DDenseGridColumns = 385
+    static let pseudo3DDenseGridRows = 217
 
     nonisolated(unsafe) let pseudo3DGridPositions: MTLBuffer
     nonisolated(unsafe) let pseudo3DGridIndices: MTLBuffer
     let pseudo3DGridIndexCount: Int
+    nonisolated(unsafe) let pseudo3DDenseGridPositions: MTLBuffer
+    nonisolated(unsafe) let pseudo3DDenseGridIndices: MTLBuffer
+    let pseudo3DDenseGridIndexCount: Int
     private let ciContext: CIContext
 
     /// Bounds the number of concurrent full-image CGImageSource decodes across
@@ -138,34 +157,21 @@ final class MetalImageRenderer: Sendable {
         }
         self.pseudo3DMeshDepthState = meshDepthState
 
-        // Build the displaced-grid geometry once. A 193×109 vertex grid (192×108
-        // cells) gives clean silhouettes without meaningful cost on Apple Silicon.
-        // (A denser grid rendered the model's high-frequency depth detail as
-        // visible per-vertex wobble, so it stays moderate. That predates the
-        // edge-aware/lookahead-smoothed cached depth — 257×145 is worth an
-        // on-device retest for that path; revert if silhouette wobble returns.)
-        let nx = Self.pseudo3DGridColumns, ny = Self.pseudo3DGridRows
-        var gridPositions = [SIMD2<Float>](); gridPositions.reserveCapacity(nx * ny)
-        for j in 0..<ny {
-            for i in 0..<nx {
-                gridPositions.append(SIMD2(Float(i) / Float(nx - 1), Float(j) / Float(ny - 1)))
-            }
-        }
-        var gridIndices = [UInt32](); gridIndices.reserveCapacity((nx - 1) * (ny - 1) * 6)
-        for j in 0..<(ny - 1) {
-            for i in 0..<(nx - 1) {
-                let a = UInt32(j * nx + i), b = a + 1
-                let c = UInt32((j + 1) * nx + i), d = c + 1
-                gridIndices.append(contentsOf: [a, c, b, b, c, d])
-            }
-        }
-        guard let posBuf = device.makeBuffer(bytes: gridPositions, length: gridPositions.count * MemoryLayout<SIMD2<Float>>.stride),
-              let idxBuf = device.makeBuffer(bytes: gridIndices, length: gridIndices.count * MemoryLayout<UInt32>.stride) else {
+        // Build both displaced-grid geometries once (see the density rationale
+        // on the constants above). Vertex cost is trivial either way.
+        guard let moderate = Self.makeWarpGrid(
+            nx: Self.pseudo3DGridColumns, ny: Self.pseudo3DGridRows, device: device
+        ), let dense = Self.makeWarpGrid(
+            nx: Self.pseudo3DDenseGridColumns, ny: Self.pseudo3DDenseGridRows, device: device
+        ) else {
             return nil
         }
-        self.pseudo3DGridPositions = posBuf
-        self.pseudo3DGridIndices = idxBuf
-        self.pseudo3DGridIndexCount = gridIndices.count
+        self.pseudo3DGridPositions = moderate.positions
+        self.pseudo3DGridIndices = moderate.indices
+        self.pseudo3DGridIndexCount = moderate.indexCount
+        self.pseudo3DDenseGridPositions = dense.positions
+        self.pseudo3DDenseGridIndices = dense.indices
+        self.pseudo3DDenseGridIndexCount = dense.indexCount
 
         // Pass-2 (final): alpha blending enabled so transparent pixels (bg removal)
         // composite over whatever's behind the MTKView.
@@ -207,17 +213,48 @@ final class MetalImageRenderer: Sendable {
             stereoDesc.colorAttachments[0].pixelFormat = .bgra8Unorm
             self.pseudo3DEyePipelineState = try device.makeRenderPipelineState(descriptor: stereoDesc)
 
-            // Depth-displaced mesh pipeline: opaque bgra8 color + depth attachment.
+            // Depth-displaced mesh pipeline: opaque bgra8 color + depth
+            // attachment, multisampled (resolved into the eye buffer by the
+            // render pass).
+            let msaa = device.supportsTextureSampleCount(4) ? 4 : 1
+            self.pseudo3DMSAASampleCount = msaa
             let meshDesc = MTLRenderPipelineDescriptor()
             meshDesc.vertexFunction = meshVertexFn
             meshDesc.fragmentFunction = meshFragmentFn
             meshDesc.colorAttachments[0].isBlendingEnabled = false
             meshDesc.colorAttachments[0].pixelFormat = .bgra8Unorm
             meshDesc.depthAttachmentPixelFormat = .depth32Float
+            meshDesc.rasterSampleCount = msaa
             self.pseudo3DMeshPipelineState = try device.makeRenderPipelineState(descriptor: meshDesc)
         } catch {
             return nil
         }
+    }
+
+    /// Build one fake-3D warp grid: [0,1]² positions row-major, two triangles
+    /// per cell.
+    private static func makeWarpGrid(
+        nx: Int, ny: Int, device: MTLDevice
+    ) -> (positions: MTLBuffer, indices: MTLBuffer, indexCount: Int)? {
+        var gridPositions = [SIMD2<Float>](); gridPositions.reserveCapacity(nx * ny)
+        for j in 0..<ny {
+            for i in 0..<nx {
+                gridPositions.append(SIMD2(Float(i) / Float(nx - 1), Float(j) / Float(ny - 1)))
+            }
+        }
+        var gridIndices = [UInt32](); gridIndices.reserveCapacity((nx - 1) * (ny - 1) * 6)
+        for j in 0..<(ny - 1) {
+            for i in 0..<(nx - 1) {
+                let a = UInt32(j * nx + i), b = a + 1
+                let c = UInt32((j + 1) * nx + i), d = c + 1
+                gridIndices.append(contentsOf: [a, c, b, b, c, d])
+            }
+        }
+        guard let posBuf = device.makeBuffer(bytes: gridPositions, length: gridPositions.count * MemoryLayout<SIMD2<Float>>.stride),
+              let idxBuf = device.makeBuffer(bytes: gridIndices, length: gridIndices.count * MemoryLayout<UInt32>.stride) else {
+            return nil
+        }
+        return (posBuf, idxBuf, gridIndices.count)
     }
 
     // MARK: - Texture Creation

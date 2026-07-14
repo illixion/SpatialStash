@@ -60,6 +60,13 @@ protocol PumpDepthSource: AnyObject {
     /// not fall back to the different-looking heuristic warp); false to use the
     /// heuristic (realtime mode: an isolated inference hiccup).
     var flattensWhenUnavailable: Bool { get }
+    /// True to warp with the dense mesh grid. Cached depth is edge-aware
+    /// (joint-bilateral) + lookahead-smoothed, so it both tolerates and needs
+    /// the finer grid (sharp depth edges alias the moderate grid into
+    /// silhouette stairsteps). Realtime depth stays on the moderate grid — its
+    /// residual high-frequency detail rendered as per-vertex wobble when the
+    /// grid was densified.
+    var prefersDenseWarpGrid: Bool { get }
     /// Release decode/GPU resources; the pump is shutting down.
     func invalidate()
 }
@@ -105,6 +112,7 @@ final class RealtimeDepthSource: PumpDepthSource, @unchecked Sendable {
     }
 
     let flattensWhenUnavailable = false
+    let prefersDenseWarpGrid = false
 
     func frameDepth(itemTime: CMTime, frame: CVPixelBuffer) -> PumpFrameDepth? {
         let t = itemTime.seconds
