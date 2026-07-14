@@ -164,8 +164,6 @@ struct PhotoDisplayView: View {
                 VStack {
                     Spacer()
                     HStack(spacing: 12) {
-                        Image(systemName: "view.3d")
-                            .font(.body)
                         Text("Switch to \(windowModel.autoRestoreImmersive ? "immersive 3D" : "3D")?")
                             .font(.callout)
                             .lineLimit(1)

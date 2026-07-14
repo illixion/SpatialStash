@@ -400,7 +400,6 @@ struct VideoOrnamentsView: View {
             .onDisappear { chromeMenu(opened: false) }
         } label: {
             HStack(spacing: 4) {
-                Image(systemName: currentModeIcon)
                 Text(currentModeLabel)
                     .font(.caption)
                 if windowModel.shouldUse3DMode {
@@ -514,10 +513,6 @@ struct VideoOrnamentsView: View {
                 }
             }
         }
-    }
-
-    private var currentModeIcon: String {
-        (windowModel.shouldUse3DMode || windowModel.shouldUsePseudo3D) ? "view.3d" : "view.2d"
     }
 
     private var currentModeLabel: String {

@@ -98,7 +98,7 @@ struct RemoteTabView: View {
 
                     Picker("3D Mode", selection: $editingConfig.slideshow3DMode) {
                         ForEach(Slideshow3DMode.allCases) { mode in
-                            Label(mode.label, systemImage: mode.systemImage).tag(mode)
+                            Text(mode.label).tag(mode)
                         }
                     }
 

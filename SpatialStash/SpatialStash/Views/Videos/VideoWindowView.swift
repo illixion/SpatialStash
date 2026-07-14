@@ -231,8 +231,6 @@ struct VideoWindowView: View {
                 VStack {
                     Spacer()
                     HStack(spacing: 12) {
-                        Image(systemName: "view.3d")
-                            .font(.body)
                         Text("3D version ready")
                             .font(.callout)
                             .lineLimit(1)

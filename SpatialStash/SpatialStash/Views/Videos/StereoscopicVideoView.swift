@@ -233,7 +233,6 @@ struct StereoscopicVideoView: View {
 
     private var formatBadge: some View {
         HStack(spacing: 6) {
-            Image(systemName: "view.3d")
             if let settings = currentSettings {
                 Text(settings.format.shortLabel)
             } else if let format = video.stereoscopicFormat {

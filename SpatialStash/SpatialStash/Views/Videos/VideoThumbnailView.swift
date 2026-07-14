@@ -94,8 +94,6 @@ struct VideoThumbnailView: View {
                     // 3D badge for stereoscopic videos
                     if video.isStereoscopic {
                         HStack(spacing: 2) {
-                            Image(systemName: "view.3d")
-                                .font(.caption2)
                             if let format = video.stereoscopicFormat {
                                 Text(format.shortLabel)
                                     .font(.caption2)
