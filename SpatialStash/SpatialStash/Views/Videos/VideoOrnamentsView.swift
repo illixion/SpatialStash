@@ -369,13 +369,9 @@ struct VideoOrnamentsView: View {
             // its own updates don't reflow the menu items.
             ConversionMenuStatus(videoStashId: video.stashId)
 
-            if windowModel.shouldUsePseudo3D {
-                Menu("3D Depth") {
-                    depthButton("Subtle", .subtle)
-                    depthButton("Medium", .medium)
-                    depthButton("Strong", .strong)
-                }
-            }
+            // (No depth-strength presets: strength is fixed at the Subtle
+            // level — anything above it demands more vergence than comfortably
+            // fuses. Convergence stays adjustable in the Adjustments window.)
 
             // Depth-model pickers, one per pipeline, shown whenever fake-3D
             // is available. Real-Time live-reloads a playing fake-3D video;
@@ -415,22 +411,6 @@ struct VideoOrnamentsView: View {
         .menuStyle(.button)
         .buttonStyle(.borderless)
         .help("View Mode")
-    }
-
-    @ViewBuilder
-    private func depthButton(_ title: String, _ preset: Pseudo3DSettings) -> some View {
-        Button {
-            // Mutate rather than replace so toggles (autoConvergence) survive.
-            windowModel.pseudo3DSettings.depthStrength = preset.depthStrength
-            windowModel.pseudo3DSettings.convergence = preset.convergence
-        } label: {
-            HStack {
-                Text(title)
-                if windowModel.pseudo3DSettings.depthStrength == preset.depthStrength {
-                    Image(systemName: "checkmark")
-                }
-            }
-        }
     }
 
     /// The three window viewing modes, mutually exclusive by construction

@@ -215,13 +215,8 @@ struct VisualAdjustmentsPopover: View {
 
             if let pseudo3DSettings {
                 Divider()
-                adjustmentSlider(
-                    label: "Stereo Separation",
-                    value: pseudo3DSettings.depthStrength,
-                    range: Pseudo3DSettings.depthStrengthRange,
-                    defaultValue: Pseudo3DSettings.default.depthStrength,
-                    linear: true
-                )
+                // (No Stereo Separation control: strength is fixed at the
+                // Subtle level — see Pseudo3DSettings.depthStrength.)
                 // Auto: track the video's smoothed median depth as the
                 // zero-parallax plane (pre-processed fake-3D only).
                 Toggle("Auto Convergence", isOn: pseudo3DSettings.autoConvergence)
@@ -318,13 +313,6 @@ struct VisualAdjustmentsPopover: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                adjustmentSlider(
-                    label: "Stereo Separation",
-                    value: globalPseudo3DSettings.depthStrength,
-                    range: Pseudo3DSettings.depthStrengthRange,
-                    defaultValue: Pseudo3DSettings.default.depthStrength,
-                    linear: true
-                )
                 Toggle("Auto Convergence", isOn: globalPseudo3DSettings.autoConvergence)
                     .font(.caption)
                 adjustmentSlider(

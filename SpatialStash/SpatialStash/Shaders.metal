@@ -550,15 +550,25 @@ kernel void depthHistogram256(
 }
 
 struct DepthEncodeParams {
-    float rangeLo;      // center frame's robust lo (raw units)
-    float rangeInvSpan; // 1 / (hi - lo)
-    float weights[5];   // temporal window weights, normalized; 0 for unused slots
+    float rangeLo;        // center frame's robust lo (raw units)
+    float rangeInvSpan;   // 1 / (hi - lo)
+    float weights[5];     // temporal window weights, normalized; 0 for unused slots
+    float motionSigmaInv; // depth-similarity gate: 1/(2σ²), raw units; 0 = ungated
 };
 
-/// Weighted temporal average of up to 5 blurred raw-depth maps (the center
+/// Weighted temporal average of up to 5 refined raw-depth maps (the center
 /// frame ±2, truncated at scene cuts), normalized into the center frame's
 /// robust range and written to the cache video's luma plane. Unused slots must
 /// still be bound (weight 0).
+///
+/// Each neighbor's weight is additionally gated by its depth similarity to the
+/// center frame at this texel. The window has no motion compensation, so at a
+/// moving silhouette the neighbors disagree with the center by ~the edge's
+/// depth jump; averaging them in paints ghost bands that scroll with the
+/// motion — invisible when the encode was soft, but a visible edge shimmer at
+/// the sharp 2x guided-upsample encode. The gate collapses those taps toward
+/// zero while depths within σ of the center (stable regions and genuine slow
+/// drift — the jitter this window exists to smooth) keep ~full weight.
 kernel void depthTemporalEncode(
     array<texture2d<float, access::sample>, 5> maps [[texture(0)]],
     texture2d<float, access::write> outLuma [[texture(5)]],
@@ -571,9 +581,16 @@ kernel void depthTemporalEncode(
 
     constexpr sampler s(mag_filter::linear, min_filter::linear, address::clamp_to_edge);
     const float2 uv = (float2(gid) + 0.5) / float2(W, H);
+    const float center = maps[2].sample(s, uv).r; // window is centered on slot 2
     float acc = 0.0;
+    float wsum = 0.0;
     for (uint i = 0; i < 5; ++i) {
-        acc += p.weights[i] * maps[i].sample(s, uv).r;
+        const float d = maps[i].sample(s, uv).r;
+        const float delta = d - center;
+        const float w = p.weights[i] * exp(-delta * delta * p.motionSigmaInv);
+        acc += w * d;
+        wsum += w;
     }
-    outLuma.write(float4(saturate((acc - p.rangeLo) * p.rangeInvSpan), 0.0, 0.0, 1.0), gid);
+    const float v = wsum > 1e-6 ? (acc / wsum) : center;
+    outLuma.write(float4(saturate((v - p.rangeLo) * p.rangeInvSpan), 0.0, 0.0, 1.0), gid);
 }

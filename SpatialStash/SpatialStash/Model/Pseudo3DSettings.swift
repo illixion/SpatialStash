@@ -24,12 +24,13 @@ enum Pseudo3DDepthMode: Equatable {
 }
 
 struct Pseudo3DSettings: Codable, Hashable {
-    /// Max per-eye horizontal disparity in UV space (fraction of frame width).
-    /// Applies verbatim up to a 1 m-wide video plane; on larger planes the
-    /// engine attenuates it (Pseudo3DStereoEngine.makePumpConfig) so the
-    /// physical on-plane disparity — and the vergence demand — stops growing
-    /// with the window instead of silently amplifying past the comfort zone.
-    /// Defaults to Subtle.
+    /// LEGACY, retained only so previously persisted JSON keeps decoding.
+    /// Strength is no longer user-adjustable: on-device testing showed anything
+    /// above this default demands more vergence than comfortably fuses (higher
+    /// values push background disparity toward divergence), so the engine pins
+    /// the warp to `Pseudo3DSettings.default.depthStrength` (attenuated on
+    /// video planes wider than 1 m — see Pseudo3DStereoEngine.makePumpConfig)
+    /// and ignores whatever this decodes to.
     var depthStrength: Double = 0.008
     /// Depth (0..1) that maps to zero parallax / the window plane.
     var convergence: Double = 0.45
@@ -39,21 +40,11 @@ struct Pseudo3DSettings: Codable, Hashable {
     /// manual Convergence slider is disabled while on.
     var autoConvergence: Bool = false
 
-    /// Slider bounds for the Adjustments "Stereo Separation" control.
-    static let depthStrengthRange: ClosedRange<Double> = 0.0...0.04
-
     static let `default` = Pseudo3DSettings()
 
     /// Whether these differ from the neutral defaults (used for per-window vs
     /// global fallback and to enable Reset, mirroring VisualAdjustments).
     var isModified: Bool { self != Pseudo3DSettings.default }
-
-    // Convenience depth presets surfaced in the ornament menu. Preset buttons
-    // must MUTATE strength/convergence rather than replace the struct, so
-    // toggles like autoConvergence survive a preset tap.
-    static let subtle = Pseudo3DSettings(depthStrength: 0.008, convergence: 0.45)
-    static let medium = Pseudo3DSettings(depthStrength: 0.018, convergence: 0.45)
-    static let strong = Pseudo3DSettings(depthStrength: 0.03, convergence: 0.45)
 }
 
 extension Pseudo3DSettings {

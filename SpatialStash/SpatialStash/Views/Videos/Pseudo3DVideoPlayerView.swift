@@ -433,7 +433,10 @@ final class Pseudo3DStereoEngine {
     private static let referencePlaneWidthMeters: Float = 1.0
 
     private func makePumpConfig() -> StereoPump.Config {
-        var strength = Float(settings.depthStrength)
+        // Fixed at the (Subtle) default — persisted settings may carry a legacy
+        // user-tuned strength, which is deliberately ignored (values above the
+        // default don't fuse comfortably; see Pseudo3DSettings.depthStrength).
+        var strength = Float(Pseudo3DSettings.default.depthStrength)
         if let planeWidth = planeWidthMeters, planeWidth > 0.05 {
             strength *= min(1, Self.referencePlaneWidthMeters / planeWidth)
         }

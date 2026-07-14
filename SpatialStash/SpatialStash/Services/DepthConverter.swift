@@ -84,6 +84,8 @@ private struct DepthEncodeParams {
     var rangeLo: Float
     var rangeInvSpan: Float
     var weights: (Float, Float, Float, Float, Float)
+    /// Depth-similarity gate for the temporal window: 1/(2σ²) in raw units.
+    var motionSigmaInv: Float
 }
 
 final class DepthConverter: @unchecked Sendable {
@@ -110,6 +112,13 @@ final class DepthConverter: @unchecked Sendable {
     fileprivate static let temporalRadius = 2
     /// Binomial weights for the ±2 window, truncated at cuts and renormalized.
     fileprivate static let temporalBaseWeights: [Float] = [1, 4, 6, 4, 1]
+    /// Depth-similarity gate sigma for the temporal window, as a fraction of the
+    /// center frame's robust range. Neighbors within ~σ of the center's depth at
+    /// a texel keep full weight (jitter smoothing); a moving silhouette's depth
+    /// jump (≫σ) is gated out instead of averaged in as a scrolling ghost band
+    /// (edge shimmer at the sharp 2× encode). 0.15: an edge jump of half the
+    /// range is attenuated to e^-5.5 ≈ 0, per-frame jitter of 2% keeps ~99%.
+    fileprivate static let temporalDepthSigma: Float = 0.15
     /// Robust per-frame range percentiles (clips depth outliers/speckle).
     fileprivate static let rangeLoPercentile: Float = 0.02
     fileprivate static let rangeHiPercentile: Float = 0.98
@@ -1056,10 +1065,13 @@ extension DepthConverter {
             }
 
             let stat = stats[c]
+            let span = max(stat.hi - stat.lo, 1e-6)
+            let sigma = DepthConverter.temporalDepthSigma * span
             var params = DepthEncodeParams(
                 rangeLo: stat.lo,
-                rangeInvSpan: 1 / max(stat.hi - stat.lo, 1e-6),
-                weights: (w[0], w[1], w[2], w[3], w[4])
+                rangeInvSpan: 1 / span,
+                weights: (w[0], w[1], w[2], w[3], w[4]),
+                motionSigmaInv: 1 / (2 * sigma * sigma)
             )
             guard let cmd = gpu.commandQueue.makeCommandBuffer(),
                   let enc = cmd.makeComputeCommandEncoder() else {
