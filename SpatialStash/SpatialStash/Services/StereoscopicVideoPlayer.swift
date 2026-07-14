@@ -203,7 +203,11 @@ class StereoscopicVideoPlayer: ObservableObject {
                     // Re-throw our custom errors
                     throw playerError
                 } catch {
-                    // AVFoundation couldn't read the file - likely unsupported format
+                    // AVFoundation couldn't read the file. When the source is a
+                    // Stash HLS transcode we download `/stream.mp4` instead (see
+                    // GalleryVideo.transcodedDownloadURL), so reaching here with a
+                    // raw container extension means the server served the original
+                    // file — i.e. it couldn't provide an MP4 transcode.
                     let urlExtension = video.streamURL.pathExtension.lowercased()
                     let unsupportedFormats = ["webm", "mkv", "flv", "avi", "wmv"]
 
@@ -211,7 +215,7 @@ class StereoscopicVideoPlayer: ObservableObject {
 
                     if unsupportedFormats.contains(urlExtension) {
                         throw StereoscopicPlayerError.conversionFailed(
-                            "\(urlExtension.uppercased()) format is not supported for 3D conversion. Only MP4/MOV videos can be converted."
+                            "\(urlExtension.uppercased()) can't be converted to 3D because this Stash server didn't provide an MP4 transcode. Enable transcoding in Settings (or on the server) and try again."
                         )
                     } else {
                         throw StereoscopicPlayerError.conversionFailed(
@@ -416,7 +420,11 @@ class StereoscopicVideoPlayer: ObservableObject {
         // Remove existing file if present
         try? FileManager.default.removeItem(at: destinationURL)
 
-        var request = URLRequest(url: video.streamURL)
+        // WebM sources stream via Stash's HLS live transcode; downloading the
+        // `.m3u8` playlist yields a text file, not video. `transcodedDownloadURL`
+        // rewrites that to the server's `/stream.mp4` transcode, which downloads
+        // to a normal MP4 that AVAssetReader (and hence MV-HEVC conversion) reads.
+        var request = URLRequest(url: video.transcodedDownloadURL)
         if let apiKey = apiKey, !apiKey.isEmpty {
             request.setValue(apiKey, forHTTPHeaderField: "ApiKey")
         }

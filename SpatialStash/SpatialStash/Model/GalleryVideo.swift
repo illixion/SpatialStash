@@ -75,6 +75,24 @@ struct GalleryVideo: Identifiable, Equatable, Hashable, Codable {
         self.fileName = fileName
     }
 
+    /// A URL suitable for downloading the full video to disk for AVAssetReader
+    /// consumption (MV-HEVC conversion, depth pre-processing). WebM sources route
+    /// playback through Stash's HLS live transcode (`/stream.m3u8`) — downloading
+    /// that URL yields a playlist text file, not video ("No video track found").
+    /// Swap it for the server's `/stream.mp4` transcode: AVPlayer rejects that as a
+    /// *stream* (non-seekable chunked pipe), but downloaded to completion it's a
+    /// normal fragmented MP4 that AVAssetReader reads fine. Non-HLS sources (native
+    /// MP4/MOV, or a raw WebM when the server can't transcode) return `streamURL`
+    /// unchanged. Auth (apikey query param / ApiKey header) is layered by callers.
+    var transcodedDownloadURL: URL {
+        let hlsSuffix = "/stream.m3u8"
+        guard streamURL.path.hasSuffix(hlsSuffix),
+              var components = URLComponents(url: streamURL, resolvingAgainstBaseURL: false)
+        else { return streamURL }
+        components.path = String(components.path.dropLast(hlsSuffix.count)) + "/stream.mp4"
+        return components.url ?? streamURL
+    }
+
     /// Formatted duration string (e.g., "1:23:45" or "12:34")
     var formattedDuration: String? {
         guard let duration = duration else { return nil }
