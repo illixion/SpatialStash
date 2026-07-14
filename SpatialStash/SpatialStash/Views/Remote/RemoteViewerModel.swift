@@ -495,6 +495,13 @@ class RemoteViewerModel: SlideshowEngine {
                 config.useAspectRatio = newValue
                 onConfigChanged?(config)
             }
+            // Remote mode: re-advertise so the server adds/drops its
+            // `ratio:lo..hi` clause immediately. Without this the toggle only
+            // takes effect on the next reconnect. Gallery mode filters locally
+            // in fetchMorePosts, so no server round-trip is needed.
+            if !isGalleryMode {
+                sendSlideshowConfigToServer()
+            }
         }
     }
 
@@ -908,8 +915,13 @@ class RemoteViewerModel: SlideshowEngine {
     /// Advertise the window's raw aspect ratio (width/height). The server owns
     /// the matching tolerance and expands this into its `ratio:lo..hi` query
     /// clause, so the client sends a bare number rather than a baked-in window.
-    /// Returns nil if the window hasn't reported a usable size yet.
+    /// Returns nil if the window hasn't reported a usable size yet, or if
+    /// "Fit to Window Aspect Ratio" is off — in which case we must NOT advertise
+    /// a ratio, or the server keeps filtering candidates to our aspect (the
+    /// width/height we also send drive only server-side image rescaling, never
+    /// content selection). Sending nil drops the server's `ratio:lo..hi` clause.
     private func currentRatioValue() -> Double? {
+        guard useAspectRatio else { return nil }
         let ratio = windowAspectRatio
         guard ratio.isFinite, ratio > 0 else { return nil }
         return (ratio * 10000).rounded() / 10000
