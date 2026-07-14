@@ -396,27 +396,17 @@ struct VideoOrnamentsView: View {
             .onAppear { chromeMenu(opened: true) }
             .onDisappear { chromeMenu(opened: false) }
         } label: {
-            HStack(spacing: 4) {
-                Text(currentModeLabel)
-                    .font(.caption)
-                if windowModel.shouldUse3DMode {
-                    if let settings = windowModel.video3DSettings {
-                        Text("(\(settings.format.shortLabel))")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    } else if let format = video.stereoscopicFormat {
-                        Text("(\(format.shortLabel))")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
-                }
-            }
-            .padding(6)
-            .background(
-                (windowModel.shouldUse3DMode || windowModel.shouldUsePseudo3D)
-                    ? .white.opacity(0.3) : .clear,
-                in: .rect(cornerRadius: 8)
-            )
+            // Icon-only, .title3 — matches PhotoOrnamentView's 3D menu button
+            // (which shows `view.3d` in the flat state). The active-mode
+            // background is the only highlight.
+            Image(systemName: viewModeIcon)
+                .font(.title3)
+                .padding(6)
+                .background(
+                    (windowModel.shouldUse3DMode || windowModel.shouldUsePseudo3D)
+                        ? .white.opacity(0.3) : .clear,
+                    in: .rect(cornerRadius: 8)
+                )
         }
         // Match the other borderless ornament buttons: the default Menu style
         // renders a raised glass capsule that reads as "always highlighted"
@@ -424,6 +414,7 @@ struct VideoOrnamentsView: View {
         // so the only highlight comes from the active-mode background above.
         .menuStyle(.button)
         .buttonStyle(.borderless)
+        .help("View Mode")
     }
 
     /// Conversion status for the ViewMode menu — phase *kind* only, never the
@@ -537,8 +528,13 @@ struct VideoOrnamentsView: View {
         }
     }
 
-    private var currentModeLabel: String {
-        if windowModel.shouldUsePseudo3D { return "3D*" }
-        return windowModel.shouldUse3DMode ? "3D" : "2D"
+    /// SF Symbol for the ViewMode button, mirroring PhotoOrnamentView's
+    /// mapping: immersive/stereoscopic → `inset.filled.pano`, windowed fake-3D
+    /// → `spatial.capture.fill`, flat → `view.3d` (the "switch to 3D"
+    /// affordance, same as pictures in 2D).
+    private var viewModeIcon: String {
+        if windowModel.shouldUse3DMode { return "inset.filled.pano" }
+        if windowModel.shouldUsePseudo3D { return "spatial.capture.fill" }
+        return "view.3d"
     }
 }
