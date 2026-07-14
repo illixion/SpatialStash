@@ -120,7 +120,10 @@ struct VideoOrnamentsView: View {
             }
 
             // Depth-conversion status for THIS video — visible at a glance
-            // without keeping the ViewMode menu open.
+            // without keeping the ViewMode menu open. The label carries a live
+            // percentage; pin it to a fixed width (and monospace the digits) so
+            // the growing number ("9%" → "100%") can't reflow the ornament and
+            // shift the buttons out from under a tap.
             if let phase = DepthConversionManager.shared.phase(for: video.stashId) {
                 Divider()
                     .frame(height: 24)
@@ -129,15 +132,18 @@ struct VideoOrnamentsView: View {
                         .controlSize(.small)
                     Text(phase.label)
                         .font(.caption)
+                        .monospacedDigit()
                         .foregroundColor(.secondary)
                         .lineLimit(1)
                 }
+                .frame(width: 160, alignment: .leading)
             } else if DepthConversionManager.shared.isProcessing(videoIdentity: video.stashId) {
                 Divider()
                     .frame(height: 24)
                 Text("Conversion queued")
                     .font(.caption)
                     .foregroundColor(.secondary)
+                    .frame(width: 160, alignment: .leading)
             }
         }
         .padding(.horizontal, 20)
