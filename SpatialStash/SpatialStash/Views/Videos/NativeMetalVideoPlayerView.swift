@@ -150,6 +150,18 @@ struct NativeMetalVideoPlayerView: UIViewRepresentable {
         /// Playback state captured at room exit; room re-entry restores it so
         /// a manual pause survives focus/room flaps.
         private var wasPlayingBeforeRoomExit = true
+        /// True whenever we intend playback to be running (set by play(),
+        /// cleared by pause()). visionOS pauses the AVPlayer out from under us
+        /// when a `pushWindow` transition settles (~1s in) — no scenePhase or
+        /// room change fires, so nothing resumes it and the video freezes. When
+        /// the player drops to .paused while we still intend to play and the
+        /// room is active, that pause is involuntary and we resume it.
+        private var intendsToPlay = false
+        /// Guards the involuntary-resume path against a tight play/pause loop if
+        /// the system insists on pausing. Reset to 0 each time playback actually
+        /// resumes (status → .playing).
+        private var involuntaryResumeCount = 0
+        private static let maxInvoluntaryResumes = 5
 
         var currentTime: Double {
             player?.currentTime().seconds ?? 0
@@ -177,16 +189,6 @@ struct NativeMetalVideoPlayerView: UIViewRepresentable {
 
             let player = AVPlayer(playerItem: item)
             player.isMuted = startMuted
-            // Keep this OFF: with it on, AVPlayer parks itself in
-            // .waitingToPlayAtSpecifiedRate whenever it decides the decode/buffer
-            // isn't "comfortable" (heavy 4K HEVC trips this even for a local file
-            // that has nothing to buffer). In this pull-based AVPlayerItemVideoOutput
-            // setup the parked player never resumes on its own — itemTime stops
-            // advancing so hasNewPixelBuffer() never fires again and the frame
-            // freezes ~1s in. play() at rate 1 is what un-sticks it. Off = play
-            // immediately and let us drive display; state changes are reported via
-            // the timeControlStatus observer below.
-            player.automaticallyWaitsToMinimizeStalling = false
 
             self.player = player
             self.playerItem = item
@@ -235,9 +237,16 @@ struct NativeMetalVideoPlayerView: UIViewRepresentable {
             // timeControlStatus directly so windowModel.isPaused stays truthful
             // through every transition — without this the play/pause button
             // desyncs (shows "pause" over a frozen frame) and needs two taps.
-            timeControlObservation = player.observe(\.timeControlStatus, options: [.new]) { [weak self] _, _ in
+            timeControlObservation = player.observe(\.timeControlStatus, options: [.new]) { [weak self] observed, _ in
+                let status = observed.timeControlStatus
                 Task { @MainActor [weak self] in
-                    self?.reportPlaybackState()
+                    guard let self else { return }
+                    self.reportPlaybackState()
+                    if status == .playing {
+                        self.involuntaryResumeCount = 0
+                    } else if status == .paused, self.intendsToPlay, self.isRoomActive {
+                        self.resumeAfterInvoluntaryPause()
+                    }
                 }
             }
 
@@ -257,13 +266,34 @@ struct NativeMetalVideoPlayerView: UIViewRepresentable {
 
         func play() {
             isRoomActive = true
+            intendsToPlay = true
             player?.play()
             reportPlaybackState()
         }
 
         func pause() {
+            intendsToPlay = false
             player?.pause()
             reportPlaybackState()
+        }
+
+        /// The system paused a player we intend to keep running (a `pushWindow`
+        /// transition does this without any scenePhase/room change). Resume,
+        /// unless we're at the natural end of the item (the end observer loops
+        /// that) or we've already retried too many times (avoid a tight loop if
+        /// the system genuinely won't let it play).
+        private func resumeAfterInvoluntaryPause() {
+            guard let player, let item = player.currentItem else { return }
+            let duration = item.duration.seconds
+            let current = player.currentTime().seconds
+            if duration.isFinite, duration > 0, current >= duration - 0.25 { return }
+            guard involuntaryResumeCount < Self.maxInvoluntaryResumes else {
+                AppLogger.videoWindow.error("Native player kept pausing after \(Self.maxInvoluntaryResumes, privacy: .public) resumes — giving up")
+                return
+            }
+            involuntaryResumeCount += 1
+            AppLogger.videoWindow.info("Native involuntary pause — resuming (attempt \(self.involuntaryResumeCount, privacy: .public))")
+            player.play()
         }
 
         func seek(to seconds: Double) {
