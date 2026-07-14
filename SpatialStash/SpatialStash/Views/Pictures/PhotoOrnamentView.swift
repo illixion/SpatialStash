@@ -281,6 +281,7 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
 
                     popoverMenuButton(
                         title: "2D",
+                        icon: "rectangle",
                         isChecked: false
                     ) {
                         show3DPopover = false
