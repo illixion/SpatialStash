@@ -251,7 +251,13 @@ class RemoteViewerModel: SlideshowEngine {
     }
 
     override func onEnteredBackground() {
-        scheduleSceneStateReport(false)
+        // Send the OFF edge immediately, not debounced: visionOS suspends the
+        // app (and freezes the socket) fast enough that a 250ms-delayed Task
+        // never fires, so the server would never learn we left — no
+        // dark-advance/park, stale image on return. Firing synchronously here
+        // usually lands the frame in the brief pre-suspend window; the server's
+        // heartbeat reaper is the backstop if it doesn't.
+        scheduleSceneStateReport(false, immediate: true)
     }
 
     /// HA-driven panel state addressed to this window's deviceId
@@ -306,9 +312,9 @@ class RemoteViewerModel: SlideshowEngine {
     /// telemetry (the HA motion sensor). For a VP window both track the same
     /// condition — the window is showing the slideshow iff someone's here to
     /// see it — so we report them together.
-    private func scheduleSceneStateReport(_ active: Bool) {
-        schedulePresenceReport(active)
-        scheduleVisibilityReport(active)
+    private func scheduleSceneStateReport(_ active: Bool, immediate: Bool = false) {
+        schedulePresenceReport(active, immediate: immediate)
+        scheduleVisibilityReport(active, immediate: immediate)
     }
 
     /// Clear the last-sent snapshots so the next report is not suppressed by
@@ -319,27 +325,47 @@ class RemoteViewerModel: SlideshowEngine {
         lastSentPresence = nil
     }
 
-    private func scheduleVisibilityReport(_ visible: Bool) {
+    /// Send a visibility frame right now (deduped), bypassing the debounce.
+    private func sendVisibilityNow(_ visible: Bool) {
+        guard lastSentVisibility != visible else { return }
+        lastSentVisibility = visible
+        AppLogger.remoteViewer.info("WS tx visibility deviceId=\(self.config.wsDeviceId, privacy: .public) visible=\(visible, privacy: .public)")
+        wsSession?.sendVisibilityChange(deviceId: config.wsDeviceId, visible: visible)
+    }
+
+    private func scheduleVisibilityReport(_ visible: Bool, immediate: Bool = false) {
         visibilityDebounce?.cancel()
+        if immediate {
+            visibilityDebounce = nil
+            sendVisibilityNow(visible)
+            return
+        }
         visibilityDebounce = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(250))
             guard !Task.isCancelled, let self else { return }
-            guard self.lastSentVisibility != visible else { return }
-            self.lastSentVisibility = visible
-            AppLogger.remoteViewer.info("WS tx visibility deviceId=\(self.config.wsDeviceId, privacy: .public) visible=\(visible, privacy: .public)")
-            self.wsSession?.sendVisibilityChange(deviceId: self.config.wsDeviceId, visible: visible)
+            self.sendVisibilityNow(visible)
         }
     }
 
-    private func schedulePresenceReport(_ present: Bool) {
+    /// Send a presence frame right now (deduped), bypassing the debounce.
+    private func sendPresenceNow(_ present: Bool) {
+        guard lastSentPresence != present else { return }
+        lastSentPresence = present
+        AppLogger.remoteViewer.info("WS tx present deviceId=\(self.config.wsDeviceId, privacy: .public) present=\(present, privacy: .public)")
+        wsSession?.sendPresenceChange(deviceId: config.wsDeviceId, present: present)
+    }
+
+    private func schedulePresenceReport(_ present: Bool, immediate: Bool = false) {
         presenceDebounce?.cancel()
+        if immediate {
+            presenceDebounce = nil
+            sendPresenceNow(present)
+            return
+        }
         presenceDebounce = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(250))
             guard !Task.isCancelled, let self else { return }
-            guard self.lastSentPresence != present else { return }
-            self.lastSentPresence = present
-            AppLogger.remoteViewer.info("WS tx present deviceId=\(self.config.wsDeviceId, privacy: .public) present=\(present, privacy: .public)")
-            self.wsSession?.sendPresenceChange(deviceId: self.config.wsDeviceId, present: present)
+            self.sendPresenceNow(present)
         }
     }
 
