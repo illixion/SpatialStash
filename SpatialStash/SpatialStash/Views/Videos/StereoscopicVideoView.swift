@@ -243,9 +243,10 @@ struct StereoscopicVideoView: View {
         }
         .font(.caption)
         .fontWeight(.medium)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .glassBackgroundEffect(in: Capsule())
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(.ultraThinMaterial)
+        .cornerRadius(8)
     }
 
     // MARK: - Helpers

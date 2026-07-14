@@ -414,10 +414,12 @@ struct VideoOrnamentsView: View {
                     }
                 }
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Color.secondary.opacity(0.2))
-            .cornerRadius(6)
+            .padding(6)
+            .background(
+                (windowModel.shouldUse3DMode || windowModel.shouldUsePseudo3D)
+                    ? .white.opacity(0.3) : .clear,
+                in: .rect(cornerRadius: 8)
+            )
         }
     }
 
