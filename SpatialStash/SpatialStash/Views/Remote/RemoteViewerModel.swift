@@ -1117,10 +1117,14 @@ class RemoteViewerModel: SlideshowEngine {
             // the post it displays — and therefore the id it reports in
             // imageReady — always matches what the server is waiting on.
             provider?.enqueueFromPlayback([cur] + (next.map { [$0] } ?? []))
+            // Record the look-ahead so the 3D layer's `peekedNextImage`
+            // resolves the real next post (not a stale prefetch-buffer head).
+            setServerNext(next)
             triggerPrefetch()
             setServerCurrent(cur)
         } else if let n = next {
             provider?.enqueueFromPlayback([n])
+            setServerNext(n)
             triggerPrefetch()
         }
     }

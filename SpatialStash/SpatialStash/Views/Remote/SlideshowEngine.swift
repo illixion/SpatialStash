@@ -141,6 +141,20 @@ class SlideshowEngine {
     /// advances toward this whenever it's in a state where jumping is safe.
     private(set) var serverCurrentPost: RemotePost?
 
+    /// The orchestrator's latest `next` post (remote mode only). In server-
+    /// driven mode display always flows through the `pendingPost` path, so
+    /// `prefetchedImages` is never consumed in id order and its `.first` is a
+    /// stale duplicate of an early image — not the true look-ahead. The 3D
+    /// pre-generation layer needs the real next, so `peekedNextImage` resolves
+    /// the prefetched image whose id matches this instead.
+    private(set) var serverNextPost: RemotePost?
+
+    /// Record the orchestrator's announced `next`. Set from the remote
+    /// viewer's `playback` handler alongside `setServerCurrent`.
+    func setServerNext(_ post: RemotePost?) {
+        serverNextPost = post
+    }
+
     /// True once the slideshow has shown a real image at least once. Used to
     /// distinguish the cold-start case (allow a bounded wait for the first
     /// image, show spinner) from steady state (show placeholder immediately on
@@ -268,7 +282,19 @@ class SlideshowEngine {
     /// image at the start of the crossfade and generation visibly runs
     /// twice (once in each slot).
     var peekedNextImage: UIImage? {
-        prefetchedImages.first?.image
+        if serverDriven {
+            // Server-paced: the prefetch buffer isn't drained in id order
+            // (display goes through the `pendingPost` path, not the fast
+            // path), so `.first` is a stale duplicate of an early image, not
+            // the real look-ahead. Resolve the prefetched image whose post id
+            // matches the orchestrator's announced `next` — this is the same
+            // instance `fetchAndDisplayPost` will reuse when it commits, so
+            // the hidden 3D slot's pre-generated depth map survives the
+            // crossfade without a wasteful regen.
+            guard let nextId = serverNextPost?._id else { return nil }
+            return prefetchedImages.first(where: { $0.post._id == nextId })?.image
+        }
+        return prefetchedImages.first?.image
     }
 
     /// Diorama mode — when enabled, the engine generates an uncropped
@@ -1031,6 +1057,22 @@ class SlideshowEngine {
         if Self.videoExtensions.contains(ext) {
             guard state == .loading else { return true }
             await displayVideo(url: imageURL, post: post)
+            return true
+        }
+
+        // Reuse an already-prefetched copy when one exists. This is the
+        // common case in server-driven mode, where every display arrives via
+        // this path rather than the prefetch fast-path. Reusing the buffered
+        // entry (a) hands the crossfade the *same* `UIImage` instance the 3D
+        // layer pre-generated its depth map against — so the hidden slot just
+        // promotes instead of regenerating — and (b) drains the buffer so
+        // `prefetchedImages` doesn't grow stale (which is what corrupted
+        // `peekedNextImage`). Prefetched entries are only ever images, so
+        // videos never match and fall through to the download path.
+        if let idx = prefetchedImages.firstIndex(where: { $0.post._id == post._id }) {
+            let entry = prefetchedImages.remove(at: idx)
+            guard state == .loading else { return true }
+            await displayDownloadedPost(post: entry.post, image: entry.image, data: entry.data, url: entry.url, ext: entry.post.file_ext.lowercased())
             return true
         }
 
