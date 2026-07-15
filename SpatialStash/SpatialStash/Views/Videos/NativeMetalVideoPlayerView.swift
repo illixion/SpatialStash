@@ -181,6 +181,7 @@ struct NativeMetalVideoPlayerView: UIViewRepresentable {
 
             let asset = AVURLAsset(url: url)
             let item = AVPlayerItem(asset: asset)
+            item.applySpatialAudioPolicy()
             let output = AVPlayerItemVideoOutput(pixelBufferAttributes: [
                 kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
                 kCVPixelBufferMetalCompatibilityKey as String: true

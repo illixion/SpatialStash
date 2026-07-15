@@ -25,3 +25,23 @@ enum AudioSessionConfig {
         }
     }
 }
+
+extension AVPlayerItem {
+    /// Apply the app's spatial-audio policy: spatialize only genuine
+    /// multichannel (5.1/7.1) audio, and play mono/stereo non-spatialized.
+    ///
+    /// visionOS defaults video items to `.monoStereoAndMultichannel`, so it
+    /// head-tracks even plain stereo — anchoring the sound to a window position
+    /// that frequently reads as "coming from the wrong window" when several
+    /// player windows are open. Restricting to `.multichannel` bypasses that
+    /// for stereo while retaining head-tracked spatial audio for true surround.
+    /// AVFoundation makes the stereo-vs-surround decision from the decoded
+    /// channel layout, so no manual channel counting is needed. (The user can
+    /// still override globally via Control Center.)
+    ///
+    /// Call once per item right after creation. Not KVO-compliant, so setting
+    /// it eagerly (before playback) is the intended usage.
+    func applySpatialAudioPolicy() {
+        allowedAudioSpatializationFormats = .multichannel
+    }
+}

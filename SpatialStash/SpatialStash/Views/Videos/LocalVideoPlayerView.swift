@@ -16,7 +16,9 @@ struct LocalVideoPlayerView: UIViewControllerRepresentable {
         AudioSessionConfig.configureMixedPlayback()
 
         let controller = AVPlayerViewController()
-        let player = AVPlayer(url: videoURL)
+        let item = AVPlayerItem(url: videoURL)
+        item.applySpatialAudioPolicy()
+        let player = AVPlayer(playerItem: item)
         player.isMuted = true
         controller.player = player
         controller.allowsPictureInPicturePlayback = true
@@ -33,7 +35,9 @@ struct LocalVideoPlayerView: UIViewControllerRepresentable {
         if let currentAsset = controller.player?.currentItem?.asset as? AVURLAsset,
            currentAsset.url != videoURL {
             controller.player?.pause()
-            let player = AVPlayer(url: videoURL)
+            let item = AVPlayerItem(url: videoURL)
+            item.applySpatialAudioPolicy()
+            let player = AVPlayer(playerItem: item)
             player.isMuted = true
             controller.player = player
             context.coordinator.observeLooping(player: player)

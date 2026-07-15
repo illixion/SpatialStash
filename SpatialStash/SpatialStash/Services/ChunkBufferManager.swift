@@ -275,7 +275,9 @@ extension ChunkBufferManager {
     /// Create an AVPlayerItem for a buffered chunk
     nonisolated func createPlayerItem(for chunk: BufferedChunk) -> AVPlayerItem {
         let asset = AVURLAsset(url: chunk.fileURL)
-        return AVPlayerItem(asset: asset)
+        let item = AVPlayerItem(asset: asset)
+        item.applySpatialAudioPolicy()
+        return item
     }
 
     /// Get stats about current buffer state

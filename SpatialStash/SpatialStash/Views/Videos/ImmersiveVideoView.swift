@@ -30,6 +30,7 @@ struct ImmersiveVideoView: View {
 
             let asset = AVURLAsset(url: videoURL)
             let playerItem = AVPlayerItem(asset: asset)
+            playerItem.applySpatialAudioPolicy()
 
             // Get video info for mesh generation
             guard let videoInfo = await getVideoInfo(asset: asset) else {

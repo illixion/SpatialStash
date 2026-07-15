@@ -475,6 +475,7 @@ class StereoscopicVideoPlayer: ObservableObject {
     private func startPlayback(url: URL) {
         let asset = AVURLAsset(url: url)
         let playerItem = AVPlayerItem(asset: asset)
+        playerItem.applySpatialAudioPolicy()
         let player = AVPlayer(playerItem: playerItem)
 
         // Enable looping
