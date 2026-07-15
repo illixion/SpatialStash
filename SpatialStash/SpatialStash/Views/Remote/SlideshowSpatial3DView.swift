@@ -104,6 +104,21 @@ struct SlideshowSpatial3DLayer: View {
             handleCommit()
         }
         .onChange(of: identity(model.peekedNextImage)) { oldId, _ in
+            // Never touch the hidden slot mid-advance. While the engine is
+            // loading/crossfading toward a new current, the hidden slot holds
+            // (and is fading in) the *imminent* image. The look-ahead may have
+            // already advanced past it — server-driven mode announces the
+            // next-next (`setServerNext`) before the current crossfade
+            // commits, and the new peek often arrives via an intermediate nil
+            // as it downloads, which defeats the "hidden holds old peek"
+            // guard below. Overwriting here swaps the fading-in image out for
+            // the one after it, then `handleCommit` swaps it back — the
+            // A→B→C→B flicker. `handleCommit` reloads the fresh peek once the
+            // crossfade commits, so deferring is both safe and complete.
+            switch model.state {
+            case .displaying, .paused, .idle: break
+            default: return
+            }
             // The engine pops `prefetchedImages.first` *before* it sets
             // `isTransitioning`, so an advance flips peek from the image
             // about to display (already loaded in our hidden slot) to
