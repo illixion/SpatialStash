@@ -844,6 +844,27 @@ class AppModel {
         WebYTDLPClient(endpoint: webYTDLPEndpoint, token: webYTDLPToken)
     }
 
+    /// Last incoming URL + time, for de-duplication. Both SwiftUI's `.onOpenURL`
+    /// and the `SceneDelegate` notification fire for a custom-scheme open (the
+    /// notification path exists for file-share cold launches that `.onOpenURL`
+    /// misses), so a `spatialstash://` handoff arrives twice and would open two
+    /// windows. `shouldProcessIncomingURL` collapses identical URLs seen within
+    /// a short window.
+    private var lastIncomingURL: (raw: String, at: Date)?
+
+    /// Returns false if this exact URL was already handled moments ago (the
+    /// double-delivery described above). Distinct URLs, or the same URL after
+    /// the window, are always processed.
+    func shouldProcessIncomingURL(_ url: URL) -> Bool {
+        let now = Date()
+        if let last = lastIncomingURL, last.raw == url.absoluteString,
+           now.timeIntervalSince(last.at) < 2.0 {
+            return false
+        }
+        lastIncomingURL = (url.absoluteString, now)
+        return true
+    }
+
     /// Saved remote viewer configurations
     var savedRemoteConfigs: [RemoteViewerConfig] = [] {
         didSet {

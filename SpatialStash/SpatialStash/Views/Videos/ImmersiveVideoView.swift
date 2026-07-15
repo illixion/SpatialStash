@@ -65,6 +65,7 @@ struct ImmersiveVideoView: View {
 
             // Start playback
             player.replaceCurrentItem(with: playerItem)
+            player.applySpatialAudioPolicy(for: asset)
             player.play()
             isLoaded = true
 

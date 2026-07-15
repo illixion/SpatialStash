@@ -477,6 +477,7 @@ class StereoscopicVideoPlayer: ObservableObject {
         let playerItem = AVPlayerItem(asset: asset)
         playerItem.applySpatialAudioPolicy()
         let player = AVPlayer(playerItem: playerItem)
+        player.applySpatialAudioPolicy(for: asset)
 
         // Enable looping
         endOfPlayObserver = NotificationCenter.default.addObserver(

@@ -189,6 +189,7 @@ struct NativeMetalVideoPlayerView: UIViewRepresentable {
             item.add(output)
 
             let player = AVPlayer(playerItem: item)
+            player.applySpatialAudioPolicy(for: asset)
             player.isMuted = startMuted
 
             self.player = player

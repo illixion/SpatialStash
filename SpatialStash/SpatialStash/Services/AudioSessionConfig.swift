@@ -13,6 +13,7 @@
  */
 
 import AVFoundation
+import CoreMedia
 import os
 
 enum AudioSessionConfig {
@@ -43,5 +44,48 @@ extension AVPlayerItem {
     /// it eagerly (before playback) is the intended usage.
     func applySpatialAudioPolicy() {
         allowedAudioSpatializationFormats = .multichannel
+    }
+}
+
+extension AVPlayer {
+    /// Apply the spatial-audio policy at the player level, which is what
+    /// actually governs visionOS window-anchored spatialization (the item's
+    /// `allowedAudioSpatializationFormats` only gates the stereo→spatial upmix,
+    /// not the anchoring that makes audio seem to come from the wrong window).
+    ///
+    /// visionOS 26 defaults a player to `CAAutomaticSpatialAudio`, which
+    /// spatializes even plain stereo and anchors it to a window position — often
+    /// the wrong one with several player windows open. This bypasses
+    /// spatialization for mono/stereo and keeps head-tracked spatial audio for
+    /// genuine multichannel (5.1/7.1). Being per-player (not the process-global
+    /// `AVAudioSession` intended experience), simultaneous stereo and surround
+    /// windows each behave correctly.
+    ///
+    /// `.bypassed` is applied immediately (fixes the common stereo case with no
+    /// startup race); the policy upgrades to `.headTracked` only once the
+    /// asset's audio is confirmed multichannel.
+    func applySpatialAudioPolicy(for asset: AVURLAsset) {
+        intendedSpatialAudioExperience = .bypassed
+        Task { [weak self] in
+            guard let surround = try? await asset.hasMultichannelAudio(), surround else { return }
+            await MainActor.run {
+                self?.intendedSpatialAudioExperience = .headTracked(.automatic, soundStageSize: .automatic)
+            }
+        }
+    }
+}
+
+extension AVURLAsset {
+    /// True if any audio track carries more than two channels (5.1/7.1, etc.).
+    func hasMultichannelAudio() async throws -> Bool {
+        for track in try await loadTracks(withMediaType: .audio) {
+            for desc in try await track.load(.formatDescriptions) {
+                if let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(desc)?.pointee,
+                   asbd.mChannelsPerFrame > 2 {
+                    return true
+                }
+            }
+        }
+        return false
     }
 }

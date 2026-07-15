@@ -564,6 +564,7 @@ final class Pseudo3DStereoEngine {
         item.add(output)
 
         let player = AVPlayer(playerItem: item)
+        player.applySpatialAudioPolicy(for: asset)
         player.isMuted = startMuted
         player.automaticallyWaitsToMinimizeStalling = true
 

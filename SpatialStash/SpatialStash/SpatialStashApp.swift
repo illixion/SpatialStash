@@ -186,6 +186,13 @@ private struct MainWindowView: View {
     }
 
     private func handleIncomingURL(_ url: URL) async {
+        // Both `.onOpenURL` and the SceneDelegate notification deliver a
+        // custom-scheme open, so drop the duplicate to avoid opening two windows.
+        guard appModel.shouldProcessIncomingURL(url) else {
+            AppLogger.streamURL.info("Ignoring duplicate incoming URL: \(url.absoluteString, privacy: .public)")
+            return
+        }
+
         // Custom handoff scheme: spatialstash://play?url=<percent-encoded URL>
         if url.scheme?.lowercased() == "spatialstash" {
             guard let target = Self.playTargetURL(from: url) else {
