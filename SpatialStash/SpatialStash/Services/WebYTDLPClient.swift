@@ -20,9 +20,25 @@ struct WebYTDLPClient {
         !endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    /// Build `{endpoint}/stream?url=<page>&token=<token>`. Returns nil if the
-    /// endpoint is empty or unparseable.
-    func streamURL(forPage page: URL) -> URL? {
+    /// The encoding preset requested from web-yt-dlp. Spatial Stash only ever
+    /// runs on Apple platforms, so HEVC (`h265`) is the default: smaller files
+    /// at higher quality, tagged `hvc1` so AVPlayer's native path accepts it.
+    /// web-yt-dlp stream-copies the source when it's already HEVC, so this is
+    /// free when the source allows it and a hardware transcode otherwise.
+    static let defaultPreset = "h265"
+
+    /// The max video height requested from web-yt-dlp. Vision Pro's displays are
+    /// high-resolution, so default to 2160 (4K) — the server caps at 2160 and
+    /// picks the best source track at or below it.
+    static let defaultHeight = 2160
+
+    /// Build `{endpoint}/stream?url=<page>&token=<token>&preset=<preset>&height=<height>`.
+    /// Returns nil if the endpoint is empty or unparseable.
+    func streamURL(
+        forPage page: URL,
+        preset: String = WebYTDLPClient.defaultPreset,
+        height: Int = WebYTDLPClient.defaultHeight
+    ) -> URL? {
         var trimmed = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         if !trimmed.contains("://") { trimmed = "https://" + trimmed }
@@ -36,6 +52,9 @@ struct WebYTDLPClient {
         var items = [URLQueryItem(name: "url", value: page.absoluteString)]
         let tok = token.trimmingCharacters(in: .whitespacesAndNewlines)
         if !tok.isEmpty { items.append(URLQueryItem(name: "token", value: tok)) }
+        let presetValue = preset.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !presetValue.isEmpty { items.append(URLQueryItem(name: "preset", value: presetValue)) }
+        if height > 0 { items.append(URLQueryItem(name: "height", value: String(height))) }
         components.queryItems = items
 
         return components.url
