@@ -118,6 +118,13 @@ Uses RealityKit's `ImagePresentationComponent` for 2D→3D conversion. States tr
 - **SharedMediaSaver** - Saves shared media to Documents folder
 - **AppLogger** - Structured os.Logger instances across domains
 
+### Incoming URLs & web-yt-dlp (YouTube-in-3D)
+The app registers a `spatialstash://play?url=<link>` custom URL scheme (declared in `Info.plist`, handled by **IncomingURLHandler**; a `SceneDelegate` notification path covers file-share cold launches that SwiftUI's `.onOpenURL` misses, so `AppModel.shouldProcessIncomingURL` de-dupes the double-fire). This is the primary way to send arbitrary web videos into the app — most conveniently via the **"Open in Spatial Viewer"** iOS/visionOS Shortcut (<https://www.icloud.com/shortcuts/c313953ed4c245f988ca746808109b8d>), which shares any link into the scheme; a bookmarklet works too.
+
+- **StreamableURLResolver** classifies the incoming URL: `.directVideo` (MP4/HLS — plays immediately, no proxy), `.webPage` (routed through web-yt-dlp when enabled), or `.notPlayable`. Direct links open a stream video window straight away.
+- **WebYTDLPClient** (`struct`, built from `AppModel.webYTDLPClient`) builds `{endpoint}/stream?url=<page>&token=<token>&preset=<preset>&height=<height>` for a self-hosted [web-yt-dlp](https://github.com/illixion/web-yt-dlp) instance. The app does **not** pre-resolve metadata — it hands the stream URL straight to AVPlayer and the server runs yt-dlp + muxes + streams on the fly (HTTP Range supported). Token rides as a query param because AVPlayer can't easily attach a Bearer header. Playing web videos this way feeds the native-Metal player, so they can be converted to fake-3D — the point of the feature is watching e.g. 4K YouTube in windowed stereoscopic 3D.
+- **Settings (Developer → Web yt-dlp Support):** `webYTDLPEnabled` gates web-page routing; `webYTDLPEndpoint`/`webYTDLPToken` configure the proxy; and two dropdowns pick the re-encode target — `webYTDLPPreset` (`AppModel.webYTDLPPresetOptions`: HEVC/`h265` default — tagged `hvc1` for AVPlayer's native path, source stream-copied when already HEVC — or `h264`) and `webYTDLPHeight` (`AppModel.webYTDLPHeightOptions`: 1080 or 2160/4K default). Defaults live on `WebYTDLPClient.defaultPreset`/`defaultHeight`; `streamURL(forPage:preset:height:)` takes both as overridable params. All persisted to UserDefaults and included in `SettingsBackup`. The section links both the web-yt-dlp repo and the Shortcut.
+
 ### API Client
 `StashAPIClient` is an actor that handles GraphQL communication with Stash server. Accessible via `appModel.apiClient` (private(set)). Supports:
 - **List queries:** `findImages`, `findScenes`, `findGalleries`, `findTags`, `findStudios`, `findPerformers` (paginated, with filters)

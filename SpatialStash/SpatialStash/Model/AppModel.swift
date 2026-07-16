@@ -839,6 +839,41 @@ class AppModel {
         }
     }
 
+    /// Encoding preset requested from web-yt-dlp (`h265` or `h264`). HEVC is
+    /// the default — smaller files at higher quality, and AVPlayer decodes the
+    /// `hvc1`-tagged output natively. H.264 is the compatibility fallback for
+    /// sources or servers that stumble on HEVC.
+    var webYTDLPPreset: String {
+        didSet {
+            if webYTDLPPreset != oldValue {
+                UserDefaults.standard.set(webYTDLPPreset, forKey: "webYTDLPPreset")
+            }
+        }
+    }
+
+    /// Max video height requested from web-yt-dlp (1080 or 2160). Vision Pro's
+    /// displays are high-resolution, so 4K (2160) is the default; 1080p reduces
+    /// bandwidth and server transcode cost.
+    var webYTDLPHeight: Int {
+        didSet {
+            if webYTDLPHeight != oldValue {
+                UserDefaults.standard.set(webYTDLPHeight, forKey: "webYTDLPHeight")
+            }
+        }
+    }
+
+    /// Available web-yt-dlp codec presets.
+    static let webYTDLPPresetOptions: [(label: String, value: String)] = [
+        ("HEVC (H.265)", "h265"),
+        ("H.264", "h264"),
+    ]
+
+    /// Available web-yt-dlp max-height options.
+    static let webYTDLPHeightOptions: [(label: String, value: Int)] = [
+        ("1080p", 1080),
+        ("2160p (4K)", 2160),
+    ]
+
     /// Convenience client built from the persisted web-yt-dlp settings.
     var webYTDLPClient: WebYTDLPClient {
         WebYTDLPClient(endpoint: webYTDLPEndpoint, token: webYTDLPToken)
@@ -1188,6 +1223,10 @@ class AppModel {
         let loadedWebYTDLPEnabled = UserDefaults.standard.bool(forKey: "webYTDLPEnabled")
         let loadedWebYTDLPEndpoint = UserDefaults.standard.string(forKey: "webYTDLPEndpoint") ?? ""
         let loadedWebYTDLPToken = UserDefaults.standard.string(forKey: "webYTDLPToken") ?? ""
+        let loadedWebYTDLPPreset = UserDefaults.standard.string(forKey: "webYTDLPPreset") ?? WebYTDLPClient.defaultPreset
+        let loadedWebYTDLPHeight = UserDefaults.standard.object(forKey: "webYTDLPHeight") != nil
+            ? UserDefaults.standard.integer(forKey: "webYTDLPHeight")
+            : WebYTDLPClient.defaultHeight
 
         // Load respect memory alerts (default: true)
         let loadedRespectMemoryAlerts = UserDefaults.standard.object(forKey: "respectMemoryAlerts") != nil
@@ -1252,6 +1291,8 @@ class AppModel {
         self.webYTDLPEnabled = loadedWebYTDLPEnabled
         self.webYTDLPEndpoint = loadedWebYTDLPEndpoint
         self.webYTDLPToken = loadedWebYTDLPToken
+        self.webYTDLPPreset = loadedWebYTDLPPreset
+        self.webYTDLPHeight = loadedWebYTDLPHeight
         self.respectMemoryAlerts = loadedRespectMemoryAlerts
         self.useLossyTextureCompression = loadedUseLossyTextureCompression
         self.globalVisualAdjustments = loadedGlobalVisualAdjustments
@@ -1809,6 +1850,8 @@ class AppModel {
             webYTDLPEnabled: webYTDLPEnabled,
             webYTDLPEndpoint: webYTDLPEndpoint,
             webYTDLPToken: webYTDLPToken,
+            webYTDLPPreset: webYTDLPPreset,
+            webYTDLPHeight: webYTDLPHeight,
             savedViews: savedViews,
             savedVideoViews: savedVideoViews,
             savedWindowGroups: savedWindowGroups,
@@ -1862,6 +1905,8 @@ class AppModel {
         if let v = backup.webYTDLPEnabled { webYTDLPEnabled = v }
         if let v = backup.webYTDLPEndpoint { webYTDLPEndpoint = v }
         if let v = backup.webYTDLPToken { webYTDLPToken = v }
+        if let v = backup.webYTDLPPreset { webYTDLPPreset = v }
+        if let v = backup.webYTDLPHeight { webYTDLPHeight = v }
 
         // Complex settings
         if let v = backup.savedViews {

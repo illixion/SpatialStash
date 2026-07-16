@@ -68,7 +68,11 @@ struct IncomingURLHandler: ViewModifier {
                     AppLogger.streamURL.info("Web page received but web-yt-dlp disabled; ignoring: \(pageURL.absoluteString, privacy: .public)")
                     return
                 }
-                guard let stream = appModel.webYTDLPClient.streamURL(forPage: pageURL) else {
+                guard let stream = appModel.webYTDLPClient.streamURL(
+                    forPage: pageURL,
+                    preset: appModel.webYTDLPPreset,
+                    height: appModel.webYTDLPHeight
+                ) else {
                     AppLogger.streamURL.error("web-yt-dlp endpoint not configured; cannot play: \(pageURL.absoluteString, privacy: .public)")
                     return
                 }

@@ -140,6 +140,13 @@ A slideshow viewer for displaying images from a [RoboFrame](https://github.com/i
 - **Client-side content filtering** with blocked post/tag lists (merged from server on connect)
 - **Visual adjustments** shared with the photo/video viewer system (brightness, contrast, saturation)
 
+### Play Web Videos in 3D (Developer)
+Spatial Stash can play arbitrary web videos — including YouTube — and convert them to Pseudo 3D on the fly. This is what makes it easy to watch, say, a 4K YouTube video in windowed stereoscopic 3D on Vision Pro. Enable **Web yt-dlp Support** in Settings → Developer.
+
+- **How it works** — page links (e.g. a YouTube URL) are routed through a self-hosted [web-yt-dlp](https://github.com/illixion/web-yt-dlp) proxy that runs yt-dlp, muxes, and streams the result with HTTP Range support. The app plays the proxied stream directly through the native-Metal player, so the Pseudo 3D pipeline can convert it. Configure the proxy **Endpoint URL** and **Token** in the same section.
+- **Codec / Max Resolution** — two dropdowns control what the proxy re-encodes to: **Codec** (HEVC/H.265, recommended on Apple platforms for smaller files at higher quality; or H.264 for compatibility) and **Max Resolution** (1080p or 2160p/4K). HEVC output is tagged `hvc1` so AVPlayer decodes it natively, and the proxy stream-copies already-HEVC sources rather than transcoding.
+- **Getting links into the app** — the app registers a `spatialstash://play?url=…` callback URL scheme. Any direct video link (MP4/HLS) opens and plays immediately without the proxy; web page links are routed through web-yt-dlp when it's enabled. The easiest way to hand a link over is the **[Open in Spatial Viewer](https://www.icloud.com/shortcuts/c313953ed4c245f988ca746808109b8d)** Shortcut — add it, then use the Share sheet on any video or link to send it straight into Spatial Stash. A bookmarklet that opens the same URL scheme works too.
+
 ## Architecture
 
 The app follows a SwiftUI architecture with:

@@ -356,10 +356,22 @@ struct SettingsTabView: View {
                         SecureField("Token", text: $appModel.webYTDLPToken)
                             .autocorrectionDisabled()
                             .textInputAutocapitalization(.never)
+                        Picker("Codec", selection: $appModel.webYTDLPPreset) {
+                            ForEach(AppModel.webYTDLPPresetOptions, id: \.value) { option in
+                                Text(option.label).tag(option.value)
+                            }
+                        }
+                        Picker("Max Resolution", selection: $appModel.webYTDLPHeight) {
+                            ForEach(AppModel.webYTDLPHeightOptions, id: \.value) { option in
+                                Text(option.label).tag(option.value)
+                            }
+                        }
                         Link("web-yt-dlp on GitHub", destination: URL(string: "https://github.com/illixion/web-yt-dlp")!)
                             .font(.caption)
+                        Link("“Open in Spatial Viewer” Shortcut", destination: URL(string: "https://www.icloud.com/shortcuts/c313953ed4c245f988ca746808109b8d")!)
+                            .font(.caption)
                     }
-                    Text("Play web videos (e.g. YouTube) in 3D by routing page links through a self-hosted web-yt-dlp proxy. Hand a link to the app with a Shortcut or bookmarklet opening spatialstash://play?url=… — see the repo README. Direct stream links (MP4/HLS) play without this.")
+                    Text("Play web videos (e.g. YouTube) in 3D by routing page links through a self-hosted web-yt-dlp proxy. Hand a link to the app with the \"Open in Spatial Viewer\" Shortcut or a bookmarklet opening spatialstash://play?url=… — see the repo README. Direct stream links (MP4/HLS) play without this. The proxy re-encodes to the chosen codec (HEVC recommended on Apple platforms) at up to the chosen height.")
                         .font(.caption)
                         .foregroundColor(.secondary)
 

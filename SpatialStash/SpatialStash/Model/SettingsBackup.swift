@@ -47,6 +47,8 @@ struct SettingsBackup: Codable {
     var webYTDLPEnabled: Bool?
     var webYTDLPEndpoint: String?
     var webYTDLPToken: String?
+    var webYTDLPPreset: String?
+    var webYTDLPHeight: Int?
 
     // Complex Codable settings
     var savedViews: [SavedView]?
