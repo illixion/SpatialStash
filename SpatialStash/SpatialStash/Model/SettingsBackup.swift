@@ -74,6 +74,21 @@ struct SettingsBackup: Codable {
     var globalVisualAdjustments: Data?
     var imageEnhancementAdjustments: [String: Data]?
 
+    // Display / playback settings added after the initial schema. All
+    // optional so older backups (missing the keys) still decode, and a
+    // restore leaves them untouched rather than resetting to defaults.
+    var thumbnailStyle: String?
+    var reduceMotion: Bool?
+    var defaultImageViewingMode: String?
+    var enableStashTranscoding: Bool?
+    var realtimeDepthModelName: String?
+    var preprocessDepthModelName: String?
+    var defaultRealtimePseudo3D: Bool?
+    var videoAutoplayMuted: Bool?
+    var useLossyTextureCompression: Bool?
+    var globalPseudo3DSettings: Data?
+    var cacheSizePreset: String?
+
     static let currentVersion = 1
 }
 

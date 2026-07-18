@@ -494,15 +494,22 @@ struct SettingsTabView: View {
             ) { result in
                 switch result {
                 case .success(let url):
-                    guard url.startAccessingSecurityScopedResource() else { return }
-                    defer { url.stopAccessingSecurityScopedResource() }
-                    if let data = try? Data(contentsOf: url) {
-                        pendingImportData = data
-                        showImportConfirmation = true
+                    // startAccessing legitimately returns false for URLs that
+                    // aren't security-scoped (e.g. files already in our own
+                    // container) — read regardless, only balance a successful
+                    // start with a stop.
+                    let didAccess = url.startAccessingSecurityScopedResource()
+                    defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
+                    do {
+                        pendingImportData = try Data(contentsOf: url)
+                        presentAfterPickerDismissal { showImportConfirmation = true }
+                    } catch {
+                        importErrorMessage = error.localizedDescription
+                        presentAfterPickerDismissal { showImportError = true }
                     }
                 case .failure(let error):
                     importErrorMessage = error.localizedDescription
-                    showImportError = true
+                    presentAfterPickerDismissal { showImportError = true }
                 }
             }
             .alert("Import Settings?", isPresented: $showImportConfirmation) {
@@ -569,6 +576,17 @@ struct SettingsTabView: View {
             }
         }
         .pickerStyle(.menu)
+    }
+
+    /// Presenting an alert directly from the fileImporter completion handler
+    /// races the picker's dismissal animation and the alert silently never
+    /// appears (the tap seems to "do nothing"). Defer the presentation until
+    /// the picker is gone.
+    private func presentAfterPickerDismissal(_ present: @escaping () -> Void) {
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(600))
+            present()
+        }
     }
 
     private func importFromDocuments() {

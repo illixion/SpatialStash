@@ -1871,7 +1871,18 @@ class AppModel {
             imageEnhancementSpatial3DResolutionOverrides: imageEnhancementData.spatial3DResolutionOverrides,
             imageEnhancementWindowSizes: imageEnhancementData.windowSizes,
             globalVisualAdjustments: try? JSONEncoder().encode(globalVisualAdjustments),
-            imageEnhancementAdjustments: imageEnhancementData.adjustments
+            imageEnhancementAdjustments: imageEnhancementData.adjustments,
+            thumbnailStyle: thumbnailStyle.rawValue,
+            reduceMotion: reduceMotion,
+            defaultImageViewingMode: defaultImageViewingMode.rawValue,
+            enableStashTranscoding: enableStashTranscoding,
+            realtimeDepthModelName: realtimeDepthModelName,
+            preprocessDepthModelName: preprocessDepthModelName,
+            defaultRealtimePseudo3D: defaultRealtimePseudo3D,
+            videoAutoplayMuted: videoAutoplayMuted,
+            useLossyTextureCompression: useLossyTextureCompression,
+            globalPseudo3DSettings: try? JSONEncoder().encode(globalPseudo3DSettings),
+            cacheSizePreset: UserDefaults.standard.string(forKey: CacheBudget.presetKey)
         )
     }
 
@@ -1907,6 +1918,22 @@ class AppModel {
         if let v = backup.webYTDLPToken { webYTDLPToken = v }
         if let v = backup.webYTDLPPreset { webYTDLPPreset = v }
         if let v = backup.webYTDLPHeight { webYTDLPHeight = v }
+        if let raw = backup.thumbnailStyle, let style = ThumbnailStyle(rawValue: raw) { thumbnailStyle = style }
+        if let v = backup.reduceMotion { reduceMotion = v }
+        if let raw = backup.defaultImageViewingMode, let mode = DefaultImageViewingMode(rawValue: raw) { defaultImageViewingMode = mode }
+        if let v = backup.enableStashTranscoding { enableStashTranscoding = v }
+        if let v = backup.realtimeDepthModelName { realtimeDepthModelName = v }
+        if let v = backup.preprocessDepthModelName { preprocessDepthModelName = v }
+        if let v = backup.defaultRealtimePseudo3D { defaultRealtimePseudo3D = v }
+        if let v = backup.videoAutoplayMuted { videoAutoplayMuted = v }
+        if let v = backup.useLossyTextureCompression { useLossyTextureCompression = v }
+        if let data = backup.globalPseudo3DSettings,
+           let loaded = try? JSONDecoder().decode(Pseudo3DSettings.self, from: data) {
+            globalPseudo3DSettings = loaded
+        }
+        if let raw = backup.cacheSizePreset, CacheSizePreset(rawValue: raw) != nil {
+            UserDefaults.standard.set(raw, forKey: CacheBudget.presetKey)
+        }
 
         // Complex settings
         if let v = backup.savedViews {
