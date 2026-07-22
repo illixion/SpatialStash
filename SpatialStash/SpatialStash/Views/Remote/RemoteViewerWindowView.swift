@@ -329,6 +329,16 @@ struct RemoteViewerWindowView: View {
                     .saturation(model.effectiveSaturation)
                 }
 
+            case .animatedJXL:
+                if model.isRoomActive {
+                    AnimatedJXLWebView(imageData: model.currentAnimatedData)
+                        .aspectRatio(model.currentImage?.size ?? CGSize(width: 1, height: 1), contentMode: .fit)
+                        .opacity(model.isTransitioning ? 0 : 1)
+                        .brightness(model.effectiveBrightness)
+                        .contrast(model.effectiveContrast)
+                        .saturation(model.effectiveSaturation)
+                }
+
             case .image:
                 EmptyView()
             }

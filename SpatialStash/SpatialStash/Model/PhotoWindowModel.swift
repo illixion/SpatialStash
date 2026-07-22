@@ -450,7 +450,10 @@ class PhotoWindowModel {
     var isAnimatedGIF: Bool = false
     var isAnimatedWebP: Bool = false
     var isAnimatedWebVisual: Bool = false
-    var isAnimatedImage: Bool { isAnimatedGIF || isAnimatedWebP || isAnimatedWebVisual }
+    /// Animated JPEG XL — decoded/animated by the bundled WASM libjxl path
+    /// (ImageIO only yields the first frame).
+    var isAnimatedJXL: Bool = false
+    var isAnimatedImage: Bool { isAnimatedGIF || isAnimatedWebP || isAnimatedWebVisual || isAnimatedJXL }
     var currentImageData: Data? = nil
     var animatedImageSourceURL: URL? = nil
     var gifHEVCURL: URL? = nil
@@ -673,6 +676,7 @@ class PhotoWindowModel {
                 // the asset to the browser-based renderer which can display both static
                 // and animated WebP correctly.
                 isAnimatedWebP = isWebPByFileName || isAnimatedWebPByBytes || isWebPByBytes || isWebPByURL
+                isAnimatedJXL = data.isAnimatedJXL
 
                 if isAnimatedGIF {
                     // For GIFs, calculate aspect ratio from the image data
@@ -690,7 +694,7 @@ class PhotoWindowModel {
                         AppLogger.gifConverter.warning("GIF HEVC conversion failed, falling back to base64: \(error.localizedDescription, privacy: .public)")
                         gifHEVCURL = nil
                     }
-                } else if isAnimatedWebP || isAnimatedWebVisual {
+                } else if isAnimatedWebP || isAnimatedWebVisual || isAnimatedJXL {
                     if let image = UIImage(data: data) {
                         imageAspectRatio = image.size.width / image.size.height
                     }

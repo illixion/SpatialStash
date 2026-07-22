@@ -71,7 +71,7 @@ class GalleryContentProvider: SlideshowContentProvider {
                 let (data, _) = try await URLSession.shared.data(from: imageURL)
                 // Skip downsampling for animated formats — see
                 // RemoteContentProvider.downloadImage for rationale.
-                let effectiveMax: CGFloat = (data.isAnimatedGIF || data.isAnimatedWebP) ? 0 : maxDim
+                let effectiveMax: CGFloat = (data.isAnimatedGIF || data.isAnimatedWebP || data.isAnimatedJXL) ? 0 : maxDim
                 guard let image = MetalImageRenderer.downsampledImage(from: data, maxDimension: effectiveMax) else {
                     return nil
                 }

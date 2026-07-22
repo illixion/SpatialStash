@@ -375,6 +375,32 @@ struct PhotoDisplayView: View {
                     scheduleWindowSizeVerification()
                 }
             }
+        } else if windowModel.isAnimatedJXL {
+            AnimatedJXLWebView(imageData: windowModel.currentImageData)
+                .brightness(windowModel.effectiveAdjustments.brightness)
+                .contrast(windowModel.effectiveAdjustments.contrast)
+                .saturation(windowModel.effectiveAdjustments.saturation)
+                .opacity(windowModel.effectiveAdjustments.opacity)
+                .aspectRatio(windowModel.imageAspectRatio, contentMode: .fit)
+                .clipShape(RoundedRectangle(cornerRadius: appModel.roundedCorners ? 50 : 0, style: .continuous))
+                .overlay {
+                    if windowModel.isUIHidden {
+                        Color.clear
+                            .contentShape(.rect)
+                            .onTapGesture {
+                                windowModel.toggleUIVisibility()
+                            }
+                    }
+                }
+                .modifier(SwipeGestureModifier(enabled: isSwipeEnabled, onEnded: handleDragEnded))
+                .onAppear {
+                    let initialBounds = windowModel.savedWindowSize ?? appModel.mainWindowSize
+                    resizeGIFWindowToFit(windowModel.imageAspectRatio, within: initialBounds)
+                }
+                .onChange(of: windowModel.imageAspectRatio) { _, newAspectRatio in
+                    guard !suppressWindowResize else { return }
+                    resizeGIFWindowToFit(newAspectRatio, within: currentBounds)
+                }
         } else if windowModel.isAnimatedWebP || windowModel.isAnimatedWebVisual {
             AnimatedImageWebView(
                 imageURL: windowModel.animatedImageSourceURL ?? windowModel.imageURL,

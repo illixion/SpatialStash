@@ -67,6 +67,11 @@ class SlideshowEngine {
         /// The URL is the original image URL — WebKit decodes/animates the
         /// WebP directly, no HEVC conversion needed.
         case animatedWebP(URL)
+        /// Animated JPEG XL rendered via WKWebView. WebKit can't decode JXL,
+        /// so a bundled WASM libjxl build decodes the frames and muxes them
+        /// into an APNG the `<img>` animates. The bytes travel in
+        /// `currentAnimatedData`; the URL is the original image URL.
+        case animatedJXL(URL)
     }
 
     static let videoExtensions: Set<String> = [
@@ -137,7 +142,7 @@ class SlideshowEngine {
     /// that gap.
     var isAnimatedMediaWithStaticFallback: Bool {
         switch currentMediaType {
-        case .animatedWebP, .animatedGIF: return true
+        case .animatedWebP, .animatedGIF, .animatedJXL: return true
         case .image, .video, .videoAsImage: return false
         }
     }
@@ -1146,6 +1151,18 @@ class SlideshowEngine {
             // inline; cleared in the non-animated branches below.
             currentAnimatedData = data
             await displayImage(image, post: post, url: url, mediaType: .animatedWebP(url))
+            return
+        }
+
+        // Animated JPEG XL — WebKit can't decode JXL, so the bytes go to a
+        // WASM libjxl decoder that muxes an APNG for the <img>. Detected from
+        // the codestream header (ImageIO reports frame count 1 for animated
+        // JXL, so it can't gate this). `image` is the ImageIO first-frame decode
+        // and serves as the static fallback while the WASM decode runs.
+        if ext == "jxl" && data.isAnimatedJXL {
+            isCurrentPostAnimatedGIF = true
+            currentAnimatedData = data
+            await displayImage(image, post: post, url: url, mediaType: .animatedJXL(url))
             return
         }
 

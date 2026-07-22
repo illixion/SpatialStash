@@ -92,7 +92,7 @@ class RemoteContentProvider: SlideshowContentProvider {
                 // the WKWebView path (the static UIImage is fine, but we
                 // want the full-resolution first frame as the crossfade
                 // preview to match what the animation will display).
-                let effectiveMax: CGFloat = (data.isAnimatedGIF || data.isAnimatedWebP) ? 0 : maxDim
+                let effectiveMax: CGFloat = (data.isAnimatedGIF || data.isAnimatedWebP || data.isAnimatedJXL) ? 0 : maxDim
                 guard let image = MetalImageRenderer.downsampledImage(from: data, maxDimension: effectiveMax) else {
                     return nil
                 }
