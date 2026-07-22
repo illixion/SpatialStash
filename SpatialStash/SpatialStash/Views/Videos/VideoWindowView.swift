@@ -96,6 +96,7 @@ struct VideoWindowView: View {
                             settings: windowModel.effectivePseudo3DSettings,
                             depthMode: windowModel.pseudo3DDepthMode,
                             startAtSeconds: windowModel.pseudo3DEngageResumeTime,
+                            startPaused: windowModel.pseudo3DEngagePaused,
                             isFlipped: windowModel.isFlipped,
                             loopController: windowModel.loopController,
                             playbackModel: windowModel,

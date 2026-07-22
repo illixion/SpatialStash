@@ -270,6 +270,7 @@ final class VideoWindowModel {
         pseudo3DEnabled = false
         pseudo3DDepthMode = .realtime
         pseudo3DEngageResumeTime = nil
+        pseudo3DEngagePaused = false
         progressiveEngageTask?.cancel()
         progressiveEngageTask = nil
         dismissDepthReadyPrompt()
@@ -356,6 +357,13 @@ final class VideoWindowModel {
     /// Playhead captured when fake-3D is engaged so the stereo player resumes
     /// where the 2D player was instead of restarting.
     var pseudo3DEngageResumeTime: Double?
+    /// Engage fake-3D paused rather than playing. Set for a progressive engage
+    /// mid-conversion: the stereo player decodes a single frame (so it's
+    /// visibly playable in 3D) but doesn't start sustained playback — a second
+    /// decode session concurrent with the converter's reader can trip a
+    /// transient VideoToolbox decode failure. The user's manual Play then
+    /// opts into that second session deliberately.
+    var pseudo3DEngagePaused = false
     /// Polls for the safe point to auto-engage 3D playback mid-conversion.
     @ObservationIgnored private var progressiveEngageTask: Task<Void, Never>?
     /// The frontier must lead the playhead by at least this much before
@@ -400,15 +408,20 @@ final class VideoWindowModel {
     /// background conversion — it would fight the live inference for the ANE.
     func engageRealtimePseudo3D() {
         pseudo3DEngageResumeTime = currentTime
+        pseudo3DEngagePaused = false
         pseudo3DDepthMode = .realtime
         enablePseudo3D()
     }
 
     /// Engage fake-3D from this video's depth cache (complete, or still growing
-    /// when the conversion is running — progressive playback).
-    func engageCachedPseudo3D() {
+    /// when the conversion is running — progressive playback). `startPaused`
+    /// engages showing a single 3D frame without starting playback (used for a
+    /// progressive engage mid-conversion — see `pseudo3DEngagePaused`).
+    func engageCachedPseudo3D(startPaused: Bool = false) {
         dismissDepthReadyPrompt()
         pseudo3DEngageResumeTime = currentTime
+        pseudo3DEngagePaused = startPaused
+        if startPaused { isPaused = true }
         pseudo3DDepthMode = .cached(videoIdentity: video.stashId)
         enablePseudo3D()
     }
@@ -484,8 +497,10 @@ final class VideoWindowModel {
                 let remainingConversion = max(self.duration - status.frontier, 0)
                 if lead >= Self.progressiveMinLeadSeconds,
                    remainingConversion <= status.rate * remainingPlayback * Self.progressiveSafetyFactor {
-                    AppLogger.videoWindow.info("Progressive 3D engage: frontier \(status.frontier, privacy: .public)s, rate \(status.rate, privacy: .public)x, playhead \(playhead, privacy: .public)s")
-                    self.engageCachedPseudo3D()
+                    AppLogger.videoWindow.info("Progressive 3D engage (paused): frontier \(status.frontier, privacy: .public)s, rate \(status.rate, privacy: .public)x, playhead \(playhead, privacy: .public)s")
+                    // Engage paused: show one 3D frame without a second decode
+                    // session fighting the converter. Manual Play starts it.
+                    self.engageCachedPseudo3D(startPaused: true)
                     engagedProgressively = true
                 }
             }

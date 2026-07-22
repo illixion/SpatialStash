@@ -83,6 +83,11 @@ struct Pseudo3DVideoPlayerView: View {
     var depthMode: Pseudo3DDepthMode = .realtime
     /// Resume position (seconds) captured from the 2D player at engage time.
     var startAtSeconds: Double? = nil
+    /// Engage without auto-playing: seek to `startAtSeconds` and warp that one
+    /// frame (visibly playable in 3D) but don't start sustained playback. Used
+    /// for a progressive engage mid-conversion so a second decode session
+    /// doesn't fight the converter's reader; manual Play starts it.
+    var startPaused: Bool = false
     var isFlipped: Bool = false
     var loopController: VideoLoopController? = nil
     var playbackModel: VideoWindowModel? = nil
@@ -120,7 +125,7 @@ struct Pseudo3DVideoPlayerView: View {
                 engine.startMuted = startMuted
                 content.add(engine.makeVideoEntity())
                 engine.observeVideoSize(content: content)
-                engine.load(url: videoURL, roomActive: isRoomActive, depthMode: depthMode, startAt: startAtSeconds)
+                engine.load(url: videoURL, roomActive: isRoomActive, depthMode: depthMode, startAt: startAtSeconds, startPaused: startPaused)
             } update: { content in
                 // Fit the video plane to the window (VideoPlayerComponent's screen
                 // defaults to ~2× the window otherwise).
@@ -501,7 +506,7 @@ final class Pseudo3DStereoEngine {
         setMuted(wasMuted)
     }
 
-    func load(url: URL, roomActive: Bool, depthMode requestedMode: Pseudo3DDepthMode? = nil, startAt: Double? = nil) {
+    func load(url: URL, roomActive: Bool, depthMode requestedMode: Pseudo3DDepthMode? = nil, startAt: Double? = nil, startPaused: Bool = false) {
         if let requestedMode { depthMode = requestedMode }
         guard loadedURL != url else { return }
 
@@ -644,7 +649,17 @@ final class Pseudo3DStereoEngine {
         // Resume where the previous (2D) player left off when the caller says
         // so — engaging fake-3D mid-watch shouldn't restart the video.
         if let startAt, startAt > 1 { seek(to: startAt) }
-        if isRoomActive { play() }
+        // startPaused: seek alone (paused player) still delivers the target
+        // frame to the video output, so the pump warps and enqueues that one
+        // frame — the video shows as a 3D still without a sustained decode
+        // session. Also clear the room-resume intent (defaults true) so a room
+        // activation doesn't auto-play the still we deliberately left paused;
+        // a manual play() still works normally.
+        if startPaused {
+            wasPlayingBeforeRoomExit = false
+        } else if isRoomActive {
+            play()
+        }
     }
 
     func play() { isRoomActive = true; player?.play() }
