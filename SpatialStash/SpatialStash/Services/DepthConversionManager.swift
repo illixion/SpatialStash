@@ -80,6 +80,10 @@ final class DepthConversionManager {
         let date: Date
     }
 
+    /// Automatic retries for a transient converter failure before surfacing an
+    /// error (see the retry loop in `run`).
+    private static let maxConverterRetries = 2
+
     private(set) var activeJob: ActiveJob?
     private(set) var pending: [Request] = []
     /// Most recent successful conversion — video windows observe this to show
@@ -238,18 +242,49 @@ final class DepthConversionManager {
             }
 
             activeJob?.phase = .converting(0)
-            let converter = DepthConverter()
-            currentConverter = converter
             let converterRequest = DepthConverter.Request(
                 videoIdentity: request.videoIdentity,
                 title: request.title,
                 localFileURL: localURL
             )
-            _ = try await converter.convert(request: converterRequest) { progress, frontier, refining in
-                Task { @MainActor in
-                    self.updateConversionProgress(
-                        identity: request.videoIdentity, fraction: progress, frontier: frontier, refining: refining
-                    )
+            // Transient VideoToolbox decode flakes (e.g. "Invalid sample
+            // cursor") occasionally kill the reader mid-stream — most often
+            // when a progressive-engage AVPlayer decode session contends with
+            // the converter's AVAssetReader on the same source under memory
+            // pressure. It's non-deterministic and clears on a fresh run; the
+            // partial entry is deleted on every failure, so restarting is
+            // clean and idempotent. Retry a couple of times before surfacing
+            // an error (this mirrors the manual retry that has always
+            // recovered). Cancellation and backgrounding are never retried —
+            // they rethrow to the outer catch, which handles them as before.
+            var attempt = 0
+            while true {
+                do {
+                    let converter = DepthConverter()
+                    currentConverter = converter
+                    _ = try await converter.convert(request: converterRequest) { progress, frontier, refining in
+                        Task { @MainActor in
+                            self.updateConversionProgress(
+                                identity: request.videoIdentity, fraction: progress, frontier: frontier, refining: refining
+                            )
+                        }
+                    }
+                    break
+                } catch {
+                    attempt += 1
+                    guard attempt <= Self.maxConverterRetries,
+                          isRetriableConversionFailure(error),
+                          interruptedRequest?.videoIdentity != request.videoIdentity,
+                          UIApplication.shared.applicationState == .active else {
+                        throw error
+                    }
+                    AppLogger.videoCache.notice("Depth conversion transient failure for \(request.videoIdentity, privacy: .private) (attempt \(attempt, privacy: .public)/\(Self.maxConverterRetries, privacy: .public)), retrying: \(error.localizedDescription, privacy: .public)")
+                    // Fresh attempt: reset the progress/rate state so the
+                    // engage math doesn't see a frontier jump backwards.
+                    activeJob?.phase = .converting(0)
+                    activeJob?.frontierSeconds = 0
+                    conversionRate = 0
+                    lastFrontierSample = nil
                 }
             }
             lastCompleted = CompletionEvent(videoIdentity: request.videoIdentity, date: Date())
@@ -300,6 +335,20 @@ final class DepthConversionManager {
             }
         } else {
             lastFrontierSample = (now, frontier)
+        }
+    }
+
+    /// Whether a converter failure is worth an automatic retry. Structural
+    /// problems (no video track, no depth model) are permanent; everything
+    /// else — reader/writer/inference/encode/GPU — is treated as a transient
+    /// VideoToolbox/decode flake that a fresh run usually clears.
+    private func isRetriableConversionFailure(_ error: Error) -> Bool {
+        guard let convError = error as? DepthConversionError else { return false }
+        switch convError {
+        case .noVideoTrack, .noDepthModel, .cancelled:
+            return false
+        case .readerInitFailed, .writerInitFailed, .inferenceFailed, .encodingFailed, .gpuSetupFailed:
+            return true
         }
     }
 
