@@ -51,10 +51,24 @@ actor RemoteAPIClient {
     /// deliver animated posts and videos as source-resolution H.264 mp4
     /// (`vcodec=h264&vmaxh=0&vmaxfps=0`) so they can be rendered via an `<img>`
     /// (WebKit plays H.264 in an image element). Static images ignore it.
-    nonisolated func getImageURL(baseURL: String, postId: Int, accessToken: String, record: Bool = true, h264: Bool = false) -> URL? {
+    nonisolated func getImageURL(baseURL: String, postId: Int, accessToken: String, record: Bool = true, h264: Bool = false, rawAnimated: Bool = false) -> URL? {
         var url = "\(normalize(baseURL))/get?id=\(postId)"
         if h264 { url += "&vcodec=h264&vmaxh=0&vmaxfps=0" }
+        // Deliver animated posts as their untouched source: animated JXL is
+        // decoded on-device (WASM), GIF/WebP animate directly in `<img>`. Skips
+        // the server's WebP/mp4 conversion. Stills are unaffected.
+        if rawAnimated { url += "&rawanimated=1" }
         if !record { url += "&record=0" }
+        return URL(string: withToken(url, token: accessToken))
+    }
+
+    /// HLS (fMP4) URL for a video post — the streaming fallback the slideshow
+    /// uses after native `<img>`/`<video>` playback of the raw source fails
+    /// (e.g. a codec Safari can't decode). The server transcodes to H.264 HLS
+    /// and streams it. `record=0`: the raw-source attempt already recorded the
+    /// view via `/addtohistory`.
+    nonisolated func getHLSURL(baseURL: String, postId: Int, accessToken: String) -> URL? {
+        let url = "\(normalize(baseURL))/get?id=\(postId)&vcodec=hls&vmaxh=0&vmaxfps=0&record=0"
         return URL(string: withToken(url, token: accessToken))
     }
 

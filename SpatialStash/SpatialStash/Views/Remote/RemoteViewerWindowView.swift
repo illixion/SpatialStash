@@ -488,14 +488,21 @@ struct RemoteViewerWindowView: View {
                 let isOutgoing = model.isTransitioning && model.nextVideoURL == nil
                 Group {
                     if model.activeVideoIsAnimatedImage {
-                        // RoboFrame content: WebKit plays the H.264 in an
-                        // <img>, managing playback lifecycle itself (pause /
-                        // resume on room transitions) — no AVPlayer, no
-                        // isRoomActive/duration wiring.
-                        AnimatedImageWebView(imageURL: videoURL)
+                        // Native tier: WebKit plays H.264 in an <img>, managing
+                        // playback lifecycle itself (pause / resume on room
+                        // transitions) — no AVPlayer, no isRoomActive/duration
+                        // wiring. If the source isn't a codec <img> can decode,
+                        // onError escalates to the <video> tiers (raw → HLS).
+                        AnimatedImageWebView(imageURL: videoURL, onError: { [weak model] in
+                            model?.videoNativeImgFailed = true
+                        })
                     } else {
+                        // Fallback tiers: <video> plays the raw source natively
+                        // (WebM/AV1 the device supports); on decode error it
+                        // switches to the HLS stream (server-transcoded H.264).
                         WebVideoPlayerView(
                             videoURL: videoURL,
+                            fallbackVideoURL: model.currentVideoHLSURL,
                             apiKey: nil,
                             showControls: false,
                             isRoomActive: model.isRoomActive,

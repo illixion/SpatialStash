@@ -45,6 +45,11 @@ protocol SlideshowContentProvider: AnyObject {
     /// Resolve the display URL for a post.
     func resolveImageURL(for post: RemotePost) -> URL?
 
+    /// Streaming (HLS) URL for a video post — the fallback used after native
+    /// playback of the raw source fails. `nil` (default) means no streaming
+    /// fallback is available (e.g. local files).
+    func hlsURL(for post: RemotePost) -> URL?
+
     /// Called when a post is displayed. Use for server-side history tracking, etc.
     func onPostDisplayed(_ post: RemotePost) async
 
@@ -62,4 +67,5 @@ protocol SlideshowContentProvider: AnyObject {
 
 extension SlideshowContentProvider {
     var rendersVideoAsAnimatedImage: Bool { false }
+    func hlsURL(for post: RemotePost) -> URL? { nil }
 }

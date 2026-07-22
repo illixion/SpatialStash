@@ -94,6 +94,14 @@ class SlideshowEngine {
     /// URL — startup time for an animated WebP drops from several
     /// seconds to near-instant. Cleared on every non-animated commit.
     var currentAnimatedData: Data?
+    /// HLS streaming URL for the current video post — the fallback the
+    /// `<video>` player switches to when native playback of the raw source
+    /// fails. nil for non-video posts or providers without a streaming
+    /// fallback (e.g. local files).
+    var currentVideoHLSURL: URL?
+    /// Set when the native video-in-`<img>` tier reports an error for the
+    /// current video post; flips rendering to the `<video>` tiers (raw → HLS).
+    var videoNativeImgFailed: Bool = false
     var currentPost: RemotePost?
     var nextPost: RemotePost?
     var currentMediaType: SlideshowMediaType = .image
@@ -127,6 +135,8 @@ class SlideshowEngine {
     /// path (RoboFrame content) rather than an AVPlayer. Mirrors `activeVideoURL`
     /// precedence: the incoming crossfade slot first, then the committed slot.
     var activeVideoIsAnimatedImage: Bool {
+        // Native <img> playback failed for this post → use the <video> tiers.
+        if videoNativeImgFailed { return false }
         if nextVideoURL != nil {
             if case .videoAsImage = nextMediaType { return true }
             return false
@@ -1080,7 +1090,8 @@ class SlideshowEngine {
 
         if Self.videoExtensions.contains(ext) {
             guard state == .loading else { return true }
-            await displayVideo(url: imageURL, post: post, asImage: asImage)
+            await displayVideo(url: imageURL, post: post, asImage: asImage,
+                               hlsURL: contentProvider?.hlsURL(for: post))
             return true
         }
 
@@ -1107,9 +1118,10 @@ class SlideshowEngine {
         case .still(let image, let data):
             await displayDownloadedPost(post: post, image: image, data: data, url: imageURL, ext: ext)
         case .video(let videoURL):
-            // An animated post the server delivered as H.264 — render it via
-            // the same video-in-<img> path as a video post.
-            await displayVideo(url: videoURL, post: post, asImage: true)
+            // A post the server delivered as video (e.g. legacy H.264) — render
+            // it via the same tiered path as a video post.
+            await displayVideo(url: videoURL, post: post, asImage: true,
+                               hlsURL: contentProvider?.hlsURL(for: post))
         }
         return true
     }
@@ -1223,7 +1235,7 @@ class SlideshowEngine {
 
     // MARK: - Display
 
-    func displayVideo(url: URL, post: RemotePost, asImage: Bool = false) async {
+    func displayVideo(url: URL, post: RemotePost, asImage: Bool = false, hlsURL: URL? = nil) async {
         trackPreviousPost()
         trackHistory(post: post, url: url)
         Task { await contentProvider?.onPostDisplayed(post) }
@@ -1236,6 +1248,10 @@ class SlideshowEngine {
 
         isCurrentPostAnimatedGIF = false
         hasDisplayedFirstMedia = true
+        // Reset the native→streaming escalation for this post: start on the
+        // <img>/<video> raw tier, keep the HLS URL for the fallback.
+        currentVideoHLSURL = hlsURL
+        videoNativeImgFailed = false
 
         // The RoboFrame slideshow renders video (and animated posts) through
         // the video-in-<img> path; other modes keep the AVPlayer. Same

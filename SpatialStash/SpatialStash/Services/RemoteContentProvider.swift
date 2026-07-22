@@ -105,14 +105,24 @@ class RemoteContentProvider: SlideshowContentProvider {
     }
 
     func resolveImageURL(for post: RemotePost) -> URL? {
-        // Don't record on fetch — onPostDisplayed records authoritatively with
-        // our deviceId once the post is actually shown. `h264: true` so animated
-        // posts and videos arrive as source-res H.264 for the <img> renderer.
-        apiClient.getImageURL(baseURL: baseURL, postId: post._id, accessToken: accessToken, record: false, h264: true)
+        // Fetch the raw source (no transcode). Don't record on fetch —
+        // onPostDisplayed records authoritatively with our deviceId once shown.
+        // Serving raw means: still/animated images arrive as their real bytes
+        // (animated JXL is decoded on-device, not converted to mp4), and video
+        // posts get their source file — played natively via <img> (H.264) or
+        // <video>, falling back to HLS (hlsURL) only when the device can't
+        // decode the source.
+        apiClient.getImageURL(baseURL: baseURL, postId: post._id, accessToken: accessToken, record: false, rawAnimated: true)
     }
 
-    // RoboFrame content renders video (and animated) via the video-in-<img>
-    // path so the web view manages playback lifecycle across room transitions.
+    func hlsURL(for post: RemotePost) -> URL? {
+        apiClient.getHLSURL(baseURL: baseURL, postId: post._id, accessToken: accessToken)
+    }
+
+    // Video posts start on the video-in-<img> path (native H.264 in an image
+    // element) so the web view manages playback lifecycle across room
+    // transitions; on error the slideshow falls through to <video> raw, then
+    // <video> + HLS.
     var rendersVideoAsAnimatedImage: Bool { true }
 
     func onPostDisplayed(_ post: RemotePost) async {

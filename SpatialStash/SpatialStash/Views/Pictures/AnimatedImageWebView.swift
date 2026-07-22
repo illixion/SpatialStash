@@ -26,13 +26,18 @@ struct AnimatedImageWebView: UIViewRepresentable {
     /// MIME type for `imageData`. Defaults to `image/webp` (the only
     /// caller today); video elements should pass an appropriate type.
     var imageDataMimeType: String = "image/webp"
+    /// Called when the media element fails to load/decode (e.g. a video-in-
+    /// `<img>` source Safari can't decode). Drives the slideshow's fall-through
+    /// from the native `<img>` tier to the `<video>`/HLS tiers.
+    var onError: (() -> Void)?
 
     func makeCoordinator() -> Coordinator {
-        Coordinator()
+        Coordinator(onError: onError)
     }
 
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
+        configuration.userContentController.add(context.coordinator, name: "mediaError")
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.isOpaque = false
         webView.backgroundColor = .clear
@@ -42,6 +47,7 @@ struct AnimatedImageWebView: UIViewRepresentable {
     }
 
     func updateUIView(_ webView: WKWebView, context: Context) {
+        context.coordinator.onError = onError
         let digest = imageURL.absoluteString.hashValue
             ^ elementType.rawValue.hashValue
             ^ (apiKey ?? "").hashValue
@@ -79,8 +85,22 @@ struct AnimatedImageWebView: UIViewRepresentable {
         webView.loadHTMLString(html, baseURL: nil)
     }
 
-    class Coordinator {
+    static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: "mediaError")
+    }
+
+    class Coordinator: NSObject, WKScriptMessageHandler {
         var loadedDigest: Int?
+        var onError: (() -> Void)?
+
+        init(onError: (() -> Void)?) {
+            self.onError = onError
+        }
+
+        func userContentController(_ userContentController: WKUserContentController,
+                                   didReceive message: WKScriptMessage) {
+            if message.name == "mediaError" { onError?() }
+        }
     }
 
     private func resolvedRemoteURL() -> URL? {
@@ -145,6 +165,12 @@ struct AnimatedImageWebView: UIViewRepresentable {
                 \(body)
             </div>
             <script>
+                (function () {
+                    var m = document.getElementById('media');
+                    if (m) m.addEventListener('error', function () {
+                        try { window.webkit.messageHandlers.mediaError.postMessage('error'); } catch (e) {}
+                    });
+                })();
                 \(script)
             </script>
         </body>
