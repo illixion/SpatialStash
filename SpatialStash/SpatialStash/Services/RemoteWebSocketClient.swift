@@ -297,18 +297,16 @@ class RemoteWebSocketClient {
     /// same image. Mod tags ride along so the orchestrator's first refill
     /// query already includes them — without that the initial query is
     /// discarded when a separate setModTags arrives a few ms later.
-    func sendSlideshowConfig(sessionId: String, deviceId: String, interval: Int, width: Int, height: Int, bright: Bool, convert: Bool, ratio: Double? = nil, modTags: [String] = []) {
+    func sendSlideshowConfig(sessionId: String, deviceId: String, interval: Int, bright: Bool, ratio: Double? = nil, modTags: [String] = []) {
+        // No width/height: Spatialstash fetches at the source resolution
+        // (server treats absent dimensions as "no downscale"), so advertising a
+        // size would only mis-key the server's prefetch. No convert either — we
+        // never ask the server to transcode stills, and under convert it would
+        // return animated posts as mp4 sized to those dimensions.
         var payload: [String: Any] = [
             "deviceId": deviceId,
             "interval": interval,
-            "width": width,
-            "height": height,
             "bright": bright,
-            "convert": convert,
-            // Spatialstash never uses lowmem (visionOS doesn't have a JPEG
-            // hardware-decode constraint), but the field is sent so the
-            // server's variant fingerprint matches what we'll request.
-            "lowmem": false,
             "modTags": modTags,
         ]
         if let ratio { payload["ratio"] = ratio }

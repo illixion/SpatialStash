@@ -57,6 +57,11 @@ class SlideshowEngine {
     enum SlideshowMediaType: Equatable {
         case image
         case video(URL)
+        /// H.264 rendered via WKWebView `<img src=mp4>` — WebKit plays it as a
+        /// muted looping animated image and manages playback lifecycle (pause /
+        /// resume on room transitions) itself. Used by the RoboFrame slideshow
+        /// for both animated posts and videos, in place of an AVPlayer.
+        case videoAsImage(URL)
         case animatedGIF(URL)
         /// Animated WebP rendered via WKWebView (browser-native animation).
         /// The URL is the original image URL — WebKit decodes/animates the
@@ -109,7 +114,20 @@ class SlideshowEngine {
         // committed slot (steady-state video, or after the crossfade commits).
         if let url = nextVideoURL { return url }
         if case .video(let url) = currentMediaType { return url }
+        if case .videoAsImage(let url) = currentMediaType { return url }
         return nil
+    }
+
+    /// Whether the active video layer should render via the video-in-`<img>`
+    /// path (RoboFrame content) rather than an AVPlayer. Mirrors `activeVideoURL`
+    /// precedence: the incoming crossfade slot first, then the committed slot.
+    var activeVideoIsAnimatedImage: Bool {
+        if nextVideoURL != nil {
+            if case .videoAsImage = nextMediaType { return true }
+            return false
+        }
+        if case .videoAsImage = currentMediaType { return true }
+        return false
     }
 
     /// True when the current media is animated (WebP or HEVC-GIF) and its
@@ -120,7 +138,7 @@ class SlideshowEngine {
     var isAnimatedMediaWithStaticFallback: Bool {
         switch currentMediaType {
         case .animatedWebP, .animatedGIF: return true
-        case .image, .video: return false
+        case .image, .video, .videoAsImage: return false
         }
     }
 
@@ -1053,10 +1071,11 @@ class SlideshowEngine {
         guard let imageURL = contentProvider?.resolveImageURL(for: post) else { return false }
 
         let ext = post.file_ext.lowercased()
+        let asImage = contentProvider?.rendersVideoAsAnimatedImage == true
 
         if Self.videoExtensions.contains(ext) {
             guard state == .loading else { return true }
-            await displayVideo(url: imageURL, post: post)
+            await displayVideo(url: imageURL, post: post, asImage: asImage)
             return true
         }
 
@@ -1076,10 +1095,17 @@ class SlideshowEngine {
             return true
         }
 
-        guard let result = await contentProvider?.downloadImage(for: post, maxResolution: effectiveDownloadResolution) else { return false }
+        guard let media = await contentProvider?.downloadImage(for: post, maxResolution: effectiveDownloadResolution) else { return false }
         guard state == .loading else { return true }
 
-        await displayDownloadedPost(post: post, image: result.image, data: result.data, url: imageURL, ext: ext)
+        switch media {
+        case .still(let image, let data):
+            await displayDownloadedPost(post: post, image: image, data: data, url: imageURL, ext: ext)
+        case .video(let videoURL):
+            // An animated post the server delivered as H.264 — render it via
+            // the same video-in-<img> path as a video post.
+            await displayVideo(url: videoURL, post: post, asImage: true)
+        }
         return true
     }
 
@@ -1180,7 +1206,7 @@ class SlideshowEngine {
 
     // MARK: - Display
 
-    func displayVideo(url: URL, post: RemotePost) async {
+    func displayVideo(url: URL, post: RemotePost, asImage: Bool = false) async {
         trackPreviousPost()
         trackHistory(post: post, url: url)
         Task { await contentProvider?.onPostDisplayed(post) }
@@ -1194,8 +1220,17 @@ class SlideshowEngine {
         isCurrentPostAnimatedGIF = false
         hasDisplayedFirstMedia = true
 
+        // The RoboFrame slideshow renders video (and animated posts) through
+        // the video-in-<img> path; other modes keep the AVPlayer. Same
+        // crossfade slots either way — only the media type (and thus the
+        // renderer the window view picks) differs.
+        let target: SlideshowMediaType = asImage ? .videoAsImage(url) : .video(url)
+
         let outgoingWasVideo: Bool
-        if case .video = currentMediaType { outgoingWasVideo = true } else { outgoingWasVideo = false }
+        switch currentMediaType {
+        case .video, .videoAsImage: outgoingWasVideo = true
+        default: outgoingWasVideo = false
+        }
         let hadCurrentMedia = currentPost != nil
 
         if reduceMotion || !hadCurrentMedia {
@@ -1204,12 +1239,12 @@ class SlideshowEngine {
             clearImageDisplayState()
             isTransitioning = false
             currentPost = post
-            currentMediaType = .video(url)
+            currentMediaType = target
         } else if outgoingWasVideo {
-            // video → video: fade through black so only one
-            // WebVideoPlayerView is ever alive. Phase 1 fades the current
-            // video out (the black background shows through); phase 2 swaps
-            // in the new video URL while hidden, then fades it back in.
+            // video → video: fade through black so only one video layer is
+            // ever alive. Phase 1 fades the current video out (the black
+            // background shows through); phase 2 swaps in the new video URL
+            // while hidden, then fades it back in.
             transition(to: .transitioning)
             withAnimation(.easeInOut(duration: 0.5)) {
                 isTransitioning = true
@@ -1218,7 +1253,7 @@ class SlideshowEngine {
             guard state == .transitioning else { return }
             clearImageDisplayState()
             currentPost = post
-            currentMediaType = .video(url)
+            currentMediaType = target
             withAnimation(.easeInOut(duration: 0.5)) {
                 isTransitioning = false
             }
@@ -1228,7 +1263,7 @@ class SlideshowEngine {
             // out via its `isTransitioning` opacity binding.
             transition(to: .transitioning)
             withAnimation(.easeInOut(duration: 1.0)) {
-                nextMediaType = .video(url)
+                nextMediaType = target
                 nextVideoURL = url
                 nextPost = post
                 isTransitioning = true
@@ -1237,7 +1272,7 @@ class SlideshowEngine {
             guard state == .transitioning else { return }
             clearImageDisplayState()
             currentPost = post
-            currentMediaType = .video(url)
+            currentMediaType = target
             nextMediaType = .image
             nextVideoURL = nil
             nextPost = nil
@@ -1468,11 +1503,11 @@ class SlideshowEngine {
             // Retry transient download failures a couple of times before
             // dropping the post — a single network hiccup shouldn't cost
             // us a slot in the prefetch buffer.
-            var result: (image: UIImage, data: Data)?
+            var media: DownloadedMedia?
             for attempt in 0..<3 {
                 if Task.isCancelled { break }
                 if let r = await contentProvider?.downloadImage(for: post, maxResolution: effectiveDownloadResolution) {
-                    result = r
+                    media = r
                     break
                 }
                 if attempt < 2 {
@@ -1480,14 +1515,18 @@ class SlideshowEngine {
                     try? await Task.sleep(for: .seconds(delay))
                 }
             }
-            guard let result, !Task.isCancelled else { continue }
-            prefetchedImages.append((post: post, image: result.image, url: imageURL, data: result.data))
+            guard let media, !Task.isCancelled else { continue }
+            // Animated posts arrive as H.264 (`.video`); they're not decoded
+            // into the still buffer — the display path streams them via the
+            // <img> renderer, like a video post (which never reaches here).
+            guard case .still(let image, let data) = media else { continue }
+            prefetchedImages.append((post: post, image: image, url: imageURL, data: data))
             AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "Prefetched post \(post._id, privacy: .public) (\(self.prefetchedImages.count, privacy: .public)/\(Self.prefetchTarget, privacy: .public))")
 
             // Pre-process diorama foreground for the upcoming post so the
             // overlay is ready the moment it transitions in.
             if enableDiorama {
-                generateDioramaForeground(post: post, image: result.image, isCurrent: false)
+                generateDioramaForeground(post: post, image: image, isCurrent: false)
             }
         }
 

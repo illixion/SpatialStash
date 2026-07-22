@@ -65,7 +65,7 @@ class VideoSlideshowContentProvider: SlideshowContentProvider {
         }
     }
 
-    func downloadImage(for post: RemotePost, maxResolution: Int) async -> (image: UIImage, data: Data)? {
+    func downloadImage(for post: RemotePost, maxResolution: Int) async -> DownloadedMedia? {
         // Never reached for video posts — the engine routes by extension to
         // displayVideo before calling this.
         nil

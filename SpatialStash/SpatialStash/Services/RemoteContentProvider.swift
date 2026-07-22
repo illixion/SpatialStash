@@ -73,13 +73,19 @@ class RemoteContentProvider: SlideshowContentProvider {
         return []
     }
 
-    func downloadImage(for post: RemotePost, maxResolution: Int) async -> (image: UIImage, data: Data)? {
+    func downloadImage(for post: RemotePost, maxResolution: Int) async -> DownloadedMedia? {
         guard let imageURL = resolveImageURL(for: post) else { return nil }
 
         let maxDim = CGFloat(maxResolution)
         return await Task.detached {
             do {
-                let (data, _) = try await URLSession.shared.data(from: imageURL)
+                let (data, response) = try await URLSession.shared.data(from: imageURL)
+                // An animated post comes back as H.264 mp4 (we request
+                // vcodec=h264): it can't be decoded as a still, so hand it to
+                // the video-in-<img> path instead of the texture pipeline.
+                if (response.mimeType ?? "").hasPrefix("video/") {
+                    return .video(url: imageURL)
+                }
                 // Skip downsampling for animated formats — the thumbnail API
                 // returns only the first frame, which kills animation in
                 // both the HEVC converter (needs original GIF bytes) and
@@ -90,7 +96,7 @@ class RemoteContentProvider: SlideshowContentProvider {
                 guard let image = MetalImageRenderer.downsampledImage(from: data, maxDimension: effectiveMax) else {
                     return nil
                 }
-                return (image, data)
+                return .still(image: image, data: data)
             } catch {
                 AppLogger.remoteViewer.error("Failed to load post \(post._id, privacy: .public): \(error.localizedDescription, privacy: .public)")
                 return nil
@@ -100,9 +106,14 @@ class RemoteContentProvider: SlideshowContentProvider {
 
     func resolveImageURL(for post: RemotePost) -> URL? {
         // Don't record on fetch — onPostDisplayed records authoritatively with
-        // our deviceId once the post is actually shown.
-        apiClient.getImageURL(baseURL: baseURL, postId: post._id, accessToken: accessToken, record: false)
+        // our deviceId once the post is actually shown. `h264: true` so animated
+        // posts and videos arrive as source-res H.264 for the <img> renderer.
+        apiClient.getImageURL(baseURL: baseURL, postId: post._id, accessToken: accessToken, record: false, h264: true)
     }
+
+    // RoboFrame content renders video (and animated) via the video-in-<img>
+    // path so the web view manages playback lifecycle across room transitions.
+    var rendersVideoAsAnimatedImage: Bool { true }
 
     func onPostDisplayed(_ post: RemotePost) async {
         try? await apiClient.addToHistory(baseURL: baseURL, postId: post._id, accessToken: accessToken, deviceId: deviceId)

@@ -47,8 +47,13 @@ actor RemoteAPIClient {
     /// entry for this fetch — we record authoritatively via `/addtohistory`
     /// on display, so letting the image fetch record too would double-count
     /// (playback) or pollute the `others` bucket (history-grid thumbnails).
-    nonisolated func getImageURL(baseURL: String, postId: Int, accessToken: String, record: Bool = true) -> URL? {
+    /// Build the direct media URL for a post. `h264: true` asks the server to
+    /// deliver animated posts and videos as source-resolution H.264 mp4
+    /// (`vcodec=h264&vmaxh=0&vmaxfps=0`) so they can be rendered via an `<img>`
+    /// (WebKit plays H.264 in an image element). Static images ignore it.
+    nonisolated func getImageURL(baseURL: String, postId: Int, accessToken: String, record: Bool = true, h264: Bool = false) -> URL? {
         var url = "\(normalize(baseURL))/get?id=\(postId)"
+        if h264 { url += "&vcodec=h264&vmaxh=0&vmaxfps=0" }
         if !record { url += "&record=0" }
         return URL(string: withToken(url, token: accessToken))
     }

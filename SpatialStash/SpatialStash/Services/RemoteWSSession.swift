@@ -38,8 +38,8 @@ final class RemoteWSSession {
     var sensorData: [String: HASensorReading] { client?.sensorData ?? [:] }
     var isConnected: Bool { client?.isConnected ?? false }
 
-    func sendSlideshowConfig(deviceId: String, interval: Int, width: Int, height: Int, bright: Bool, convert: Bool, ratio: Double? = nil, modTags: [String] = []) {
-        client?.sendSlideshowConfig(sessionId: sessionId, deviceId: deviceId, interval: interval, width: width, height: height, bright: bright, convert: convert, ratio: ratio, modTags: modTags)
+    func sendSlideshowConfig(deviceId: String, interval: Int, bright: Bool, ratio: Double? = nil, modTags: [String] = []) {
+        client?.sendSlideshowConfig(sessionId: sessionId, deviceId: deviceId, interval: interval, bright: bright, ratio: ratio, modTags: modTags)
     }
 
     func sendVisibilityChange(deviceId: String, visible: Bool) {

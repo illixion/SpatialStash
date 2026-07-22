@@ -8,6 +8,15 @@
 
 import UIKit
 
+/// Result of a slideshow download. A still is decoded to a `UIImage` for the
+/// texture/crossfade/3D pipeline; a `.video` is a post the server handed back
+/// as H.264 (an animated post, or a video) to be rendered via the
+/// video-in-`<img>` path instead of decoded as a still.
+enum DownloadedMedia {
+    case still(image: UIImage, data: Data)
+    case video(url: URL)
+}
+
 @MainActor
 protocol SlideshowContentProvider: AnyObject {
     /// Fetch a batch of posts for the slideshow queue.
@@ -25,12 +34,13 @@ protocol SlideshowContentProvider: AnyObject {
         blockedTags: Set<String>
     ) async -> [RemotePost]
 
-    /// Download and optionally downsample an image for display.
+    /// Download an image for display, or detect that the server returned a
+    /// video (H.264) to be rendered via the video-in-`<img>` path.
     /// - Parameters:
     ///   - post: The post to download the image for
     ///   - maxResolution: Maximum dimension for downsampling (0 = no limit)
-    /// - Returns: Tuple of image and raw data, or nil on failure
-    func downloadImage(for post: RemotePost, maxResolution: Int) async -> (image: UIImage, data: Data)?
+    /// - Returns: `.still`/`.video`, or nil on failure
+    func downloadImage(for post: RemotePost, maxResolution: Int) async -> DownloadedMedia?
 
     /// Resolve the display URL for a post.
     func resolveImageURL(for post: RemotePost) -> URL?
@@ -40,4 +50,16 @@ protocol SlideshowContentProvider: AnyObject {
 
     /// Reset pagination state. Called when tag list changes or a fresh start is needed.
     func resetPagination()
+
+    /// When true, video posts (and animated posts the server delivers as H.264)
+    /// are rendered through the video-in-`<img>` path — a muted, looping
+    /// animated image whose playback the web view manages automatically (pause
+    /// / resume on room transitions) — instead of an AVPlayer. Only the
+    /// RoboFrame remote slideshow opts in; dedicated video playback keeps the
+    /// real player.
+    var rendersVideoAsAnimatedImage: Bool { get }
+}
+
+extension SlideshowContentProvider {
+    var rendersVideoAsAnimatedImage: Bool { false }
 }

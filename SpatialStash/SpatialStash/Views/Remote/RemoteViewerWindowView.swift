@@ -284,7 +284,7 @@ struct RemoteViewerWindowView: View {
 
             // Video / animated GIF layer (WebVideoPlayerView)
             switch model.currentMediaType {
-            case .video:
+            case .video, .videoAsImage:
                 // Rendered by the unified video layer below (see activeVideoURL)
                 // so the player survives the image→video crossfade commit.
                 EmptyView()
@@ -476,22 +476,32 @@ struct RemoteViewerWindowView: View {
             // forced a reload and a brief blank flash right after the crossfade.
             if let videoURL = model.activeVideoURL {
                 let isOutgoing = model.isTransitioning && model.nextVideoURL == nil
-                WebVideoPlayerView(
-                    videoURL: videoURL,
-                    apiKey: nil,
-                    showControls: false,
-                    isRoomActive: model.isRoomActive,
-                    onDurationKnown: { [weak model] seconds in
-                        // During the image→video crossfade the incoming clip is
-                        // `nextPost` — loadedmetadata usually fires before the
-                        // engine commits it to `currentPost`. Attribute the
-                        // duration to the post that owns the video, not whatever
-                        // is still fading out.
-                        guard let model, let post = model.nextPost ?? model.currentPost else { return }
-                        model.onVideoDurationKnown(seconds, for: post)
-                    },
-                    loop: model.currentVideoLoops
-                )
+                Group {
+                    if model.activeVideoIsAnimatedImage {
+                        // RoboFrame content: WebKit plays the H.264 in an
+                        // <img>, managing playback lifecycle itself (pause /
+                        // resume on room transitions) — no AVPlayer, no
+                        // isRoomActive/duration wiring.
+                        AnimatedImageWebView(imageURL: videoURL)
+                    } else {
+                        WebVideoPlayerView(
+                            videoURL: videoURL,
+                            apiKey: nil,
+                            showControls: false,
+                            isRoomActive: model.isRoomActive,
+                            onDurationKnown: { [weak model] seconds in
+                                // During the image→video crossfade the incoming clip is
+                                // `nextPost` — loadedmetadata usually fires before the
+                                // engine commits it to `currentPost`. Attribute the
+                                // duration to the post that owns the video, not whatever
+                                // is still fading out.
+                                guard let model, let post = model.nextPost ?? model.currentPost else { return }
+                                model.onVideoDurationKnown(seconds, for: post)
+                            },
+                            loop: model.currentVideoLoops
+                        )
+                    }
+                }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 // Fade out only when this is the *outgoing* video (video→video
                 // through black, or video→image). When a video is crossfading

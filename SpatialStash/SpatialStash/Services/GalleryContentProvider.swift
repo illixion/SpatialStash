@@ -62,7 +62,7 @@ class GalleryContentProvider: SlideshowContentProvider {
         }
     }
 
-    func downloadImage(for post: RemotePost, maxResolution: Int) async -> (image: UIImage, data: Data)? {
+    func downloadImage(for post: RemotePost, maxResolution: Int) async -> DownloadedMedia? {
         guard let imageURL = resolveImageURL(for: post) else { return nil }
 
         let maxDim = CGFloat(maxResolution)
@@ -75,7 +75,7 @@ class GalleryContentProvider: SlideshowContentProvider {
                 guard let image = MetalImageRenderer.downsampledImage(from: data, maxDimension: effectiveMax) else {
                     return nil
                 }
-                return (image, data)
+                return .still(image: image, data: data)
             } catch {
                 AppLogger.remoteViewer.error("Gallery image load failed: \(error.localizedDescription, privacy: .public)")
                 return nil
