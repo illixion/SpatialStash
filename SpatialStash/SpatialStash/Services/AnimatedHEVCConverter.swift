@@ -1,10 +1,12 @@
 /*
- Spatial Stash - GIF HEVC Converter
+ Spatial Stash - Animated HEVC Converter
 
- Converts animated GIF data to HEVC .mp4 video for reliable multi-window
- playback on visionOS. Frames are extracted via CGImageSource and encoded
- using AVAssetWriter with the HEVC codec. Variable frame timing from the
- source GIF is preserved.
+ Converts animated still data — animated GIF or the APNG produced by decoding
+ an animated JPEG XL — to HEVC .mp4 video for reliable multi-window playback on
+ visionOS. Both formats are frame sequences that ImageIO reads via
+ CGImageSource, so a single path serves both: frames are extracted and encoded
+ with AVAssetWriter (HEVC codec), preserving each frame's variable timing (read
+ from the GIF or APNG per-frame delay dictionary).
  */
 
 import AVFoundation
@@ -15,8 +17,8 @@ import ImageIO
 import os
 import UIKit
 
-actor GIFHEVCConverter {
-    static let shared = GIFHEVCConverter()
+actor AnimatedHEVCConverter {
+    static let shared = AnimatedHEVCConverter()
 
     enum ConversionError: Error, LocalizedError {
         case invalidGIFData
@@ -28,8 +30,8 @@ actor GIFHEVCConverter {
 
         var errorDescription: String? {
             switch self {
-            case .invalidGIFData: return "Invalid GIF data"
-            case .noFrames: return "GIF contains no frames"
+            case .invalidGIFData: return "Invalid animated image data"
+            case .noFrames: return "Animated image contains no frames"
             case .pixelBufferCreationFailed: return "Failed to create pixel buffer"
             case .writerSetupFailed(let msg): return "Writer setup failed: \(msg)"
             case .encodingFailed(let msg): return "Encoding failed: \(msg)"
@@ -42,19 +44,19 @@ actor GIFHEVCConverter {
 
     // MARK: - Public API
 
-    /// Convert GIF data to HEVC .mp4, returning a cached file URL.
-    /// Returns immediately if the result is already cached.
-    func convert(gifData: Data, sourceURL: URL) async throws -> URL {
+    /// Convert animated still data (GIF or APNG) to HEVC .mp4, returning a
+    /// cached file URL. Returns immediately if the result is already cached.
+    func convert(animatedData: Data, sourceURL: URL) async throws -> URL {
         // Check cache first
-        if let cachedURL = await DiskGIFHEVCCache.shared.cachedFileURL(for: sourceURL) {
-            AppLogger.gifConverter.log(level: AppLogger.effectiveDebugLevel, "Cache hit for GIF HEVC: \(sourceURL.lastPathComponent, privacy: .public)")
+        if let cachedURL = await DiskAnimatedHEVCCache.shared.cachedFileURL(for: sourceURL) {
+            AppLogger.gifConverter.log(level: AppLogger.effectiveDebugLevel, "Cache hit for animated HEVC: \(sourceURL.lastPathComponent, privacy: .public)")
             return cachedURL
         }
 
-        AppLogger.gifConverter.info("Converting GIF to HEVC: \(sourceURL.lastPathComponent, privacy: .public)")
+        AppLogger.gifConverter.info("Converting animated still to HEVC: \(sourceURL.lastPathComponent, privacy: .public)")
 
-        // Extract frames from GIF
-        guard let imageSource = CGImageSourceCreateWithData(gifData as CFData, nil) else {
+        // Extract frames (CGImageSource handles both GIF and APNG)
+        guard let imageSource = CGImageSourceCreateWithData(animatedData as CFData, nil) else {
             throw ConversionError.invalidGIFData
         }
 
@@ -84,13 +86,13 @@ actor GIFHEVCConverter {
             )
 
             // Move to cache
-            await DiskGIFHEVCCache.shared.saveFile(from: tempURL, for: sourceURL)
+            await DiskAnimatedHEVCCache.shared.saveFile(from: tempURL, for: sourceURL)
 
-            guard let cachedURL = await DiskGIFHEVCCache.shared.cachedFileURL(for: sourceURL) else {
+            guard let cachedURL = await DiskAnimatedHEVCCache.shared.cachedFileURL(for: sourceURL) else {
                 throw ConversionError.encodingFailed("File not found in cache after save")
             }
 
-            AppLogger.gifConverter.info("GIF HEVC conversion complete: \(frameCount, privacy: .public) frames, \(width, privacy: .public)x\(height, privacy: .public)")
+            AppLogger.gifConverter.info("Animated HEVC conversion complete: \(frameCount, privacy: .public) frames, \(width, privacy: .public)x\(height, privacy: .public)")
             return cachedURL
         } catch {
             // Clean up temp file on error
@@ -196,17 +198,23 @@ actor GIFHEVCConverter {
     // MARK: - Frame Timing
 
     private func frameDuration(for source: CGImageSource, at index: Int) -> CMTime {
-        guard let properties = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any],
-              let gifDict = properties[kCGImagePropertyGIFDictionary] as? [CFString: Any] else {
-            return CMTime(value: 1, timescale: 10) // Default 0.1s
-        }
+        let properties = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any]
 
-        // Prefer unclamped delay time, fall back to standard delay time
+        // Read the per-frame delay from whichever container dictionary is
+        // present — GIF or APNG (an animated JXL is decoded to APNG upstream).
         var delay: Double = 0.1
-        if let unclamped = gifDict[kCGImagePropertyGIFUnclampedDelayTime] as? Double, unclamped > 0.01 {
-            delay = unclamped
-        } else if let clamped = gifDict[kCGImagePropertyGIFDelayTime] as? Double, clamped > 0.01 {
-            delay = clamped
+        if let gifDict = properties?[kCGImagePropertyGIFDictionary] as? [CFString: Any] {
+            if let unclamped = gifDict[kCGImagePropertyGIFUnclampedDelayTime] as? Double, unclamped > 0.01 {
+                delay = unclamped
+            } else if let clamped = gifDict[kCGImagePropertyGIFDelayTime] as? Double, clamped > 0.01 {
+                delay = clamped
+            }
+        } else if let pngDict = properties?[kCGImagePropertyPNGDictionary] as? [CFString: Any] {
+            if let unclamped = pngDict[kCGImagePropertyAPNGUnclampedDelayTime] as? Double, unclamped > 0.01 {
+                delay = unclamped
+            } else if let clamped = pngDict[kCGImagePropertyAPNGDelayTime] as? Double, clamped > 0.01 {
+                delay = clamped
+            }
         }
 
         // Browser behavior: clamp very short delays to 0.1s

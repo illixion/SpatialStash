@@ -1141,7 +1141,7 @@ class SlideshowEngine {
             gifConversionTask?.cancel()
             gifConversionTask = Task { [weak self] in
                 do {
-                    let hevcURL = try await GIFHEVCConverter.shared.convert(gifData: bytes, sourceURL: url)
+                    let hevcURL = try await AnimatedHEVCConverter.shared.convert(animatedData: bytes, sourceURL: url)
                     guard !Task.isCancelled else { return }
                     if self?.currentPost?._id == post._id {
                         self?.currentMediaType = .animatedGIF(hevcURL)

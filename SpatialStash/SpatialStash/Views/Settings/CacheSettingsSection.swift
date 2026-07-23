@@ -23,7 +23,7 @@ struct CacheSettingsSection: View {
     /// Display order — biggest budget shares first.
     private static let domains: [CacheBudget.Domain] = [
         .videos, .images, .depth, .autoEnhance, .backgroundRemoval,
-        .gifHEVC, .jxlAnimation, .thumbnails, .thumbnailDioramas
+        .gifHEVC, .thumbnails, .thumbnailDioramas
     ]
 
     var body: some View {
@@ -110,10 +110,8 @@ struct CacheSettingsSection: View {
         fresh[.autoEnhance] = DomainStats(fileCount: enhance.fileCount, totalSize: enhance.totalSize)
         let removal = await BackgroundRemovalCache.shared.getCacheStats()
         fresh[.backgroundRemoval] = DomainStats(fileCount: removal.fileCount, totalSize: removal.totalSize)
-        let gif = await DiskGIFHEVCCache.shared.getCacheStats()
-        fresh[.gifHEVC] = DomainStats(fileCount: gif.fileCount, totalSize: gif.totalSize)
-        let jxl = await DiskJXLAnimationCache.shared.getCacheStats()
-        fresh[.jxlAnimation] = DomainStats(fileCount: jxl.fileCount, totalSize: jxl.totalSize)
+        let animated = await DiskAnimatedHEVCCache.shared.getCacheStats()
+        fresh[.gifHEVC] = DomainStats(fileCount: animated.fileCount, totalSize: animated.totalSize)
         let thumbs = await ThumbnailCache.shared.getCacheStats()
         fresh[.thumbnails] = DomainStats(fileCount: thumbs.fileCount, totalSize: thumbs.totalSize)
         let dioramas = ThumbnailDioramaCache.getCacheStats()
@@ -138,9 +136,7 @@ struct CacheSettingsSection: View {
             await BackgroundRemovalCache.shared.clearCache()
             ThumbnailDioramaCache.shared.clearCache()
         case .gifHEVC:
-            await DiskGIFHEVCCache.shared.clearCache()
-        case .jxlAnimation:
-            await DiskJXLAnimationCache.shared.clearCache()
+            await DiskAnimatedHEVCCache.shared.clearCache()
         case .thumbnails:
             await ThumbnailCache.shared.clearCache()
         case .thumbnailDioramas:
@@ -157,8 +153,7 @@ struct CacheSettingsSection: View {
         await DiskVideoCache.shared.enforceBudget()
         await AutoEnhanceCache.shared.enforceBudget()
         await BackgroundRemovalCache.shared.enforceBudget()
-        await DiskGIFHEVCCache.shared.enforceBudget()
-        await DiskJXLAnimationCache.shared.enforceBudget()
+        await DiskAnimatedHEVCCache.shared.enforceBudget()
         await ThumbnailCache.shared.enforceBudget()
         ThumbnailDioramaCache.enforceBudget()
         DepthCacheStore.enforceBudget()

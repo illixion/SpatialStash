@@ -1,11 +1,17 @@
 /*
  Spatial Stash - Animated JXL Web View
 
- Renders an animated JPEG XL by decoding it in WebAssembly (a decode-only
- build of libjxl) and muxing the frames into an APNG that a plain `<img>`
- animates. WebKit then owns the animation loop and pauses it when the window
- is offscreen — the same lifecycle behaviour the video-in-`<img>` path relies
- on, and the reason this goes through an image element rather than a canvas.
+ First-view renderer for an animated JPEG XL, used only until an HEVC
+ conversion exists. It decodes the JXL in WebAssembly (a decode-only build of
+ libjxl) and muxes the frames into an APNG that a plain `<img>` animates.
+ WebKit then owns the animation loop and pauses it when the window is offscreen
+ — the same lifecycle behaviour the video-in-`<img>` path relies on, and the
+ reason this goes through an image element rather than a canvas.
+
+ The decoded APNG is also posted back to Swift and transcoded to HEVC
+ (AnimatedHEVCConverter), cached in the same store as GIF conversions. On the
+ next open PhotoWindowModel finds that HEVC and plays it through the shared
+ native video path, so this WebView (and the WASM decode) is skipped entirely.
 
  ImageIO can't be used: it decodes JPEG XL but exposes only the first frame of
  an animation. The bundled `jxl_decoder.js` (SINGLE_FILE emscripten build) and
@@ -24,14 +30,11 @@ import os
 struct AnimatedJXLWebView: UIViewRepresentable {
     /// Raw JPEG XL bytes to decode and animate.
     let imageData: Data?
-    /// A previously-decoded APNG for this media (from DiskJXLAnimationCache).
-    /// When present the WASM decode is skipped entirely — the image is shown
-    /// straight from the cache.
-    var cachedAPNG: Data? = nil
-    /// Source URL used as the cache key when saving a fresh decode.
+    /// Source URL keying the HEVC conversion built from this decode.
     var sourceURL: URL? = nil
 
-    /// JS→Swift channel the page posts the base64 APNG on after a fresh decode.
+    /// JS→Swift channel the page posts the decoded APNG (base64) on so it can
+    /// be converted to HEVC and cached for the next open.
     private static let cacheMessageName = "jxlCache"
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -50,17 +53,8 @@ struct AnimatedJXLWebView: UIViewRepresentable {
     func updateUIView(_ webView: WKWebView, context: Context) {
         context.coordinator.sourceURL = sourceURL
 
-        // Prefer a cached decode (instant, no WASM). Fall back to raw bytes.
-        if let apng = cachedAPNG {
-            let digest = Self.digest(of: apng, tag: 1)
-            guard context.coordinator.loadedDigest != digest else { return }
-            context.coordinator.loadedDigest = digest
-            webView.loadHTMLString(Self.cachedHTML(for: apng), baseURL: nil)
-            return
-        }
-
         guard let data = imageData else { return }
-        let digest = Self.digest(of: data, tag: 0)
+        let digest = Self.digest(of: data)
         guard context.coordinator.loadedDigest != digest else { return }
         context.coordinator.loadedDigest = digest
         webView.loadHTMLString(Self.decodeHTML(for: data), baseURL: nil)
@@ -70,9 +64,8 @@ struct AnimatedJXLWebView: UIViewRepresentable {
         webView.configuration.userContentController.removeScriptMessageHandler(forName: cacheMessageName)
     }
 
-    private static func digest(of data: Data, tag: Int) -> Int {
+    private static func digest(of data: Data) -> Int {
         var hasher = Hasher()
-        hasher.combine(tag)
         hasher.combine(data.count)
         hasher.combine(data.prefix(64))
         return hasher.finalize()
@@ -81,13 +74,22 @@ struct AnimatedJXLWebView: UIViewRepresentable {
     final class Coordinator: NSObject, WKScriptMessageHandler {
         var loadedDigest: Int?
         var sourceURL: URL?
+        /// Guards against converting the same decode twice (the page posts once,
+        /// but be defensive against re-entrancy across view reuse).
+        private var conversionStarted = false
 
         func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
             guard message.name == AnimatedJXLWebView.cacheMessageName,
                   let base64 = message.body as? String,
-                  let data = Data(base64Encoded: base64),
-                  let url = sourceURL else { return }
-            Task { await DiskJXLAnimationCache.shared.saveData(data, for: url) }
+                  let apng = Data(base64Encoded: base64),
+                  let url = sourceURL,
+                  !conversionStarted else { return }
+            conversionStarted = true
+            // Convert the decoded APNG to HEVC in the background so reopening
+            // this JXL plays through the shared native path — same cache as GIF.
+            Task {
+                _ = try? await AnimatedHEVCConverter.shared.convert(animatedData: apng, sourceURL: url)
+            }
         }
     }
 
@@ -128,8 +130,8 @@ struct AnimatedJXLWebView: UIViewRepresentable {
     """
 
     /// Page for a fresh decode: runs the WASM decoder + APNG muxer, displays the
-    /// result, and posts the encoded bytes back to Swift so the next open is
-    /// served from the cache without decoding.
+    /// result, and posts the encoded APNG back to Swift so it can be transcoded
+    /// to HEVC and cached — the next open then plays through the native path.
     private static func decodeHTML(for data: Data) -> String {
         let base64 = data.base64EncodedString()
         return """
@@ -166,27 +168,6 @@ struct AnimatedJXLWebView: UIViewRepresentable {
             console.error('JXL render failed:', e);
             reveal();
           }
-        })();
-        </script>
-        </body></html>
-        """
-    }
-
-    /// Page for a cached decode: just the muxed APNG, no decoder/muxer scripts.
-    private static func cachedHTML(for apng: Data) -> String {
-        let base64 = apng.base64EncodedString()
-        return """
-        <!doctype html><html><head>\(headAndBody)</head>
-        <body>
-        <div class="wrap"><img id="media" alt="" draggable="false"><div id="spinner" class="spinner"></div></div>
-        <script>
-        (function () {
-          const media = document.getElementById('media');
-          const spinner = document.getElementById('spinner');
-          const reveal = () => { spinner.classList.add('hidden'); media.classList.add('ready'); };
-          media.onload = reveal;
-          media.onerror = reveal;
-          media.src = "data:image/png;base64,\(base64)";
         })();
         </script>
         </body></html>

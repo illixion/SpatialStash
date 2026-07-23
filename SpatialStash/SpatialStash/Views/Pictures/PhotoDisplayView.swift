@@ -343,8 +343,8 @@ struct PhotoDisplayView: View {
 
     @ViewBuilder
     private var imageContent: some View {
-        if !windowModel.is3DMode, windowModel.isAnimatedGIF, let hevcURL = windowModel.gifHEVCURL {
-            // Display converted GIF as video using the shared web video player
+        if !windowModel.is3DMode, (windowModel.isAnimatedGIF || windowModel.isAnimatedJXL), let hevcURL = windowModel.animatedHEVCURL {
+            // Display the converted GIF/JXL as video using the shared web video player
             WebVideoPlayerView(
                 videoURL: hevcURL,
                 apiKey: nil,
@@ -384,7 +384,10 @@ struct PhotoDisplayView: View {
                 }
             }
         } else if windowModel.isAnimatedJXL, !windowModel.is3DMode {
-            AnimatedJXLWebView(imageData: windowModel.currentImageData, cachedAPNG: windowModel.jxlAnimationData, sourceURL: windowModel.imageURL)
+            // No HEVC yet — decode on-device via WASM this session; the decode
+            // is converted to HEVC in the background so the next open plays
+            // through the native path above.
+            AnimatedJXLWebView(imageData: windowModel.currentImageData, sourceURL: windowModel.imageURL)
                 .brightness(windowModel.effectiveAdjustments.brightness)
                 .contrast(windowModel.effectiveAdjustments.contrast)
                 .saturation(windowModel.effectiveAdjustments.saturation)

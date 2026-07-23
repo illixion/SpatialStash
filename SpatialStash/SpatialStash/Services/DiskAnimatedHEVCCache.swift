@@ -1,17 +1,18 @@
 /*
- Spatial Stash - Disk GIF HEVC Cache
+ Spatial Stash - Disk Animated HEVC Cache
 
- Persistent cache for GIF-to-HEVC converted videos using Apple's Caches directory.
- The system can automatically clean this directory when storage is low.
- Separate from other caches to allow independent cache management.
- Size accounting and LRU eviction live in the shared LRUDiskCache engine.
+ Persistent cache for HEVC conversions of animated stills — both animated GIF
+ and animated JPEG XL. Both formats convert to the same HEVC .mp4 so playback,
+ caching, and budget accounting are unified in one place. Uses Apple's Caches
+ directory (the system can clean it when storage is low). Size accounting and
+ LRU eviction live in the shared LRUDiskCache engine.
  */
 
 import Foundation
 import os
 
-actor DiskGIFHEVCCache {
-    static let shared = DiskGIFHEVCCache()
+actor DiskAnimatedHEVCCache {
+    static let shared = DiskAnimatedHEVCCache()
 
     private let engine: LRUDiskCache
     private let fileManager = FileManager.default
@@ -19,6 +20,7 @@ actor DiskGIFHEVCCache {
     private init() {
         let caches = fileManager.urls(for: .cachesDirectory, in: .userDomainMask).first!
         engine = LRUDiskCache(
+            // Directory name kept as-is so existing GIF conversions survive.
             directory: caches.appendingPathComponent("GIFHEVCCache", isDirectory: true),
             domain: .gifHEVC,
             log: AppLogger.gifConverter,
@@ -56,7 +58,7 @@ actor DiskGIFHEVCCache {
             try fileManager.moveItem(at: tempURL, to: destinationURL)
             engine.noteWrite(at: destinationURL, replacing: replaced)
         } catch {
-            AppLogger.gifConverter.error("Failed to save GIF HEVC to cache: \(error.localizedDescription, privacy: .public)")
+            AppLogger.gifConverter.error("Failed to save animated HEVC to cache: \(error.localizedDescription, privacy: .public)")
         }
     }
 

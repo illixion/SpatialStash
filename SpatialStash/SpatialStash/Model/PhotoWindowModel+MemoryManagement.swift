@@ -126,7 +126,7 @@ extension PhotoWindowModel {
 
         // For animated content, release converted GIF video too.
         if isAnimatedGIF {
-            gifHEVCURL = nil
+            animatedHEVCURL = nil
         }
 
         isIdleDownscaled = true

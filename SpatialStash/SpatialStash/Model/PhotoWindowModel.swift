@@ -454,16 +454,16 @@ class PhotoWindowModel {
     var isAnimatedGIF: Bool = false
     var isAnimatedWebP: Bool = false
     var isAnimatedWebVisual: Bool = false
-    /// Animated JPEG XL — decoded/animated by the bundled WASM libjxl path
-    /// (ImageIO only yields the first frame).
+    /// Animated JPEG XL. ImageIO only yields the first frame, so it's decoded
+    /// via the bundled WASM libjxl path (AnimatedJXLWebView) on first view; that
+    /// decode is converted to HEVC and cached so reopens play natively.
     var isAnimatedJXL: Bool = false
-    /// Cached decoded APNG for an animated JXL (from DiskJXLAnimationCache), if
-    /// present — lets AnimatedJXLWebView skip the expensive WASM decode.
-    var jxlAnimationData: Data? = nil
     var isAnimatedImage: Bool { isAnimatedGIF || isAnimatedWebP || isAnimatedWebVisual || isAnimatedJXL }
     var currentImageData: Data? = nil
     var animatedImageSourceURL: URL? = nil
-    var gifHEVCURL: URL? = nil
+    /// HEVC conversion of an animated GIF *or* animated JXL, once available —
+    /// drives the unified native video playback path in PhotoDisplayView.
+    var animatedHEVCURL: URL? = nil
 
     // MARK: - UI Visibility State
 
@@ -696,19 +696,22 @@ class PhotoWindowModel {
 
                     // Convert GIF to HEVC in background for reliable multi-window playback
                     do {
-                        gifHEVCURL = try await GIFHEVCConverter.shared.convert(gifData: data, sourceURL: url)
+                        animatedHEVCURL = try await AnimatedHEVCConverter.shared.convert(animatedData: data, sourceURL: url)
                     } catch {
                         AppLogger.gifConverter.warning("GIF HEVC conversion failed, falling back to base64: \(error.localizedDescription, privacy: .public)")
-                        gifHEVCURL = nil
+                        animatedHEVCURL = nil
                     }
                 } else if isAnimatedWebP || isAnimatedWebVisual || isAnimatedJXL {
                     if let image = UIImage(data: data) {
                         imageAspectRatio = image.size.width / image.size.height
                     }
-                    // Reuse a previously-decoded APNG so reopening an animated
-                    // JXL skips the WASM decode (and its loading spinner).
+                    // Animated JXL shares the GIF HEVC path: if a prior WASM
+                    // decode was already converted, play that natively and skip
+                    // the WebView decode entirely. Otherwise AnimatedJXLWebView
+                    // decodes it on-device this session and kicks off the HEVC
+                    // conversion for next time.
                     if isAnimatedJXL {
-                        jxlAnimationData = await DiskJXLAnimationCache.shared.loadData(for: imageURL)
+                        animatedHEVCURL = await DiskAnimatedHEVCCache.shared.cachedFileURL(for: url)
                     }
                     isLoadingDetailImage = false
                 } else if autoRestore {
@@ -1118,7 +1121,7 @@ class PhotoWindowModel {
         // Release image data
         currentImageData = nil
         animatedImageSourceURL = nil
-        gifHEVCURL = nil
+        animatedHEVCURL = nil
         displayTexture = nil
         displayImage = nil
         isShowingAdjustmentPreview = false
