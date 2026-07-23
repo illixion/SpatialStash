@@ -74,23 +74,48 @@ struct AnimatedJXLWebView: UIViewRepresentable {
         <style>
         html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: transparent; }
         .wrap { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: transparent; }
-        #media { display: block; width: 100%; height: 100%; object-fit: contain; background: transparent; }
+        /* Hidden until decoded so the browser never paints the alt-text placeholder. */
+        #media { display: block; width: 100%; height: 100%; object-fit: contain; background: transparent; opacity: 0; transition: opacity 0.25s ease; }
+        #media.ready { opacity: 1; }
+        .spinner {
+          position: absolute; top: 50%; left: 50%;
+          width: 44px; height: 44px; margin: -22px 0 0 -22px;
+          border: 4px solid rgba(255,255,255,0.25);
+          border-top-color: rgba(255,255,255,0.9);
+          border-radius: 50%;
+          animation: spin 0.9s linear infinite;
+        }
+        .spinner.hidden { display: none; }
+        @keyframes spin { to { transform: rotate(360deg); } }
         </style>
         </head>
         <body>
-        <div class="wrap"><img id="media" alt="animated jxl" draggable="false"></div>
+        <div class="wrap">
+          <img id="media" alt="" draggable="false">
+          <div id="spinner" class="spinner"></div>
+        </div>
         <script src="data:text/javascript;base64,\(decoderB64)"></script>
         <script src="data:text/javascript;base64,\(animB64)"></script>
         <script>
         (async function () {
+          const media = document.getElementById('media');
+          const spinner = document.getElementById('spinner');
+          const reveal = () => {
+            spinner.classList.add('hidden');
+            media.classList.add('ready');
+          };
           try {
             const b = "\(base64)";
             const bin = atob(b), n = bin.length, u = new Uint8Array(n);
             for (let i = 0; i < n; i++) u[i] = bin.charCodeAt(i);
             const url = await window.RoboFrameJXL.decodeToObjectURL(u.buffer);
-            document.getElementById('media').src = url;
+            // Only reveal once the muxed image has actually decoded for display.
+            media.onload = reveal;
+            media.onerror = reveal;
+            media.src = url;
           } catch (e) {
             console.error('JXL render failed:', e);
+            reveal();
           }
         })();
         </script>
