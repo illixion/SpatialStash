@@ -31,6 +31,10 @@ class PhotoWindowModel {
     var showAutoRestorePrompt: Bool = false
     /// Whether the auto-restore target is immersive 3D (vs regular 3D)
     var autoRestoreImmersive: Bool = false
+    /// Whether the 3D prompt pill is offering 3D for *animated* content (vs the
+    /// normal auto-restore of a previously-converted still). When true, "Yes"
+    /// enables 3D of the first frame; auto-3D never fires for animated content.
+    var autoRestoreForAnimated: Bool = false
     /// Whether the window is currently snapped to a surface (mirrored from
     /// `surfaceSnappingInfo`). Used to suppress the 3D restore prompt, which
     /// is irrelevant on a snapped wall view and can pop up unexpectedly on
@@ -702,6 +706,15 @@ class PhotoWindowModel {
                 } else if autoRestore {
                     // Check if the image was previously enhanced and auto-restore
                     await autoRestorePreviousEnhancement()
+                }
+
+                // Animated content never auto-generates 3D/diorama (the guards
+                // in the auto paths key off isAnimatedImage). If the user's
+                // settings would have auto-3D'd a still, offer 3D via the pill
+                // instead so they can choose 3D (of the first frame) or just
+                // watch the animation.
+                if isAnimatedImage {
+                    await maybeOfferAnimated3DIfNeeded()
                 }
             }
         } catch {

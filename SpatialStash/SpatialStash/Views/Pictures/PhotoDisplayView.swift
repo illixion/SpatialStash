@@ -183,10 +183,18 @@ struct PhotoDisplayView: View {
                         .buttonStyle(.borderless)
 
                         Button {
+                            let forAnimated = windowModel.autoRestoreForAnimated
+                            let immersive = windowModel.autoRestoreImmersive
                             windowModel.dismissAutoRestorePrompt()
                             Task {
-                                let mode: ImagePresentationComponent.ViewingMode = windowModel.autoRestoreImmersive ? .spatial3DImmersive : .spatial3D
-                                await windowModel.switchToViewingMode(mode)
+                                if forAnimated {
+                                    // Animated content: explicitly render the first
+                                    // frame in 3D (auto paths never would).
+                                    windowModel.activate3DMode(generateImmediately: true, explicit: true)
+                                } else {
+                                    let mode: ImagePresentationComponent.ViewingMode = immersive ? .spatial3DImmersive : .spatial3D
+                                    await windowModel.switchToViewingMode(mode)
+                                }
                             }
                         } label: {
                             Text("Yes")
@@ -335,7 +343,7 @@ struct PhotoDisplayView: View {
 
     @ViewBuilder
     private var imageContent: some View {
-        if windowModel.isAnimatedGIF, let hevcURL = windowModel.gifHEVCURL {
+        if !windowModel.is3DMode, windowModel.isAnimatedGIF, let hevcURL = windowModel.gifHEVCURL {
             // Display converted GIF as video using the shared web video player
             WebVideoPlayerView(
                 videoURL: hevcURL,
@@ -375,7 +383,7 @@ struct PhotoDisplayView: View {
                     scheduleWindowSizeVerification()
                 }
             }
-        } else if windowModel.isAnimatedJXL {
+        } else if windowModel.isAnimatedJXL, !windowModel.is3DMode {
             AnimatedJXLWebView(imageData: windowModel.currentImageData)
                 .brightness(windowModel.effectiveAdjustments.brightness)
                 .contrast(windowModel.effectiveAdjustments.contrast)
@@ -401,7 +409,7 @@ struct PhotoDisplayView: View {
                     guard !suppressWindowResize else { return }
                     resizeGIFWindowToFit(newAspectRatio, within: currentBounds)
                 }
-        } else if windowModel.isAnimatedWebP || windowModel.isAnimatedWebVisual {
+        } else if (windowModel.isAnimatedWebP || windowModel.isAnimatedWebVisual), !windowModel.is3DMode {
             AnimatedImageWebView(
                 imageURL: windowModel.animatedImageSourceURL ?? windowModel.imageURL,
                 elementType: windowModel.isAnimatedWebVisual ? .video : .image,
@@ -438,7 +446,7 @@ struct PhotoDisplayView: View {
                         scheduleWindowSizeVerification()
                     }
                 }
-        } else if windowModel.isAnimatedGIF {
+        } else if windowModel.isAnimatedGIF, !windowModel.is3DMode {
             // GIF detected but HEVC conversion still in progress — show loading indicator
             ZStack {
                 Color.black

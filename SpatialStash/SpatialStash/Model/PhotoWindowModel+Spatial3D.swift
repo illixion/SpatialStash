@@ -40,6 +40,26 @@ extension PhotoWindowModel {
         autoRestorePromptDismissTask?.cancel()
         autoRestorePromptDismissTask = nil
         showAutoRestorePrompt = false
+        autoRestoreForAnimated = false
+    }
+
+    /// Offer 3D via the pill for animated content, but only where the user's
+    /// settings would otherwise have auto-generated 3D for a still image — so
+    /// the pill appears exactly in place of the suppressed auto-3D, not on
+    /// every animation. "Yes" activates 3D of the first frame explicitly.
+    func maybeOfferAnimated3DIfNeeded() async {
+        guard isAnimatedImage, !isWindowSnapped, !is3DMode else { return }
+        let defaultIs3D = appModel.defaultImageViewingMode == .spatial3D
+            || appModel.defaultImageViewingMode == .spatial3DImmersive
+        var offer = defaultIs3D
+        if !offer, appModel.rememberImageEnhancements, appModel.autoRestoreSpatial3D {
+            let lastMode = await ImageEnhancementTracker.shared.lastViewingMode(url: imageURL)
+            let wasConverted = await ImageEnhancementTracker.shared.wasConverted(url: imageURL)
+            offer = wasConverted && (lastMode == .spatial3D || lastMode == .spatial3DImmersive)
+        }
+        guard offer else { return }
+        autoRestoreForAnimated = true
+        presentAutoRestorePrompt(immersive: appModel.defaultImageViewingMode == .spatial3DImmersive)
     }
 
     // MARK: - Generation Settling
@@ -65,9 +85,11 @@ extension PhotoWindowModel {
     /// from the disk cache and releases the lightweight 2D display image.
     /// - Parameter generateImmediately: If true, RealityView will generate the 3D depth map
     ///   right after creating the component (used when the user explicitly taps "Generate 3D").
-    func activate3DMode(generateImmediately: Bool = false) {
+    func activate3DMode(generateImmediately: Bool = false, explicit: Bool = false) {
         recordInteraction()
-        guard !isAnimatedImage, !is3DMode else { return }
+        // Auto paths never 3D animated content; an explicit user choice (the
+        // pill / ornament) may, rendering the first frame in 3D.
+        guard explicit || !isAnimatedImage, !is3DMode else { return }
         if backgroundRemovalState == .removed {
             restoreOriginalBackground()
         }
@@ -157,7 +179,11 @@ extension PhotoWindowModel {
         contentEntity.components.remove(ImagePresentationComponent.self)
         inputPlaneEntity = Entity()
 
-        guard !isAnimatedImage else {
+        // Animated content only reaches here when the user explicitly opted
+        // into 3D via the pill (auto paths are guarded, and `is3DMode` is only
+        // set for animated through activate3DMode(explicit:)). The first frame
+        // is decoded from the source URL below like any still.
+        guard !isAnimatedImage || is3DMode else {
             isLoadingDetailImage = false
             return
         }
