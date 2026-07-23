@@ -50,6 +50,8 @@ extension PhotoWindowModel {
         isAnimatedGIF = false
         isAnimatedWebP = false
         isAnimatedWebVisual = false
+        isAnimatedJXL = false
+        jxlAnimationData = nil
         currentImageData = nil
         animatedImageSourceURL = nil
         gifHEVCURL = nil

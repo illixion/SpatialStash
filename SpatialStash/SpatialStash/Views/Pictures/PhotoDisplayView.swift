@@ -384,7 +384,7 @@ struct PhotoDisplayView: View {
                 }
             }
         } else if windowModel.isAnimatedJXL, !windowModel.is3DMode {
-            AnimatedJXLWebView(imageData: windowModel.currentImageData)
+            AnimatedJXLWebView(imageData: windowModel.currentImageData, cachedAPNG: windowModel.jxlAnimationData, sourceURL: windowModel.imageURL)
                 .brightness(windowModel.effectiveAdjustments.brightness)
                 .contrast(windowModel.effectiveAdjustments.contrast)
                 .saturation(windowModel.effectiveAdjustments.saturation)

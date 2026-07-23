@@ -457,6 +457,9 @@ class PhotoWindowModel {
     /// Animated JPEG XL — decoded/animated by the bundled WASM libjxl path
     /// (ImageIO only yields the first frame).
     var isAnimatedJXL: Bool = false
+    /// Cached decoded APNG for an animated JXL (from DiskJXLAnimationCache), if
+    /// present — lets AnimatedJXLWebView skip the expensive WASM decode.
+    var jxlAnimationData: Data? = nil
     var isAnimatedImage: Bool { isAnimatedGIF || isAnimatedWebP || isAnimatedWebVisual || isAnimatedJXL }
     var currentImageData: Data? = nil
     var animatedImageSourceURL: URL? = nil
@@ -701,6 +704,11 @@ class PhotoWindowModel {
                 } else if isAnimatedWebP || isAnimatedWebVisual || isAnimatedJXL {
                     if let image = UIImage(data: data) {
                         imageAspectRatio = image.size.width / image.size.height
+                    }
+                    // Reuse a previously-decoded APNG so reopening an animated
+                    // JXL skips the WASM decode (and its loading spinner).
+                    if isAnimatedJXL {
+                        jxlAnimationData = await DiskJXLAnimationCache.shared.loadData(for: imageURL)
                     }
                     isLoadingDetailImage = false
                 } else if autoRestore {

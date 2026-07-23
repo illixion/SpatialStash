@@ -43,23 +43,20 @@ extension PhotoWindowModel {
         autoRestoreForAnimated = false
     }
 
-    /// Offer 3D via the pill for animated content, but only where the user's
-    /// settings would otherwise have auto-generated 3D for a still image — so
-    /// the pill appears exactly in place of the suppressed auto-3D, not on
-    /// every animation. "Yes" activates 3D of the first frame explicitly.
+    /// Offer 3D via the pill for animated content, but *only* to restore an
+    /// animation the user had previously converted to 3D themselves — never
+    /// just because the global default viewing mode is 3D. A 3D default
+    /// auto-3Ds stills, but offering it on every animation is unwanted noise;
+    /// the pill here is purely a restore affordance. "Yes" activates 3D of the
+    /// first frame explicitly.
     func maybeOfferAnimated3DIfNeeded() async {
         guard isAnimatedImage, !isWindowSnapped, !is3DMode else { return }
-        let defaultIs3D = appModel.defaultImageViewingMode == .spatial3D
-            || appModel.defaultImageViewingMode == .spatial3DImmersive
-        var offer = defaultIs3D
-        if !offer, appModel.rememberImageEnhancements, appModel.autoRestoreSpatial3D {
-            let lastMode = await ImageEnhancementTracker.shared.lastViewingMode(url: imageURL)
-            let wasConverted = await ImageEnhancementTracker.shared.wasConverted(url: imageURL)
-            offer = wasConverted && (lastMode == .spatial3D || lastMode == .spatial3DImmersive)
-        }
-        guard offer else { return }
+        guard appModel.rememberImageEnhancements, appModel.autoRestoreSpatial3D else { return }
+        let lastMode = await ImageEnhancementTracker.shared.lastViewingMode(url: imageURL)
+        let wasConverted = await ImageEnhancementTracker.shared.wasConverted(url: imageURL)
+        guard wasConverted && (lastMode == .spatial3D || lastMode == .spatial3DImmersive) else { return }
         autoRestoreForAnimated = true
-        presentAutoRestorePrompt(immersive: appModel.defaultImageViewingMode == .spatial3DImmersive)
+        presentAutoRestorePrompt(immersive: lastMode == .spatial3DImmersive)
     }
 
     // MARK: - Generation Settling

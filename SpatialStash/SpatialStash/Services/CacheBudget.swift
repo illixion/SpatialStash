@@ -62,17 +62,19 @@ enum CacheBudget {
         case autoEnhance
         case backgroundRemoval
         case gifHEVC
+        case jxlAnimation
         case thumbnails
         case thumbnailDioramas
 
         var share: Double {
             switch self {
-            case .videos: return 0.40
+            case .videos: return 0.38
             case .images: return 0.20
             case .depth: return 0.20
             case .autoEnhance: return 0.07
             case .backgroundRemoval: return 0.07
             case .gifHEVC: return 0.04
+            case .jxlAnimation: return 0.02
             case .thumbnails: return 0.01
             case .thumbnailDioramas: return 0.01
             }
@@ -86,6 +88,7 @@ enum CacheBudget {
             case .autoEnhance: return "Auto-Enhance"
             case .backgroundRemoval: return "Background Removal"
             case .gifHEVC: return "Animated GIFs"
+            case .jxlAnimation: return "Animated JPEG XL"
             case .thumbnails: return "Thumbnails"
             case .thumbnailDioramas: return "Thumbnail Dioramas"
             }

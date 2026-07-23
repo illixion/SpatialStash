@@ -23,7 +23,7 @@ struct CacheSettingsSection: View {
     /// Display order — biggest budget shares first.
     private static let domains: [CacheBudget.Domain] = [
         .videos, .images, .depth, .autoEnhance, .backgroundRemoval,
-        .gifHEVC, .thumbnails, .thumbnailDioramas
+        .gifHEVC, .jxlAnimation, .thumbnails, .thumbnailDioramas
     ]
 
     var body: some View {
@@ -112,6 +112,8 @@ struct CacheSettingsSection: View {
         fresh[.backgroundRemoval] = DomainStats(fileCount: removal.fileCount, totalSize: removal.totalSize)
         let gif = await DiskGIFHEVCCache.shared.getCacheStats()
         fresh[.gifHEVC] = DomainStats(fileCount: gif.fileCount, totalSize: gif.totalSize)
+        let jxl = await DiskJXLAnimationCache.shared.getCacheStats()
+        fresh[.jxlAnimation] = DomainStats(fileCount: jxl.fileCount, totalSize: jxl.totalSize)
         let thumbs = await ThumbnailCache.shared.getCacheStats()
         fresh[.thumbnails] = DomainStats(fileCount: thumbs.fileCount, totalSize: thumbs.totalSize)
         let dioramas = ThumbnailDioramaCache.getCacheStats()
@@ -137,6 +139,8 @@ struct CacheSettingsSection: View {
             ThumbnailDioramaCache.shared.clearCache()
         case .gifHEVC:
             await DiskGIFHEVCCache.shared.clearCache()
+        case .jxlAnimation:
+            await DiskJXLAnimationCache.shared.clearCache()
         case .thumbnails:
             await ThumbnailCache.shared.clearCache()
         case .thumbnailDioramas:
@@ -154,6 +158,7 @@ struct CacheSettingsSection: View {
         await AutoEnhanceCache.shared.enforceBudget()
         await BackgroundRemovalCache.shared.enforceBudget()
         await DiskGIFHEVCCache.shared.enforceBudget()
+        await DiskJXLAnimationCache.shared.enforceBudget()
         await ThumbnailCache.shared.enforceBudget()
         ThumbnailDioramaCache.enforceBudget()
         DepthCacheStore.enforceBudget()
