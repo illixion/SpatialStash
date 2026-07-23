@@ -47,6 +47,7 @@ struct MediaDetailSheet: View {
     let mediaType: MediaDetailType
     @Environment(AppModel.self) private var appModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openWindow) private var openWindow
 
     @State private var selectedTab = 0
     @State private var isLoading = true
@@ -252,7 +253,7 @@ struct MediaDetailSheet: View {
                     associationGroup(label: "Performers", items: currentPerformers.map(\.name))
                 }
                 if !currentTags.isEmpty {
-                    associationGroup(label: "Tags", items: currentTags.map(\.name))
+                    tagsAssociationGroup(currentTags)
                 }
                 if !currentGalleries.isEmpty {
                     associationGroup(
@@ -330,6 +331,57 @@ struct MediaDetailSheet: View {
                 }
             }
         }
+    }
+
+    /// Tags association group where each expanded row is tappable: it opens a
+    /// new gallery window filtered to that single tag, in the Pictures or Videos
+    /// section depending on this sheet's media type. Falls back to copy-on-hold
+    /// for the tag name, matching the other association rows.
+    @ViewBuilder
+    private func tagsAssociationGroup(_ tags: [MediaTag]) -> some View {
+        let cleaned = tags.filter { !$0.name.isEmpty }
+        if !cleaned.isEmpty {
+            DisclosureGroup {
+                ForEach(cleaned) { tag in
+                    Button {
+                        openTagGallery(tag)
+                    } label: {
+                        HStack {
+                            Text(tag.name)
+                                .font(.callout)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            Image(systemName: "arrow.up.forward.square")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .copyOnHold(tag.name)
+                }
+            } label: {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Tags")
+                        .foregroundColor(.secondary)
+                    Text(cleaned.map(\.name).joined(separator: ", "))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    /// Opens a new gallery window filtered by the given tag, choosing the
+    /// Pictures or Videos section based on the current media type, then closes
+    /// this sheet.
+    private func openTagGallery(_ tag: MediaTag) {
+        let isVideo: Bool
+        switch mediaType {
+        case .image: isVideo = false
+        case .scene: isVideo = true
+        }
+        appModel.openGalleryFilteredByTag(id: tag.id, name: tag.name, isVideo: isVideo, openWindow: openWindow)
+        dismiss()
     }
 
     // MARK: - Edit Tab

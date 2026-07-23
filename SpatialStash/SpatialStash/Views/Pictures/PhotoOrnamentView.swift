@@ -31,6 +31,7 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
     var onGalleryButtonTap: () -> Void
     @ViewBuilder var extraMenuItems: () -> ExtraMenuItems
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismissWindow) private var dismissWindow
 
     var body: some View {
         HStack(spacing: 16) {
@@ -381,11 +382,14 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
                 MediaDetailSheet(
                     mediaType: .image(stashId: stashId),
                     onDelete: {
-                        // Remove from gallery and navigate away
+                        // Remove from gallery and close this photo window (the
+                        // sheet only dismisses itself; the window would otherwise
+                        // linger showing the now-deleted image).
                         let appModel = windowModel.appModel
                         if let idx = appModel.galleryImages.firstIndex(where: { $0.stashId == stashId }) {
                             appModel.galleryImages.remove(at: idx)
                         }
+                        dismissWindow()
                     },
                     onSaved: { newRating in
                         windowModel.image.rating100 = newRating

@@ -446,6 +446,18 @@ struct SavedVideoView: Identifiable, Codable, Equatable {
     }
 }
 
+// MARK: - Pending Gallery Filter
+
+/// A one-shot request to open a new main gallery window on a specific content
+/// tab after the shared filter has been seeded (e.g. tapping a tag in the
+/// media info sheet). `id` makes each request distinct so SwiftUI change
+/// observers fire even for back-to-back requests.
+struct PendingGalleryFilter: Equatable {
+    let id = UUID()
+    /// True → open the Videos tab (scene filter); false → Pictures tab (image filter).
+    let isVideo: Bool
+}
+
 // MARK: - Autocomplete Item
 
 /// Generic item for autocomplete lists (tags, galleries)

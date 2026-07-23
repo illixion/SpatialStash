@@ -99,6 +99,7 @@ struct ContentView: View {
             Text("A viewer with this configuration is already open. You can summon it or open a copy.")
         }
         .onAppear {
+            consumePendingGalleryFilterIfNeeded()
             handlePhotoWindowOpenIfNeeded()
             handleRemoteViewerOpenIfNeeded()
         }
@@ -107,6 +108,25 @@ struct ContentView: View {
         }
         .onChange(of: appModel.activeRemoteViewerOpenRequest?.id) { _, _ in
             handleRemoteViewerOpenIfNeeded()
+        }
+    }
+
+    // MARK: - Pending Gallery Filter (tag-tapped from media info)
+
+    /// If a tag was tapped in a media info sheet, this newly created main window
+    /// adopts the seeded filter: switch to the right content tab and run the
+    /// query. Consumed once so other/existing windows don't also react.
+    private func consumePendingGalleryFilterIfNeeded() {
+        guard let pending = appModel.pendingGalleryFilter else { return }
+        appModel.pendingGalleryFilter = nil
+        if pending.isVideo {
+            windowModel.selectedTab = .videos
+            windowModel.lastContentTab = .videos
+            Task { await appModel.applyVideoFilter() }
+        } else {
+            windowModel.selectedTab = .pictures
+            windowModel.lastContentTab = .pictures
+            Task { await appModel.applyFilter() }
         }
     }
 

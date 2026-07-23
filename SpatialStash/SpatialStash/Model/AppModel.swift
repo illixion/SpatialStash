@@ -101,6 +101,12 @@ class AppModel {
 
     var currentFilter: ImageFilterCriteria = ImageFilterCriteria()
     var currentVideoFilter: SceneFilterCriteria = SceneFilterCriteria()
+
+    /// A one-shot request to open a freshly created main window on a specific
+    /// content tab (Pictures/Videos) after seeding the corresponding filter.
+    /// Consumed by the new window's `ContentView` on appear, then cleared.
+    var pendingGalleryFilter: PendingGalleryFilter?
+
     var savedViews: [SavedView] = []
     var selectedSavedView: SavedView?
     var savedVideoViews: [SavedVideoView] = []
@@ -1988,6 +1994,24 @@ class AppModel {
     /// Opens a new main gallery window.
     /// Each call creates a fresh instance (UUID-keyed WindowGroup).
     func showMainWindow(openWindow: OpenWindowAction) {
+        openWindow(id: "main", value: UUID())
+    }
+
+    /// Seeds the shared filter with a single tag and opens a new main gallery
+    /// window focused on the matching content tab. `isVideo` picks the Videos
+    /// tab + scene filter; otherwise the Pictures tab + image filter. The new
+    /// window's `ContentView` consumes `pendingGalleryFilter` on appear to
+    /// switch tabs and run the query.
+    func openGalleryFilteredByTag(id tagId: String, name tagName: String, isVideo: Bool, openWindow: OpenWindowAction) {
+        let item = AutocompleteItem(id: tagId, name: tagName)
+        if isVideo {
+            currentVideoFilter.clearFilters()
+            currentVideoFilter.selectedTags = [item]
+        } else {
+            currentFilter.clearFilters()
+            currentFilter.selectedTags = [item]
+        }
+        pendingGalleryFilter = PendingGalleryFilter(isVideo: isVideo)
         openWindow(id: "main", value: UUID())
     }
 
