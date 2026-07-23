@@ -31,74 +31,7 @@ final class GraphQLVideoSource: VideoSource, @unchecked Sendable {
         // Mirrors AppModel.enableStashTranscoding.
         let allowTranscoding = UserDefaults.standard.object(forKey: "enableStashTranscoding") as? Bool ?? true
 
-        let videos = result.scenes.compactMap { scene -> GalleryVideo? in
-            guard let streamURLString = scene.paths.stream,
-                  let directStreamURL = URL(string: streamURLString) else {
-                return nil
-            }
-
-            let thumbnailURL: URL
-            if let screenshotString = scene.paths.screenshot,
-               let screenshotURL = URL(string: screenshotString) {
-                thumbnailURL = screenshotURL
-            } else {
-                // Use a placeholder or first frame
-                thumbnailURL = directStreamURL
-            }
-
-            let firstFile = scene.files?.first
-            let duration = firstFile?.duration
-            let sourceWidth = firstFile?.width
-            let sourceHeight = firstFile?.height
-
-            // Extract original filename from files path
-            let fileName = firstFile?.path.map { ($0 as NSString).lastPathComponent }
-            let streamURL = Self.preferredStreamURL(
-                directStreamURL: directStreamURL,
-                fileName: fileName,
-                streamEndpoints: scene.sceneStreams,
-                allowTranscoding: allowTranscoding
-            )
-            let fallbackStreamURL = streamURL == directStreamURL ? nil : directStreamURL
-
-            // Prefer the server-reported preview path; otherwise derive it as a
-            // sibling of the screenshot (`/scene/{id}/screenshot` → `/preview`),
-            // which matches Stash's default route layout.
-            let previewURL: URL? = scene.paths.preview
-                .flatMap { URL(string: $0) }
-                ?? Self.derivedPreviewURL(fromScreenshot: thumbnailURL)
-
-            // Detect stereoscopic format from tags
-            let tagNames = scene.tags?.map { $0.name } ?? []
-            let (isStereoscopic, stereoscopicFormat) = StereoscopicFormat.detect(from: tagNames)
-
-            // Check for eyes reversed tag (for videos with swapped left/right eyes)
-            let eyesReversed = tagNames.contains { tag in
-                let lowercased = tag.lowercased()
-                return lowercased == "stereo_eyes_reversed" ||
-                       lowercased == "stereo-eyes-reversed" ||
-                       lowercased == "eyes_reversed" ||
-                       lowercased == "eyes-reversed"
-            }
-
-            return GalleryVideo(
-                stashId: scene.id,
-                thumbnailURL: thumbnailURL,
-                streamURL: streamURL,
-                fallbackStreamURL: fallbackStreamURL,
-                previewURL: previewURL,
-                title: scene.title,
-                duration: duration,
-                isStereoscopic: isStereoscopic,
-                stereoscopicFormat: stereoscopicFormat,
-                sourceWidth: sourceWidth,
-                sourceHeight: sourceHeight,
-                eyesReversed: eyesReversed,
-                rating100: scene.rating100,
-                oCounter: scene.o_counter,
-                fileName: fileName
-            )
-        }
+        let videos = result.scenes.compactMap { Self.makeGalleryVideo(from: $0, allowTranscoding: allowTranscoding) }
 
         let totalPages = (result.count + pageSize - 1) / pageSize
         let hasMore = (page + 1) < totalPages
@@ -107,6 +40,90 @@ final class GraphQLVideoSource: VideoSource, @unchecked Sendable {
             videos: videos,
             hasMore: hasMore,
             totalCount: result.count
+        )
+    }
+
+    /// Read the transcoding preference live (default on) so toggling the setting
+    /// takes effect on the next fetch. Mirrors `AppModel.enableStashTranscoding`.
+    private static var allowTranscodingPreference: Bool {
+        UserDefaults.standard.object(forKey: "enableStashTranscoding") as? Bool ?? true
+    }
+
+    /// Fetch a single scene by Stash ID and map it to a `GalleryVideo`.
+    /// Used by the `spatialstash://scene?id=` callback.
+    func fetchVideo(id: String) async throws -> GalleryVideo? {
+        guard let scene = try await apiClient.findScene(id: id) else { return nil }
+        return Self.makeGalleryVideo(from: scene, allowTranscoding: Self.allowTranscodingPreference)
+    }
+
+    /// Map a raw GraphQL scene to a `GalleryVideo`. Shared by list fetching and
+    /// the single-scene `fetchVideo(id:)` path so both stay in sync.
+    static func makeGalleryVideo(from scene: StashAPIClient.StashScene, allowTranscoding: Bool) -> GalleryVideo? {
+        guard let streamURLString = scene.paths.stream,
+              let directStreamURL = URL(string: streamURLString) else {
+            return nil
+        }
+
+        let thumbnailURL: URL
+        if let screenshotString = scene.paths.screenshot,
+           let screenshotURL = URL(string: screenshotString) {
+            thumbnailURL = screenshotURL
+        } else {
+            // Use a placeholder or first frame
+            thumbnailURL = directStreamURL
+        }
+
+        let firstFile = scene.files?.first
+        let duration = firstFile?.duration
+        let sourceWidth = firstFile?.width
+        let sourceHeight = firstFile?.height
+
+        // Extract original filename from files path
+        let fileName = firstFile?.path.map { ($0 as NSString).lastPathComponent }
+        let streamURL = Self.preferredStreamURL(
+            directStreamURL: directStreamURL,
+            fileName: fileName,
+            streamEndpoints: scene.sceneStreams,
+            allowTranscoding: allowTranscoding
+        )
+        let fallbackStreamURL = streamURL == directStreamURL ? nil : directStreamURL
+
+        // Prefer the server-reported preview path; otherwise derive it as a
+        // sibling of the screenshot (`/scene/{id}/screenshot` → `/preview`),
+        // which matches Stash's default route layout.
+        let previewURL: URL? = scene.paths.preview
+            .flatMap { URL(string: $0) }
+            ?? Self.derivedPreviewURL(fromScreenshot: thumbnailURL)
+
+        // Detect stereoscopic format from tags
+        let tagNames = scene.tags?.map { $0.name } ?? []
+        let (isStereoscopic, stereoscopicFormat) = StereoscopicFormat.detect(from: tagNames)
+
+        // Check for eyes reversed tag (for videos with swapped left/right eyes)
+        let eyesReversed = tagNames.contains { tag in
+            let lowercased = tag.lowercased()
+            return lowercased == "stereo_eyes_reversed" ||
+                   lowercased == "stereo-eyes-reversed" ||
+                   lowercased == "eyes_reversed" ||
+                   lowercased == "eyes-reversed"
+        }
+
+        return GalleryVideo(
+            stashId: scene.id,
+            thumbnailURL: thumbnailURL,
+            streamURL: streamURL,
+            fallbackStreamURL: fallbackStreamURL,
+            previewURL: previewURL,
+            title: scene.title,
+            duration: duration,
+            isStereoscopic: isStereoscopic,
+            stereoscopicFormat: stereoscopicFormat,
+            sourceWidth: sourceWidth,
+            sourceHeight: sourceHeight,
+            eyesReversed: eyesReversed,
+            rating100: scene.rating100,
+            oCounter: scene.o_counter,
+            fileName: fileName
         )
     }
 

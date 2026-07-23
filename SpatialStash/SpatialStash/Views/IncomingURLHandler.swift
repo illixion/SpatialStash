@@ -41,16 +41,76 @@ struct IncomingURLHandler: ViewModifier {
             return
         }
 
-        // Custom handoff scheme: spatialstash://play?url=<percent-encoded URL>
+        // Custom handoff scheme: spatialstash://<host>?...
         if url.scheme?.lowercased() == "spatialstash" {
-            guard let target = Self.playTargetURL(from: url) else {
-                AppLogger.streamURL.error("spatialstash:// URL had no valid 'url' parameter: \(url.absoluteString, privacy: .public)")
-                return
+            switch url.host?.lowercased() {
+            case "image":
+                await openStashImage(from: url)
+            case "scene", "video":
+                await openStashScene(from: url)
+            case "play", nil, "":
+                // spatialstash://play?url=<percent-encoded URL>
+                guard let target = Self.playTargetURL(from: url) else {
+                    AppLogger.streamURL.error("spatialstash:// URL had no valid 'url' parameter: \(url.absoluteString, privacy: .public)")
+                    return
+                }
+                await route(target)
+            default:
+                AppLogger.streamURL.error("Unrecognised spatialstash:// host: \(url.absoluteString, privacy: .public)")
             }
-            await route(target)
             return
         }
         await route(url)
+    }
+
+    /// Open a Stash image by ID: `spatialstash://image?id=<stashId>`.
+    /// Fetches the image via GraphQL and opens it in the photo detail window,
+    /// bypassing gallery UI automation (used for fast on-device testing).
+    @MainActor
+    private func openStashImage(from url: URL) async {
+        guard let id = Self.idParameter(from: url) else {
+            AppLogger.streamURL.error("spatialstash://image had no 'id' parameter: \(url.absoluteString, privacy: .public)")
+            return
+        }
+        do {
+            let source = GraphQLImageSource(apiClient: appModel.apiClient)
+            guard let image = try await source.fetchImage(id: id) else {
+                AppLogger.streamURL.error("No Stash image found for id \(id, privacy: .public)")
+                return
+            }
+            openWindow(id: "photo-detail", value: PhotoWindowValue(image: image))
+            AppLogger.streamURL.info("Opened Stash image \(id, privacy: .public) via callback URL")
+        } catch {
+            AppLogger.streamURL.error("Failed to fetch Stash image \(id, privacy: .public): \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Open a Stash scene by ID: `spatialstash://scene?id=<stashId>` (also `video`).
+    @MainActor
+    private func openStashScene(from url: URL) async {
+        guard let id = Self.idParameter(from: url) else {
+            AppLogger.streamURL.error("spatialstash://scene had no 'id' parameter: \(url.absoluteString, privacy: .public)")
+            return
+        }
+        do {
+            let source = GraphQLVideoSource(apiClient: appModel.apiClient)
+            guard let video = try await source.fetchVideo(id: id) else {
+                AppLogger.streamURL.error("No Stash scene found for id \(id, privacy: .public)")
+                return
+            }
+            openWindow(id: "video-detail", value: VideoWindowValue(video: video, galleryVideos: [video]))
+            AppLogger.streamURL.info("Opened Stash scene \(id, privacy: .public) via callback URL")
+        } catch {
+            AppLogger.streamURL.error("Failed to fetch Stash scene \(id, privacy: .public): \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Extract the `id` query parameter from a `spatialstash://image|scene?id=` URL.
+    private static func idParameter(from url: URL) -> String? {
+        guard let comps = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let raw = comps.queryItems?.first(where: { $0.name == "id" })?.value,
+              !raw.isEmpty else { return nil }
+        return raw
     }
 
     /// Route an incoming URL. Remote http(s) URLs try the rich video pipeline

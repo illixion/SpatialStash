@@ -307,6 +307,45 @@ actor StashAPIClient {
         return response.findImages
     }
 
+    struct FindImageByIDResponse: Decodable {
+        let findImage: StashImage?
+    }
+
+    /// Fetch a single image by its Stash ID (used by the `spatialstash://image?id=`
+    /// callback). Mirrors the field selection of `findImages` so the result can be
+    /// mapped by the same `GraphQLImageSource.makeGalleryImage(from:)`.
+    func findImage(id: String) async throws -> StashImage? {
+        let graphQLQuery = """
+        query FindImage($id: ID!) {
+            findImage(id: $id) {
+                id
+                title
+                rating100
+                o_counter
+                paths {
+                    thumbnail
+                    image
+                }
+                files {
+                    width
+                    height
+                }
+                visual_files {
+                    __typename
+                    ... on ImageFile {
+                        path
+                    }
+                    ... on VideoFile {
+                        path
+                    }
+                }
+            }
+        }
+        """
+        let response: FindImageByIDResponse = try await self.query(graphQLQuery, variables: ["id": id])
+        return response.findImage
+    }
+
     // MARK: - Gallery Queries (for autocomplete)
 
     struct FindGalleriesResponse: Decodable {
@@ -699,6 +738,50 @@ actor StashAPIClient {
 
         let response: FindScenesResponse = try await self.query(graphQLQuery, variables: variables)
         return response.findScenes
+    }
+
+    struct FindSceneByIDResponse: Decodable {
+        let findScene: StashScene?
+    }
+
+    /// Fetch a single scene by its Stash ID (used by the `spatialstash://scene?id=`
+    /// callback). Mirrors the field selection of `findScenes` so the result can be
+    /// mapped by the same `GraphQLVideoSource.makeGalleryVideo(from:allowTranscoding:)`.
+    func findScene(id: String) async throws -> StashScene? {
+        let graphQLQuery = """
+        query FindScene($id: ID!) {
+            findScene(id: $id) {
+                id
+                title
+                details
+                date
+                rating100
+                o_counter
+                paths {
+                    screenshot
+                    stream
+                    preview
+                }
+                files {
+                    path
+                    width
+                    height
+                    duration
+                }
+                tags {
+                    id
+                    name
+                }
+                sceneStreams {
+                    url
+                    mime_type
+                    label
+                }
+            }
+        }
+        """
+        let response: FindSceneByIDResponse = try await self.query(graphQLQuery, variables: ["id": id])
+        return response.findScene
     }
 
     // MARK: - Image Mutations
