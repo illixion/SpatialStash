@@ -32,23 +32,30 @@ private struct JXLBitReader {
     private var bitPos = 0
     private var ok = true
 
-    init(_ slice: ArraySlice<UInt8>) { bytes = Array(slice) }
+    init(_ b: [UInt8]) { bytes = b }
 
     // MARK: codestream location
 
-    /// Returns the codestream bytes (starting at the 0xFF 0x0A signature) from
-    /// either a bare codestream or an ISOBMFF-wrapped JXL container.
-    static func locateCodestream(in data: Data) -> ArraySlice<UInt8>? {
+    /// Returns the JXL codestream bytes from either a bare codestream or an
+    /// ISOBMFF-wrapped JXL container. A container splits the codestream across
+    /// one `jxlc` box (whole) or several `jxlp` boxes (each prefixed by a
+    /// 4-byte sequence index) — the fragments must be concatenated, since the
+    /// first `jxlp` is often only a handful of bytes, far too short to reach the
+    /// `have_animation` bit. Real encoders (and Stash-served files) use the
+    /// split `jxlp` form, so reading only the first fragment misdetects animated
+    /// container JXL as still.
+    static func locateCodestream(in data: Data) -> [UInt8]? {
         let b = [UInt8](data)
         guard b.count >= 2 else { return nil }
 
         // Bare codestream.
-        if b[0] == 0xFF && b[1] == 0x0A { return b[0...] }
+        if b[0] == 0xFF && b[1] == 0x0A { return b }
 
         // Container: 00 00 00 0C 'JXL ' 0D 0A 87 0A, then boxes.
         let containerSig: [UInt8] = [0x00, 0x00, 0x00, 0x0C, 0x4A, 0x58, 0x4C, 0x20, 0x0D, 0x0A, 0x87, 0x0A]
         guard b.count >= 12, Array(b[0..<12]) == containerSig else { return nil }
 
+        var codestream: [UInt8] = []
         var off = 12
         while off + 8 <= b.count {
             let size32 = UInt32(b[off]) << 24 | UInt32(b[off + 1]) << 16 | UInt32(b[off + 2]) << 8 | UInt32(b[off + 3])
@@ -65,20 +72,26 @@ private struct JXLBitReader {
             } else if size32 == 0 {
                 boxSize = b.count - off
             }
-            guard boxSize >= header, off + boxSize <= b.count else { return nil }
+            guard boxSize >= header, off + boxSize <= b.count else { break }
 
             let payloadStart = off + header
+            let payloadEnd = off + boxSize
             if type == [0x6A, 0x78, 0x6C, 0x63] {  // 'jxlc' — whole codestream
-                return b[payloadStart..<(off + boxSize)]
+                codestream.append(contentsOf: b[payloadStart..<payloadEnd])
+                break
             }
-            if type == [0x6A, 0x78, 0x6C, 0x70] {  // 'jxlp' — first partial has a 4-byte index prefix
-                let csStart = payloadStart + 4
-                guard csStart <= off + boxSize else { return nil }
-                return b[csStart..<(off + boxSize)]
+            if type == [0x6A, 0x78, 0x6C, 0x70] {  // 'jxlp' — 4-byte index, then a fragment
+                let fragStart = payloadStart + 4
+                if fragStart <= payloadEnd {
+                    codestream.append(contentsOf: b[fragStart..<payloadEnd])
+                }
+                // Enough header bytes accumulated to reach have_animation? Stop
+                // early — no need to read a multi-MB tail fragment.
+                if codestream.count >= 64 { break }
             }
             off += boxSize
         }
-        return nil
+        return codestream.isEmpty ? nil : codestream
     }
 
     // MARK: bit primitives (LSB-first)
@@ -144,9 +157,11 @@ private struct JXLBitReader {
     }
 
     mutating func skipSignatureAndSizeHeader() -> Bool {
-        // Skip the 2-byte signature (byte aligned), then the SizeHeader.
-        guard bytes.count >= 2, bytes[0] == 0xFF, bytes[1] == 0x0A else { return false }
-        bitPos = 16
+        // The codestream signature (0xFF 0x0A) prefixes a bare stream and the
+        // fragments inside jxlp boxes; a jxlc box may omit it. Skip it when
+        // present (byte aligned), otherwise the SizeHeader starts at byte 0.
+        guard bytes.count >= 2 else { return false }
+        bitPos = (bytes[0] == 0xFF && bytes[1] == 0x0A) ? 16 : 0
         skipSizeHeader()
         return ok
     }
