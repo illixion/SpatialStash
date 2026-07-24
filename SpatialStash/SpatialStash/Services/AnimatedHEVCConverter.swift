@@ -133,10 +133,13 @@ actor AnimatedHEVCConverter {
             AVVideoHeightKey: height,
             AVVideoCompressionPropertiesKey: [
                 AVVideoAverageBitRateKey: calculateBitrate(width: width, height: height),
-                // High profile, auto level; disable B-frames so the looping
-                // <img>-video decode starts instantly and seeks cleanly.
+                AVVideoQualityKey: 0.9,
+                // Highest 8-bit profile. Frame reordering (B-frames) is left
+                // enabled — it improves quality per bit and the <img>-video
+                // path plays B-frame H.264 fine (the RemoteViewer's server
+                // clips use it). Encoding is hardware (VideoToolbox), so there
+                // is no speed cost to the richer settings.
                 AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
-                AVVideoAllowFrameReorderingKey: false,
             ] as [String: Any],
         ]
 
@@ -290,8 +293,12 @@ actor AnimatedHEVCConverter {
     // MARK: - Bitrate
 
     private func calculateBitrate(width: Int, height: Int) -> Int {
-        // Scale bitrate with resolution; GIFs are typically small
-        // Minimum 2 Mbps, scale up for larger dimensions
-        return max(2_000_000, width * height * 4)
+        // Quality-first: these are short animated loops, the disk cache is
+        // LRU-bounded, and the encode is hardware (VideoToolbox) — so there's
+        // no speed or storage reason to skimp. Bitrate is the one lever that
+        // actually gates quality inside 4:2:0 8-bit (the ceiling of the
+        // <img>-video delivery path), so run it high enough to be visually
+        // lossless for the 8-bit RGBA the GIF/APNG intermediary carries.
+        return max(8_000_000, width * height * 12)
     }
 }
