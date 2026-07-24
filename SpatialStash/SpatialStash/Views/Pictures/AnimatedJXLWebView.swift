@@ -182,19 +182,25 @@ struct AnimatedJXLWebView: UIViewRepresentable {
             const bin = atob(b), n = bin.length, u = new Uint8Array(n);
             for (let i = 0; i < n; i++) u[i] = bin.charCodeAt(i);
             const blob = await window.RoboFrameJXL.decodeToBlob(u.buffer, onProgress);
+            // Display via a blob: object URL, never a base64 data: URL. A large
+            // animated JXL muxes to a multi-MB APNG; inlined as a data: URL it
+            // exceeds what <img> will decode and fails with a broken-image
+            // square (only large ones — small decodes stay under the limit). An
+            // object URL has no such size ceiling.
+            media.onload = reveal;
+            media.onerror = reveal;
+            media.src = URL.createObjectURL(blob);
+            // Separately hand the APNG bytes to Swift for background HEVC
+            // caching. This reads the same blob to base64 but never touches the
+            // displayed <img>, so a huge payload can't break rendering.
             const reader = new FileReader();
             reader.onload = () => {
               const dataURL = reader.result;
-              media.onload = reveal;
-              media.onerror = reveal;
-              media.src = dataURL;
-              // Hand the decoded APNG to Swift for caching (strip the data: prefix).
               try {
                 const comma = dataURL.indexOf(',');
                 window.webkit.messageHandlers.jxlCache.postMessage(dataURL.slice(comma + 1));
               } catch (e) {}
             };
-            reader.onerror = reveal;
             reader.readAsDataURL(blob);
           } catch (e) {
             console.error('JXL render failed:', e);
