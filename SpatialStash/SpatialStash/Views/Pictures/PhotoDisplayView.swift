@@ -344,14 +344,31 @@ struct PhotoDisplayView: View {
     @ViewBuilder
     private var imageContent: some View {
         if !windowModel.is3DMode, (windowModel.isAnimatedGIF || windowModel.isAnimatedJXL), let hevcURL = windowModel.animatedHEVCURL {
-            // Play the cached H.264 conversion through the native video-in-<img>
-            // path: WebKit owns the animation loop and pauses/resumes it with the
-            // window, matching the raw GIF and animated-WebP paths (no AVPlayer,
-            // no isRoomActive/controls wiring).
-            AnimatedImageWebView(
-                imageURL: hevcURL,
-                elementType: .image
-            )
+            // Play the cached HEVC conversion. Preferred path is the native
+            // video-in-<img> tier: WebKit owns the animation loop and
+            // pauses/resumes it with the window, matching the raw GIF and
+            // animated-WebP paths (no AVPlayer, no isRoomActive/controls
+            // wiring). If WebKit can't decode HEVC in an <img> it errors, and
+            // we fall back to the <video> player, which decodes it reliably.
+            Group {
+                if windowModel.animatedImgPlaybackFailed {
+                    WebVideoPlayerView(
+                        videoURL: hevcURL,
+                        apiKey: nil,
+                        showControls: !windowModel.isUIHidden,
+                        isRoomActive: windowModel.isInActiveRoom
+                    )
+                } else {
+                    AnimatedImageWebView(
+                        imageURL: hevcURL,
+                        elementType: .image,
+                        onError: { [weak windowModel] in
+                            AppLogger.gifConverter.info("HEVC failed to decode in <img> tier — falling back to <video> player")
+                            windowModel?.animatedImgPlaybackFailed = true
+                        }
+                    )
+                }
+            }
             .brightness(windowModel.effectiveAdjustments.brightness)
             .contrast(windowModel.effectiveAdjustments.contrast)
             .saturation(windowModel.effectiveAdjustments.saturation)

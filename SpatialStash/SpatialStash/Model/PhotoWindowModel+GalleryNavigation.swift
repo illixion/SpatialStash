@@ -51,6 +51,7 @@ extension PhotoWindowModel {
         isAnimatedWebP = false
         isAnimatedWebVisual = false
         isAnimatedJXL = false
+        animatedImgPlaybackFailed = false
         animatedConversionTask?.cancel()
         animatedConversionTask = nil
         currentImageData = nil

@@ -20,13 +20,13 @@ actor DiskAnimatedHEVCCache {
     private init() {
         let caches = fileManager.urls(for: .cachesDirectory, in: .userDomainMask).first!
         engine = LRUDiskCache(
-            // Directory name kept as-is for continuity. formatVersion 2 purges
-            // the old HEVC-encoded clips: playback moved to the video-in-<img>
-            // path, which needs H.264 (see AnimatedHEVCConverter).
+            // Directory name kept as-is for continuity. formatVersion 3 purges
+            // the interim H.264 clips so they re-convert as HEVC (better
+            // quality at the same bitrate — see AnimatedHEVCConverter).
             directory: caches.appendingPathComponent("GIFHEVCCache", isDirectory: true),
             domain: .gifHEVC,
             log: AppLogger.gifConverter,
-            formatVersion: 2
+            formatVersion: 3
         )
     }
 

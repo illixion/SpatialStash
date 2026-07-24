@@ -456,18 +456,23 @@ class PhotoWindowModel {
     var isAnimatedWebVisual: Bool = false
     /// Animated JPEG XL. ImageIO only yields the first frame, so it's decoded
     /// via the bundled WASM libjxl path (AnimatedJXLWebView) on first view; that
-    /// decode is converted to H.264 and cached so reopens play natively.
+    /// decode is converted to HEVC and cached so reopens play natively.
     var isAnimatedJXL: Bool = false
     var isAnimatedImage: Bool { isAnimatedGIF || isAnimatedWebP || isAnimatedWebVisual || isAnimatedJXL }
     var currentImageData: Data? = nil
     var animatedImageSourceURL: URL? = nil
-    /// Cached H.264 conversion of an animated GIF *or* animated JXL, once
+    /// Cached HEVC conversion of an animated GIF *or* animated JXL, once
     /// available — drives the unified native `<img src=mp4>` playback path in
-    /// PhotoDisplayView (WebKit owns the animation lifecycle). Named "HEVC"
-    /// for historical reasons; the codec is now H.264 for `<img>` compatibility.
+    /// PhotoDisplayView (WebKit owns the animation lifecycle), with a `<video>`
+    /// fallback if the `<img>` tier can't decode HEVC.
     var animatedHEVCURL: URL? = nil
 
-    /// Background task converting an animated GIF to the cached H.264 the
+    /// Set when the cached clip fails to decode in the native video-in-`<img>`
+    /// tier (e.g. WebKit can't play HEVC in an `<img>`), flipping playback to
+    /// the `<video>` player (WebVideoPlayerView), which decodes HEVC reliably.
+    var animatedImgPlaybackFailed: Bool = false
+
+    /// Background task converting an animated GIF to the cached HEVC the
     /// native playback path uses. Runs off the load path so the raw GIF
     /// displays immediately; on completion it sets `animatedHEVCURL` and
     /// playback switches to the lighter cached video. Cancelled on navigate /
@@ -701,7 +706,7 @@ class PhotoWindowModel {
                     }
 
                     // Show the raw GIF immediately — WebKit animates it in an
-                    // <img>. Prefer a cached H.264 if one already exists;
+                    // <img>. Prefer a cached HEVC clip if one already exists;
                     // otherwise convert in the background (non-blocking) so this
                     // session stays responsive and the next open plays the
                     // lighter cached video.
@@ -743,7 +748,7 @@ class PhotoWindowModel {
         }
     }
 
-    /// Kick off the background animated-GIF → H.264 conversion and adopt the
+    /// Kick off the background animated-GIF → HEVC conversion and adopt the
     /// result when it finishes. Held in `animatedConversionTask` so navigating
     /// to another image (or window cleanup) cancels it, and the completed URL
     /// is only adopted if this window is still showing the same GIF.
@@ -1144,6 +1149,7 @@ class PhotoWindowModel {
         // Release image data
         animatedConversionTask?.cancel()
         animatedConversionTask = nil
+        animatedImgPlaybackFailed = false
         currentImageData = nil
         animatedImageSourceURL = nil
         animatedHEVCURL = nil

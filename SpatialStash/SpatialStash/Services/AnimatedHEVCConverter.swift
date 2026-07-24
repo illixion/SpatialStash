@@ -8,10 +8,13 @@
  with AVAssetWriter, preserving each frame's variable timing (read from the GIF
  or APNG per-frame delay dictionary).
 
- Codec is **H.264**, not HEVC (the type name is kept for history): the cached
- clip is played through the native video-in-`<img>` path (AnimatedImageWebView),
- and WebKit's `<img>`-video decode only reliably handles H.264. H.264 also
- requires even frame dimensions, so odd source sizes are rounded down to even.
+ Codec is **HEVC**: it's far more efficient than H.264 at the same bitrate, so
+ the cached clip stays much closer to the JPEG XL / GIF source (H.264 4:2:0 was
+ a visible downgrade). Playback goes through the native video-in-`<img>` path
+ (AnimatedImageWebView); if WebKit's `<img>`-video decode can't take HEVC the
+ view falls back to the `<video>` player, which decodes it reliably on
+ visionOS. Even frame dimensions are still enforced (the encoders prefer them),
+ so odd source sizes are rounded down to even.
  */
 
 import AVFoundation
@@ -74,9 +77,9 @@ actor AnimatedHEVCConverter {
         guard let firstImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
             throw ConversionError.noFrames
         }
-        // H.264 (4:2:0) requires even dimensions, and the <img>-video decode
-        // path is stricter than <video>. Round down to even; the ≤1px change
-        // is invisible and display aspect is driven separately by the source.
+        // The video encoders prefer even dimensions (4:2:0 chroma), and the
+        // <img>-video decode path is stricter than <video>. Round down to even;
+        // the ≤1px change is invisible and display aspect is driven separately.
         let width = firstImage.width - (firstImage.width % 2)
         let height = firstImage.height - (firstImage.height % 2)
         guard width > 0, height > 0 else { throw ConversionError.noFrames }
@@ -128,18 +131,18 @@ actor AnimatedHEVCConverter {
         }
 
         let videoSettings: [String: Any] = [
-            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoCodecKey: AVVideoCodecType.hevc,
             AVVideoWidthKey: width,
             AVVideoHeightKey: height,
             AVVideoCompressionPropertiesKey: [
+                // HEVC Main (8-bit 4:2:0 — the source is already 8-bit RGBA, so
+                // depth loses nothing). AVFoundation exposes no HEVC profile-
+                // level constant; the encoder picks Main and AVAssetWriter tags
+                // the .mp4 `hvc1`, which WebKit needs. Bitrate is generous
+                // (hardware encode, short LRU-bounded loops) and B-frames stay
+                // enabled for better quality per bit.
                 AVVideoAverageBitRateKey: calculateBitrate(width: width, height: height),
                 AVVideoQualityKey: 0.9,
-                // Highest 8-bit profile. Frame reordering (B-frames) is left
-                // enabled — it improves quality per bit and the <img>-video
-                // path plays B-frame H.264 fine (the RemoteViewer's server
-                // clips use it). Encoding is hardware (VideoToolbox), so there
-                // is no speed cost to the richer settings.
-                AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
             ] as [String: Any],
         ]
 
@@ -295,10 +298,9 @@ actor AnimatedHEVCConverter {
     private func calculateBitrate(width: Int, height: Int) -> Int {
         // Quality-first: these are short animated loops, the disk cache is
         // LRU-bounded, and the encode is hardware (VideoToolbox) — so there's
-        // no speed or storage reason to skimp. Bitrate is the one lever that
-        // actually gates quality inside 4:2:0 8-bit (the ceiling of the
-        // <img>-video delivery path), so run it high enough to be visually
-        // lossless for the 8-bit RGBA the GIF/APNG intermediary carries.
+        // no speed or storage reason to skimp. Run the bitrate high enough that
+        // HEVC is visually lossless for the 8-bit RGBA the GIF/APNG
+        // intermediary carries.
         return max(8_000_000, width * height * 12)
     }
 }

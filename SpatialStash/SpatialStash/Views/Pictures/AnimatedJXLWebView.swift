@@ -8,7 +8,7 @@
  — the same lifecycle behaviour the video-in-`<img>` path relies on, and the
  reason this goes through an image element rather than a canvas.
 
- The decoded APNG is also posted back to Swift and transcoded to H.264
+ The decoded APNG is also posted back to Swift and transcoded to HEVC
  (AnimatedHEVCConverter), cached in the same store as GIF conversions. On the
  next open PhotoWindowModel finds that clip and plays it through the shared
  video-in-`<img>` path, so this WebView (and the WASM decode) is skipped.
