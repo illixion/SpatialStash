@@ -112,7 +112,7 @@
     });
   }
 
-  async function encodeAPNG(frames, w, h, loops) {
+  async function encodeAPNG(frames, w, h, loops, onProgress) {
     const parts = [PNG_SIG, chunk('IHDR', ihdrData(w, h))];
 
     const actl = new Uint8Array(8);
@@ -149,6 +149,10 @@
         fd.set(comp, 4);
         parts.push(chunk('fdAT', fd));
       }
+      // zlibDeflate awaits (CompressionStream yields to the event loop), so a
+      // progress callback here lets the host paint a determinate bar between
+      // frames instead of an indeterminate spinner.
+      if (onProgress) onProgress({ phase: 'encoding', frame: i + 1, total: frames.length });
     }
 
     parts.push(chunk('IEND', new Uint8Array(0)));
@@ -157,7 +161,10 @@
 
   // --- Public API ------------------------------------------------------------
 
-  async function decodeToBlob(arrayBuffer) {
+  // onProgress (optional) receives {phase, ...}:
+  //   {phase:'decoded', width, height, frames}   — dimensions/frame count known
+  //   {phase:'encoding', frame, total}            — per-frame APNG muxing
+  async function decodeToBlob(arrayBuffer, onProgress) {
     const Module = await getModule();
     const bytes = new Uint8Array(arrayBuffer);
     const ptr = Module._malloc(bytes.length);
@@ -181,11 +188,12 @@
     Module._jxl_free();
 
     window.RoboFrameJXL.lastStats = { width: w, height: h, frames: n, loops };
-    return n <= 1 ? encodePNG(frames[0], w, h) : encodeAPNG(frames, w, h, loops);
+    if (onProgress) onProgress({ phase: 'decoded', width: w, height: h, frames: n });
+    return n <= 1 ? encodePNG(frames[0], w, h) : encodeAPNG(frames, w, h, loops, onProgress);
   }
 
-  async function decodeToObjectURL(arrayBuffer) {
-    const blob = await decodeToBlob(arrayBuffer);
+  async function decodeToObjectURL(arrayBuffer, onProgress) {
+    const blob = await decodeToBlob(arrayBuffer, onProgress);
     return URL.createObjectURL(blob);
   }
 

@@ -344,12 +344,13 @@ struct PhotoDisplayView: View {
     @ViewBuilder
     private var imageContent: some View {
         if !windowModel.is3DMode, (windowModel.isAnimatedGIF || windowModel.isAnimatedJXL), let hevcURL = windowModel.animatedHEVCURL {
-            // Display the converted GIF/JXL as video using the shared web video player
-            WebVideoPlayerView(
-                videoURL: hevcURL,
-                apiKey: nil,
-                showControls: !windowModel.isUIHidden,
-                isRoomActive: windowModel.isInActiveRoom
+            // Play the cached H.264 conversion through the native video-in-<img>
+            // path: WebKit owns the animation loop and pauses/resumes it with the
+            // window, matching the raw GIF and animated-WebP paths (no AVPlayer,
+            // no isRoomActive/controls wiring).
+            AnimatedImageWebView(
+                imageURL: hevcURL,
+                elementType: .image
             )
             .brightness(windowModel.effectiveAdjustments.brightness)
             .contrast(windowModel.effectiveAdjustments.contrast)
@@ -450,18 +451,38 @@ struct PhotoDisplayView: View {
                     }
                 }
         } else if windowModel.isAnimatedGIF, !windowModel.is3DMode {
-            // GIF detected but HEVC conversion still in progress — show loading indicator
-            ZStack {
-                Color.black
-                ProgressView("Converting...")
-                    .foregroundStyle(.white)
-            }
-            .aspectRatio(windowModel.imageAspectRatio, contentMode: .fit)
-            .clipShape(RoundedRectangle(cornerRadius: appModel.roundedCorners ? 50 : 0, style: .continuous))
-            .onAppear {
-                let initialBounds = windowModel.savedWindowSize ?? appModel.mainWindowSize
-                resizeGIFWindowToFit(windowModel.imageAspectRatio, within: initialBounds)
-            }
+            // No cached H.264 yet — play the raw GIF immediately (WebKit animates
+            // it in an <img>). The H.264 conversion runs in the background and,
+            // once ready, `animatedHEVCURL` flips this to the branch above.
+            AnimatedImageWebView(
+                imageURL: windowModel.animatedImageSourceURL ?? windowModel.imageURL,
+                imageData: windowModel.currentImageData,
+                imageDataMimeType: "image/gif"
+            )
+                .brightness(windowModel.effectiveAdjustments.brightness)
+                .contrast(windowModel.effectiveAdjustments.contrast)
+                .saturation(windowModel.effectiveAdjustments.saturation)
+                .opacity(windowModel.effectiveAdjustments.opacity)
+                .aspectRatio(windowModel.imageAspectRatio, contentMode: .fit)
+                .clipShape(RoundedRectangle(cornerRadius: appModel.roundedCorners ? 50 : 0, style: .continuous))
+                .overlay {
+                    if windowModel.isUIHidden {
+                        Color.clear
+                            .contentShape(.rect)
+                            .onTapGesture {
+                                windowModel.toggleUIVisibility()
+                            }
+                    }
+                }
+                .modifier(SwipeGestureModifier(enabled: isSwipeEnabled, onEnded: handleDragEnded))
+                .onAppear {
+                    let initialBounds = windowModel.savedWindowSize ?? appModel.mainWindowSize
+                    resizeGIFWindowToFit(windowModel.imageAspectRatio, within: initialBounds)
+                }
+                .onChange(of: windowModel.imageAspectRatio) { _, newAspectRatio in
+                    guard !suppressWindowResize else { return }
+                    resizeGIFWindowToFit(newAspectRatio, within: currentBounds)
+                }
         } else if windowModel.is3DMode {
             // Display with RealityKit for 3D spatial conversion (full resolution)
             GeometryReader3D { geometry in

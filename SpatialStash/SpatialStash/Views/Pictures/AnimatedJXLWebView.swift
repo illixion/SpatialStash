@@ -1,17 +1,17 @@
 /*
  Spatial Stash - Animated JXL Web View
 
- First-view renderer for an animated JPEG XL, used only until an HEVC
+ First-view renderer for an animated JPEG XL, used only until a cached video
  conversion exists. It decodes the JXL in WebAssembly (a decode-only build of
  libjxl) and muxes the frames into an APNG that a plain `<img>` animates.
  WebKit then owns the animation loop and pauses it when the window is offscreen
  — the same lifecycle behaviour the video-in-`<img>` path relies on, and the
  reason this goes through an image element rather than a canvas.
 
- The decoded APNG is also posted back to Swift and transcoded to HEVC
+ The decoded APNG is also posted back to Swift and transcoded to H.264
  (AnimatedHEVCConverter), cached in the same store as GIF conversions. On the
- next open PhotoWindowModel finds that HEVC and plays it through the shared
- native video path, so this WebView (and the WASM decode) is skipped entirely.
+ next open PhotoWindowModel finds that clip and plays it through the shared
+ video-in-`<img>` path, so this WebView (and the WASM decode) is skipped.
 
  ImageIO can't be used: it decodes JPEG XL but exposes only the first frame of
  an animation. The bundled `jxl_decoder.js` (SINGLE_FILE emscripten build) and
@@ -108,23 +108,42 @@ struct AnimatedJXLWebView: UIViewRepresentable {
     }
 
     // Shared page chrome: transparent full-bleed image, hidden until ready so
-    // the alt-text placeholder never paints, plus a centered loading spinner.
+    // the alt-text placeholder never paints, plus a loading overlay.
+    //
+    // The overlay fills the viewport (`inset: 0`) and centers its contents with
+    // flexbox — never `top/left: 50%` percentage math, which resolves against a
+    // zero-size viewport before the WKWebView is laid out and makes the spinner
+    // pop in at the top-left corner and then jump to center. Flex centering is
+    // size-independent, so it is centered from the very first paint. The spinner
+    // covers the (blocking, indeterminate) WASM decode; once frame count is
+    // known the muxing progress fills a determinate bar beneath it.
     private static let headAndBody = """
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <style>
     html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: transparent; }
-    .wrap { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: transparent; }
+    .wrap { position: relative; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: transparent; }
     #media { display: block; width: 100%; height: 100%; object-fit: contain; background: transparent; opacity: 0; transition: opacity 0.25s ease; }
     #media.ready { opacity: 1; }
+    #loader {
+      position: absolute; inset: 0;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 14px; pointer-events: none;
+    }
+    #loader.hidden { display: none; }
     .spinner {
-      position: absolute; top: 50%; left: 50%;
-      width: 44px; height: 44px; margin: -22px 0 0 -22px;
+      width: 44px; height: 44px;
       border: 4px solid rgba(255,255,255,0.25);
       border-top-color: rgba(255,255,255,0.9);
       border-radius: 50%;
       animation: spin 0.9s linear infinite;
     }
-    .spinner.hidden { display: none; }
+    .bar {
+      width: 140px; height: 4px; border-radius: 2px;
+      background: rgba(255,255,255,0.2); overflow: hidden;
+      opacity: 0; transition: opacity 0.2s ease;
+    }
+    .bar.show { opacity: 1; }
+    .bar > div { width: 0%; height: 100%; background: rgba(255,255,255,0.9); transition: width 0.15s ease; }
     @keyframes spin { to { transform: rotate(360deg); } }
     </style>
     """
@@ -137,19 +156,32 @@ struct AnimatedJXLWebView: UIViewRepresentable {
         return """
         <!doctype html><html><head>\(headAndBody)</head>
         <body>
-        <div class="wrap"><img id="media" alt="" draggable="false"><div id="spinner" class="spinner"></div></div>
+        <div class="wrap">
+          <img id="media" alt="" draggable="false">
+          <div id="loader"><div class="spinner"></div><div id="bar" class="bar"><div id="barfill"></div></div></div>
+        </div>
         <script src="data:text/javascript;base64,\(decoderB64)"></script>
         <script src="data:text/javascript;base64,\(animB64)"></script>
         <script>
         (async function () {
           const media = document.getElementById('media');
-          const spinner = document.getElementById('spinner');
-          const reveal = () => { spinner.classList.add('hidden'); media.classList.add('ready'); };
+          const loader = document.getElementById('loader');
+          const bar = document.getElementById('bar');
+          const barfill = document.getElementById('barfill');
+          const reveal = () => { loader.classList.add('hidden'); media.classList.add('ready'); };
+          // Progress events from the WASM decoder/muxer: show a determinate bar
+          // for the per-frame APNG muxing once the frame count is known.
+          const onProgress = (p) => {
+            if (p.phase === 'encoding' && p.total > 1) {
+              bar.classList.add('show');
+              barfill.style.width = Math.round((p.frame / p.total) * 100) + '%';
+            }
+          };
           try {
             const b = "\(base64)";
             const bin = atob(b), n = bin.length, u = new Uint8Array(n);
             for (let i = 0; i < n; i++) u[i] = bin.charCodeAt(i);
-            const blob = await window.RoboFrameJXL.decodeToBlob(u.buffer);
+            const blob = await window.RoboFrameJXL.decodeToBlob(u.buffer, onProgress);
             const reader = new FileReader();
             reader.onload = () => {
               const dataURL = reader.result;

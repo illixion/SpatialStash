@@ -456,14 +456,23 @@ class PhotoWindowModel {
     var isAnimatedWebVisual: Bool = false
     /// Animated JPEG XL. ImageIO only yields the first frame, so it's decoded
     /// via the bundled WASM libjxl path (AnimatedJXLWebView) on first view; that
-    /// decode is converted to HEVC and cached so reopens play natively.
+    /// decode is converted to H.264 and cached so reopens play natively.
     var isAnimatedJXL: Bool = false
     var isAnimatedImage: Bool { isAnimatedGIF || isAnimatedWebP || isAnimatedWebVisual || isAnimatedJXL }
     var currentImageData: Data? = nil
     var animatedImageSourceURL: URL? = nil
-    /// HEVC conversion of an animated GIF *or* animated JXL, once available —
-    /// drives the unified native video playback path in PhotoDisplayView.
+    /// Cached H.264 conversion of an animated GIF *or* animated JXL, once
+    /// available — drives the unified native `<img src=mp4>` playback path in
+    /// PhotoDisplayView (WebKit owns the animation lifecycle). Named "HEVC"
+    /// for historical reasons; the codec is now H.264 for `<img>` compatibility.
     var animatedHEVCURL: URL? = nil
+
+    /// Background task converting an animated GIF to the cached H.264 the
+    /// native playback path uses. Runs off the load path so the raw GIF
+    /// displays immediately; on completion it sets `animatedHEVCURL` and
+    /// playback switches to the lighter cached video. Cancelled on navigate /
+    /// cleanup so a conversion never outlives the image that started it.
+    var animatedConversionTask: Task<Void, Never>?
 
     // MARK: - UI Visibility State
 
@@ -691,15 +700,15 @@ class PhotoWindowModel {
                         imageAspectRatio = image.size.width / image.size.height
                     }
 
-                    // Show the GIF immediately (base64 fallback) while HEVC converts
+                    // Show the raw GIF immediately — WebKit animates it in an
+                    // <img>. Prefer a cached H.264 if one already exists;
+                    // otherwise convert in the background (non-blocking) so this
+                    // session stays responsive and the next open plays the
+                    // lighter cached video.
                     isLoadingDetailImage = false
-
-                    // Convert GIF to HEVC in background for reliable multi-window playback
-                    do {
-                        animatedHEVCURL = try await AnimatedHEVCConverter.shared.convert(animatedData: data, sourceURL: url)
-                    } catch {
-                        AppLogger.gifConverter.warning("GIF HEVC conversion failed, falling back to base64: \(error.localizedDescription, privacy: .public)")
-                        animatedHEVCURL = nil
+                    animatedHEVCURL = await DiskAnimatedHEVCCache.shared.cachedFileURL(for: url)
+                    if animatedHEVCURL == nil {
+                        startAnimatedConversion(data: data, url: url)
                     }
                 } else if isAnimatedWebP || isAnimatedWebVisual || isAnimatedJXL {
                     if let image = UIImage(data: data) {
@@ -731,6 +740,20 @@ class PhotoWindowModel {
         } catch {
             AppLogger.photoWindow.error("Error loading image data: \(error.localizedDescription, privacy: .public)")
             isLoadingDetailImage = false
+        }
+    }
+
+    /// Kick off the background animated-GIF → H.264 conversion and adopt the
+    /// result when it finishes. Held in `animatedConversionTask` so navigating
+    /// to another image (or window cleanup) cancels it, and the completed URL
+    /// is only adopted if this window is still showing the same GIF.
+    func startAnimatedConversion(data: Data, url: URL) {
+        animatedConversionTask?.cancel()
+        animatedConversionTask = Task { [weak self] in
+            let converted = try? await AnimatedHEVCConverter.shared.convert(animatedData: data, sourceURL: url)
+            guard let self, !Task.isCancelled, let converted,
+                  self.imageURL == url, self.isAnimatedGIF else { return }
+            self.animatedHEVCURL = converted
         }
     }
 
@@ -1119,6 +1142,8 @@ class PhotoWindowModel {
         }
 
         // Release image data
+        animatedConversionTask?.cancel()
+        animatedConversionTask = nil
         currentImageData = nil
         animatedImageSourceURL = nil
         animatedHEVCURL = nil

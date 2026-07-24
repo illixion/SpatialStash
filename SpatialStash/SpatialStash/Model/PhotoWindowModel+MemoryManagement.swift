@@ -80,6 +80,12 @@ extension PhotoWindowModel {
     func releaseMemoryForIdleDownscale() async {
         guard !isIdleDownscaled, !isRestoringFromIdle else { return }
 
+        // Animated content is displayed by WebKit (raw GIF / WASM APNG / cached
+        // <img>-video), which already pauses and offloads offscreen work, and it
+        // has no idle-restore path — releasing its backing data here would blank
+        // it with no way back. Leave animated windows to WebKit's own lifecycle.
+        guard !isAnimatedImage else { return }
+
         AppLogger.photoWindow.info("Releasing memory for idle downscale")
 
         // Snapshot current enhancement state so restore can skip the full
@@ -123,11 +129,6 @@ extension PhotoWindowModel {
         originalDisplayTexture = nil
         backgroundRemovedTexture = nil
         autoEnhancedBackgroundRemovedTexture = nil
-
-        // For animated content, release converted GIF video too.
-        if isAnimatedGIF {
-            animatedHEVCURL = nil
-        }
 
         isIdleDownscaled = true
     }

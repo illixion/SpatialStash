@@ -2,11 +2,16 @@
  Spatial Stash - Animated HEVC Converter
 
  Converts animated still data — animated GIF or the APNG produced by decoding
- an animated JPEG XL — to HEVC .mp4 video for reliable multi-window playback on
+ an animated JPEG XL — to an .mp4 video for reliable multi-window playback on
  visionOS. Both formats are frame sequences that ImageIO reads via
  CGImageSource, so a single path serves both: frames are extracted and encoded
- with AVAssetWriter (HEVC codec), preserving each frame's variable timing (read
- from the GIF or APNG per-frame delay dictionary).
+ with AVAssetWriter, preserving each frame's variable timing (read from the GIF
+ or APNG per-frame delay dictionary).
+
+ Codec is **H.264**, not HEVC (the type name is kept for history): the cached
+ clip is played through the native video-in-`<img>` path (AnimatedImageWebView),
+ and WebKit's `<img>`-video decode only reliably handles H.264. H.264 also
+ requires even frame dimensions, so odd source sizes are rounded down to even.
  */
 
 import AVFoundation
@@ -69,8 +74,12 @@ actor AnimatedHEVCConverter {
         guard let firstImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
             throw ConversionError.noFrames
         }
-        let width = firstImage.width
-        let height = firstImage.height
+        // H.264 (4:2:0) requires even dimensions, and the <img>-video decode
+        // path is stricter than <video>. Round down to even; the ≤1px change
+        // is invisible and display aspect is driven separately by the source.
+        let width = firstImage.width - (firstImage.width % 2)
+        let height = firstImage.height - (firstImage.height % 2)
+        guard width > 0, height > 0 else { throw ConversionError.noFrames }
 
         // Create temporary output file
         let tempURL = FileManager.default.temporaryDirectory
@@ -119,11 +128,15 @@ actor AnimatedHEVCConverter {
         }
 
         let videoSettings: [String: Any] = [
-            AVVideoCodecKey: AVVideoCodecType.hevc,
+            AVVideoCodecKey: AVVideoCodecType.h264,
             AVVideoWidthKey: width,
             AVVideoHeightKey: height,
             AVVideoCompressionPropertiesKey: [
                 AVVideoAverageBitRateKey: calculateBitrate(width: width, height: height),
+                // High profile, auto level; disable B-frames so the looping
+                // <img>-video decode starts instantly and seeks cleanly.
+                AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
+                AVVideoAllowFrameReorderingKey: false,
             ] as [String: Any],
         ]
 
