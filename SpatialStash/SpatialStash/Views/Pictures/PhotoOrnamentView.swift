@@ -204,7 +204,7 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
                     title: "3D",
                     icon: "spatial.capture.fill",
                     isChecked: windowModel.desiredViewingMode == .spatial3D,
-                    isDisabled: windowModel.isAnimatedImage || (windowModel.spatial3DImageState == .generating && windowModel.desiredViewingMode != .spatial3DImmersive)
+                    isDisabled: windowModel.spatial3DImageState == .generating && windowModel.desiredViewingMode != .spatial3DImmersive
                 ) {
                     Task {
                         if windowModel.desiredViewingMode == .spatial3D {
@@ -219,7 +219,7 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
                     title: "Immersive 3D",
                     icon: "inset.filled.pano",
                     isChecked: windowModel.desiredViewingMode == .spatial3DImmersive,
-                    isDisabled: windowModel.isAnimatedImage || (windowModel.spatial3DImageState == .generating && windowModel.desiredViewingMode != .spatial3D)
+                    isDisabled: windowModel.spatial3DImageState == .generating && windowModel.desiredViewingMode != .spatial3D
                 ) {
                     Task {
                         if windowModel.desiredViewingMode == .spatial3DImmersive {
@@ -282,7 +282,10 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
         }
         .menuStyle(.button)
         .buttonStyle(.borderless)
-        .disabled(windowModel.isAnimatedImage)
+        // Enabled for animated images too: 3D / Immersive 3D convert the first
+        // frame (the same explicit path the auto-restore pill uses), and 2D
+        // returns to the animation. Diorama stays disabled for animated via its
+        // own item flag — it's a separate pipeline, not part of this.
         .help("3D")
     }
 

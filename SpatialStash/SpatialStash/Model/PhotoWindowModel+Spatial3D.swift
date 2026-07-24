@@ -156,8 +156,17 @@ extension PhotoWindowModel {
         // Reset display dimension so the 2D reload doesn't early-exit
         currentDisplayMaxDimension = 0
 
-        // Reload 2D display image
-        if let windowSize = lastWindowSize {
+        // Return to the pre-3D display. Animated content has no 2D texture to
+        // rebuild — clearing is3DMode alone returns PhotoDisplayView to the
+        // animated (<img>/video) path — but createImagePresentationComponent
+        // released the raw bytes when entering 3D, so reload them for the
+        // raw-GIF / WASM-APNG branches that display from currentImageData.
+        if isAnimatedImage {
+            if currentImageData == nil {
+                currentImageData = try? await ImageLoader.shared.loadRawData(from: imageURL)
+            }
+            isLoadingDetailImage = false
+        } else if let windowSize = lastWindowSize {
             isLoadingDetailImage = true
             await loadDisplayImage(for: windowSize)
         }
@@ -335,9 +344,13 @@ extension PhotoWindowModel {
     func generateSpatial3DImage() async {
         recordInteraction()
         // If not in 3D mode yet, activate it first and let the RealityView
-        // handle creation + generation after its init closure runs
+        // handle creation + generation after its init closure runs.
+        // explicit: true because generation is only ever reached for animated
+        // content through a deliberate user action (the ornament 3D menu or the
+        // pill) — the auto paths all guard `!isAnimatedImage` — so activating
+        // the first frame in 3D is exactly what was asked for.
         if !is3DMode {
-            activate3DMode(generateImmediately: true)
+            activate3DMode(generateImmediately: true, explicit: true)
             return
         }
 
