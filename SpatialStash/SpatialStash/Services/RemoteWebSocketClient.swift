@@ -156,6 +156,12 @@ class RemoteWebSocketClient {
         if isConnected {
             sendJSON(["sessionId": sessionId, "action": "sessionEnd"])
         }
+        // Drop this window's presence contribution. If it was the last present
+        // source for its deviceId, flushSceneState emits the OFF edge — without
+        // it a closed window leaves the shared socket asserting presence for a
+        // display that no longer exists, and the channel never parks.
+        sceneBySession.removeValue(forKey: sessionId)
+        if isConnected { flushSceneState() }
         return sessions.count
     }
 
@@ -243,6 +249,54 @@ class RemoteWebSocketClient {
         doConnect()
     }
 
+    /// Flush anything queued (notably a just-reported `present:false`) and, if
+    /// nothing on this connection is present any more, hand the server a clean
+    /// close.
+    ///
+    /// Two problems this solves on visionOS background. First, `sendJSON` is
+    /// fire-and-forget, and the app can suspend before the OFF frame reaches the
+    /// transport — so the server never learns we left. WebSocket sends complete
+    /// in order, so awaiting a trailing frame proves the frames ahead of it went
+    /// out. Second, a suspended client leaves the socket half-open: `close`
+    /// never fires server-side and the channel only parks once the broker's
+    /// liveness heartbeat reaps us, 5-10s later. Closing explicitly parks it
+    /// immediately, and per protocol.md a parked channel keeps its queue, cursor
+    /// and current post for the life of the server process and rebinds us on the
+    /// next `slideshowConfig` — so there is nothing to lose by letting go.
+    ///
+    /// Must be awaited under a background-task assertion or the app suspends
+    /// mid-flush and we're back to the fire-and-forget failure mode.
+    func flushAndSuspendIfAbsent() async {
+        guard let task = webSocketTask else { return }
+        await withCheckedContinuation { continuation in
+            task.send(.string("{\"action\":\"ping\"}")) { _ in
+                continuation.resume()
+            }
+        }
+        // A window may have come back while we were flushing.
+        guard allSessionsAbsent, task === webSocketTask else { return }
+        AppLogger.remoteViewer.info("WebSocket suspending — every session absent, releasing socket for background")
+        suspendSocket()
+    }
+
+    /// Tear down the socket while keeping the session registry, endpoint,
+    /// URLSession and path monitor, so returning to the foreground reconnects
+    /// straight away instead of rediscovering everything. `retryCount` is reset
+    /// because this close is ours by choice, not a failure — the return path
+    /// must not inherit somebody else's backoff.
+    private func suspendSocket() {
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        receiveTask?.cancel()
+        receiveTask = nil
+        keepaliveTask?.cancel()
+        keepaliveTask = nil
+        webSocketTask?.cancel(with: .goingAway, reason: nil)
+        webSocketTask = nil
+        isConnected = false
+        retryCount = 0
+    }
+
     func disconnect() {
         reconnectTask?.cancel()
         reconnectTask = nil
@@ -259,25 +313,96 @@ class RemoteWebSocketClient {
         session = nil
     }
 
-    /// Notify the server about a device's active/background state
-    /// (used by the RoboFrame server for in-home location tracking → the HA
-    /// motion sensor). Telemetry only — it no longer drives the slideshow.
-    func sendVisibilityChange(deviceId: String, visible: Bool) {
-        sendJSON([
-            "action": "visibility",
-            "payload": ["deviceId": deviceId, "visible": visible]
-        ])
+    // MARK: - Scene state (present / visibility)
+    //
+    // Both actions are connection-wide and keyed on `deviceId` at the server,
+    // which stores **one** contribution per WebSocket — not per session. Since
+    // every viewer window multiplexes over this one shared socket, N windows on
+    // a deviceId collapse into that single slot, last-write-wins. Reporting per
+    // window directly is therefore wrong in both directions: one window
+    // backgrounding would park a channel another window is still displaying
+    // (and the still-visible window, having already reported `true`, never
+    // re-asserts), and closing a window would leave the socket's contribution
+    // stuck at `true` so the channel never parks.
+    //
+    // So the aggregate the server wants is computed here instead: OR across
+    // every attached session sharing a deviceId, emitted only on aggregate
+    // edges. Sessions report their own state and the socket owns the wire.
+
+    private struct SceneContribution {
+        var deviceId: String
+        var present: Bool
+        var visible: Bool
     }
 
-    /// Report whether a display on this `deviceId` is live and showing the
-    /// slideshow. This is the signal that drives playback: when every source
-    /// on a deviceId is absent the server dark-advances one post and parks,
-    /// so the next arrival sees a fresh image (no client-side wake-advance).
-    func sendPresenceChange(deviceId: String, present: Bool) {
-        sendJSON([
-            "action": "present",
-            "payload": ["deviceId": deviceId, "present": present]
-        ])
+    /// Per-session scene state, keyed by sessionId. Retained across reconnects
+    /// (the socket dies, the windows don't) so the post-reconnect replay has
+    /// real values to send.
+    private var sceneBySession: [String: SceneContribution] = [:]
+    /// Last aggregate actually put on the wire, per deviceId. Cleared on
+    /// reconnect — the server forgets our reports when the socket dies.
+    private var sentPresenceByDevice: [String: Bool] = [:]
+    private var sentVisibilityByDevice: [String: Bool] = [:]
+
+    /// Record this session's scene state and emit any resulting aggregate
+    /// edges. `present` drives the slideshow (all-absent → the server
+    /// dark-advances one post and parks, so the next arrival sees a fresh
+    /// image); `visible` is home-location telemetry for the HA motion sensor.
+    func reportSceneState(sessionId: String, deviceId: String, present: Bool, visible: Bool) {
+        sceneBySession[sessionId] = SceneContribution(deviceId: deviceId, present: present, visible: visible)
+        flushSceneState()
+    }
+
+    /// Emit `present`/`visibility` for every deviceId whose aggregate differs
+    /// from what we last sent. `force` re-sends everything regardless — used
+    /// after a reconnect, where the server has forgotten our prior reports.
+    private func flushSceneState(force: Bool = false) {
+        // Nothing reaches a dead socket, and recording these as sent would let
+        // the reconnect skip them as unchanged. The reconnect replays every
+        // aggregate from scratch, so just keep the contributions and wait.
+        guard isConnected else { return }
+
+        var presence: [String: Bool] = [:]
+        var visibility: [String: Bool] = [:]
+        for contribution in sceneBySession.values {
+            presence[contribution.deviceId] = (presence[contribution.deviceId] ?? false) || contribution.present
+            visibility[contribution.deviceId] = (visibility[contribution.deviceId] ?? false) || contribution.visible
+        }
+
+        // A deviceId whose last session just detached has no contributions
+        // left. It still needs its OFF edge — that's the window-close case
+        // where the socket stays up for sibling windows, so the server would
+        // otherwise never learn this display is gone.
+        for deviceId in sentPresenceByDevice.keys where presence[deviceId] == nil {
+            presence[deviceId] = false
+        }
+        for deviceId in sentVisibilityByDevice.keys where visibility[deviceId] == nil {
+            visibility[deviceId] = false
+        }
+
+        for (deviceId, present) in presence where force || sentPresenceByDevice[deviceId] != present {
+            sentPresenceByDevice[deviceId] = present
+            AppLogger.remoteViewer.info("WS tx present deviceId=\(deviceId, privacy: .public) present=\(present, privacy: .public)")
+            sendJSON(["action": "present", "payload": ["deviceId": deviceId, "present": present]])
+        }
+        for (deviceId, visible) in visibility where force || sentVisibilityByDevice[deviceId] != visible {
+            sentVisibilityByDevice[deviceId] = visible
+            AppLogger.remoteViewer.info("WS tx visibility deviceId=\(deviceId, privacy: .public) visible=\(visible, privacy: .public)")
+            sendJSON(["action": "visibility", "payload": ["deviceId": deviceId, "visible": visible]])
+        }
+
+        // Drop bookkeeping for devices that are fully absent and have no
+        // sessions left, so the maps don't grow across a long session.
+        let live = Set(sceneBySession.values.map(\.deviceId))
+        sentPresenceByDevice = sentPresenceByDevice.filter { live.contains($0.key) || $0.value }
+        sentVisibilityByDevice = sentVisibilityByDevice.filter { live.contains($0.key) || $0.value }
+    }
+
+    /// True when no attached session is present anywhere — i.e. nothing on this
+    /// connection is showing a slideshow. Used to decide whether the socket can
+    /// be released on background.
+    var allSessionsAbsent: Bool {
+        !sceneBySession.values.contains(where: { $0.present })
     }
 
     func sendBlock(postId: Int) {
@@ -356,10 +481,12 @@ class RemoteWebSocketClient {
     }
 
     /// Ask the server to reshuffle the current channel's post order.
-    /// Matches the RoboFrame web client, which sends the deviceId in the
-    /// `sessionId` field for this action.
-    func sendReshuffle(deviceId: String) {
-        sendJSON(["sessionId": deviceId, "action": "reshuffle"])
+    /// Session-scoped like `requestNext`: the orchestrator resolves the channel
+    /// from (ws, sessionId), so this must carry *our* sessionId. Sending the
+    /// deviceId here instead made the server's session lookup miss and return
+    /// silently — the button did nothing.
+    func sendReshuffle(sessionId: String) {
+        sendJSON(["sessionId": sessionId, "action": "reshuffle"])
     }
 
     /// Tell the server we've finished transitioning to `postId`. The
@@ -441,6 +568,14 @@ class RemoteWebSocketClient {
                     isConnected = true
                     retryCount = 0
                     for entry in sessions.values { entry.onConnected?() }
+                    // The server forgot our presence/visibility when the old
+                    // socket died, so re-state every aggregate. Runs after the
+                    // sessions' onConnected (slideshowConfig first, per the
+                    // protocol checklist) and doesn't depend on their debounced
+                    // re-reports, which would be deduped as unchanged anyway.
+                    sentPresenceByDevice.removeAll()
+                    sentVisibilityByDevice.removeAll()
+                    flushSceneState(force: true)
                 }
                 switch message {
                 case .string(let text):

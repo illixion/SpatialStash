@@ -42,14 +42,18 @@ final class RemoteWSSession {
         client?.sendSlideshowConfig(sessionId: sessionId, deviceId: deviceId, interval: interval, bright: bright, ratio: ratio, modTags: modTags)
     }
 
-    func sendVisibilityChange(deviceId: String, visible: Bool) {
-        // visibility is keyed on deviceId at the server, no sessionId.
-        client?.sendVisibilityChange(deviceId: deviceId, visible: visible)
+    /// Report this window's scene state. Both `present` and `visibility` are
+    /// keyed on deviceId at the server with one slot per *socket*, so the client
+    /// OR-aggregates across every session sharing this connection and puts only
+    /// aggregate edges on the wire — see RemoteWebSocketClient.reportSceneState.
+    func reportSceneState(deviceId: String, present: Bool, visible: Bool) {
+        client?.reportSceneState(sessionId: sessionId, deviceId: deviceId, present: present, visible: visible)
     }
 
-    func sendPresenceChange(deviceId: String, present: Bool) {
-        // present is keyed on deviceId at the server, no sessionId.
-        client?.sendPresenceChange(deviceId: deviceId, present: present)
+    /// Flush pending frames and release the socket if no session anywhere is
+    /// present. Await under a background-task assertion.
+    func flushAndSuspendIfAbsent() async {
+        await client?.flushAndSuspendIfAbsent()
     }
 
     func sendBlock(postId: Int) {
@@ -74,8 +78,8 @@ final class RemoteWSSession {
         client?.sendRequestNext(sessionId: sessionId)
     }
 
-    func sendReshuffle(deviceId: String) {
-        client?.sendReshuffle(deviceId: deviceId)
+    func sendReshuffle() {
+        client?.sendReshuffle(sessionId: sessionId)
     }
 
     func sendImageReady(postId: Int, durationMs: Int? = nil) {

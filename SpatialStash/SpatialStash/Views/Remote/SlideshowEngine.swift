@@ -342,6 +342,35 @@ class SlideshowEngine {
     /// switch (driven by AppModel's effectiveReduceMotion).
     var reduceMotion: Bool = false
 
+    /// Deadline for a one-shot instant (cut, not crossfade) transition, armed
+    /// when the viewer becomes present again. While we were away the server
+    /// dark-advanced to a fresh post and parked it; committing that post is not
+    /// a slideshow advance the user watched happen, and protocol.md describes
+    /// the return as "no stale hold and no old→new crossfade" — dissolving the
+    /// stale image into the fresh one advertises exactly the staleness the dark
+    /// advance exists to hide. Bounded rather than a bare one-shot: if the
+    /// server had nothing newer for us, the arm must expire instead of stealing
+    /// the crossfade from a later, legitimate advance.
+    private var instantTransitionDeadline: Date?
+
+    /// How long after becoming present a commit still counts as "the post we
+    /// returned to". Covers download + decode (+ 3D generation) of the parked
+    /// post; past it we're in steady state and crossfade normally.
+    private static let postReturnCutWindow: TimeInterval = 10
+
+    /// Arm the post-return cut. Called when this session flips back to present.
+    func armInstantTransition() {
+        instantTransitionDeadline = Date().addingTimeInterval(Self.postReturnCutWindow)
+    }
+
+    /// Take the arm if it's still valid. Consumed either way so a stale arm
+    /// can't leak into a later transition.
+    private func consumeInstantTransition() -> Bool {
+        guard let deadline = instantTransitionDeadline else { return false }
+        instantTransitionDeadline = nil
+        return Date() < deadline
+    }
+
     /// Uncropped foreground for the currently displayed post, when diorama
     /// is enabled. GPU-private MTLTexture so the pixels live in GPU
     /// memory and don't count toward jetsam-tracked dirty CPU pages;
@@ -1266,8 +1295,9 @@ class SlideshowEngine {
         }
         let hadCurrentMedia = currentPost != nil
 
-        if reduceMotion || !hadCurrentMedia {
-            // Instant switch — reduce-motion, or the cold-start first video
+        if reduceMotion || consumeInstantTransition() || !hadCurrentMedia {
+            // Instant switch — reduce-motion, the post we returned to (see
+            // instantTransitionDeadline), or the cold-start first video
             // (nothing on screen to crossfade from).
             clearImageDisplayState()
             isTransitioning = false
@@ -1399,9 +1429,10 @@ class SlideshowEngine {
             return
         }
 
-        // Crossfade transition (skipped under reduce motion — instant switch)
+        // Crossfade transition (skipped under reduce motion, or when this is
+        // the post we returned to — see instantTransitionDeadline)
         transition(to: .transitioning)
-        if reduceMotion {
+        if reduceMotion || consumeInstantTransition() {
             var t = Transaction(); t.disablesAnimations = true
             withTransaction(t) {
                 nextImage = image

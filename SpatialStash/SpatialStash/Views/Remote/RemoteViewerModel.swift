@@ -8,6 +8,7 @@
 
 import os
 import SwiftUI
+import UIKit
 
 @MainActor
 @Observable
@@ -87,6 +88,12 @@ class RemoteViewerModel: SlideshowEngine {
     /// client and the user sees the IPC conversion animation play during
     /// the next crossfade. Cleared when we actually send `imageReady`.
     private var pendingImageReadyPost: RemotePost?
+    /// Watchdog for the 3D deferral above. Kept under the server's default
+    /// `readyTimeoutMs` (15 s) so a slow depth map degrades to a normal report
+    /// rather than letting the channel promote without us and march toward its
+    /// three-strike stall.
+    @ObservationIgnored private var spatial3DReadyTimeoutTask: Task<Void, Never>?
+    private static let spatial3DReadyGrace: TimeInterval = 12
     /// Object identities of images whose 3D depth-map generation has
     /// completed. Two-slot pipeline means at most two are live at once,
     /// so we cap the set rather than letting it grow unbounded.
@@ -219,15 +226,14 @@ class RemoteViewerModel: SlideshowEngine {
         playbackSuppressedUntil = nil
         ratioResendTask?.cancel()
         ratioResendTask = nil
-        visibilityDebounce?.cancel()
-        visibilityDebounce = nil
-        presenceDebounce?.cancel()
-        presenceDebounce = nil
-        lastSentVisibility = nil
-        lastSentPresence = nil
+        sceneStateDebounce?.cancel()
+        sceneStateDebounce = nil
         videoDurationTimeoutTask?.cancel()
         videoDurationTimeoutTask = nil
         pendingVideoImageReadyPost = nil
+        spatial3DReadyTimeoutTask?.cancel()
+        spatial3DReadyTimeoutTask = nil
+        pendingImageReadyPost = nil
     }
 
     override func onBecameActive() {
@@ -254,10 +260,31 @@ class RemoteViewerModel: SlideshowEngine {
         // Send the OFF edge immediately, not debounced: visionOS suspends the
         // app (and freezes the socket) fast enough that a 250ms-delayed Task
         // never fires, so the server would never learn we left — no
-        // dark-advance/park, stale image on return. Firing synchronously here
-        // usually lands the frame in the brief pre-suspend window; the server's
-        // heartbeat reaper is the backstop if it doesn't.
+        // dark-advance/park, stale image on return.
         scheduleSceneStateReport(false, immediate: true)
+        // Queuing the frame isn't the same as sending it. Hold a background
+        // assertion so the flush (and, once every window on the shared socket is
+        // absent, the clean close that parks the channel immediately instead of
+        // waiting out the broker's 5-10s heartbeat reap) actually completes
+        // before the app suspends.
+        endBackgroundFlushAssertion()
+        backgroundFlushAssertion = UIApplication.shared.beginBackgroundTask(withName: "roboframe-presence-flush") {
+            Task { @MainActor [weak self] in self?.endBackgroundFlushAssertion() }
+        }
+        Task { [weak self] in
+            await self?.wsSession?.flushAndSuspendIfAbsent()
+            self?.endBackgroundFlushAssertion()
+        }
+    }
+
+    /// Assertion held while the background presence flush completes. visionOS
+    /// would otherwise suspend us mid-send.
+    @ObservationIgnored private var backgroundFlushAssertion: UIBackgroundTaskIdentifier = .invalid
+
+    private func endBackgroundFlushAssertion() {
+        guard backgroundFlushAssertion != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(backgroundFlushAssertion)
+        backgroundFlushAssertion = .invalid
     }
 
     /// HA-driven panel state addressed to this window's deviceId
@@ -279,6 +306,11 @@ class RemoteViewerModel: SlideshowEngine {
     /// imageReady on render). We just nudge reconciliation in case a
     /// `playback` frame already landed. No client-side wake-advance.
     private func rejoinReadinessBarrier() {
+        // The post we're about to adopt is the one the server dark-advanced to
+        // while we were away, not an advance the user watched happen. Cut to it
+        // instead of dissolving the stale image into it — a crossfade on
+        // re-entry advertises the very staleness the dark advance hides.
+        armInstantTransition()
         reconcileWithServer()
     }
 
@@ -292,81 +324,40 @@ class RemoteViewerModel: SlideshowEngine {
         if effectiveVisible { rejoinReadinessBarrier() }
     }
 
-    /// Last visibility value we actually told the server about. Used to
-    /// suppress duplicate sends across visionOS scenePhase flutter
-    /// (active→inactive→background→inactive→active cycles can fire in
-    /// rapid succession around a window dismiss/gaze shift).
-    private var lastSentVisibility: Bool?
-    /// Coalesces visibility changes so a transient flutter doesn't fire
-    /// a dozen WS frames before settling.
-    private var visibilityDebounce: Task<Void, Never>?
+    /// Coalesces scene-state changes so visionOS scenePhase flutter
+    /// (active→inactive→background→inactive→active cycles fire in rapid
+    /// succession around a window dismiss or gaze shift) doesn't produce a
+    /// dozen reports before settling.
+    private var sceneStateDebounce: Task<Void, Never>?
 
-    /// Last `present` value we told the server; mirrors lastSentVisibility.
-    private var lastSentPresence: Bool?
-    private var presenceDebounce: Task<Void, Never>?
-
-    /// Report this window's scene state to the server. `present` drives the
-    /// slideshow — while every display on this deviceId is absent the server
-    /// dark-advances one post and parks, so the next arrival sees a fresh
-    /// image (no client-side wake-advance). `visibility` is home-location
-    /// telemetry (the HA motion sensor). For a VP window both track the same
-    /// condition — the window is showing the slideshow iff someone's here to
-    /// see it — so we report them together.
+    /// Report this window's scene state. `present` drives the slideshow — while
+    /// every display on this deviceId is absent the server dark-advances one
+    /// post and parks, so the next arrival sees a fresh image (no client-side
+    /// wake-advance). `visibility` is home-location telemetry (the HA motion
+    /// sensor). For a VP window both track the same condition — the window is
+    /// showing the slideshow iff someone's here to see it — so they go together.
+    ///
+    /// This is a report of *this window's* state, not a wire frame: the socket
+    /// OR-aggregates it with every sibling window on the same deviceId and emits
+    /// only aggregate edges (the server stores one contribution per socket, so
+    /// per-window frames would fight each other). Deduplication and
+    /// post-reconnect replay live there too.
     private func scheduleSceneStateReport(_ active: Bool, immediate: Bool = false) {
-        schedulePresenceReport(active, immediate: immediate)
-        scheduleVisibilityReport(active, immediate: immediate)
-    }
-
-    /// Clear the last-sent snapshots so the next report is not suppressed by
-    /// the debouncers — used after a reconnect, since the server forgets our
-    /// prior visibility/presence when the socket dies.
-    private func resetSceneStateSnapshots() {
-        lastSentVisibility = nil
-        lastSentPresence = nil
-    }
-
-    /// Send a visibility frame right now (deduped), bypassing the debounce.
-    private func sendVisibilityNow(_ visible: Bool) {
-        guard lastSentVisibility != visible else { return }
-        lastSentVisibility = visible
-        AppLogger.remoteViewer.info("WS tx visibility deviceId=\(self.config.wsDeviceId, privacy: .public) visible=\(visible, privacy: .public)")
-        wsSession?.sendVisibilityChange(deviceId: config.wsDeviceId, visible: visible)
-    }
-
-    private func scheduleVisibilityReport(_ visible: Bool, immediate: Bool = false) {
-        visibilityDebounce?.cancel()
+        sceneStateDebounce?.cancel()
         if immediate {
-            visibilityDebounce = nil
-            sendVisibilityNow(visible)
+            sceneStateDebounce = nil
+            sendSceneStateNow(active)
             return
         }
-        visibilityDebounce = Task { [weak self] in
+        sceneStateDebounce = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(250))
             guard !Task.isCancelled, let self else { return }
-            self.sendVisibilityNow(visible)
+            self.sendSceneStateNow(active)
         }
     }
 
-    /// Send a presence frame right now (deduped), bypassing the debounce.
-    private func sendPresenceNow(_ present: Bool) {
-        guard lastSentPresence != present else { return }
-        lastSentPresence = present
-        AppLogger.remoteViewer.info("WS tx present deviceId=\(self.config.wsDeviceId, privacy: .public) present=\(present, privacy: .public)")
-        wsSession?.sendPresenceChange(deviceId: config.wsDeviceId, present: present)
-    }
-
-    private func schedulePresenceReport(_ present: Bool, immediate: Bool = false) {
-        presenceDebounce?.cancel()
-        if immediate {
-            presenceDebounce = nil
-            sendPresenceNow(present)
-            return
-        }
-        presenceDebounce = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(250))
-            guard !Task.isCancelled, let self else { return }
-            self.sendPresenceNow(present)
-        }
+    private func sendSceneStateNow(_ active: Bool) {
+        wsSession?.reportSceneState(deviceId: config.wsDeviceId, present: active, visible: active)
     }
 
     // MARK: - Remote Actions
@@ -387,10 +378,14 @@ class RemoteViewerModel: SlideshowEngine {
 
     func blockCurrentPost() {
         guard let post = currentPost else { return }
-        // Local insert keeps gallery-mode filtering working (no WS to
-        // notify); in remote mode the server is the only filter and the
-        // local Set is incidental.
-        blockedPosts.insert(post._id)
+        // Gallery mode has no server to notify, so it needs the local filter.
+        // Remote mode must NOT keep one (protocol.md "Blocklist is server-side
+        // and invisible to clients"): the server already drops the post from
+        // every channel's queue, and a local set would additionally filter a
+        // post the server later re-serves on purpose.
+        if isGalleryMode {
+            blockedPosts.insert(post._id)
+        }
         wsSession?.sendBlock(postId: post._id)
         showToast("Blocked post #\(post._id)")
         if isGalleryMode {
@@ -423,7 +418,7 @@ class RemoteViewerModel: SlideshowEngine {
 
     /// Ask the server to reshuffle the current channel's post order.
     func reshuffle() {
-        wsSession?.sendReshuffle(deviceId: config.wsDeviceId)
+        wsSession?.sendReshuffle()
         showToast("Reshuffling…")
     }
 
@@ -569,12 +564,12 @@ class RemoteViewerModel: SlideshowEngine {
         }
 
         // Tell the server we've finished transitioning to this post. The
-        // orchestrator's readiness barrier closes once every visible session
-        // reports — without this the server rides the 10 s bad-network
-        // fallback every cycle, drifting the channel ~10 s slower than the
-        // engine's local deadline. The drift causes the engine to drain its
-        // prefetch and flash the warning placeholder while the server
-        // catches up. (Skip when applying an incoming local sync: the
+        // orchestrator's readiness barrier starts the dwell on the *first*
+        // present session to report (first-ready-wins), so this is what keeps
+        // the channel on wall-clock cadence — without it the server rides its
+        // 15 s readiness-timeout fallback every cycle and, after three such
+        // cycles with no reports at all, stalls the channel outright. (Skip when
+        // applying an incoming local sync: the
         // transition was driven by another window, not by our own engine
         // ticking, and that window already reported.)
         if !isApplyingIncomingSync {
@@ -627,17 +622,19 @@ class RemoteViewerModel: SlideshowEngine {
             pendingVideoImageReadyPost = nil
             videoDurationTimeoutTask?.cancel()
             videoDurationTimeoutTask = nil
+            spatial3DReadyTimeoutTask?.cancel()
+            spatial3DReadyTimeoutTask = nil
             AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "imageReady skipped for post \(post._id, privacy: .public) — session hidden")
             return
         }
-        if case .video = currentMediaType, currentVideoDurationMs == nil {
+        if case .video = currentMediaType, knownDurationMs(for: post) == nil {
             // Real AVPlayer video on screen but its clip length isn't known
             // yet (the video-in-<img> path has no duration source and reports
             // immediately, treated as an animated image). Hold the
-            // report until the player reports duration (onVideoDurationKnown
-            // releases it) so the server can delay the slideshow for a clip
-            // longer than the interval. The server's readiness barrier has no
-            // timeout — it parks on this frame until we report, same as images.
+            // report until the duration arrives — from the playback frame's
+            // `current.durationMs` (applyServerVideoDuration) or, failing that,
+            // the player (onVideoDurationKnown) — so the server can delay the
+            // slideshow for a clip longer than the interval.
             pendingVideoImageReadyPost = post
             AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "imageReady deferred for post \(post._id, privacy: .public) — waiting on video duration")
             // Watchdog: the duration can legitimately never arrive (load
@@ -670,10 +667,16 @@ class RemoteViewerModel: SlideshowEngine {
         if isSlideshow3DActive, !isCurrentPostAnimatedGIF,
            let image = currentImage,
            !generatedImageIds.contains(ObjectIdentifier(image)) {
-            // Defer until the slot reports generation complete. The
-            // server's readiness barrier holds the channel on this image
-            // until we report — there is no longer a timeout fallback, so
-            // the channel waits as long as 3D generation takes.
+            // Defer until the slot reports generation complete, so the channel
+            // doesn't advance ahead of the slowest 3D client and play the depth
+            // conversion animation inside the next crossfade.
+            //
+            // Bounded, though: the barrier is first-ready-wins with a
+            // readiness-timeout fallback (`readyTimeoutMs`, 15 s by default),
+            // and three consecutive timeouts with no reports *stall* the
+            // channel. Deferring past that budget gets us the worst of both —
+            // the frame is promoted without us anyway, and we're on our way to
+            // stalling the room — so give up just under it and report.
             //
             // Animated media (GIF/WebP) is excluded: the spatial-3D layer only
             // renders for a static `.image`, so it never generates a depth map
@@ -683,13 +686,26 @@ class RemoteViewerModel: SlideshowEngine {
             // static photos generate and release — only animated got stuck).
             pendingImageReadyPost = post
             AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "imageReady deferred for post \(post._id, privacy: .public) — waiting on 3D generation")
+            spatial3DReadyTimeoutTask?.cancel()
+            spatial3DReadyTimeoutTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(Self.spatial3DReadyGrace))
+                guard !Task.isCancelled, let self else { return }
+                guard let pending = self.pendingImageReadyPost, pending._id == post._id else { return }
+                self.pendingImageReadyPost = nil
+                self.spatial3DReadyTimeoutTask = nil
+                guard self.effectiveVisible else { return }
+                AppLogger.remoteViewer.warning("3D generation still pending for post \(post._id, privacy: .public) — reporting imageReady after \(Self.spatial3DReadyGrace, privacy: .public) s to stay inside the server's readiness budget")
+                self.wsSession?.sendImageReady(postId: pending._id)
+            }
         } else {
             pendingImageReadyPost = nil
+            spatial3DReadyTimeoutTask?.cancel()
+            spatial3DReadyTimeoutTask = nil
             if wsSession == nil {
                 AppLogger.remoteViewer.warning("imageReady not sent for post \(post._id, privacy: .public) — wsSession is nil")
             } else {
                 AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "imageReady sent for post \(post._id, privacy: .public)")
-                wsSession?.sendImageReady(postId: post._id, durationMs: currentVideoDurationMs)
+                wsSession?.sendImageReady(postId: post._id, durationMs: knownDurationMs(for: post))
             }
         }
     }
@@ -745,6 +761,8 @@ class RemoteViewerModel: SlideshowEngine {
               let current = currentImage,
               ObjectIdentifier(current) == id else { return }
         pendingImageReadyPost = nil
+        spatial3DReadyTimeoutTask?.cancel()
+        spatial3DReadyTimeoutTask = nil
         // Don't advance the channel for a session that went hidden (window
         // inactive or panel held off) while its 3D depth map was generating.
         guard effectiveVisible else {
@@ -851,10 +869,10 @@ class RemoteViewerModel: SlideshowEngine {
             // an unconditional present=true here would un-dark a slideshow the
             // user can't see. effectiveVisible captures both cases.
             //
-            // Reset the last-sent snapshots so the post-reconnect send is not
-            // suppressed by the debouncers: the server forgot our prior
-            // reports when the ws died, so we have to re-state them.
-            self.resetSceneStateSnapshots()
+            // The socket re-states every deviceId aggregate itself on connect
+            // (the server forgot ours when the ws died), so this report is
+            // usually a no-op confirmation — it matters when our state changed
+            // while disconnected.
             self.scheduleSceneStateReport(self.effectiveVisible)
         }
         wsSession = session
@@ -865,7 +883,6 @@ class RemoteViewerModel: SlideshowEngine {
         // gets our slideshowConfig immediately.
         if session.isConnected {
             sendSlideshowConfigToServer()
-            resetSceneStateSnapshots()
             scheduleSceneStateReport(effectiveVisible)
         }
 
@@ -1075,7 +1092,21 @@ class RemoteViewerModel: SlideshowEngine {
         let stateStr = "\(state)"
         AppLogger.remoteViewer.info("playback: current=\(curStr, privacy: .public) next=\(nxtStr, privacy: .public) primary=\(self.serverPrimaryDeviceId ?? "nil", privacy: .public) myDevice=\(self.config.wsDeviceId, privacy: .public) engineState=\(stateStr, privacy: .public)")
 
+        // `upcoming` is the server's full look-ahead (typically 4 deep) and is
+        // free to consume — the engine prefetches 3 ahead, so feeding it only
+        // current+next left the buffer chronically one deep and dependent on the
+        // next frame arriving on time. Duplicates are dropped by the provider.
+        let upcoming = (payload["upcoming"] as? [Any])?.compactMap(postFromPlaybackEntry) ?? []
+
         if let cur = current {
+            // The server's indexed clip length for a video. Prefer it over the
+            // player's demuxer: a live-transcoded clip arrives as fragmented MP4
+            // with no duration in its header, so the player reports 0/NaN, and
+            // we'd sit out the 10 s watchdog and then report no duration at all —
+            // letting the server cut a long clip off at the plain interval.
+            if let ms = payload["current"].flatMap(playbackDurationMs) {
+                applyServerVideoDuration(ms, for: cur._id)
+            }
             // Keep the lookahead warm, then hand the server's current to the
             // engine. The engine is server-paced (no local dwell clock), so
             // setServerCurrent is the sole advance trigger: it advances to
@@ -1084,17 +1115,50 @@ class RemoteViewerModel: SlideshowEngine {
             // Because the engine only ever transitions to a server `current`,
             // the post it displays — and therefore the id it reports in
             // imageReady — always matches what the server is waiting on.
-            provider?.enqueueFromPlayback([cur] + (next.map { [$0] } ?? []))
+            provider?.enqueueFromPlayback([cur] + (next.map { [$0] } ?? []) + upcoming)
             // Record the look-ahead so the 3D layer's `peekedNextImage`
             // resolves the real next post (not a stale prefetch-buffer head).
             setServerNext(next)
             triggerPrefetch()
             setServerCurrent(cur)
         } else if let n = next {
-            provider?.enqueueFromPlayback([n])
+            provider?.enqueueFromPlayback([n] + upcoming)
             setServerNext(n)
             triggerPrefetch()
         }
+    }
+
+    /// `durationMs` off a playback entry (present on video posts whose length
+    /// the library indexed; absent for images and for a library that indexed 0).
+    private func playbackDurationMs(_ raw: Any?) -> Int? {
+        guard let dict = raw as? [String: Any] else { return nil }
+        if let ms = dict["durationMs"] as? Int { return ms > 0 ? ms : nil }
+        if let ms = dict["durationMs"] as? Double, ms > 0 { return Int(ms.rounded()) }
+        return nil
+    }
+
+    /// Adopt a server-supplied clip length and release any `imageReady` that was
+    /// deferred waiting on the player to report one.
+    private func applyServerVideoDuration(_ ms: Int, for postId: Int) {
+        currentVideoDurationMs = ms
+        currentVideoDurationPostId = postId
+        // Loop only if the clip fits inside the interval; a longer clip plays
+        // through once and the server delays the advance until it ends.
+        currentVideoLoops = Double(ms) <= delay * 1000
+        AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "Server-indexed duration for post \(postId, privacy: .public): \(ms, privacy: .public) ms")
+        guard let pending = pendingVideoImageReadyPost, pending._id == postId else { return }
+        videoDurationTimeoutTask?.cancel()
+        videoDurationTimeoutTask = nil
+        pendingVideoImageReadyPost = nil
+        reportImageReady(for: pending)
+    }
+
+    /// The clip length we know for `post`, if any. Keyed by id so a duration
+    /// recorded for one post can't be reported against another (the server can
+    /// announce a new `current` before we finish displaying the previous one).
+    private func knownDurationMs(for post: RemotePost) -> Int? {
+        guard currentVideoDurationPostId == post._id else { return nil }
+        return currentVideoDurationMs
     }
 
     /// Jump to a post chosen from the shared history grid and suppress
