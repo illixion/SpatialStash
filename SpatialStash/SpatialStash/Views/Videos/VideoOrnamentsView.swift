@@ -353,13 +353,15 @@ struct VideoOrnamentsView: View {
             }
 
             // Fake-3D conversion of a mono video: realtime inference or
-            // pre-processed cached depth. Only for AVFoundation-decodable sources.
+            // pre-processed cached depth. Needs an AVFoundation-decodable
+            // source — either already native, or reachable by swapping to the
+            // Stash server transcode (how WebM qualifies).
             Divider()
 
             modeButton("Convert to 3D (Beta)", mode: .pseudo3D) {
                 windowModel.requestPseudo3D()
             }
-            .disabled(windowModel.playbackRenderer != .nativeMetal)
+            .disabled(!windowModel.pseudo3DAvailable)
 
             // Background depth conversion for THIS video: status + cancel.
             // Isolated in its own view so its observation of the (continuously
@@ -378,7 +380,7 @@ struct VideoOrnamentsView: View {
             // Pre-Process picks the model future conversions (and the engage
             // flow's cache lookup) use — changing it here means the next
             // Convert to 3D offers a fresh conversion with that model.
-            if windowModel.playbackRenderer == .nativeMetal {
+            if windowModel.pseudo3DAvailable {
                 depthModelMenu(
                     "Depth Model (Real-Time)",
                     preference: appModel.realtimeDepthModelName

@@ -80,13 +80,10 @@ final class GraphQLVideoSource: VideoSource, @unchecked Sendable {
 
         // Extract original filename from files path
         let fileName = firstFile?.path.map { ($0 as NSString).lastPathComponent }
-        let streamURL = Self.preferredStreamURL(
-            directStreamURL: directStreamURL,
-            fileName: fileName,
-            streamEndpoints: scene.sceneStreams,
-            allowTranscoding: allowTranscoding
-        )
-        let fallbackStreamURL = streamURL == directStreamURL ? nil : directStreamURL
+        // Play the original file; keep the server transcode in reserve.
+        let transcodeStreamURL = allowTranscoding
+            ? Self.transcodeStreamURL(directStreamURL: directStreamURL, streamEndpoints: scene.sceneStreams)
+            : nil
 
         // Prefer the server-reported preview path; otherwise derive it as a
         // sibling of the screenshot (`/scene/{id}/screenshot` → `/preview`),
@@ -111,8 +108,8 @@ final class GraphQLVideoSource: VideoSource, @unchecked Sendable {
         return GalleryVideo(
             stashId: scene.id,
             thumbnailURL: thumbnailURL,
-            streamURL: streamURL,
-            fallbackStreamURL: fallbackStreamURL,
+            streamURL: directStreamURL,
+            transcodeStreamURL: transcodeStreamURL,
             previewURL: previewURL,
             title: scene.title,
             duration: duration,
@@ -127,9 +124,8 @@ final class GraphQLVideoSource: VideoSource, @unchecked Sendable {
         )
     }
 
-    /// Stash's direct `/stream` endpoint may serve WebM with VP8/AV1/etc. that
-    /// visionOS WebKit cannot reliably decode. When the original file is WebM,
-    /// route to a server-side live-transcode endpoint, preferring HLS.
+    /// The server's live-transcode endpoint for this scene, kept in reserve
+    /// rather than used up front (see `GalleryVideo.transcodeStreamURL`).
     ///
     /// HLS (`/stream.m3u8`) is a proper VOD playlist of h264/AAC mpegts
     /// segments, which AVFoundation plays natively — so it routes to the Metal
@@ -137,23 +133,17 @@ final class GraphQLVideoSource: VideoSource, @unchecked Sendable {
     /// (the pseudo-3D pipeline decodes via AVPlayerItemVideoOutput and is gated
     /// on the native renderer). The `/stream.mp4` endpoint is a *fragmented*
     /// MP4 served over a single non-seekable chunked pipe: WebKit plays it but
-    /// AVPlayer rejects it (it wants a byte-range-seekable resource), which is
-    /// why mp4 forces WebKit and blocks fake-3D. So prefer HLS, fall back to
-    /// MP4 (WebKit-only), then direct WebM for servers without live transcode.
-    private static func preferredStreamURL(
+    /// AVPlayer rejects it (it wants a byte-range-seekable resource), so it is
+    /// only a playability fallback and cannot unlock fake-3D. Prefer HLS.
+    ///
+    /// Returned for every scene that advertises endpoints, not just WebM: any
+    /// container/codec WebKit can't decode gets the same escape hatch, and for a
+    /// natively-playable MP4 the transcode simply never gets used.
+    private static func transcodeStreamURL(
         directStreamURL: URL,
-        fileName: String?,
-        streamEndpoints: [StashAPIClient.StashSceneStreamEndpoint]?,
-        allowTranscoding: Bool
-    ) -> URL {
-        let originalExtension = (fileName as NSString?)?.pathExtension.lowercased()
-            ?? directStreamURL.pathExtension.lowercased()
-        guard allowTranscoding,
-              originalExtension == "webm",
-              let streamEndpoints,
-              !streamEndpoints.isEmpty else {
-            return directStreamURL
-        }
+        streamEndpoints: [StashAPIClient.StashSceneStreamEndpoint]?
+    ) -> URL? {
+        guard let streamEndpoints, !streamEndpoints.isEmpty else { return nil }
 
         let endpointURLs = streamEndpoints.compactMap { URL(string: $0.url) }
 
@@ -165,7 +155,7 @@ final class GraphQLVideoSource: VideoSource, @unchecked Sendable {
             return mp4URL
         }
 
-        return directStreamURL
+        return nil
     }
 
     /// Fallback preview URL when the server didn't report `paths.preview`.

@@ -6,13 +6,16 @@
  */
 
 import Foundation
+import os
 import SwiftUI
 import WebKit
 
 struct WebVideoPlayerView: UIViewRepresentable {
     let videoURL: URL
-    /// Optional direct/original URL to try if the preferred playback URL fails.
-    /// Used when Stash server-side transcoding is unavailable for a WebM scene.
+    /// Optional second URL the *page* switches to on error, without involving
+    /// Swift (the remote slideshow's raw → HLS escalation). The main video
+    /// window leaves this nil and uses `onSourceUnplayable` instead, so the
+    /// re-route also updates the renderer and unlocks the AVFoundation features.
     var fallbackVideoURL: URL? = nil
     let apiKey: String?
     var showControls: Bool = true
@@ -46,6 +49,11 @@ struct WebVideoPlayerView: UIViewRepresentable {
     /// without a mute UI (GIFs, remote slideshow) keep the muted default.
     var startMuted: Bool = true
 
+    /// Called when the source can't be played: a decode/unsupported-source error
+    /// (immediately), or a network error whose in-page retries were exhausted.
+    /// The video window uses it to fall forward onto Stash's server transcode.
+    var onSourceUnplayable: (() -> Void)? = nil
+
     func makeCoordinator() -> Coordinator {
         Coordinator()
     }
@@ -54,12 +62,14 @@ struct WebVideoPlayerView: UIViewRepresentable {
         let coordinator = context.coordinator
         coordinator.onVideoSizeKnown = onVideoSizeKnown
         coordinator.onDurationKnown = onDurationKnown
+        coordinator.onSourceUnplayable = onSourceUnplayable
 
         let configuration = WKWebViewConfiguration()
         configuration.allowsInlineMediaPlayback = true
         configuration.mediaTypesRequiringUserActionForPlayback = []
         configuration.userContentController.add(coordinator, name: "videoDimensions")
         configuration.userContentController.add(coordinator, name: "videoPlayback")
+        configuration.userContentController.add(coordinator, name: "videoSourceFailed")
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.isOpaque = false
@@ -74,6 +84,7 @@ struct WebVideoPlayerView: UIViewRepresentable {
         let coordinator = context.coordinator
         coordinator.onVideoSizeKnown = onVideoSizeKnown
         coordinator.onDurationKnown = onDurationKnown
+        coordinator.onSourceUnplayable = onSourceUnplayable
 
         // Wire up A-B loop controller (re-bound each update; closures hold a weak webView)
         if let loopController {
@@ -114,7 +125,9 @@ struct WebVideoPlayerView: UIViewRepresentable {
                 webView?.evaluateJavaScript("var p = document.getElementById('player'); if (p) p.play().catch(function(){});")
             }
             playbackModel.pauseCommand = { [weak webView] in
-                webView?.evaluateJavaScript("var p = document.getElementById('player'); if (p) p.pause();")
+                // Also stand down the autoplay kick: an explicit pause outranks
+                // a still-retrying autoplay attempt.
+                webView?.evaluateJavaScript("window.__autoplayKickCancelled = true; var p = document.getElementById('player'); if (p) p.pause();")
             }
             playbackModel.seekCommand = { [weak webView] t in
                 webView?.evaluateJavaScript("{ const p = document.getElementById('player'); if (p) p.currentTime = \(t); }")
@@ -135,6 +148,13 @@ struct WebVideoPlayerView: UIViewRepresentable {
             // controls visible and they flash until updateUIView's JS runs.
             coordinator.lastShowControls = showControls
             coordinator.lastLoop = loop
+            // Seed room activity too: the fresh page starts with the current
+            // state baked in (`window._roomActive`), so the room block below
+            // doesn't fire a play/pause JS call against a page that hasn't
+            // finished loading — which is exactly what used to leave a video
+            // switched via prev/next sitting on a blank first frame. Autoplay is
+            // now driven from inside the page (kickAutoplay).
+            coordinator.lastIsRoomActive = isRoomActive
             if videoURL.isFileURL {
                 loadLocalVideo(webView: webView, coordinator: coordinator, fileURL: videoURL)
             } else {
@@ -264,8 +284,10 @@ struct WebVideoPlayerView: UIViewRepresentable {
     static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "videoDimensions")
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "videoPlayback")
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: "videoSourceFailed")
         coordinator.onVideoSizeKnown = nil
         coordinator.onDurationKnown = nil
+        coordinator.onSourceUnplayable = nil
         coordinator.onPlaybackUpdate = nil
         coordinator.cancelSrcUnload()
         coordinator.cleanupHTMLFile()
@@ -277,7 +299,7 @@ struct WebVideoPlayerView: UIViewRepresentable {
         // Use relative filename so WKWebView resolves it against the HTML file's directory
         let relativeSrc = fileURL.lastPathComponent.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
             ?? fileURL.lastPathComponent
-        let html = generateVideoHTML(videoSrc: relativeSrc, fallbackVideoSrc: nil)
+        let html = generateVideoHTML(videoSrc: relativeSrc)
         let videoDir = fileURL.deletingLastPathComponent()
         let videoBaseName = fileURL.deletingPathExtension().lastPathComponent
         let htmlFile = videoDir.appendingPathComponent(".spatialstash_player_\(videoBaseName).html")
@@ -297,6 +319,9 @@ struct WebVideoPlayerView: UIViewRepresentable {
         var lastAdjustments: VisualAdjustments?
         var onVideoSizeKnown: ((CGSize) -> Void)?
         var onDurationKnown: ((Double) -> Void)?
+        /// Fired once per page load when the source turns out to be a dead end.
+        var onSourceUnplayable: (() -> Void)?
+        private var didReportSourceFailure = false
         /// Forwards periodic playback state ({currentTime, duration, paused, muted, buffered})
         /// to the bound VideoWindowModel for the custom control bar.
         var onPlaybackUpdate: (([String: Any]) -> Void)?
@@ -322,6 +347,7 @@ struct WebVideoPlayerView: UIViewRepresentable {
         func resetForNewVideo() {
             didReportSize = false
             didReportDuration = false
+            didReportSourceFailure = false
             cancelSrcUnload()
             isSourceUnloaded = false
         }
@@ -348,6 +374,14 @@ struct WebVideoPlayerView: UIViewRepresentable {
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            if message.name == "videoSourceFailed" {
+                guard !didReportSourceFailure else { return }
+                didReportSourceFailure = true
+                let reason = (message.body as? [String: Any])?["reason"] as? String ?? "unknown"
+                AppLogger.videoWindow.warning("WebKit player reported source unplayable (\(reason, privacy: .public))")
+                onSourceUnplayable?()
+                return
+            }
             if message.name == "videoPlayback" {
                 if let body = message.body as? [String: Any] {
                     onPlaybackUpdate?(body)
@@ -398,7 +432,7 @@ struct WebVideoPlayerView: UIViewRepresentable {
         return generateVideoHTML(videoSrc: videoURLString, fallbackVideoSrc: fallbackURLString)
     }
 
-    private func generateVideoHTML(videoSrc: String, fallbackVideoSrc: String?) -> String {
+    private func generateVideoHTML(videoSrc: String, fallbackVideoSrc: String? = nil) -> String {
         // Match the initial `controls` attribute to showControls so native
         // controls never flash on load before the JS toggle can hide them.
         let controlsAttr = showControls ? "controls " : ""
@@ -408,7 +442,6 @@ struct WebVideoPlayerView: UIViewRepresentable {
         let mutedAttr = startMuted ? "muted " : ""
         let initialAdjustments = visualAdjustments ?? VisualAdjustments()
         let initialFilter = initialAdjustments.cssFilterString()
-        let fallbackVideoSrcLiteral = Self.javascriptStringLiteral(fallbackVideoSrc ?? "")
         return """
         <!DOCTYPE html>
         <html>
@@ -470,8 +503,10 @@ struct WebVideoPlayerView: UIViewRepresentable {
                 const video = document.getElementById('player');
                 const sharpenCanvas = document.getElementById('sharpen-canvas');
                 const originalSrc = video.src;
-                const fallbackSrc = \(fallbackVideoSrcLiteral);
+                const fallbackSrc = \(Self.javascriptStringLiteral(fallbackVideoSrc ?? ""));
                 let didSwitchToFallbackSrc = false;
+                const reportsSourceFailure = \(onSourceUnplayable != nil ? "true" : "false");
+                let didReportSourceFailure = false;
                 let retryCount = 0;
                 const maxRetries = 5;
                 const baseDelay = 3000; // 3 seconds initial delay
@@ -484,9 +519,10 @@ struct WebVideoPlayerView: UIViewRepresentable {
                     cssFilter: '\(initialFilter)'
                 };
 
-                // Room activity flag — set by Swift via evaluateJavaScript.
-                // When false, auto-resume and error recovery are suppressed.
-                window._roomActive = true;
+                // Room activity flag — baked in at load, updated by Swift via
+                // evaluateJavaScript. When false, autoplay, auto-resume and
+                // error recovery are all suppressed.
+                window._roomActive = \(isRoomActive ? "true" : "false");
 
                 // Auto-resume on pause is only allowed within a brief window after
                 // a scene-phase transition (window restoration), to recover from
@@ -733,22 +769,69 @@ struct WebVideoPlayerView: UIViewRepresentable {
                     }, delay);
                 }
 
+                // Tell Swift the source is a dead end so it can re-route (Stash
+                // server transcode). Reported once per page load.
+                function reportSourceFailure(reason) {
+                    if (!reportsSourceFailure || didReportSourceFailure) return false;
+                    if (!(window.webkit && window.webkit.messageHandlers.videoSourceFailed)) return false;
+                    didReportSourceFailure = true;
+                    window.webkit.messageHandlers.videoSourceFailed.postMessage({ reason: reason });
+                    return true;
+                }
+
+                // Page-level escalation to a second URL (remote slideshow).
                 function switchToFallbackVideo() {
                     if (!fallbackSrc || didSwitchToFallbackSrc) return false;
                     didSwitchToFallbackSrc = true;
                     retryCount = 0;
+                    window.__playbackEverStarted = false;
                     video.src = fallbackSrc;
                     video.load();
                     video.play().catch(function() {});
                     return true;
                 }
 
-                // On error: attempt to reload instead of showing a permanent error
+                // On error: a decode / unsupported-source error is terminal for
+                // this URL (the codec isn't supported), so escalate immediately —
+                // to the in-page fallback if there is one, else to Swift. A
+                // network error is worth retrying in place, and only becomes an
+                // escalation once the retries are spent.
                 video.addEventListener('error', function() {
-                    if (!switchToFallbackVideo()) {
-                        reloadVideo();
+                    const code = (video.error && video.error.code) || 0;
+                    const terminal = code === 3 /* MEDIA_ERR_DECODE */
+                        || code === 4 /* MEDIA_ERR_SRC_NOT_SUPPORTED */;
+                    if (terminal) {
+                        if (switchToFallbackVideo()) return;
+                        if (reportSourceFailure('decode-error-' + code)) return;
                     }
+                    if (retryCount >= maxRetries) {
+                        if (switchToFallbackVideo()) return;
+                        if (reportSourceFailure('retries-exhausted')) return;
+                    }
+                    reloadVideo();
                 });
+
+                // ----- Autoplay -----
+                // The bare `autoplay` attribute is not enough: when this page is
+                // loaded into a WKWebView that isn't in the window hierarchy yet
+                // (which is what happens on a prev/next switch, where the whole
+                // player view is rebuilt), the initial autoplay attempt is
+                // dropped and the video sits on a blank frame until the user
+                // taps play. So kick it explicitly, with a few retries, until
+                // playback genuinely starts.
+                function kickAutoplay(attempt) {
+                    if (!window._roomActive) return;
+                    if (window.__autoplayKickCancelled) return;
+                    if (window.__playbackEverStarted) return;
+                    video.play().catch(function() {
+                        if (attempt < 6) {
+                            setTimeout(function() { kickAutoplay(attempt + 1); }, 250 * (attempt + 1));
+                        }
+                    });
+                }
+                video.addEventListener('loadeddata', function() { kickAutoplay(0); });
+                video.addEventListener('canplay', function() { kickAutoplay(0); });
+                kickAutoplay(0);
 
                 // Also catch source-level errors (nested <source> or src attribute)
                 video.addEventListener('stalled', function() {

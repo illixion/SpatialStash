@@ -257,7 +257,7 @@ struct SettingsTabView: View {
                     }
 
                     Toggle("Server-Side Transcoding", isOn: $appModel.enableStashTranscoding)
-                    Text("Transcode WebM scenes on the Stash server (HLS) so they play in the native renderer and support fake-3D. Turn off to stream the original file directly. Applies to newly loaded scenes.")
+                    Text("Keep the Stash server's HLS transcode in reserve. Scenes always play their original file first (WebM decodes on-device in WebKit); the transcode is used only if that file can't be played, or when a feature needs AVFoundation — Convert to 3D, immersive 3D, depth pre-processing. Turn off to never transcode, which leaves those unavailable for WebM. Applies to newly loaded scenes.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

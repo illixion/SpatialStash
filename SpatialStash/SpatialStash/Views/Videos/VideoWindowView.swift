@@ -150,7 +150,6 @@ struct VideoWindowView: View {
                         case .webKit:
                             WebVideoPlayerView(
                                 videoURL: windowModel.authenticatedStreamURL,
-                                fallbackVideoURL: windowModel.authenticatedFallbackStreamURL,
                                 apiKey: appModel.stashAPIKey.isEmpty ? nil : appModel.stashAPIKey,
                                 // Native Safari controls are off; our SwiftUI
                                 // control bar drives playback via the JS bridge.
@@ -162,7 +161,13 @@ struct VideoWindowView: View {
                                 visualAdjustments: windowModel.effectiveVideoAdjustments,
                                 loopController: windowModel.loopController,
                                 playbackModel: windowModel,
-                                startMuted: windowModel.isMuted
+                                startMuted: windowModel.isMuted,
+                                // WebKit couldn't decode the original file (or
+                                // lost the connection for good): fall forward to
+                                // Stash's server-side transcode.
+                                onSourceUnplayable: {
+                                    windowModel.handleSourceUnplayable()
+                                }
                             )
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .id("\(video.id)_web")

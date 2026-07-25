@@ -203,12 +203,12 @@ class StereoscopicVideoPlayer: ObservableObject {
                     // Re-throw our custom errors
                     throw playerError
                 } catch {
-                    // AVFoundation couldn't read the file. When the source is a
-                    // Stash HLS transcode we download `/stream.mp4` instead (see
+                    // AVFoundation couldn't read the file. Downloads prefer the
+                    // server transcode, rewritten to `/stream.mp4` (see
                     // GalleryVideo.transcodedDownloadURL), so reaching here with a
-                    // raw container extension means the server served the original
-                    // file — i.e. it couldn't provide an MP4 transcode.
-                    let urlExtension = video.streamURL.pathExtension.lowercased()
+                    // raw container extension means there was no transcode to
+                    // download — the setting is off, or the server can't provide one.
+                    let urlExtension = video.transcodedDownloadURL.pathExtension.lowercased()
                     let unsupportedFormats = ["webm", "mkv", "flv", "avi", "wmv"]
 
                     AppLogger.stereoscopicPlayer.error("AVFoundation cannot read video: \(error.localizedDescription)")

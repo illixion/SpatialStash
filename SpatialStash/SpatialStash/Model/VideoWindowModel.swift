@@ -93,6 +93,11 @@ final class VideoWindowModel {
     /// Per-window visual adjustments tier (falls back to global when unmodified).
     var currentAdjustments: VisualAdjustments = VisualAdjustments()
     var playbackRenderer: PlaybackRenderer = .resolving
+    /// True once this window has swapped the original file for the server's
+    /// transcode (`GalleryVideo.transcodeStreamURL`) — either because the
+    /// original proved undecodable or because a feature needed AVFoundation.
+    /// Reset on every video switch so each video starts on its original.
+    var usingTranscodedStream: Bool = false
     /// Native video pixel aspect (width/height), reported once the first frame's
     /// size is known. Used to aspect-fit the native Metal player so it never
     /// stretches when the window can't match the video's aspect (tall videos).
@@ -275,6 +280,10 @@ final class VideoWindowModel {
         progressiveEngageTask = nil
         dismissDepthReadyPrompt()
         pseudo3DSettings = .default
+        pendingPseudo3DEngage = nil
+        // Every video starts on its own original file, whatever the previous
+        // one ended up playing.
+        usingTranscodedStream = false
         isFlipped = false
         currentAdjustments = VisualAdjustments()
         loopController.reset()
@@ -537,7 +546,55 @@ final class VideoWindowModel {
     }
 
     /// Engage fake-3D, ensuring the genuine-stereoscopic path is off.
+    /// Single choke point for engaging fake-3D, so every entry path (the
+    /// ViewMode menu, the realtime/pre-process prompt, the "3D ready" pill, the
+    /// progressive monitor, the auto-engage setting) picks up the transcode swap.
+    ///
+    /// Fake-3D pulls frames through `AVPlayerItemVideoOutput`, so a source
+    /// WebKit is decoding (WebM) has to move to the server's HLS transcode
+    /// first. The intent is parked in `pendingPseudo3DEngage` and replayed by
+    /// `resolvePlaybackRenderer` once the new renderer is known.
     func enablePseudo3D() {
+        // Only swap once the renderer is actually known to be WebKit — swapping
+        // while still `.resolving` could abandon an original that AVFoundation
+        // was about to accept.
+        if playbackRenderer == .webKit, canUseTranscodedStream {
+            pendingPseudo3DEngage = PendingPseudo3DEngage(
+                depthMode: pseudo3DDepthMode,
+                startPaused: pseudo3DEngagePaused,
+                resumeAt: pseudo3DEngageResumeTime ?? (currentTime > 0 ? currentTime : nil)
+            )
+            switchToTranscodedStream(reason: "fake-3D requires the AVFoundation renderer")
+            return
+        }
+        stereoscopicOverride = false
+        pseudo3DEnabled = true
+    }
+
+    /// A fake-3D engage deferred until the transcode's renderer resolves.
+    private struct PendingPseudo3DEngage {
+        let depthMode: Pseudo3DDepthMode
+        let startPaused: Bool
+        let resumeAt: Double?
+    }
+
+    @ObservationIgnored private var pendingPseudo3DEngage: PendingPseudo3DEngage?
+
+    /// Replay (or abandon) a fake-3D engage that was waiting on the transcode.
+    private func resumePendingPseudo3DEngage() {
+        guard let pending = pendingPseudo3DEngage else { return }
+        pendingPseudo3DEngage = nil
+        guard playbackRenderer == .nativeMetal else {
+            // The transcode isn't AVFoundation-playable either (a server that
+            // only offers the non-seekable /stream.mp4 lands here). Say so
+            // rather than leaving a menu item that silently does nothing.
+            depthConversionFailureMessage = "This video can't be converted to 3D: its server transcode isn't playable by AVFoundation. HLS transcoding must be available on the Stash server."
+            return
+        }
+        pseudo3DDepthMode = pending.depthMode
+        pseudo3DEngagePaused = pending.startPaused
+        pseudo3DEngageResumeTime = pending.resumeAt
+        if pending.startPaused { isPaused = true }
         stereoscopicOverride = false
         pseudo3DEnabled = true
     }
@@ -575,17 +632,60 @@ final class VideoWindowModel {
         pseudo3DSettings.isModified ? pseudo3DSettings : appModel.globalPseudo3DSettings
     }
 
-    var authenticatedStreamURL: URL {
-        authenticatedURL(video.streamURL)
+    /// The URL this window is currently playing: the original file, or the
+    /// server transcode once `usingTranscodedStream` is set.
+    var activeStreamURL: URL {
+        guard usingTranscodedStream, let transcode = video.transcodeStreamURL else {
+            return video.streamURL
+        }
+        return transcode
     }
 
-    var authenticatedFallbackStreamURL: URL? {
-        video.fallbackStreamURL.map(authenticatedURL)
+    var authenticatedStreamURL: URL {
+        authenticatedURL(activeStreamURL)
+    }
+
+    /// Whether swapping to the server transcode is still an available move.
+    var canUseTranscodedStream: Bool {
+        !usingTranscodedStream && video.hasNativePlayableTranscode
+    }
+
+    /// Whether the fake-3D ("Convert to 3D") path is reachable for this video —
+    /// either it already decodes through AVFoundation, or a server transcode can
+    /// get it there. WebM lands in the second case: WebKit plays the original,
+    /// and picking 3D re-routes playback through the HLS transcode.
+    var pseudo3DAvailable: Bool {
+        playbackRenderer == .nativeMetal || canUseTranscodedStream
     }
 
     func forceWebKitPlayback() {
         playbackRendererTask?.cancel()
         playbackRenderer = .webKit
+    }
+
+    /// Swap the original file for the server's live transcode and re-resolve the
+    /// renderer. Returns false when there's nothing to swap to.
+    ///
+    /// Called from two places: the WebKit player reporting the original as
+    /// undecodable, and any fake-3D engage on a WebKit-rendered source (fake-3D
+    /// needs AVPlayerItemVideoOutput). The playhead is carried over so the swap
+    /// resumes rather than restarts.
+    @discardableResult
+    func switchToTranscodedStream(reason: String) -> Bool {
+        guard canUseTranscodedStream else { return false }
+        AppLogger.videoWindow.info(
+            "[\(self.videoDisplayName, privacy: .public)] switching to server transcode: \(reason, privacy: .public)"
+        )
+        usingTranscodedStream = true
+        resolvePlaybackRenderer()
+        return true
+    }
+
+    /// Called by the WebKit player when the original file can't be decoded (or
+    /// its network retries are exhausted). Falls forward to the transcode; with
+    /// no transcode available the player keeps its own retry behaviour.
+    func handleSourceUnplayable() {
+        switchToTranscodedStream(reason: "original file is not decodable by WebKit")
     }
 
     private func resolvePlaybackRenderer() {
@@ -599,10 +699,19 @@ final class VideoWindowModel {
             await MainActor.run {
                 guard let self, self.authenticatedStreamURL == url else { return }
                 self.playbackRenderer = isPlayable ? .nativeMetal : .webKit
-                if isPlayable {
-                    self.autoEngagePseudo3DIfPreferred()
-                    self.offerCached3DIfAvailable()
+                // A fake-3D engage waiting on the transcode swap resolves here.
+                if self.pendingPseudo3DEngage != nil {
+                    self.resumePendingPseudo3DEngage()
+                    return
                 }
+                // A restored window that was in fake-3D over a WebKit-decoded
+                // source needs the same transcode swap to get back there.
+                if self.pseudo3DEnabled, !self.shouldUse3DMode, !isPlayable, self.canUseTranscodedStream {
+                    self.enablePseudo3D()
+                    return
+                }
+                self.autoEngagePseudo3DIfPreferred()
+                self.offerCached3DIfAvailable()
             }
         }
     }
@@ -616,7 +725,10 @@ final class VideoWindowModel {
     /// model installed it stays 2D silently — never forces the setup sheet.
     private func autoEngagePseudo3DIfPreferred() {
         guard appModel.defaultRealtimePseudo3D,
-              !pseudo3DEnabled, !shouldUse3DMode else { return }
+              !pseudo3DEnabled, !shouldUse3DMode,
+              // WebKit-decoded sources qualify too — enablePseudo3D swaps them
+              // onto the server transcode first (WebM with transcoding on).
+              pseudo3DAvailable else { return }
         if DepthCacheStore.engageEntry(videoIdentity: video.stashId) != nil {
             pseudo3DDepthMode = .cached(videoIdentity: video.stashId)
         } else if CoreMLDepthProvider.hasAvailableModel(role: .realtime) {
@@ -635,7 +747,7 @@ final class VideoWindowModel {
     /// conversion can't trigger it — engageEntry only returns completed
     /// entries, and completion has its own prompt.
     private func offerCached3DIfAvailable() {
-        guard !pseudo3DEnabled, !shouldUse3DMode,
+        guard !pseudo3DEnabled, !shouldUse3DMode, pseudo3DAvailable,
               DepthCacheStore.engageEntry(videoIdentity: video.stashId) != nil else { return }
         presentDepthReadyPrompt(message: "3D version available")
     }
