@@ -72,6 +72,13 @@ struct WebVideoPlayerView: UIViewRepresentable {
         configuration.userContentController.add(coordinator, name: "videoSourceFailed")
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
+        // Kicking play() from the delegate's didFinish is what actually starts
+        // autoplay reliably: a Swift-initiated play on a fully loaded page is
+        // honoured where the page's own initial attempt gets dropped. (This used
+        // to happen by accident via the room-activity JS on the open-time
+        // scene-phase flap, which is why a prev/next switch — no phase change —
+        // stayed blank.)
+        webView.navigationDelegate = coordinator
         webView.isOpaque = false
         webView.backgroundColor = .clear
         webView.scrollView.backgroundColor = .clear
@@ -236,6 +243,7 @@ struct WebVideoPlayerView: UIViewRepresentable {
                         if (window._resumeOnRoomActive !== false) {
                             window._autoResumeUntil = Date.now() + 3000;
                             p.play().catch(function() {});
+                            if (window.__kickAutoplayNow) window.__kickAutoplayNow();
                         }
                     })();
                     """
@@ -253,6 +261,9 @@ struct WebVideoPlayerView: UIViewRepresentable {
                         if (window._resumeOnRoomActive !== false) {
                             window._autoResumeUntil = Date.now() + 3000;
                             document.getElementById('player').play().catch(function() {});
+                            // A video whose autoplay never got going before the
+                            // window left the room resumes the poll here.
+                            if (window.__kickAutoplayNow) window.__kickAutoplayNow();
                         }
                     })();
                     """
@@ -289,6 +300,7 @@ struct WebVideoPlayerView: UIViewRepresentable {
         coordinator.onDurationKnown = nil
         coordinator.onSourceUnplayable = nil
         coordinator.onPlaybackUpdate = nil
+        webView.navigationDelegate = nil
         coordinator.cancelSrcUnload()
         coordinator.cleanupHTMLFile()
     }
@@ -310,7 +322,7 @@ struct WebVideoPlayerView: UIViewRepresentable {
         webView.loadFileURL(htmlFile, allowingReadAccessTo: videoDir)
     }
 
-    class Coordinator: NSObject, WKScriptMessageHandler {
+    class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         var htmlFileURL: URL?
         var loadedURL: URL?
         var lastShowControls: Bool?
@@ -371,6 +383,12 @@ struct WebVideoPlayerView: UIViewRepresentable {
         func cancelSrcUnload() {
             srcUnloadTask?.cancel()
             srcUnloadTask = nil
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            // The page is live now — start playback from the app side. The
+            // in-page poll is the backup for the frames before this fires.
+            webView.evaluateJavaScript("if (window.__kickAutoplayNow) window.__kickAutoplayNow();")
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -815,23 +833,52 @@ struct WebVideoPlayerView: UIViewRepresentable {
                 // The bare `autoplay` attribute is not enough: when this page is
                 // loaded into a WKWebView that isn't in the window hierarchy yet
                 // (which is what happens on a prev/next switch, where the whole
-                // player view is rebuilt), the initial autoplay attempt is
-                // dropped and the video sits on a blank frame until the user
-                // taps play. So kick it explicitly, with a few retries, until
-                // playback genuinely starts.
-                function kickAutoplay(attempt) {
-                    if (!window._roomActive) return;
-                    if (window.__autoplayKickCancelled) return;
-                    if (window.__playbackEverStarted) return;
-                    video.play().catch(function() {
-                        if (attempt < 6) {
-                            setTimeout(function() { kickAutoplay(attempt + 1); }, 250 * (attempt + 1));
-                        }
-                    });
+                // player view is rebuilt), the initial attempt is dropped and the
+                // video sits on a blank frame until the user taps play.
+                //
+                // A dropped `play()` does NOT reject — its promise just stays
+                // pending — so retrying in `.catch` never fires. Poll instead:
+                // re-issue play() while the element is still paused, and stop as
+                // soon as it reports playing (or the user pauses, or the window
+                // leaves the room, or we run out of patience).
+                let autoplayTicks = 0;
+                let autoplayTimer = null;
+                const maxAutoplayTicks = 24;      // ~10s at 400ms
+                function stopAutoplayKick() {
+                    if (autoplayTimer !== null) {
+                        clearInterval(autoplayTimer);
+                        autoplayTimer = null;
+                    }
                 }
-                video.addEventListener('loadeddata', function() { kickAutoplay(0); });
-                video.addEventListener('canplay', function() { kickAutoplay(0); });
-                kickAutoplay(0);
+                function autoplayKickDone() {
+                    return window.__playbackEverStarted
+                        || window.__autoplayKickCancelled
+                        || !window._roomActive;
+                }
+                function kickAutoplayOnce() {
+                    if (autoplayKickDone()) { stopAutoplayKick(); return; }
+                    if (!video.paused) return;
+                    video.play().catch(function() {});
+                }
+                // Exposed so Swift can kick from the navigation delegate, once
+                // the page has genuinely finished loading into a live WKWebView.
+                window.__kickAutoplayNow = function() {
+                    if (autoplayKickDone()) return;
+                    kickAutoplayOnce();
+                    startAutoplayKick();
+                };
+                function startAutoplayKick() {
+                    if (autoplayTimer !== null || autoplayKickDone()) return;
+                    autoplayTimer = setInterval(function() {
+                        autoplayTicks++;
+                        if (autoplayTicks > maxAutoplayTicks) { stopAutoplayKick(); return; }
+                        kickAutoplayOnce();
+                    }, 400);
+                }
+                video.addEventListener('loadeddata', function() { kickAutoplayOnce(); startAutoplayKick(); });
+                video.addEventListener('canplay', function() { kickAutoplayOnce(); startAutoplayKick(); });
+                video.addEventListener('playing', stopAutoplayKick);
+                startAutoplayKick();
 
                 // Also catch source-level errors (nested <source> or src attribute)
                 video.addEventListener('stalled', function() {
