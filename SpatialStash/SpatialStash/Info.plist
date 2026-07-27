@@ -26,6 +26,8 @@
 		<dict>
 			<key>CFBundleTypeName</key>
 			<string>Image</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
 			<key>LSHandlerRank</key>
 			<string>Alternate</string>
 			<key>LSItemContentTypes</key>
@@ -45,17 +47,74 @@
 		<dict>
 			<key>CFBundleTypeName</key>
 			<string>Video</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
 			<key>LSHandlerRank</key>
 			<string>Alternate</string>
 			<key>LSItemContentTypes</key>
 			<array>
 				<string>public.movie</string>
+				<string>public.video</string>
+				<string>public.audiovisual-content</string>
 				<string>public.mpeg-4</string>
 				<string>com.apple.quicktime-movie</string>
 				<string>public.avi</string>
+				<string>public.mpeg</string>
+				<string>public.mpeg-2-transport-stream</string>
 				<string>org.matroska.mkv</string>
 				<string>org.webmproject.webm</string>
 			</array>
+		</dict>
+	</array>
+	<!-- mkv/webm are not system-declared UTIs on every OS version, so without
+	     an import declaration those identifiers are inert in the document type
+	     above (and an unresolvable identifier can cost the whole entry its
+	     LaunchServices registration — i.e. no "Open in Spatial Stash" for any
+	     video). Declaring them here makes them resolvable and gives the app a
+	     real conformance to public.movie for those containers. -->
+	<key>UTImportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>org.matroska.mkv</string>
+			<key>UTTypeDescription</key>
+			<string>Matroska Video</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.movie</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>mkv</string>
+				</array>
+				<key>public.mime-type</key>
+				<array>
+					<string>video/x-matroska</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>org.webmproject.webm</string>
+			<key>UTTypeDescription</key>
+			<string>WebM Video</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.movie</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>webm</string>
+				</array>
+				<key>public.mime-type</key>
+				<array>
+					<string>video/webm</string>
+				</array>
+			</dict>
 		</dict>
 	</array>
 	<key>CFBundleURLTypes</key>

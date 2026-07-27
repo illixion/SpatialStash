@@ -67,18 +67,11 @@ struct SpatialStashApp: App {
         .defaultSize(width: 1200, height: 900)
         .defaultLaunchBehavior(.suppressed)
 
-        // Shared video player - opens when video is shared to the app
-        WindowGroup(id: "shared-video", for: SharedMediaItem.self) { $item in
-            if let item = item {
-                SharedVideoWindowView(item: item)
-                    .environment(appModel)
-                    .captureOpenWindowAction()
-                    .handleIncomingMediaURLs(appModel: appModel)
-            }
-        }
-        .windowStyle(.plain)
-        .defaultSize(width: 1200, height: 700)
-        .defaultLaunchBehavior(.suppressed)
+        // Shared videos are routed to the "video-detail" scene above (rich
+        // pipeline: native-Metal playback, fake-3D, adjustments). The old flat
+        // "shared-video" group is gone — nothing opened it, and a second
+        // WindowGroup taking the same `SharedMediaItem` payload made scene
+        // restoration ambiguous between it and "shared-photo".
 
         // Pop-out debug console window (singleton)
         Window("Console", id: "console") {

@@ -20,7 +20,7 @@ xcodebuild -quiet -project SpatialStash/SpatialStash.xcodeproj -scheme SpatialSt
 ## Architecture
 
 ### App Structure
-- **SpatialStashApp.swift** - App entry point defining scenes: main window, photo-detail pop-out, video-detail, shared-photo viewer, shared-video player, console, GPU memory monitor, remote-viewer, remote-video, remote-alert, and StereoscopicVideoSpace (immersive)
+- **SpatialStashApp.swift** - App entry point defining scenes: main window, photo-detail pop-out, video-detail, shared-photo viewer (shared *videos* reuse video-detail), console, GPU memory monitor, remote-viewer, remote-video, remote-alert, and StereoscopicVideoSpace (immersive)
 - **AppModel.swift** - Central `@Observable` state container for gallery data, server config, filter state, video playback state, memory monitoring, and persisted settings (UserDefaults)
 - **PhotoWindowModel.swift** - Per-window `@Observable` model for individual photo viewers. Contains all stored properties, init/start lifecycle, core image loading pipeline, interaction tracking, shared utilities, and resource cleanup. Split into extension files by concern:
   - **PhotoWindowModel+VisualAdjustments.swift** - Auto-enhance (3-tier cache), brightness/contrast/saturation adjustments, 3D adjustment preview with debounced reload

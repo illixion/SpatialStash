@@ -30,6 +30,14 @@ struct IncomingURLHandler: ViewModifier {
                 guard let url = notif.object as? URL else { return }
                 Task { @MainActor in await handle(url) }
             }
+            // Cold launch: the SceneDelegate posted before any scene root
+            // existed, so the notification above had no observers. Drain the
+            // backlog as soon as a handler is alive.
+            .task {
+                for url in SceneDelegate.drainPendingURLs() {
+                    await handle(url)
+                }
+            }
     }
 
     @MainActor
@@ -40,6 +48,9 @@ struct IncomingURLHandler: ViewModifier {
             AppLogger.streamURL.info("Ignoring duplicate incoming URL: \(url.absoluteString, privacy: .public)")
             return
         }
+        // This handler owns the URL now; keep the cold-launch backlog from
+        // replaying it into a second window when another scene mounts later.
+        SceneDelegate.consumePending(url)
 
         // Custom handoff scheme: spatialstash://<host>?...
         if url.scheme?.lowercased() == "spatialstash" {
@@ -172,6 +183,15 @@ struct IncomingURLHandler: ViewModifier {
             mediaType: mediaType
         ) else {
             AppLogger.sharedMedia.error("Failed to cache shared file from URL: \(url.lastPathComponent, privacy: .public)")
+            // A video is playable straight from the source URL when the copy is
+            // what failed (network file share, disk pressure, a multi-GB file):
+            // AVFoundation only needs read access, not a private copy. Bailing
+            // out here instead left the share with no window and no error at
+            // all, which is the "nothing happens when I share a video" symptom.
+            if mediaType == .video {
+                AppLogger.sharedMedia.info("Playing shared video in place: \(url.lastPathComponent, privacy: .public)")
+                openStreamVideo(url, identitySource: url)
+            }
             return
         }
 

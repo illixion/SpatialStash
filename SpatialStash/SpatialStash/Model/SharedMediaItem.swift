@@ -18,14 +18,17 @@ struct SharedMediaItem: Identifiable, Codable, Hashable {
         case image
         case video
 
+        private static let imageExtensions: Set<String> = [
+            "jpg", "jpeg", "png", "heic", "heif", "gif", "webp", "bmp", "tiff", "tif", "jxl"
+        ]
+
+        /// Kept in sync with `StreamableURLResolver.videoExtensions` — a
+        /// container the players can handle must classify as `.video` here too,
+        /// or it gets handed to the photo viewer and renders nothing.
+        private static let videoExtensions: Set<String> = StreamableURLResolver.videoExtensions
+
         static func from(url: URL) -> SharedMediaType {
             let ext = url.pathExtension.lowercased()
-            let imageExtensions: Set<String> = [
-                "jpg", "jpeg", "png", "heic", "heif", "gif", "webp", "bmp", "tiff", "tif", "jxl"
-            ]
-            let videoExtensions: Set<String> = [
-                "mp4", "m4v", "mov", "mkv", "webm", "avi", "wmv", "flv", "3gp"
-            ]
 
             if imageExtensions.contains(ext) {
                 return .image
@@ -33,13 +36,28 @@ struct SharedMediaItem: Identifiable, Codable, Hashable {
                 return .video
             }
 
-            // Fallback: use UTType conformance
-            if let utType = UTType(filenameExtension: ext) {
-                if utType.conforms(to: .image) { return .image }
-                if utType.conforms(to: .movie) || utType.conforms(to: .video) { return .video }
+            // Fallback: ask the file system what this actually is. In-place and
+            // file-provider shares routinely arrive with no usable extension, so
+            // `UTType(filenameExtension:)` returns nil for them — resolving the
+            // real content type is the only way those get classified at all.
+            if let contentType = try? url.resourceValues(forKeys: [.contentTypeKey]).contentType,
+               let type = classify(contentType) {
+                return type
+            }
+
+            if let utType = UTType(filenameExtension: ext), let type = classify(utType) {
+                return type
             }
 
             return .image
+        }
+
+        private static func classify(_ type: UTType) -> SharedMediaType? {
+            if type.conforms(to: .movie) || type.conforms(to: .video) || type.conforms(to: .audiovisualContent) {
+                return .video
+            }
+            if type.conforms(to: .image) { return .image }
+            return nil
         }
     }
 
