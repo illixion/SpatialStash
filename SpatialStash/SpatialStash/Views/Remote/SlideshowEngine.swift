@@ -727,28 +727,38 @@ class SlideshowEngine {
             // barrier-rejoin imageReady gates on it and would be silently
             // dropped under the old value.
             isRoomActive = true
-            onBecameActive()
 
-            guard state == .backgrounded else { return }
+            if state == .backgrounded {
+                // Restore to the state we were in before backgrounding.
+                // Content is always preserved — the slideshow manages its own
+                // memory by cycling images as it advances, so there is no
+                // background unload timer.
+                let restoreState = stateBeforeBackground ?? .displaying
+                stateBeforeBackground = nil
 
-            // Restore to the state we were in before backgrounding.
-            // Content is always preserved — the slideshow manages its own
-            // memory by cycling images as it advances, so there is no
-            // background unload timer.
-            let restoreState = stateBeforeBackground ?? .displaying
-            stateBeforeBackground = nil
-
-            if restoreState == .paused {
-                // Preserve paused state across background cycle
-                transition(to: .paused)
-            } else if currentImage != nil || currentMediaType != .image {
-                // Resume the slideshow timer
-                transition(to: .displaying)
-            } else {
-                // Content was never loaded (backgrounded before first fetch) — fetch fresh
-                transition(to: .loading)
+                if restoreState == .paused {
+                    // Preserve paused state across background cycle
+                    transition(to: .paused)
+                } else if currentImage != nil || currentMediaType != .image {
+                    // Resume the slideshow timer
+                    transition(to: .displaying)
+                } else {
+                    // Content was never loaded (backgrounded before first fetch) — fetch fresh
+                    transition(to: .loading)
+                }
             }
 
+            // The hook runs *after* the restore, not before it. Overrides use it
+            // to rejoin the server (reconcile onto the post the server
+            // dark-advanced to, re-report readiness), and every one of those
+            // paths is gated on being out of `.backgrounded` —
+            // `reconcileWithServer` requires `.displaying`/`.idle`. Calling the
+            // hook first made the whole rejoin a silent no-op, and in remote
+            // mode there is no local clock to recover with (`runDisplayingPhase`
+            // just awaits a state change and the watchdog refuses to advance a
+            // server-driven engine), so the window sat on the stale post
+            // forever.
+            onBecameActive()
         } else {
             // Truly backgrounded. Same ordering as above: the hook observes
             // the new state.

@@ -242,7 +242,15 @@ class RemoteViewerModel: SlideshowEngine {
         // lets a healthy socket prove itself; only a missing pong
         // forces a reconnect.
         wsSession?.probeOrReconnect()
-        scheduleSceneStateReport(effectiveVisible)
+        // Immediate, like the OFF edge: `flushAndSuspendIfAbsent`'s in-flight
+        // continuation re-checks `allSessionsAbsent` before releasing the
+        // socket, and a 250ms-debounced ON report leaves that check reading
+        // "still absent" — so a window that comes back during the background
+        // flush gets its freshly-reconnected socket suspended out from under it.
+        // Recording the contribution synchronously here closes that race.
+        // (Debouncing exists for scenePhase flutter, which never reaches this
+        // hook: only .background edges do.)
+        scheduleSceneStateReport(effectiveVisible, immediate: true)
         // While HA holds the panel off, the channel stays parked: reporting
         // present or rejoining the barrier here would resume a slideshow the
         // user explicitly switched off. The displayState(on) frame is what
@@ -312,6 +320,23 @@ class RemoteViewerModel: SlideshowEngine {
         // re-entry advertises the very staleness the dark advance hides.
         armInstantTransition()
         reconcileWithServer()
+
+        // Sign of life. If reconcile didn't move us — the server is parked on
+        // the post we already show, or nothing new arrived while we were away —
+        // then nothing else is going to report for this channel. `present` is
+        // OR-aggregated per deviceId and only emitted on aggregate *edges*, so
+        // when sibling windows share a deviceId exactly one of them produces the
+        // OFF→ON edge; the rest are deduped on the wire, the server commits and
+        // broadcasts once, and every window that hadn't finished restoring yet
+        // is left with no trigger at all. Three report-less cycles then stall
+        // the channel permanently (protocol.md, readiness-timeout fallback),
+        // which is why only the single lucky window kept cycling. Re-reporting
+        // what's on screen is idempotent: the server drops a late imageReady for
+        // a channel that is no longer loading.
+        if let post = currentPost,
+           serverCurrentPost == nil || serverCurrentPost?._id == post._id {
+            reportImageReady(for: post)
+        }
     }
 
     /// A `displayState` frame addressed to this window's deviceId.
