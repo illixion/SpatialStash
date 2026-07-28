@@ -116,9 +116,22 @@ struct SpatialStashApp: App {
                     .environment(appModel)
                     .captureOpenWindowAction()
                     .handleIncomingMediaURLs(appModel: appModel)
+                    // Structural floor. This view's root is a GeometryReader,
+                    // which has no intrinsic size and greedily accepts whatever
+                    // it's proposed — during restoration of a window the
+                    // compositor hasn't placed yet, that proposal can be the
+                    // 10x10 default. Without a minimum the window collapses to
+                    // nothing, and the size write-back then persists the
+                    // collapsed geometry. The main window group has had this
+                    // floor all along; the viewer was the one scene without it.
+                    .frame(
+                        minWidth: RemoteViewerWindowView.minimumWindowSize.width,
+                        minHeight: RemoteViewerWindowView.minimumWindowSize.height
+                    )
             }
         }
         .windowStyle(.plain)
+        .windowResizability(.contentMinSize)
         .defaultSize(width: 1400, height: 900)
         .defaultLaunchBehavior(.suppressed)
 

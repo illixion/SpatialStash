@@ -181,8 +181,11 @@ struct RemoteViewerWindowView: View {
         .onDisappear {
             if let model = viewerModel {
                 appModel.unregisterRemoteViewerModel(model)
-                appModel.unregisterRemoteViewerWindow(configId: windowValue.configId, windowValueId: windowValue.id)
             }
+            // Unregister unconditionally. Gating this on the model meant a
+            // window whose config never resolved could never be unregistered,
+            // so the registry kept claiming it was open forever.
+            appModel.unregisterRemoteViewerWindow(configId: windowValue.configId, windowValueId: windowValue.id)
             viewerModel?.stop()
             autoHideTimer?.cancel()
         }
@@ -783,19 +786,25 @@ struct RemoteViewerWindowView: View {
         }
     }
 
+    /// Smallest geometry this window is allowed to occupy, and the floor below
+    /// which a persisted size is treated as corrupt rather than restored.
+    static let minimumWindowSize = CGSize(width: 480, height: 320)
+
+    /// Whether a size is one the user could plausibly have resized to, as
+    /// opposed to transient layout noise from a window the compositor hasn't
+    /// placed yet. Guards both ends of the persist/restore round-trip.
+    static func isPlausibleWindowSize(_ size: CGSize) -> Bool {
+        size.width >= minimumWindowSize.width && size.height >= minimumWindowSize.height
+            && size.width.isFinite && size.height.isFinite
+    }
+
     /// Resolve the window scene hosting this viewer for geometry updates
-    /// (restored-size apply, IPC calibration nudge). Prefer the per-scene
-    /// SceneDelegate from the environment — it is THIS window's scene. The
-    /// foreground-active fallback is wrong during cold-launch restoration
-    /// (it can pick another window's scene, sending the resize elsewhere),
-    /// so it only remains as a last resort for the calibration nudge.
+    /// (restored-size apply, IPC calibration nudge). This is strictly THIS
+    /// window's scene from the environment: the old foreground-active fallback
+    /// could resolve to a *different* window and send it our resize, which is
+    /// exactly the failure mode `VideoWindowView`'s aspect lock documents.
     private var resolvedWindowScene: UIWindowScene? {
-        if let scene = sceneDelegate?.windowScene {
-            return scene
-        }
-        return UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .first { $0.activationState == .foregroundActive }
+        sceneDelegate?.windowScene
     }
 
     /// Apply the persisted custom window size (if any) on launch.
@@ -810,11 +819,33 @@ struct RemoteViewerWindowView: View {
     /// different window during cold launch. Write-back stays suppressed for
     /// the duration so the transient scene-default size isn't persisted.
     private func applyRestoredSizeIfNeeded() {
+        // Suppress the write-back for the settle period on *every* restored
+        // window, before the restored-size guard — not just ones that already
+        // have a size persisted. The window that most needs protecting is the
+        // one being restored for the first time: it has no archived size, so
+        // arming suppression after the guard meant its transient restoration
+        // geometry sailed straight into the archive. That is how a window gets
+        // poisoned in the first place.
+        if RestoredWindowTracker.isRestored(windowValue.id) {
+            suppressSizeWriteback = true
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(6))
+                suppressSizeWriteback = false
+            }
+        }
+
         // Prefer the scene-archive value; fall back to the UserDefaults store
         // (written in lockstep) in case the archive round-trip dropped it.
         guard let restored = windowValue.restoredSize?.cgSize
-                ?? RestoredWindowTracker.windowSize(for: windowValue.id),
-              restored.width > 2, restored.height > 2 else { return }
+                ?? RestoredWindowTracker.windowSize(for: windowValue.id) else { return }
+        // Reject a degenerate archived size instead of re-asserting it. An
+        // already-poisoned archive heals here: we fall through to the scene
+        // default rather than spending 5s forcing the window back to nothing.
+        guard Self.isPlausibleWindowSize(restored) else {
+            AppLogger.remoteViewer.warning("Ignoring implausible restored window size \(Int(restored.width), privacy: .public)x\(Int(restored.height), privacy: .public) — falling back to the scene default")
+            RestoredWindowTracker.clearWindowSize(for: windowValue.id)
+            return
+        }
         suppressSizeWriteback = true
         let source = windowValue.restoredSize != nil ? "scene archive" : "defaults fallback"
         AppLogger.remoteViewer.info("Applying restored window size \(Int(restored.width), privacy: .public)x\(Int(restored.height), privacy: .public) (\(source, privacy: .public))")
@@ -846,7 +877,12 @@ struct RemoteViewerWindowView: View {
     /// value so visionOS persists it for the next cold relaunch.
     private func scheduleSizeWriteback(_ size: CGSize) {
         guard let onSizeSettled else { return }
-        guard !suppressSizeWriteback, size.width > 2, size.height > 2 else { return }
+        // The old floor here was `> 2`, which happily persisted the transient
+        // geometry a not-yet-placed window reports during restoration. That
+        // value then got re-asserted on every subsequent launch, so the window
+        // came back invisible until its scene session was destroyed ("Close All
+        // Windows"). Only persist a size a user could plausibly have chosen.
+        guard !suppressSizeWriteback, Self.isPlausibleWindowSize(size) else { return }
         sizeWritebackTask?.cancel()
         sizeWritebackTask = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(500))
@@ -859,8 +895,13 @@ struct RemoteViewerWindowView: View {
 
     private func nudgeWindowSizeForCalibration() {
         guard let windowScene = resolvedWindowScene else { return }
-        let base = windowSize
-        guard base.width > 2, base.height > 2 else { return }
+        // Nudge from the *scene's* own geometry, not the GeometryReader's
+        // content size. Feeding a content size back in as a scene size shrinks
+        // the window by the chrome insets on every crossfade — a ratchet that
+        // walks a 3D slideshow window down to nothing over a long session, and
+        // whose end state the size write-back then persists.
+        let base = windowScene.coordinateSpace.bounds.size
+        guard Self.isPlausibleWindowSize(base) else { return }
         let delta: CGFloat = nudgeAlternator ? 1 : -1
         nudgeAlternator.toggle()
         let nudged = CGSize(width: base.width + delta, height: base.height + delta)

@@ -29,4 +29,12 @@ struct PhotoWindowValue: Identifiable, Codable, Hashable {
         self.wasPushed = wasPushed
         self.restoredSize = nil
     }
+
+    /// Identity is the window id alone — see the note on
+    /// `RemoteViewerWindowValue`: a synthesized conformance over `restoredSize`
+    /// makes a tracked value stop matching its own scene once the size
+    /// write-back fires.
+    static func == (lhs: Self, rhs: Self) -> Bool { lhs.id == rhs.id }
+
+    func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }

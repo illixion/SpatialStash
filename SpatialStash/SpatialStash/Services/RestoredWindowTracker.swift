@@ -63,6 +63,14 @@ enum RestoredWindowTracker {
         return CGSize(width: pair[0], height: pair[1])
     }
 
+    /// Drop a stored size — used when the persisted geometry is rejected as
+    /// degenerate, so the window falls back to the scene default instead of
+    /// being restored to a collapsed size again on the next launch.
+    static func clearWindowSize(for id: UUID) {
+        guard sizes.removeValue(forKey: id.uuidString) != nil else { return }
+        UserDefaults.standard.set(sizes, forKey: sizesKey)
+    }
+
     static func setWindowSize(_ size: CGSize, for id: UUID) {
         sizes[id.uuidString] = [size.width, size.height]
         if sizes.count > maxEntries {
