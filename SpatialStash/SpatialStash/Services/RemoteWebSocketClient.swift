@@ -141,8 +141,29 @@ class RemoteWebSocketClient {
             DispatchQueue.main.async { [weak entry] in
                 entry?.onConnected?()
             }
+        } else {
+            // The connection exists but is down — almost always `suspendSocket`
+            // releasing it once every sibling window went absent (it keeps
+            // `wsURL`, so the first branch above doesn't fire either). Attaching
+            // used to do nothing at all here: no connect, and no `onConnected`,
+            // so a window pinned while the other rooms' windows were away never
+            // sent `slideshowConfig`, never got a `playback` frame, and sat on
+            // its loading spinner until some unrelated scene-phase edge revived
+            // the socket. A new session is its own reason to reconnect.
+            reviveIfIdle()
         }
         return entry
+    }
+
+    /// Bring a released/idle connection back up. Deliberately does nothing when
+    /// an upgrade or a backoff retry is already in flight — tearing those down
+    /// is `forceReconnectNow`'s job and doing it here would turn several windows
+    /// attaching at once into a reconnect stampede.
+    private func reviveIfIdle() {
+        guard !halted, wsURL != nil, session != nil else { return }
+        guard webSocketTask == nil, reconnectTask == nil else { return }
+        AppLogger.remoteViewer.info("WebSocket revive — session attached to a released connection")
+        doConnect()
     }
 
     /// Detach a session. Sends a best-effort `sessionEnd` to the server
@@ -359,8 +380,14 @@ class RemoteWebSocketClient {
     private func flushSceneState(force: Bool = false) {
         // Nothing reaches a dead socket, and recording these as sent would let
         // the reconnect skip them as unchanged. The reconnect replays every
-        // aggregate from scratch, so just keep the contributions and wait.
-        guard isConnected else { return }
+        // aggregate from scratch, so just keep the contributions and wait —
+        // but a session declaring itself present while the socket is down is
+        // also a reason to bring it back, not just something to queue behind
+        // the next reconnect that happens to fire.
+        guard isConnected else {
+            if !allSessionsAbsent { reviveIfIdle() }
+            return
+        }
 
         var presence: [String: Bool] = [:]
         var visibility: [String: Bool] = [:]
