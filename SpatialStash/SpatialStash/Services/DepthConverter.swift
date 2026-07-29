@@ -171,6 +171,13 @@ final class DepthConverter: @unchecked Sendable {
     /// the completed pass.
     fileprivate static let provisionalMetaFirstFrames = 150
     fileprivate static let provisionalMetaEveryFrames = 300
+    /// Metadata includes arrays for every processed frame, so rewriting it at a
+    /// fixed frame cadence becomes increasingly expensive on long videos.
+    /// Keep progressive playback responsive without repeatedly stalling stage B.
+    fileprivate static let provisionalMetaMinimumInterval: CFTimeInterval = 20
+    /// The tiny progressive frontier sidecar can update much more often than
+    /// the full metadata without making long conversions quadratic.
+    fileprivate static let progressiveFrontierEveryFrames = 60
     /// Sources at/above this frame rate convert in two passes (half-rate sweep
     /// first, then the skipped frames). Below it a single full sweep runs:
     /// half-rate depth on 24/30fps content would update at 12-15Hz — visible
@@ -628,6 +635,8 @@ extension DepthConverter {
         private var adaptor: AVAssetWriterInputPixelBufferAdaptor?
         private var nextEmit = 0
         private var lastMetaEmitCount = 0
+        private var lastMetaEmitTime: CFTimeInterval = 0
+        private var lastFrontierEmitCount = 0
 
         private let failureLock = NSLock()
         private var storedFailure: Error?
@@ -802,10 +811,21 @@ extension DepthConverter {
             // Provisional metadata (completed: false) so a progressive engage
             // mid-conversion has display mappings to load; each write recomputes
             // over all stats so far and the final pass overwrites everything.
-            if (lastMetaEmitCount == 0 && nextEmit >= DepthConverter.provisionalMetaFirstFrames)
-                || nextEmit - lastMetaEmitCount >= DepthConverter.provisionalMetaEveryFrames {
+            let now = CACurrentMediaTime()
+            let shouldWriteInitialMeta =
+                lastMetaEmitCount == 0 && nextEmit >= DepthConverter.provisionalMetaFirstFrames
+            let shouldRefreshMeta =
+                lastMetaEmitCount > 0
+                && nextEmit - lastMetaEmitCount >= DepthConverter.provisionalMetaEveryFrames
+                && now - lastMetaEmitTime >= DepthConverter.provisionalMetaMinimumInterval
+            if shouldWriteInitialMeta || shouldRefreshMeta {
                 lastMetaEmitCount = nextEmit
+                lastMetaEmitTime = now
                 try? DepthCacheStore.writeMeta(buildMeta(completed: false), to: directory)
+            }
+            if nextEmit - lastFrontierEmitCount >= DepthConverter.progressiveFrontierEveryFrames {
+                lastFrontierEmitCount = nextEmit
+                try? writeProgress()
             }
 
             if stats.count % 10 == 0 {
@@ -851,7 +871,19 @@ extension DepthConverter {
             } catch {
                 throw DepthConversionError.encodingFailed("Metadata write failed: \(error.localizedDescription)")
             }
+            try? writeProgress()
             return meta
+        }
+
+        private func writeProgress() throws {
+            let currentFrontier = nextEmit > 0
+                ? stats[min(nextEmit - 1, stats.count - 1)].pts.seconds
+                : 0
+            let progress = DepthCacheStore.Progress(
+                primaryFrontier: sweep.refining ? plan.duration.seconds : currentFrontier,
+                secondaryFrontier: sweep.refining ? currentFrontier : nil
+            )
+            try DepthCacheStore.writeProgress(progress, to: directory)
         }
 
         // MARK: Per-frame GPU helpers
@@ -1089,6 +1121,11 @@ extension DepthConverter {
 
             while !writerInput.isReadyForMoreMediaData {
                 if isCancelled() { throw DepthConversionError.cancelled }
+                if writer?.status == .failed {
+                    throw DepthConversionError.encodingFailed(
+                        writer?.error?.localizedDescription ?? "Writer failed while waiting for input"
+                    )
+                }
                 Thread.sleep(forTimeInterval: 0.005)
             }
             guard adaptor.append(pixelBuffer, withPresentationTime: stat.pts) else {
@@ -1150,7 +1187,25 @@ extension DepthConverter {
         /// lattices would get slightly different display ranges (60Hz shimmer).
         private func mergedStats() -> [FrameStat] {
             guard let base = sweep.base, !base.stats.isEmpty else { return stats }
-            var merged = (base.stats + stats).sorted { $0.pts.seconds < $1.pts.seconds }
+            var merged: [FrameStat] = []
+            merged.reserveCapacity(base.stats.count + stats.count)
+            var baseIndex = 0
+            var currentIndex = 0
+            while baseIndex < base.stats.count, currentIndex < stats.count {
+                if base.stats[baseIndex].pts <= stats[currentIndex].pts {
+                    merged.append(base.stats[baseIndex])
+                    baseIndex += 1
+                } else {
+                    merged.append(stats[currentIndex])
+                    currentIndex += 1
+                }
+            }
+            if baseIndex < base.stats.count {
+                merged.append(contentsOf: base.stats[baseIndex...])
+            }
+            if currentIndex < stats.count {
+                merged.append(contentsOf: stats[currentIndex...])
+            }
             // Each half-rate lattice flags its first frame at/after a true cut,
             // so one cut lands on two adjacent merged frames — keeping only the
             // earlier flag recovers the exact cut position.

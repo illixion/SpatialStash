@@ -51,6 +51,7 @@ final class DepthCacheReader: @unchecked Sendable {
     /// streams (even/odd frame lattices) merged by PTS; single-pass entries one.
     private final class Stream {
         let url: URL
+        let isSecondary: Bool
         var asset: AVURLAsset
         var track: AVAssetTrack?
         var trackLoadAttempted = false
@@ -60,16 +61,24 @@ final class DepthCacheReader: @unchecked Sendable {
         /// Decoded frames, ascending PTS.
         var lookahead: [DecodedDepth] = []
         var lastGrowingRebuild: CFTimeInterval = 0
+        var lastFileSize: Int64?
 
-        init(url: URL) {
+        init(url: URL, isSecondary: Bool = false) {
             self.url = url
+            self.isSecondary = isSecondary
             self.asset = AVURLAsset(url: url)
         }
+    }
+
+    private struct MetaFileStamp: Equatable {
+        let modificationDate: Date?
+        let fileSize: Int64?
     }
 
     private let directory: URL
     /// Refreshed from disk while the entry is still growing (progressive).
     private var meta: DepthCacheStore.Meta
+    private var progress: DepthCacheStore.Progress?
     /// True while the conversion is still writing this entry: the fragmented
     /// files grow, so EOF means "no more frames YET" — rebuild with a fresh
     /// asset (throttled) to pick up new fragments, re-read meta.json, and
@@ -77,7 +86,14 @@ final class DepthCacheReader: @unchecked Sendable {
     private var progressive: Bool
     private var streams: [Stream]
     private var lastSecondaryProbe: CFTimeInterval = 0
+    private var lastMetaProbe: CFTimeInterval = 0
     private var textureCache: CVMetalTextureCache?
+    private let metaRefreshQueue = DispatchQueue(label: "com.spatialstash.depth-cache-meta", qos: .utility)
+    private let metaRefreshLock = NSLock()
+    private var knownMetaStamp: MetaFileStamp?
+    private var pendingMeta: (DepthCacheStore.Meta, MetaFileStamp)?
+    private var metaRefreshInFlight = false
+    private var invalidated = false
 
     /// Half of the typical frame duration — the PTS match tolerance.
     private var halfFrame: Double
@@ -89,11 +105,13 @@ final class DepthCacheReader: @unchecked Sendable {
         DepthCacheStore.touch(entry)
         self.directory = entry.directory
         self.meta = entry.meta
+        self.progress = DepthCacheStore.readProgress(in: entry.directory)
         self.progressive = !entry.meta.completed
         self.streams = [Stream(url: entry.depthVideoURL)]
         if FileManager.default.fileExists(atPath: entry.secondaryDepthVideoURL.path) {
-            streams.append(Stream(url: entry.secondaryDepthVideoURL))
+            streams.append(Stream(url: entry.secondaryDepthVideoURL, isSecondary: true))
         }
+        knownMetaStamp = Self.metaFileStamp(in: entry.directory)
         CVMetalTextureCacheCreate(nil, nil, device, nil, &textureCache)
         uvScale = SIMD2(entry.meta.uvScaleX, entry.meta.uvScaleY)
         uvOffset = SIMD2(entry.meta.uvOffsetX, entry.meta.uvOffsetY)
@@ -120,6 +138,8 @@ final class DepthCacheReader: @unchecked Sendable {
         let t = itemTime.seconds
         guard t.isFinite else { return nil }
 
+        applyPendingMeta()
+        requestMetaRefreshIfNeeded()
         discoverSecondaryIfNeeded()
         for stream in streams {
             advance(stream, to: t)
@@ -162,6 +182,10 @@ final class DepthCacheReader: @unchecked Sendable {
 
     /// Pump is shutting down — release the readers and decoded frames.
     func invalidate() {
+        metaRefreshLock.lock()
+        invalidated = true
+        pendingMeta = nil
+        metaRefreshLock.unlock()
         for stream in streams {
             stream.reader?.cancelReading()
             stream.reader = nil
@@ -183,8 +207,58 @@ final class DepthCacheReader: @unchecked Sendable {
         lastSecondaryProbe = now
         let url = directory.appendingPathComponent(DepthCacheStore.secondaryDepthVideoFilename)
         if FileManager.default.fileExists(atPath: url.path) {
-            streams.append(Stream(url: url))
+            streams.append(Stream(url: url, isSecondary: true))
         }
+    }
+
+    private static func metaFileStamp(in directory: URL) -> MetaFileStamp? {
+        let url = directory.appendingPathComponent(DepthCacheStore.metaFilename)
+        guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]) else {
+            return nil
+        }
+        return MetaFileStamp(
+            modificationDate: values.contentModificationDate,
+            fileSize: values.fileSize.map(Int64.init)
+        )
+    }
+
+    private func requestMetaRefreshIfNeeded() {
+        guard progressive else { return }
+        let now = CACurrentMediaTime()
+        guard now - lastMetaProbe > Self.growingRefreshInterval else { return }
+        lastMetaProbe = now
+        guard let stamp = Self.metaFileStamp(in: directory) else { return }
+
+        metaRefreshLock.lock()
+        let shouldRefresh = !invalidated && !metaRefreshInFlight && stamp != knownMetaStamp
+        if shouldRefresh { metaRefreshInFlight = true }
+        metaRefreshLock.unlock()
+        guard shouldRefresh else { return }
+
+        let directory = self.directory
+        metaRefreshQueue.async { [weak self] in
+            let refreshed = DepthCacheStore.readMeta(in: directory)
+            guard let self else { return }
+            self.metaRefreshLock.lock()
+            defer {
+                self.metaRefreshInFlight = false
+                self.metaRefreshLock.unlock()
+            }
+            guard !self.invalidated, let refreshed else { return }
+            self.pendingMeta = (refreshed, stamp)
+        }
+    }
+
+    private func applyPendingMeta() {
+        metaRefreshLock.lock()
+        let update = pendingMeta
+        pendingMeta = nil
+        if let update { knownMetaStamp = update.1 }
+        metaRefreshLock.unlock()
+        guard let update else { return }
+        meta = update.0
+        progressive = !update.0.completed
+        halfFrame = Self.halfFrame(for: update.0)
     }
 
     /// Rebuild if `t` left the stream's window, then decode until the stream
@@ -199,6 +273,8 @@ final class DepthCacheReader: @unchecked Sendable {
         let growingCatchUp = stream.readerAtEnd && progressive
             && (newest.map { t > $0 + halfFrame } ?? true)
             && CACurrentMediaTime() - stream.lastGrowingRebuild > Self.growingRefreshInterval
+            && streamHasReadableProgress(stream, at: t)
+            && streamFileHasGrown(stream)
         // Seek after EOF (A-B loop / restart). Empty-lookahead EOF on a
         // growing file means "ahead of the frontier" — that belongs to the
         // throttled catch-up below, or an underrun would rebuild a fresh
@@ -230,6 +306,25 @@ final class DepthCacheReader: @unchecked Sendable {
                 stream.lookahead.removeFirst(stream.lookahead.count - Self.maxLookahead)
             }
         }
+    }
+
+    private func streamHasReadableProgress(_ stream: Stream, at time: Double) -> Bool {
+        guard stream.isSecondary else { return true }
+        if let refreshed = DepthCacheStore.readProgress(in: directory) {
+            progress = refreshed
+        }
+        guard let frontier = progress?.secondaryFrontier else { return false }
+        return time <= frontier + halfFrame
+    }
+
+    private func streamFileHasGrown(_ stream: Stream) -> Bool {
+        guard let size = currentFileSize(at: stream.url) else { return false }
+        return stream.lastFileSize.map { size > $0 } ?? true
+    }
+
+    private func currentFileSize(at url: URL) -> Int64? {
+        let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+        return (attributes?[.size] as? NSNumber)?.int64Value
     }
 
     private func frameDepth(for decoded: DecodedDepth) -> PumpFrameDepth {
@@ -301,11 +396,6 @@ final class DepthCacheReader: @unchecked Sendable {
             stream.track = nil
             stream.trackLoadAttempted = false
             guard ensureTrack(stream) else { return }
-            if let fresh = DepthCacheStore.readMeta(in: directory) {
-                meta = fresh
-                progressive = !fresh.completed
-                halfFrame = Self.halfFrame(for: fresh)
-            }
         }
 
         guard let track = stream.track, let newReader = try? AVAssetReader(asset: stream.asset) else { return }
@@ -324,6 +414,7 @@ final class DepthCacheReader: @unchecked Sendable {
         guard newReader.startReading() else { return }
         stream.reader = newReader
         stream.readerOutput = output
+        stream.lastFileSize = currentFileSize(at: stream.url)
     }
 
     private func decodeNext(_ stream: Stream) {

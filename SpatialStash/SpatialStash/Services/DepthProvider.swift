@@ -21,6 +21,7 @@
  still builds and runs without the (large) model asset.
  */
 
+import Accelerate
 import CoreMedia
 import CoreML
 import CoreVideo
@@ -537,22 +538,69 @@ final class CoreMLDepthProvider: DepthProvider, @unchecked Sendable {
         switch array.dataType {
         case .float32:
             let ptr = array.dataPointer.assumingMemoryBound(to: Float.self)
-            for i in 0..<count { values[i] = ptr[base + i] }
+            values.withUnsafeMutableBufferPointer { dest in
+                dest.baseAddress?.update(from: ptr + base, count: count)
+            }
         case .float16:
             let ptr = array.dataPointer.assumingMemoryBound(to: UInt16.self)
-            for i in 0..<count { values[i] = Self.float16ToFloat(ptr[base + i]) }
+            values.withUnsafeMutableBytes { destBytes in
+                var source = vImage_Buffer(
+                    data: UnsafeMutableRawPointer(mutating: ptr + base),
+                    height: 1,
+                    width: vImagePixelCount(count),
+                    rowBytes: count * MemoryLayout<UInt16>.stride
+                )
+                var dest = vImage_Buffer(
+                    data: destBytes.baseAddress,
+                    height: 1,
+                    width: vImagePixelCount(count),
+                    rowBytes: count * MemoryLayout<Float>.stride
+                )
+                vImageConvert_Planar16FtoPlanarF(&source, &dest, 0)
+            }
         case .double:
             let ptr = array.dataPointer.assumingMemoryBound(to: Double.self)
-            for i in 0..<count { values[i] = Float(ptr[base + i]) }
+            values.withUnsafeMutableBufferPointer { dest in
+                vDSP_vdpsp(ptr + base, 1, dest.baseAddress!, 1, vDSP_Length(count))
+            }
         default:
             return nil
         }
 
-        var minV = Float.greatestFiniteMagnitude, maxV = -Float.greatestFiniteMagnitude
-        for v in values { minV = min(minV, v); maxV = max(maxV, v) }
+        var minV: Float = 0
+        var maxV: Float = 0
+        values.withUnsafeBufferPointer { buffer in
+            vDSP_minv(buffer.baseAddress!, 1, &minV, vDSP_Length(count))
+            vDSP_maxv(buffer.baseAddress!, 1, &maxV, vDSP_Length(count))
+        }
         let range = max(maxV - minV, 1e-5)
+        var scale = 1 / range
+        var bias = -minV / range
+        values.withUnsafeMutableBufferPointer { buffer in
+            vDSP_vsmsa(
+                buffer.baseAddress!, 1, &scale, &bias,
+                buffer.baseAddress!, 1, vDSP_Length(count)
+            )
+        }
+
         var halfValues = [UInt16](repeating: 0, count: count)
-        for i in 0..<count { halfValues[i] = Self.floatToFloat16((values[i] - minV) / range) }
+        values.withUnsafeMutableBytes { sourceBytes in
+            halfValues.withUnsafeMutableBytes { destBytes in
+                var source = vImage_Buffer(
+                    data: sourceBytes.baseAddress,
+                    height: 1,
+                    width: vImagePixelCount(count),
+                    rowBytes: count * MemoryLayout<Float>.stride
+                )
+                var dest = vImage_Buffer(
+                    data: destBytes.baseAddress,
+                    height: 1,
+                    width: vImagePixelCount(count),
+                    rowBytes: count * MemoryLayout<UInt16>.stride
+                )
+                vImageConvert_PlanarFtoPlanar16F(&source, &dest, 0)
+            }
+        }
 
         let desc = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: .r16Float, width: width, height: height, mipmapped: false

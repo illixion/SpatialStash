@@ -84,6 +84,22 @@ final class DepthConversionManager {
     /// error (see the retry loop in `run`).
     private static let maxConverterRetries = 2
 
+    nonisolated private static var downloadDirectory: URL {
+        let cachesDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        return cachesDir.appendingPathComponent("DepthConversionDownloads", isDirectory: true)
+    }
+
+    nonisolated static func cleanupOrphanedDownloads() {
+        let directory = downloadDirectory
+        guard FileManager.default.fileExists(atPath: directory.path) else { return }
+        do {
+            try FileManager.default.removeItem(at: directory)
+            AppLogger.videoCache.info("Cleaned orphaned depth-conversion downloads")
+        } catch {
+            AppLogger.videoCache.error("Failed to clean orphaned depth-conversion downloads: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
     private(set) var activeJob: ActiveJob?
     private(set) var pending: [Request] = []
     /// Most recent successful conversion — video windows observe this to show
@@ -364,8 +380,7 @@ final class DepthConversionManager {
     /// Download a remote source to a temp file (same pattern as the MV-HEVC
     /// path in StereoscopicVideoPlayer). Cancelled via `downloadTask`.
     private func download(_ request: Request) async throws -> URL {
-        let cachesDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
-        let downloadDir = cachesDir.appendingPathComponent("DepthConversionDownloads", isDirectory: true)
+        let downloadDir = Self.downloadDirectory
         try? FileManager.default.createDirectory(at: downloadDir, withIntermediateDirectories: true)
         let key = DepthCacheStore.entryKey(videoIdentity: request.videoIdentity, modelName: "src")
         let destinationURL = downloadDir.appendingPathComponent("\(key).mp4")

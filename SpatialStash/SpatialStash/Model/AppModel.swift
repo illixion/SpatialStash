@@ -1070,6 +1070,10 @@ class AppModel {
     // MARK: - Initialization
 
     init() {
+        Task.detached(priority: .utility) {
+            DepthConversionManager.cleanupOrphanedDownloads()
+        }
+
         // Load persisted settings or use defaults (use local vars to avoid self reference issues)
         let defaultServerURL = ""
         let defaultAPIKey = ""

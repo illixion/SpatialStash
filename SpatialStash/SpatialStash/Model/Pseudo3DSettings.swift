@@ -59,7 +59,10 @@ extension Pseudo3DSettings {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let defaults = Pseudo3DSettings()
-        depthStrength = try container.decodeIfPresent(Double.self, forKey: .depthStrength) ?? defaults.depthStrength
+        // The renderer intentionally ignores this legacy field. Normalizing old
+        // persisted values prevents them from making an otherwise-default
+        // per-window setting shadow the active global convergence settings.
+        depthStrength = defaults.depthStrength
         convergence = try container.decodeIfPresent(Double.self, forKey: .convergence) ?? defaults.convergence
         autoConvergence = try container.decodeIfPresent(Bool.self, forKey: .autoConvergence) ?? defaults.autoConvergence
     }

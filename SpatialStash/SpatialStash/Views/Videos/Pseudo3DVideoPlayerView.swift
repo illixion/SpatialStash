@@ -160,7 +160,9 @@ struct Pseudo3DVideoPlayerView: View {
         // the pump so the new model applies to THIS video immediately, keeping
         // position. (Cached playback is unaffected — its depth is baked.)
         .onChange(of: appModel.realtimeDepthModelName) { _, _ in
-            engine.reloadDepthPipeline()
+            if case .realtime = depthMode {
+                engine.reloadDepthPipeline()
+            }
         }
         .onAppear {
             engine.startMuted = startMuted
@@ -499,8 +501,11 @@ final class Pseudo3DStereoEngine {
         let resumeTime = currentTime
         let wasPaused = player?.timeControlStatus == .paused
         let wasMuted = player?.isMuted ?? startMuted
+        let savedLoopA = loopA
+        let savedLoopB = loopB
         loadedURL = nil
         load(url: url, roomActive: isRoomActive)
+        setLoopBounds(a: savedLoopA, b: savedLoopB)
         if resumeTime > 0 { seek(to: resumeTime) }
         if wasPaused { pause() }
         setMuted(wasMuted)

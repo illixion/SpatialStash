@@ -41,6 +41,7 @@ enum DepthCacheStore {
     /// PTS; single-pass entries simply have no secondary file.
     static let secondaryDepthVideoFilename = "depth-b.mov"
     static let metaFilename = "meta.json"
+    static let progressFilename = "progress.json"
 
     /// Everything cached playback needs, written by DepthConverter at the end of
     /// a successful conversion. Per-frame arrays are indexed by frame and mapped
@@ -76,6 +77,14 @@ enum DepthCacheStore {
         /// Per-frame median depth in display space (0-1), lookahead-smoothed —
         /// drives auto-convergence.
         let displayMedian: [Float]
+    }
+
+    /// Small, frequently rewritten progressive-playback signal. Keeping this
+    /// separate avoids re-encoding the large per-frame metadata arrays merely
+    /// to advertise that another video fragment became readable.
+    struct Progress: Codable {
+        let primaryFrontier: Double
+        let secondaryFrontier: Double?
     }
 
     struct Entry {
@@ -244,6 +253,11 @@ enum DepthCacheStore {
         try data.write(to: directory.appendingPathComponent(metaFilename), options: .atomic)
     }
 
+    static func writeProgress(_ progress: Progress, to directory: URL) throws {
+        let data = try JSONEncoder().encode(progress)
+        try data.write(to: directory.appendingPathComponent(progressFilename), options: .atomic)
+    }
+
     static func deleteEntry(at directory: URL) {
         try? FileManager.default.removeItem(at: directory)
         AppLogger.videoCache.info("Deleted depth cache entry: \(directory.lastPathComponent, privacy: .public)")
@@ -264,6 +278,13 @@ enum DepthCacheStore {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         return try? decoder.decode(Meta.self, from: data)
+    }
+
+    static func readProgress(in directory: URL) -> Progress? {
+        guard let data = try? Data(contentsOf: directory.appendingPathComponent(progressFilename)) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(Progress.self, from: data)
     }
 
     private static func directorySize(_ url: URL) -> Int64 {
