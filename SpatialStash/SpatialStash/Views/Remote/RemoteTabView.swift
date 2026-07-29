@@ -76,9 +76,13 @@ struct RemoteTabView: View {
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
 
-                    TextField("WebSocket Device ID", text: $editingConfig.wsDeviceId)
+                    TextField("WebSocket Device ID Prefix", text: $editingConfig.wsDeviceId)
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
+
+                    Text("Each slideshow window appends its persistent window ID so duplicate windows use independent RoboFrame channels.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
 
                     SecureField("Access Token", text: $editingConfig.accessToken)
                         .autocorrectionDisabled()

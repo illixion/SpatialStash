@@ -959,10 +959,10 @@ class AppModel {
     }
 
     /// Build a process-wide telemetry sample. deviceId is best-effort: the first
-    /// active remote viewer's configured `wsDeviceId`, else a generic label.
+    /// active remote viewer window's actual channel identity, else a generic label.
     private func captureDeviceMetrics() -> DeviceMetrics {
         let deviceId = activeRemoteViewerModels.values
-            .compactMap { $0.config.wsDeviceId.isEmpty ? nil : $0.config.wsDeviceId }
+            .map(\.slideshowDeviceId)
             .first ?? "spatialstash"
         return DeviceMetrics.capture(
             deviceId: deviceId,

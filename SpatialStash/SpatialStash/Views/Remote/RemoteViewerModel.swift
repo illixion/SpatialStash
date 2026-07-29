@@ -16,6 +16,10 @@ class RemoteViewerModel: SlideshowEngine {
     // MARK: - Configuration
 
     var config: RemoteViewerConfig
+    /// Stable RoboFrame channel identity for this window. The configured value
+    /// is a human-readable prefix; the scene-restored window UUID keeps
+    /// duplicate windows on independent queues while they share one WebSocket.
+    let slideshowDeviceId: String
     var windowValue: RemoteViewerWindowValue?
 
     // MARK: - Gallery Mode
@@ -129,8 +133,11 @@ class RemoteViewerModel: SlideshowEngine {
 
     // MARK: - Init
 
-    init(config: RemoteViewerConfig) {
+    init(config: RemoteViewerConfig, windowId: UUID) {
         self.config = config
+        let prefix = config.wsDeviceId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let suffix = windowId.uuidString.lowercased()
+        self.slideshowDeviceId = prefix.isEmpty ? "spatialstash-\(suffix)" : "\(prefix)-\(suffix)"
         self.showClock = config.showClock
         self.showSensors = config.showSensors
 
@@ -323,14 +330,7 @@ class RemoteViewerModel: SlideshowEngine {
 
         // Sign of life. If reconcile didn't move us — the server is parked on
         // the post we already show, or nothing new arrived while we were away —
-        // then nothing else is going to report for this channel. `present` is
-        // OR-aggregated per deviceId and only emitted on aggregate *edges*, so
-        // when sibling windows share a deviceId exactly one of them produces the
-        // OFF→ON edge; the rest are deduped on the wire, the server commits and
-        // broadcasts once, and every window that hadn't finished restoring yet
-        // is left with no trigger at all. Three report-less cycles then stall
-        // the channel permanently (protocol.md, readiness-timeout fallback),
-        // which is why only the single lucky window kept cycling. Re-reporting
+        // then nothing else is going to report for this channel. Re-reporting
         // what's on screen is idempotent: the server drops a late imageReady for
         // a channel that is no longer loading.
         if let post = currentPost,
@@ -344,7 +344,7 @@ class RemoteViewerModel: SlideshowEngine {
         let off = !on
         guard off != remotePanelOff else { return }
         remotePanelOff = off
-        AppLogger.remoteViewer.info("displayState \(on ? "on" : "off", privacy: .public) for deviceId=\(self.config.wsDeviceId, privacy: .public)")
+        AppLogger.remoteViewer.info("displayState \(on ? "on" : "off", privacy: .public) for deviceId=\(self.slideshowDeviceId, privacy: .public)")
         scheduleSceneStateReport(effectiveVisible)
         if effectiveVisible { rejoinReadinessBarrier() }
     }
@@ -362,11 +362,9 @@ class RemoteViewerModel: SlideshowEngine {
     /// sensor). For a VP window both track the same condition — the window is
     /// showing the slideshow iff someone's here to see it — so they go together.
     ///
-    /// This is a report of *this window's* state, not a wire frame: the socket
-    /// OR-aggregates it with every sibling window on the same deviceId and emits
-    /// only aggregate edges (the server stores one contribution per socket, so
-    /// per-window frames would fight each other). Deduplication and
-    /// post-reconnect replay live there too.
+    /// This is a report of *this window's* state, not a wire frame. The socket
+    /// owns deduplication and post-reconnect replay for every deviceId carried
+    /// over the pooled connection.
     private func scheduleSceneStateReport(_ active: Bool, immediate: Bool = false) {
         sceneStateDebounce?.cancel()
         if immediate {
@@ -382,7 +380,7 @@ class RemoteViewerModel: SlideshowEngine {
     }
 
     private func sendSceneStateNow(_ active: Bool) {
-        wsSession?.reportSceneState(deviceId: config.wsDeviceId, present: active, visible: active)
+        wsSession?.reportSceneState(deviceId: slideshowDeviceId, present: active, visible: active)
     }
 
     // MARK: - Remote Actions
@@ -927,7 +925,7 @@ class RemoteViewerModel: SlideshowEngine {
     }
 
     /// Register (or re-register) this session with the orchestrator. The
-    /// server creates or joins us to the channel for `wsDeviceId` and
+    /// server creates or joins us to this window's unique channel and
     /// broadcasts a `playback` frame which our handler picks up. Mod tags
     /// ride along so the orchestrator's first refill query already includes
     /// them — no immediate-after refill round-trip from a separate
@@ -940,7 +938,7 @@ class RemoteViewerModel: SlideshowEngine {
         // Advertising a size or `convert` only mis-keyed the server's prefetch
         // and, under convert, would flip animated posts to mp4.
         wsSession?.sendSlideshowConfig(
-            deviceId: config.wsDeviceId,
+            deviceId: slideshowDeviceId,
             interval: intervalMs,
             bright: false,
             ratio: currentRatioValue(),
@@ -1067,7 +1065,7 @@ class RemoteViewerModel: SlideshowEngine {
             // HA turned this window's panel off/on. Off pauses the channel
             // (visibility=false) while keeping the current image rendered —
             // no teardown — so the wake that follows resumes without pop-in.
-            guard target == config.wsDeviceId else { break }
+            guard target == slideshowDeviceId else { break }
             handlePanelState(on: on)
 
         case .fatalAuthError(let reason):
@@ -1115,7 +1113,7 @@ class RemoteViewerModel: SlideshowEngine {
         let curStr = current.map { "\($0._id).\($0.file_ext)" } ?? "nil"
         let nxtStr = next.map { "\($0._id).\($0.file_ext)" } ?? "nil"
         let stateStr = "\(state)"
-        AppLogger.remoteViewer.info("playback: current=\(curStr, privacy: .public) next=\(nxtStr, privacy: .public) primary=\(self.serverPrimaryDeviceId ?? "nil", privacy: .public) myDevice=\(self.config.wsDeviceId, privacy: .public) engineState=\(stateStr, privacy: .public)")
+        AppLogger.remoteViewer.info("playback: current=\(curStr, privacy: .public) next=\(nxtStr, privacy: .public) primary=\(self.serverPrimaryDeviceId ?? "nil", privacy: .public) myDevice=\(self.slideshowDeviceId, privacy: .public) engineState=\(stateStr, privacy: .public)")
 
         // `upcoming` is the server's full look-ahead (typically 4 deep) and is
         // free to consume — the engine prefetches 3 ahead, so feeding it only

@@ -46,6 +46,8 @@ struct RemoteViewerConfig: Codable, Identifiable {
 
     // API
     var apiEndpoint: String = "https://example.com/api"
+    /// Human-readable prefix for RoboFrame device IDs. Each slideshow window
+    /// appends its persistent scene UUID so duplicate windows remain independent.
     var wsDeviceId: String = ""
     var accessToken: String = ""
 

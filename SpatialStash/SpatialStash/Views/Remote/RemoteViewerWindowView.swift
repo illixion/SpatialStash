@@ -686,7 +686,7 @@ struct RemoteViewerWindowView: View {
             return
         }
 
-        let model = RemoteViewerModel(config: config)
+        let model = RemoteViewerModel(config: config, windowId: windowValue.id)
         model.globalAdjustments = appModel.globalVisualAdjustments
         // Per-profile slideshow resolution caps fall back to the slideshow
         // defaults, which themselves default to 4096px.
@@ -738,7 +738,12 @@ struct RemoteViewerWindowView: View {
             }
         } else {
             // Remote API mode
-            model.contentProvider = RemoteContentProvider(apiClient: model.apiClient, baseURL: config.apiEndpoint, accessToken: config.accessToken, deviceId: config.wsDeviceId)
+            model.contentProvider = RemoteContentProvider(
+                apiClient: model.apiClient,
+                baseURL: config.apiEndpoint,
+                accessToken: config.accessToken,
+                deviceId: model.slideshowDeviceId
+            )
         }
 
         // Wire up window callbacks
