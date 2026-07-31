@@ -76,11 +76,11 @@ struct RemoteTabView: View {
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
 
-                    TextField("WebSocket Device ID Prefix", text: $editingConfig.wsDeviceId)
+                    TextField("WebSocket Device ID", text: $editingConfig.wsDeviceId)
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
 
-                    Text("Each slideshow window appends its persistent window ID so duplicate windows use independent RoboFrame channels.")
+                    Text("Home Assistant uses this stable ID. Duplicate slideshow windows use independent internal channels.")
                         .font(.caption)
                         .foregroundColor(.secondary)
 

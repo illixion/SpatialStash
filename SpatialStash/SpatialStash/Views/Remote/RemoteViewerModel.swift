@@ -20,6 +20,8 @@ class RemoteViewerModel: SlideshowEngine {
     /// is a human-readable prefix; the scene-restored window UUID keeps
     /// duplicate windows on independent queues while they share one WebSocket.
     let slideshowDeviceId: String
+    /// Stable identity used by RoboFrame's MQTT/Home Assistant bridge.
+    let automationDeviceId: String
     var windowValue: RemoteViewerWindowValue?
 
     // MARK: - Gallery Mode
@@ -137,6 +139,7 @@ class RemoteViewerModel: SlideshowEngine {
         self.config = config
         let prefix = config.wsDeviceId.trimmingCharacters(in: .whitespacesAndNewlines)
         let suffix = windowId.uuidString.lowercased()
+        self.automationDeviceId = prefix.isEmpty ? "spatialstash" : prefix
         self.slideshowDeviceId = prefix.isEmpty ? "spatialstash-\(suffix)" : "\(prefix)-\(suffix)"
         self.showClock = config.showClock
         self.showSensors = config.showSensors
@@ -939,6 +942,7 @@ class RemoteViewerModel: SlideshowEngine {
         // and, under convert, would flip animated posts to mp4.
         wsSession?.sendSlideshowConfig(
             deviceId: slideshowDeviceId,
+            automationDeviceId: automationDeviceId,
             interval: intervalMs,
             bright: false,
             ratio: currentRatioValue(),

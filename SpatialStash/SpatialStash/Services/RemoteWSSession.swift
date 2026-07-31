@@ -38,8 +38,16 @@ final class RemoteWSSession {
     var sensorData: [String: HASensorReading] { client?.sensorData ?? [:] }
     var isConnected: Bool { client?.isConnected ?? false }
 
-    func sendSlideshowConfig(deviceId: String, interval: Int, bright: Bool, ratio: Double? = nil, modTags: [String] = []) {
-        client?.sendSlideshowConfig(sessionId: sessionId, deviceId: deviceId, interval: interval, bright: bright, ratio: ratio, modTags: modTags)
+    func sendSlideshowConfig(deviceId: String, automationDeviceId: String, interval: Int, bright: Bool, ratio: Double? = nil, modTags: [String] = []) {
+        client?.sendSlideshowConfig(
+            sessionId: sessionId,
+            deviceId: deviceId,
+            automationDeviceId: automationDeviceId,
+            interval: interval,
+            bright: bright,
+            ratio: ratio,
+            modTags: modTags
+        )
     }
 
     /// Report this window's scene state. Both `present` and `visibility` are

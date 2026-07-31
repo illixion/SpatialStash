@@ -449,7 +449,7 @@ class RemoteWebSocketClient {
     /// same image. Mod tags ride along so the orchestrator's first refill
     /// query already includes them — without that the initial query is
     /// discarded when a separate setModTags arrives a few ms later.
-    func sendSlideshowConfig(sessionId: String, deviceId: String, interval: Int, bright: Bool, ratio: Double? = nil, modTags: [String] = []) {
+    func sendSlideshowConfig(sessionId: String, deviceId: String, automationDeviceId: String, interval: Int, bright: Bool, ratio: Double? = nil, modTags: [String] = []) {
         // No width/height: Spatialstash fetches at the source resolution
         // (server treats absent dimensions as "no downscale"), so advertising a
         // size would only mis-key the server's prefetch. No convert either — we
@@ -457,6 +457,7 @@ class RemoteWebSocketClient {
         // return animated posts as mp4 sized to those dimensions.
         var payload: [String: Any] = [
             "deviceId": deviceId,
+            "automationDeviceId": automationDeviceId,
             "interval": interval,
             "bright": bright,
             "modTags": modTags,
