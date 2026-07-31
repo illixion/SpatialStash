@@ -27,6 +27,7 @@ struct RemoteViewerWindowView: View {
     @State private var currentTime = Date()
     @State private var autoHideTimer: Task<Void, Never>?
     @State private var controlsVisible = true
+    @State private var didArmInitialAutoHide = false
 
     // Ken Burns animation state
     @State private var kenBurnsScale: CGFloat = 1.0
@@ -165,13 +166,13 @@ struct RemoteViewerWindowView: View {
         .onAppear {
             setupModel()
             // Wall-snapped slideshow windows restored by visionOS after a
-            // reboot come back with the same windowValue UUID. Skip the
-            // initial ornament reveal for restored windows.
-            if RestoredWindowTracker.isRestored(windowValue.id) {
-                controlsVisible = false
-            } else {
+            // reboot come back with the same windowValue UUID. Keep controls
+            // visible until the first post arrives so a failed first frame
+            // never leaves a transparent, non-interactive window.
+            if !RestoredWindowTracker.isRestored(windowValue.id) {
                 RestoredWindowTracker.markSeen(windowValue.id)
                 resetAutoHideTimer()
+                didArmInitialAutoHide = true
             }
             // Restore the user's custom window size/aspect ratio from the scene
             // archive. visionOS restores wall-snapped windows at the scene
@@ -203,6 +204,12 @@ struct RemoteViewerWindowView: View {
                 guard viewerModel?.isSlideshow3DActive == true else { return }
                 nudgeWindowSizeForCalibration()
             }
+        }
+        .onChange(of: viewerModel?.currentPost?.id) { _, postId in
+            guard postId != nil, !didArmInitialAutoHide else { return }
+            didArmInitialAutoHide = true
+            controlsVisible = true
+            resetAutoHideTimer()
         }
         .onChange(of: scenePhase) { oldPhase, newPhase in
             viewerModel?.handleScenePhaseChange(from: oldPhase, to: newPhase)

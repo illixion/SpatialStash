@@ -11,6 +11,30 @@
 import MetalKit
 import SwiftUI
 
+/// An on-demand MTKView can receive its first draw request before a restored
+/// visionOS scene has a drawable. Re-arm rendering when the view is attached or
+/// laid out instead of relying on that one early request.
+private final class ResilientMTKView: MTKView {
+    var requestRedraw: (() -> Void)?
+    private var lastLayoutSize: CGSize = .zero
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window != nil {
+            requestRedraw?()
+        }
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard bounds.size != lastLayoutSize else { return }
+        lastLayoutSize = bounds.size
+        if bounds.width > 0, bounds.height > 0 {
+            requestRedraw?()
+        }
+    }
+}
+
 /// Matches `ImageUniforms` in Shaders.metal — pass-1 (RCAS) input.
 private struct ImageUniforms {
     var brightness: Float
@@ -28,6 +52,8 @@ private struct AAUniforms {
 }
 
 struct MetalImageView: UIViewRepresentable {
+    @Environment(\.scenePhase) private var scenePhase
+
     let texture: MTLTexture?
     let brightness: Float
     let contrast: Float
@@ -43,8 +69,12 @@ struct MetalImageView: UIViewRepresentable {
             return MTKView()
         }
 
-        let mtkView = MTKView(frame: .zero, device: renderer.device)
+        let mtkView = ResilientMTKView(frame: .zero, device: renderer.device)
         mtkView.delegate = context.coordinator
+        mtkView.requestRedraw = { [weak mtkView, weak coordinator = context.coordinator] in
+            guard let mtkView, let coordinator else { return }
+            coordinator.requestRedraw(in: mtkView)
+        }
 
         // Draw on demand, not continuously
         mtkView.isPaused = true
@@ -66,8 +96,9 @@ struct MetalImageView: UIViewRepresentable {
         context.coordinator.contrast = contrast
         context.coordinator.saturation = saturation
         context.coordinator.sharpen = sharpen
+        context.coordinator.scenePhase = scenePhase
 
-        mtkView.setNeedsDisplay()
+        context.coordinator.requestRedraw(in: mtkView)
         return mtkView
     }
 
@@ -75,6 +106,10 @@ struct MetalImageView: UIViewRepresentable {
         let coordinator = context.coordinator
         var needsRedraw = false
 
+        if coordinator.scenePhase != scenePhase {
+            coordinator.scenePhase = scenePhase
+            needsRedraw = true
+        }
         if coordinator.texture !== texture {
             // Switch framebuffer format if bit depth changed
             let is16Bit = texture.map { Self.isDeepColor($0) } ?? false
@@ -103,7 +138,9 @@ struct MetalImageView: UIViewRepresentable {
         }
 
         if needsRedraw {
-            mtkView.setNeedsDisplay()
+            coordinator.requestRedraw(in: mtkView)
+        } else if !coordinator.hasPresentedFrame {
+            coordinator.ensureRedraw(in: mtkView)
         }
     }
 
@@ -120,6 +157,7 @@ struct MetalImageView: UIViewRepresentable {
 
     // MARK: - Coordinator
 
+    @MainActor
     final class Coordinator: NSObject, MTKViewDelegate {
         var renderer: MetalImageRenderer?
         var texture: MTLTexture?
@@ -127,6 +165,11 @@ struct MetalImageView: UIViewRepresentable {
         var contrast: Float = 1
         var saturation: Float = 1
         var sharpen: Float = 0
+        var scenePhase: ScenePhase = .inactive
+
+        private(set) var hasPresentedFrame = false
+        private var redrawGeneration = 0
+        private var retryActive = false
 
         /// Offscreen RCAS target. Allocated lazily and reused across draws.
         /// Reallocated when drawable size or pixel format changes.
@@ -136,7 +179,55 @@ struct MetalImageView: UIViewRepresentable {
             // Drawable resize — drop the cached intermediate so it gets
             // reallocated at the new size on the next draw.
             intermediate = nil
+            requestRedraw(in: view)
+        }
+
+        /// Keep requesting the first frame until the restored scene supplies a
+        /// drawable. A cache hit can mount this view immediately, while a cache
+        /// miss naturally delays mounting until after texture creation; that is
+        /// why the bug appeared tied to selecting the exact same resolution.
+        func requestRedraw(in view: MTKView) {
+            hasPresentedFrame = false
+            retryActive = true
+            redrawGeneration &+= 1
+            let generation = redrawGeneration
             view.setNeedsDisplay()
+            scheduleRetry(in: view, generation: generation, attempt: 0)
+        }
+
+        func ensureRedraw(in view: MTKView) {
+            if retryActive {
+                view.setNeedsDisplay()
+            } else {
+                requestRedraw(in: view)
+            }
+        }
+
+        private func scheduleRetry(in view: MTKView, generation: Int, attempt: Int) {
+            guard attempt < 80 else {
+                if redrawGeneration == generation {
+                    retryActive = false
+                }
+                return
+            }
+            let delay = attempt < 10 ? 0.05 : 0.25
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak view] in
+                guard let self, let view,
+                      self.redrawGeneration == generation,
+                      !self.hasPresentedFrame else { return }
+                guard view.window != nil else {
+                    self.retryActive = false
+                    return
+                }
+                view.setNeedsDisplay()
+                self.scheduleRetry(in: view, generation: generation, attempt: attempt + 1)
+            }
+        }
+
+        private func markFramePresented() {
+            hasPresentedFrame = true
+            retryActive = false
+            redrawGeneration &+= 1
         }
 
         func draw(in view: MTKView) {
@@ -217,6 +308,7 @@ struct MetalImageView: UIViewRepresentable {
 
             commandBuffer.present(drawable)
             commandBuffer.commit()
+            markFramePresented()
         }
 
         /// Allocate or reuse the offscreen RCAS target. Returns nil on failure.

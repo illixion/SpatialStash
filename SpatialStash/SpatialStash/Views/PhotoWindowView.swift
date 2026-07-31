@@ -92,13 +92,13 @@ struct PhotoWindowView: View {
             appModel.lastViewedImageId = windowModel.image.id
             // Wall-snapped pop-outs restored by visionOS after a reboot come
             // back with the same Codable windowValue UUID. Treat repeat
-            // appearances as system-restored: start with ornaments hidden and
-            // suppress global viewing-mode defaults so a "default to 3D"
-            // setting doesn't blow the memory budget across many windows.
+            // appearances as system-restored and suppress global viewing-mode
+            // defaults so a "default to 3D" setting doesn't blow the memory
+            // budget across many windows. Keep the ornament visible until the
+            // normal image-load completion path arms auto-hide.
             let isRestored = popOutWindowID.map(RestoredWindowTracker.isRestored) ?? false
             if isRestored {
                 windowModel.isRestoredPopOut = true
-                windowModel.isUIHidden = true
             } else if let id = popOutWindowID {
                 RestoredWindowTracker.markSeen(id)
             }
