@@ -38,11 +38,10 @@ final class RemoteWSSession {
     var sensorData: [String: HASensorReading] { client?.sensorData ?? [:] }
     var isConnected: Bool { client?.isConnected ?? false }
 
-    func sendSlideshowConfig(deviceId: String, automationDeviceId: String, interval: Int, bright: Bool, ratio: Double? = nil, modTags: [String] = []) {
+    func sendSlideshowConfig(deviceId: String, interval: Int, bright: Bool, ratio: Double? = nil, modTags: [String] = []) {
         client?.sendSlideshowConfig(
             sessionId: sessionId,
             deviceId: deviceId,
-            automationDeviceId: automationDeviceId,
             interval: interval,
             bright: bright,
             ratio: ratio,
@@ -50,10 +49,8 @@ final class RemoteWSSession {
         )
     }
 
-    /// Report this window's scene state. Both `present` and `visibility` are
-    /// keyed on deviceId at the server with one slot per *socket*, so the client
-    /// OR-aggregates across every session sharing this connection and puts only
-    /// aggregate edges on the wire — see RemoteWebSocketClient.reportSceneState.
+    /// Report this window's scene state. `present` remains session-scoped;
+    /// `visibility` is aggregated by stable deviceId for Home Assistant.
     func reportSceneState(deviceId: String, present: Bool, visible: Bool) {
         client?.reportSceneState(sessionId: sessionId, deviceId: deviceId, present: present, visible: visible)
     }

@@ -16,12 +16,10 @@ class RemoteViewerModel: SlideshowEngine {
     // MARK: - Configuration
 
     var config: RemoteViewerConfig
-    /// Stable RoboFrame channel identity for this window. The configured value
-    /// is a human-readable prefix; the scene-restored window UUID keeps
-    /// duplicate windows on independent queues while they share one WebSocket.
+    /// Stable RoboFrame identity used by MQTT, history, and display control.
     let slideshowDeviceId: String
-    /// Stable identity used by RoboFrame's MQTT/Home Assistant bridge.
-    let automationDeviceId: String
+    /// Persistent window identity used as the server-side slideshow session.
+    let slideshowSessionId: String
     var windowValue: RemoteViewerWindowValue?
 
     // MARK: - Gallery Mode
@@ -137,10 +135,9 @@ class RemoteViewerModel: SlideshowEngine {
 
     init(config: RemoteViewerConfig, windowId: UUID) {
         self.config = config
-        let prefix = config.wsDeviceId.trimmingCharacters(in: .whitespacesAndNewlines)
-        let suffix = windowId.uuidString.lowercased()
-        self.automationDeviceId = prefix.isEmpty ? "spatialstash" : prefix
-        self.slideshowDeviceId = prefix.isEmpty ? "spatialstash-\(suffix)" : "\(prefix)-\(suffix)"
+        let configuredDeviceId = config.wsDeviceId.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.slideshowDeviceId = configuredDeviceId.isEmpty ? "spatialstash" : configuredDeviceId
+        self.slideshowSessionId = windowId.uuidString.lowercased()
         self.showClock = config.showClock
         self.showSensors = config.showSensors
 
@@ -877,7 +874,7 @@ class RemoteViewerModel: SlideshowEngine {
         // Each viewer instance gets its own logical session id. The
         // underlying WebSocket connection is shared with any other
         // viewers pointed at the same endpoint — see SlideshowSyncHub.
-        let session = SlideshowSyncHub.shared.subscribeWS(endpoint: wsURL, sessionId: engineId.uuidString)
+        let session = SlideshowSyncHub.shared.subscribeWS(endpoint: wsURL, sessionId: slideshowSessionId)
         session.onMessage = { [weak self] message in
             self?.handleWSMessage(message)
         }
@@ -895,10 +892,9 @@ class RemoteViewerModel: SlideshowEngine {
             // an unconditional present=true here would un-dark a slideshow the
             // user can't see. effectiveVisible captures both cases.
             //
-            // The socket re-states every deviceId aggregate itself on connect
-            // (the server forgot ours when the ws died), so this report is
-            // usually a no-op confirmation — it matters when our state changed
-            // while disconnected.
+            // The socket re-states every session's presence and each device's
+            // aggregate visibility after reconnect, so this is usually a no-op
+            // confirmation unless our state changed while disconnected.
             self.scheduleSceneStateReport(self.effectiveVisible)
         }
         wsSession = session
@@ -942,7 +938,6 @@ class RemoteViewerModel: SlideshowEngine {
         // and, under convert, would flip animated posts to mp4.
         wsSession?.sendSlideshowConfig(
             deviceId: slideshowDeviceId,
-            automationDeviceId: automationDeviceId,
             interval: intervalMs,
             bright: false,
             ratio: currentRatioValue(),

@@ -80,7 +80,7 @@ struct RemoteTabView: View {
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
 
-                    Text("Home Assistant uses this stable ID. Duplicate slideshow windows use independent internal channels.")
+                    Text("Home Assistant uses this stable ID. The server keeps each window's slideshow session independent.")
                         .font(.caption)
                         .foregroundColor(.secondary)
 

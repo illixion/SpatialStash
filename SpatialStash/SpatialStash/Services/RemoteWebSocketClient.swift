@@ -175,6 +175,13 @@ class RemoteWebSocketClient {
     func detachSession(sessionId: String) -> Int {
         guard sessions.removeValue(forKey: sessionId) != nil else { return sessions.count }
         if isConnected {
+            if let contribution = sceneBySession[sessionId] {
+                sendJSON([
+                    "sessionId": sessionId,
+                    "action": "present",
+                    "payload": ["deviceId": contribution.deviceId, "present": false],
+                ])
+            }
             sendJSON(["sessionId": sessionId, "action": "sessionEnd"])
         }
         // Drop this window's presence contribution. If it was the last present
@@ -182,6 +189,7 @@ class RemoteWebSocketClient {
         // it a closed window leaves the shared socket asserting presence for a
         // display that no longer exists, and the channel never parks.
         sceneBySession.removeValue(forKey: sessionId)
+        sentPresenceBySession.removeValue(forKey: sessionId)
         if isConnected { flushSceneState() }
         return sessions.count
     }
@@ -336,19 +344,9 @@ class RemoteWebSocketClient {
 
     // MARK: - Scene state (present / visibility)
     //
-    // Both actions are connection-wide and keyed on `deviceId` at the server,
-    // which stores **one** contribution per WebSocket — not per session. Since
-    // every viewer window multiplexes over this one shared socket, N windows on
-    // a deviceId collapse into that single slot, last-write-wins. Reporting per
-    // window directly is therefore wrong in both directions: one window
-    // backgrounding would park a channel another window is still displaying
-    // (and the still-visible window, having already reported `true`, never
-    // re-asserts), and closing a window would leave the socket's contribution
-    // stuck at `true` so the channel never parks.
-    //
-    // So the aggregate the server wants is computed here instead: OR across
-    // every attached session sharing a deviceId, emitted only on aggregate
-    // edges. Sessions report their own state and the socket owns the wire.
+    // `present` is session-scoped because each window has its own server
+    // channel. `visibility` remains device-scoped home-location telemetry, so
+    // it is OR-aggregated across windows that share the configured deviceId.
 
     private struct SceneContribution {
         var deviceId: String
@@ -360,12 +358,12 @@ class RemoteWebSocketClient {
     /// (the socket dies, the windows don't) so the post-reconnect replay has
     /// real values to send.
     private var sceneBySession: [String: SceneContribution] = [:]
-    /// Last aggregate actually put on the wire, per deviceId. Cleared on
-    /// reconnect — the server forgets our reports when the socket dies.
-    private var sentPresenceByDevice: [String: Bool] = [:]
+    /// Last state actually put on the wire. Cleared on reconnect because the
+    /// server forgets every session binding and scene report with the socket.
+    private var sentPresenceBySession: [String: Bool] = [:]
     private var sentVisibilityByDevice: [String: Bool] = [:]
 
-    /// Record this session's scene state and emit any resulting aggregate
+    /// Record this session's scene state and emit changed session/device
     /// edges. `present` drives the slideshow (all-absent → the server
     /// dark-advances one post and parks, so the next arrival sees a fresh
     /// image); `visible` is home-location telemetry for the HA motion sensor.
@@ -374,9 +372,8 @@ class RemoteWebSocketClient {
         flushSceneState()
     }
 
-    /// Emit `present`/`visibility` for every deviceId whose aggregate differs
-    /// from what we last sent. `force` re-sends everything regardless — used
-    /// after a reconnect, where the server has forgotten our prior reports.
+    /// Emit changed session presence and aggregate device visibility. `force`
+    /// re-sends everything after a reconnect.
     private func flushSceneState(force: Bool = false) {
         // Nothing reaches a dead socket, and recording these as sent would let
         // the reconnect skip them as unchanged. The reconnect replays every
@@ -389,29 +386,26 @@ class RemoteWebSocketClient {
             return
         }
 
-        var presence: [String: Bool] = [:]
         var visibility: [String: Bool] = [:]
-        for contribution in sceneBySession.values {
-            presence[contribution.deviceId] = (presence[contribution.deviceId] ?? false) || contribution.present
+        for (sessionId, contribution) in sceneBySession {
+            if force || sentPresenceBySession[sessionId] != contribution.present {
+                sentPresenceBySession[sessionId] = contribution.present
+                AppLogger.remoteViewer.info("WS tx present sessionId=\(sessionId, privacy: .public) deviceId=\(contribution.deviceId, privacy: .public) present=\(contribution.present, privacy: .public)")
+                sendJSON([
+                    "sessionId": sessionId,
+                    "action": "present",
+                    "payload": ["deviceId": contribution.deviceId, "present": contribution.present],
+                ])
+            }
             visibility[contribution.deviceId] = (visibility[contribution.deviceId] ?? false) || contribution.visible
         }
 
-        // A deviceId whose last session just detached has no contributions
-        // left. It still needs its OFF edge — that's the window-close case
-        // where the socket stays up for sibling windows, so the server would
-        // otherwise never learn this display is gone.
-        for deviceId in sentPresenceByDevice.keys where presence[deviceId] == nil {
-            presence[deviceId] = false
-        }
+        // A deviceId whose last session detached still needs a visibility OFF
+        // edge while the shared socket remains alive.
         for deviceId in sentVisibilityByDevice.keys where visibility[deviceId] == nil {
             visibility[deviceId] = false
         }
 
-        for (deviceId, present) in presence where force || sentPresenceByDevice[deviceId] != present {
-            sentPresenceByDevice[deviceId] = present
-            AppLogger.remoteViewer.info("WS tx present deviceId=\(deviceId, privacy: .public) present=\(present, privacy: .public)")
-            sendJSON(["action": "present", "payload": ["deviceId": deviceId, "present": present]])
-        }
         for (deviceId, visible) in visibility where force || sentVisibilityByDevice[deviceId] != visible {
             sentVisibilityByDevice[deviceId] = visible
             AppLogger.remoteViewer.info("WS tx visibility deviceId=\(deviceId, privacy: .public) visible=\(visible, privacy: .public)")
@@ -421,7 +415,6 @@ class RemoteWebSocketClient {
         // Drop bookkeeping for devices that are fully absent and have no
         // sessions left, so the maps don't grow across a long session.
         let live = Set(sceneBySession.values.map(\.deviceId))
-        sentPresenceByDevice = sentPresenceByDevice.filter { live.contains($0.key) || $0.value }
         sentVisibilityByDevice = sentVisibilityByDevice.filter { live.contains($0.key) || $0.value }
     }
 
@@ -444,12 +437,11 @@ class RemoteWebSocketClient {
         sendJSON(["sessionId": sessionId, "action": "displaySync", "payload": ["enabled": enabled]])
     }
 
-    /// Required after WS open: join this session to the channel for `deviceId`.
-    /// Two sessions on the same deviceId share a channel and lockstep on the
-    /// same image. Mod tags ride along so the orchestrator's first refill
+    /// Required after WS open: join the channel identified by this stable
+    /// deviceId and sessionId. Mod tags ride along so the orchestrator's first refill
     /// query already includes them — without that the initial query is
     /// discarded when a separate setModTags arrives a few ms later.
-    func sendSlideshowConfig(sessionId: String, deviceId: String, automationDeviceId: String, interval: Int, bright: Bool, ratio: Double? = nil, modTags: [String] = []) {
+    func sendSlideshowConfig(sessionId: String, deviceId: String, interval: Int, bright: Bool, ratio: Double? = nil, modTags: [String] = []) {
         // No width/height: Spatialstash fetches at the source resolution
         // (server treats absent dimensions as "no downscale"), so advertising a
         // size would only mis-key the server's prefetch. No convert either — we
@@ -457,7 +449,6 @@ class RemoteWebSocketClient {
         // return animated posts as mp4 sized to those dimensions.
         var payload: [String: Any] = [
             "deviceId": deviceId,
-            "automationDeviceId": automationDeviceId,
             "interval": interval,
             "bright": bright,
             "modTags": modTags,
@@ -601,7 +592,7 @@ class RemoteWebSocketClient {
                     // sessions' onConnected (slideshowConfig first, per the
                     // protocol checklist) and doesn't depend on their debounced
                     // re-reports, which would be deduped as unchanged anyway.
-                    sentPresenceByDevice.removeAll()
+                    sentPresenceBySession.removeAll()
                     sentVisibilityByDevice.removeAll()
                     flushSceneState(force: true)
                 }

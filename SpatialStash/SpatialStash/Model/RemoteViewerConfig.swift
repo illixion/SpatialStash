@@ -46,8 +46,7 @@ struct RemoteViewerConfig: Codable, Identifiable {
 
     // API
     var apiEndpoint: String = "https://example.com/api"
-    /// Stable RoboFrame identity exposed to MQTT/Home Assistant. Slideshow
-    /// windows derive private channel IDs from it without changing this value.
+    /// Stable RoboFrame device identity shared by slideshow windows and MQTT.
     var wsDeviceId: String = ""
     var accessToken: String = ""
 
