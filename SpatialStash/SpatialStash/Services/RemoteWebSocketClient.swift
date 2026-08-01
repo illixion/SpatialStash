@@ -134,14 +134,25 @@ class RemoteWebSocketClient {
             self.halted = false
             startPathMonitor()
             doConnect()
-        } else if isConnected {
+        } else if isConnected, webSocketTask != nil {
             // Connection already alive — fire onConnected for late joiners
             // immediately (after the caller wires the closure; they'll do
-            // that synchronously after this returns).
-            DispatchQueue.main.async { [weak entry] in
+            // that synchronously after this returns). Re-check the transport
+            // inside the callback: suspendSocket can run before this block.
+            DispatchQueue.main.async { [weak self, weak entry] in
+                guard let self else { return }
+                guard self.isConnected, self.webSocketTask != nil else {
+                    self.isConnected = false
+                    self.reviveIfIdle()
+                    return
+                }
                 entry?.onConnected?()
             }
         } else {
+            // A receive completion from a socket cancelled by suspendSocket
+            // used to be able to restore this flag after webSocketTask was
+            // cleared. Never let that stale flag suppress the reconnect.
+            if webSocketTask == nil { isConnected = false }
             // The connection exists but is down — almost always `suspendSocket`
             // releasing it once every sibling window went absent (it keeps
             // `wsURL`, so the first branch above doesn't fire either). Attaching
@@ -576,6 +587,15 @@ class RemoteWebSocketClient {
 
             do {
                 let message = try await task.receive()
+                // Cancellation does not guarantee URLSession's pending receive
+                // stops before returning. suspendSocket/forceReconnectNow may
+                // have replaced or cleared the task while this await was in
+                // flight; accepting that stale completion would resurrect
+                // isConnected=true with no transport and strand late joiners.
+                guard !Task.isCancelled, task === webSocketTask else {
+                    AppLogger.remoteViewer.info("WebSocket stale receive completion discarded")
+                    break
+                }
                 lastReceiveAt = Date()
                 if !isConnected {
                     // First frame from the upgraded connection — promote
@@ -607,16 +627,16 @@ class RemoteWebSocketClient {
                     break
                 }
             } catch {
-                logWebSocketFailure(error, task: task)
                 // If we're not the current task, the connection has
                 // already been swapped (forceReconnectNow / disconnect);
                 // bail without rescheduling. Otherwise both loops race
                 // scheduleReconnect, the second cancels the first's
                 // backoff timer, and retryCount effectively never climbs.
-                guard task === webSocketTask else {
+                guard !Task.isCancelled, task === webSocketTask else {
                     AppLogger.remoteViewer.info("WebSocket stale receive loop exiting (current task swapped)")
                     break
                 }
+                logWebSocketFailure(error, task: task)
                 isConnected = false
                 keepaliveTask?.cancel()
                 keepaliveTask = nil
