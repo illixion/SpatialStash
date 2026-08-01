@@ -1623,6 +1623,21 @@ class SlideshowEngine {
         return sendable?.texture
     }
 
+    /// Re-upload the currently displayed static image into a fresh private
+    /// texture. Restored scenes can receive a GPU resource before their window
+    /// surface is ready; replacing it after the post is mounted separates a
+    /// stale-resource failure from an MTKView/compositor failure.
+    func refreshCurrentTextureForRestoration() {
+        guard currentMediaType == .image, let image = currentImage else { return }
+        AppLogger.windowState.info("[Remote] refreshing current texture for restored window")
+        Task { [weak self, weak image] in
+            guard let self, let image else { return }
+            let texture = await Self.makeTexture(from: image)
+            guard self.currentImage === image else { return }
+            self.currentTexture = texture
+        }
+    }
+
     // MARK: - Fetching
 
     func fetchMorePosts() async {

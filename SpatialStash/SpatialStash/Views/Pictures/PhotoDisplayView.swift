@@ -34,6 +34,11 @@ struct PhotoDisplayView: View {
     /// geometry-change handler. Nil for windows that don't persist size.
     var onSizeSettled: ((CGSize) -> Void)? = nil
 
+    /// Reports when the selected renderer has submitted or mounted its first
+    /// visible frame. Used by restored windows to remove their diagnostic
+    /// placeholder only after media has reached the presentation layer.
+    var onFirstFramePresented: (() -> Void)? = nil
+
     /// Effective swipe navigation state: disabled when window is snapped to a surface,
     /// and only active while the viewer's UI chrome is visible so swipes don't fire
     /// during the hidden-chrome immersive state.
@@ -388,6 +393,7 @@ struct PhotoDisplayView: View {
             }
             .modifier(SwipeGestureModifier(enabled: isSwipeEnabled, onEnded: handleDragEnded))
             .onAppear {
+                onFirstFramePresented?()
                 let initialBounds = windowModel.savedWindowSize ?? appModel.mainWindowSize
                 resizeGIFWindowToFit(windowModel.imageAspectRatio, within: initialBounds)
             }
@@ -423,6 +429,7 @@ struct PhotoDisplayView: View {
                 }
                 .modifier(SwipeGestureModifier(enabled: isSwipeEnabled, onEnded: handleDragEnded))
                 .onAppear {
+                    onFirstFramePresented?()
                     let initialBounds = windowModel.savedWindowSize ?? appModel.mainWindowSize
                     resizeGIFWindowToFit(windowModel.imageAspectRatio, within: initialBounds)
                 }
@@ -454,6 +461,7 @@ struct PhotoDisplayView: View {
                 }
                 .modifier(SwipeGestureModifier(enabled: isSwipeEnabled, onEnded: handleDragEnded))
                 .onAppear {
+                    onFirstFramePresented?()
                     let initialBounds = windowModel.savedWindowSize ?? appModel.mainWindowSize
                     resizeGIFWindowToFit(windowModel.imageAspectRatio, within: initialBounds)
                 }
@@ -493,6 +501,7 @@ struct PhotoDisplayView: View {
                 }
                 .modifier(SwipeGestureModifier(enabled: isSwipeEnabled, onEnded: handleDragEnded))
                 .onAppear {
+                    onFirstFramePresented?()
                     let initialBounds = windowModel.savedWindowSize ?? appModel.mainWindowSize
                     resizeGIFWindowToFit(windowModel.imageAspectRatio, within: initialBounds)
                 }
@@ -572,6 +581,7 @@ struct PhotoDisplayView: View {
                         }
                 )
                 .onAppear {
+                    onFirstFramePresented?()
                     guard let windowScene = resolvedWindowScene else {
                         AppLogger.views.warning("Unable to get the window scene. Unable to set the resizing restrictions.")
                         return
@@ -630,7 +640,9 @@ struct PhotoDisplayView: View {
                 brightness: Float(windowModel.effectiveAdjustments.brightness),
                 contrast: Float(windowModel.effectiveAdjustments.contrast),
                 saturation: Float(windowModel.effectiveAdjustments.saturation),
-                sharpen: Float(windowModel.effectiveAdjustments.sharpen)
+                sharpen: Float(windowModel.effectiveAdjustments.sharpen),
+                diagnosticLabel: "photo-\(windowModel.popOutWindowValue?.id.uuidString.prefix(8) ?? "shared")",
+                onFramePresented: onFirstFramePresented
             )
             .opacity(windowModel.effectiveAdjustments.opacity)
             .aspectRatio(windowModel.imageAspectRatio, contentMode: .fit)
@@ -680,6 +692,7 @@ struct PhotoDisplayView: View {
                 }
                 .modifier(SwipeGestureModifier(enabled: isSwipeEnabled, onEnded: handleDragEnded))
                 .onAppear {
+                    onFirstFramePresented?()
                     // Same rationale as the MetalImageView branch above —
                     // the adjustments preview re-mounts this branch, and
                     // resizing here would both shrink the window and

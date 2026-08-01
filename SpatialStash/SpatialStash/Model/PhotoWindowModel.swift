@@ -913,6 +913,12 @@ class PhotoWindowModel {
             maxDimension: Int(targetDimension)
         )
 
+        // Restored windows get a fresh GPU allocation. The exact-resolution
+        // reproduction strongly correlates with acquiring the same shared
+        // texture as an already-broken restored window; do not let a restored
+        // scene consume or seed the cross-window cache while diagnosing that.
+        let allowsSharedTexture = !isRestoredPopOut
+
         // Release previous cache entry if switching to a different resolution
         if let oldKey = displayTextureCacheKey, oldKey != newCacheKey {
             SharedTextureCache.shared.release(key: oldKey)
@@ -920,7 +926,10 @@ class PhotoWindowModel {
         }
 
         // Try shared texture cache first — another window may already have this texture
-        if let cached = SharedTextureCache.shared.acquire(key: newCacheKey) {
+        if allowsSharedTexture, let cached = SharedTextureCache.shared.acquire(key: newCacheKey) {
+            AppLogger.windowState.info(
+                "[Photo \(self.displayName, privacy: .public)] shared texture hit dimension=\(newCacheKey.maxDimension, privacy: .public)"
+            )
             displayTexture = cached.texture
             imageAspectRatio = cached.aspectRatio
             currentDisplayMaxDimension = targetDimension
@@ -956,8 +965,14 @@ class PhotoWindowModel {
         imageAspectRatio = CGFloat(texture.width) / CGFloat(texture.height)
         currentDisplayMaxDimension = targetDimension
 
-        SharedTextureCache.shared.store(key: newCacheKey, texture: texture, aspectRatio: imageAspectRatio)
-        displayTextureCacheKey = newCacheKey
+        if allowsSharedTexture {
+            SharedTextureCache.shared.store(key: newCacheKey, texture: texture, aspectRatio: imageAspectRatio)
+            displayTextureCacheKey = newCacheKey
+        } else {
+            AppLogger.windowState.info(
+                "[Photo \(self.displayName, privacy: .public)] restored window using private texture dimension=\(Int(targetDimension), privacy: .public)"
+            )
+        }
         isLoadingDetailImage = false
     }
 

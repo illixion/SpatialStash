@@ -28,6 +28,8 @@ struct RemoteViewerWindowView: View {
     @State private var autoHideTimer: Task<Void, Never>?
     @State private var controlsVisible = true
     @State private var didArmInitialAutoHide = false
+    @State private var isRestoredWindow = false
+    @State private var showRestorationPlaceholder = false
 
     // Ken Burns animation state
     @State private var kenBurnsScale: CGFloat = 1.0
@@ -62,6 +64,15 @@ struct RemoteViewerWindowView: View {
                 // Background
                 if !(viewerModel?.config.transparentBackground ?? false) {
                     Color.black.ignoresSafeArea()
+                }
+
+                if showRestorationPlaceholder {
+                    WindowRestorationPlaceholder(
+                        title: "Restoring Slideshow",
+                        windowID: windowValue.id,
+                        status: remoteRestorationStatus
+                    )
+                    .offset(z: overlayZ)
                 }
 
                 // Image layers — brightness/contrast/saturation are
@@ -164,12 +175,17 @@ struct RemoteViewerWindowView: View {
             }
         )
         .onAppear {
+            isRestoredWindow = RestoredWindowTracker.isRestored(windowValue.id)
+            showRestorationPlaceholder = isRestoredWindow
+            AppLogger.windowState.info(
+                "[Remote \(windowValue.id.uuidString, privacy: .public)] view appeared restored=\(self.isRestoredWindow, privacy: .public) config=\(windowValue.configId.uuidString, privacy: .public) savedSize=\(String(describing: windowValue.restoredSize?.cgSize), privacy: .public)"
+            )
             setupModel()
             // Wall-snapped slideshow windows restored by visionOS after a
             // reboot come back with the same windowValue UUID. Keep controls
             // visible until the first post arrives so a failed first frame
             // never leaves a transparent, non-interactive window.
-            if !RestoredWindowTracker.isRestored(windowValue.id) {
+            if !isRestoredWindow {
                 RestoredWindowTracker.markSeen(windowValue.id)
                 resetAutoHideTimer()
                 didArmInitialAutoHide = true
@@ -206,10 +222,13 @@ struct RemoteViewerWindowView: View {
             }
         }
         .onChange(of: viewerModel?.currentPost?.id) { _, postId in
-            guard postId != nil, !didArmInitialAutoHide else { return }
-            didArmInitialAutoHide = true
-            controlsVisible = true
-            resetAutoHideTimer()
+            guard postId != nil else { return }
+            if isRestoredWindow {
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(500))
+                    viewerModel?.refreshCurrentTextureForRestoration()
+                }
+            }
         }
         .onChange(of: scenePhase) { oldPhase, newPhase in
             viewerModel?.handleScenePhaseChange(from: oldPhase, to: newPhase)
@@ -384,6 +403,7 @@ struct RemoteViewerWindowView: View {
                     },
                     onSpatial3DGenerated: { image in
                         model.notifySpatial3DGenerated(image: image)
+                        markRestoredContentPresented(renderer: "RealityKit")
                     }
                 )
             }
@@ -538,6 +558,9 @@ struct RemoteViewerWindowView: View {
                 .brightness(model.effectiveBrightness)
                 .contrast(model.effectiveContrast)
                 .saturation(model.effectiveSaturation)
+                .onAppear {
+                    markRestoredContentPresented(renderer: "WebKit video")
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -570,7 +593,11 @@ struct RemoteViewerWindowView: View {
                 brightness: Float(model.effectiveBrightness),
                 contrast: Float(model.effectiveContrast),
                 saturation: Float(model.effectiveSaturation),
-                sharpen: 0
+                sharpen: 0,
+                diagnosticLabel: "remote-\(windowValue.id.uuidString.prefix(8))",
+                onFramePresented: {
+                    markRestoredContentPresented(renderer: "Metal")
+                }
             )
         } else {
             Image(uiImage: image)
@@ -578,6 +605,9 @@ struct RemoteViewerWindowView: View {
                 .brightness(model.effectiveBrightness)
                 .contrast(model.effectiveContrast)
                 .saturation(model.effectiveSaturation)
+                .onAppear {
+                    markRestoredContentPresented(renderer: "SwiftUI image")
+                }
         }
     }
 
@@ -675,6 +705,35 @@ struct RemoteViewerWindowView: View {
         let formatter = DateFormatter()
         formatter.dateFormat = "EEE, MMM d"
         return formatter.string(from: currentTime)
+    }
+
+    private var remoteRestorationStatus: String {
+        guard let model = viewerModel else {
+            return "Resolving viewer configuration"
+        }
+        if model.currentPost == nil {
+            return model.isLoading ? "Loading first post" : "Waiting for server playback"
+        }
+        if let texture = model.currentTexture {
+            return "Waiting for Metal frame (\(texture.width)x\(texture.height))"
+        }
+        if model.currentImage != nil {
+            return "Waiting for image renderer"
+        }
+        return "Waiting for \(String(describing: model.currentMediaType))"
+    }
+
+    private func markRestoredContentPresented(renderer: String) {
+        guard showRestorationPlaceholder else { return }
+        showRestorationPlaceholder = false
+        AppLogger.windowState.info(
+            "[Remote \(windowValue.id.uuidString, privacy: .public)] first content frame reported renderer=\(renderer, privacy: .public)"
+        )
+        if !didArmInitialAutoHide {
+            didArmInitialAutoHide = true
+            controlsVisible = true
+            resetAutoHideTimer()
+        }
     }
 
     private func setupModel() {

@@ -9,6 +9,7 @@
  */
 
 import MetalKit
+import os
 import SwiftUI
 
 /// An on-demand MTKView can receive its first draw request before a restored
@@ -59,9 +60,11 @@ struct MetalImageView: UIViewRepresentable {
     let contrast: Float
     let saturation: Float
     let sharpen: Float
+    var diagnosticLabel: String? = nil
+    var onFramePresented: (() -> Void)? = nil
 
     func makeCoordinator() -> Coordinator {
-        Coordinator()
+        Coordinator(diagnosticLabel: diagnosticLabel)
     }
 
     func makeUIView(context: Context) -> MTKView {
@@ -97,6 +100,9 @@ struct MetalImageView: UIViewRepresentable {
         context.coordinator.saturation = saturation
         context.coordinator.sharpen = sharpen
         context.coordinator.scenePhase = scenePhase
+        context.coordinator.onFramePresented = onFramePresented
+
+        context.coordinator.logViewCreated(mtkView)
 
         context.coordinator.requestRedraw(in: mtkView)
         return mtkView
@@ -107,9 +113,11 @@ struct MetalImageView: UIViewRepresentable {
         var needsRedraw = false
 
         if coordinator.scenePhase != scenePhase {
+            coordinator.logScenePhaseChange(from: coordinator.scenePhase, to: scenePhase, view: mtkView)
             coordinator.scenePhase = scenePhase
             needsRedraw = true
         }
+        coordinator.onFramePresented = onFramePresented
         if coordinator.texture !== texture {
             // Switch framebuffer format if bit depth changed
             let is16Bit = texture.map { Self.isDeepColor($0) } ?? false
@@ -170,10 +178,32 @@ struct MetalImageView: UIViewRepresentable {
         private(set) var hasPresentedFrame = false
         private var redrawGeneration = 0
         private var retryActive = false
+        private var drawAttemptCount = 0
+        private var hasEverPresentedFrame = false
+        private let diagnosticLabel: String
+        private let diagnosticID = String(UUID().uuidString.prefix(8))
+        var onFramePresented: (() -> Void)?
 
         /// Offscreen RCAS target. Allocated lazily and reused across draws.
         /// Reallocated when drawable size or pixel format changes.
         private var intermediate: MTLTexture?
+
+        init(diagnosticLabel: String?) {
+            self.diagnosticLabel = diagnosticLabel ?? "image"
+        }
+
+        func logViewCreated(_ view: MTKView) {
+            let textureSize = texture.map { "\($0.width)x\($0.height)" } ?? "nil"
+            AppLogger.windowState.info(
+                "[Metal \(self.diagnosticID, privacy: .public)] create label=\(self.diagnosticLabel, privacy: .public) texture=\(textureSize, privacy: .public) bounds=\(Int(view.bounds.width), privacy: .public)x\(Int(view.bounds.height), privacy: .public) attached=\(view.window != nil, privacy: .public) phase=\(String(describing: self.scenePhase), privacy: .public)"
+            )
+        }
+
+        func logScenePhaseChange(from oldPhase: ScenePhase, to newPhase: ScenePhase, view: MTKView) {
+            AppLogger.windowState.info(
+                "[Metal \(self.diagnosticID, privacy: .public)] phase label=\(self.diagnosticLabel, privacy: .public) \(String(describing: oldPhase), privacy: .public)->\(String(describing: newPhase), privacy: .public) attached=\(view.window != nil, privacy: .public)"
+            )
+        }
 
         func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
             // Drawable resize — drop the cached intermediate so it gets
@@ -189,6 +219,7 @@ struct MetalImageView: UIViewRepresentable {
         func requestRedraw(in view: MTKView) {
             hasPresentedFrame = false
             retryActive = true
+            drawAttemptCount = 0
             redrawGeneration &+= 1
             let generation = redrawGeneration
             view.setNeedsDisplay()
@@ -207,6 +238,9 @@ struct MetalImageView: UIViewRepresentable {
             guard attempt < 80 else {
                 if redrawGeneration == generation {
                     retryActive = false
+                    AppLogger.windowState.error(
+                        "[Metal \(self.diagnosticID, privacy: .public)] exhausted redraw retries label=\(self.diagnosticLabel, privacy: .public) attached=\(view.window != nil, privacy: .public) bounds=\(Int(view.bounds.width), privacy: .public)x\(Int(view.bounds.height), privacy: .public) drawable=\(Int(view.drawableSize.width), privacy: .public)x\(Int(view.drawableSize.height), privacy: .public)"
+                    )
                 }
                 return
             }
@@ -228,15 +262,25 @@ struct MetalImageView: UIViewRepresentable {
             hasPresentedFrame = true
             retryActive = false
             redrawGeneration &+= 1
+            if !hasEverPresentedFrame {
+                hasEverPresentedFrame = true
+                AppLogger.windowState.info(
+                    "[Metal \(self.diagnosticID, privacy: .public)] first frame submitted label=\(self.diagnosticLabel, privacy: .public) attempts=\(self.drawAttemptCount, privacy: .public)"
+                )
+            }
+            onFramePresented?()
         }
 
         func draw(in view: MTKView) {
-            guard let renderer,
-                  let texture,
-                  let drawable = view.currentDrawable,
-                  let finalPassDesc = view.currentRenderPassDescriptor,
-                  let commandBuffer = renderer.commandQueue.makeCommandBuffer() else {
-                return
+            drawAttemptCount += 1
+            guard let renderer else { return logDrawWait("renderer unavailable", view: view) }
+            guard let texture else { return logDrawWait("texture unavailable", view: view) }
+            guard let drawable = view.currentDrawable else { return logDrawWait("currentDrawable nil", view: view) }
+            guard let finalPassDesc = view.currentRenderPassDescriptor else {
+                return logDrawWait("renderPassDescriptor nil", view: view)
+            }
+            guard let commandBuffer = renderer.commandQueue.makeCommandBuffer() else {
+                return logDrawWait("commandBuffer unavailable", view: view)
             }
 
             let is16 = view.colorPixelFormat == .rgba16Float
@@ -309,6 +353,14 @@ struct MetalImageView: UIViewRepresentable {
             commandBuffer.present(drawable)
             commandBuffer.commit()
             markFramePresented()
+        }
+
+        private func logDrawWait(_ reason: String, view: MTKView) {
+            guard drawAttemptCount == 1 || drawAttemptCount == 5
+                    || drawAttemptCount == 20 || drawAttemptCount == 80 else { return }
+            AppLogger.windowState.warning(
+                "[Metal \(self.diagnosticID, privacy: .public)] draw waiting label=\(self.diagnosticLabel, privacy: .public) attempt=\(self.drawAttemptCount, privacy: .public) reason=\(reason, privacy: .public) attached=\(view.window != nil, privacy: .public) bounds=\(Int(view.bounds.width), privacy: .public)x\(Int(view.bounds.height), privacy: .public) drawable=\(Int(view.drawableSize.width), privacy: .public)x\(Int(view.drawableSize.height), privacy: .public)"
+            )
         }
 
         /// Allocate or reuse the offscreen RCAS target. Returns nil on failure.

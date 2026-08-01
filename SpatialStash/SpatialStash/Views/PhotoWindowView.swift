@@ -8,6 +8,7 @@
  Uses PhotoDisplayView for rendering and PhotoOrnamentView for controls.
  */
 
+import os
 import SwiftUI
 
 struct PhotoWindowView: View {
@@ -24,6 +25,7 @@ struct PhotoWindowView: View {
 
     @State private var pendingPopOutImage: GalleryImage? = nil
     @State private var showDuplicateWindowAlert: Bool = false
+    @State private var showRestorationPlaceholder: Bool = false
 
     init(windowValue: PhotoWindowValue, appModel: AppModel, onSizeSettled: @escaping (CGSize) -> Void = { _ in }) {
         self.wasPushed = windowValue.wasPushed
@@ -43,12 +45,23 @@ struct PhotoWindowView: View {
     }
 
     var body: some View {
-        PhotoDisplayView(
-            windowModel: windowModel,
-            enableSwipeNavigation: true,
-            restoredSize: wasPushed ? nil : restoredSize,
-            onSizeSettled: wasPushed ? nil : onSizeSettled
-        )
+        ZStack {
+            if showRestorationPlaceholder, let popOutWindowID {
+                WindowRestorationPlaceholder(
+                    title: "Restoring Photo",
+                    windowID: popOutWindowID,
+                    status: photoRestorationStatus
+                )
+            }
+
+            PhotoDisplayView(
+                windowModel: windowModel,
+                enableSwipeNavigation: true,
+                restoredSize: wasPushed ? nil : restoredSize,
+                onSizeSettled: wasPushed ? nil : onSizeSettled,
+                onFirstFramePresented: markRestoredContentPresented
+            )
+        }
         .opacity(appModel.allWindowsHidden ? 0 : 1)
         .persistentSystemOverlays(windowModel.isWindowControlsHidden ? .hidden : .visible)
         .ornament(
@@ -99,6 +112,12 @@ struct PhotoWindowView: View {
             let isRestored = popOutWindowID.map(RestoredWindowTracker.isRestored) ?? false
             if isRestored {
                 windowModel.isRestoredPopOut = true
+                showRestorationPlaceholder = true
+                if let popOutWindowID {
+                    AppLogger.windowState.info(
+                        "[Photo \(popOutWindowID.uuidString, privacy: .public)] restored view appeared image=\(windowModel.imageURL.loggableDescription, privacy: .public) savedSize=\(String(describing: restoredSize), privacy: .public)"
+                    )
+                }
             } else if let id = popOutWindowID {
                 RestoredWindowTracker.markSeen(id)
             }
@@ -137,6 +156,33 @@ struct PhotoWindowView: View {
         } message: {
             Text("A window for this image is already open. You can summon it or open a copy.")
         }
+    }
+
+    private var photoRestorationStatus: String {
+        if windowModel.isLoadingDetailImage {
+            return "Loading image data"
+        }
+        if let texture = windowModel.displayTexture {
+            return "Waiting for Metal frame (\(texture.width)x\(texture.height))"
+        }
+        if windowModel.displayImage != nil {
+            return "Waiting for SwiftUI image"
+        }
+        if windowModel.is3DMode {
+            return "Waiting for RealityKit content"
+        }
+        return "Preparing media renderer"
+    }
+
+    private func markRestoredContentPresented() {
+        guard showRestorationPlaceholder else { return }
+        showRestorationPlaceholder = false
+        if let popOutWindowID {
+            AppLogger.windowState.info(
+                "[Photo \(popOutWindowID.uuidString, privacy: .public)] first content frame reported"
+            )
+        }
+        windowModel.startAutoHideTimer()
     }
 
 }

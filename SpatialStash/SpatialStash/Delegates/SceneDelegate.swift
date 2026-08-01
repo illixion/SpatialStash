@@ -17,6 +17,7 @@ import SwiftUI
             return
         }
         self.windowScene = windowScene
+        logScene("willConnect", scene: windowScene)
 
         // Share-sheet cold launch: when Files.app opens us with a file
         // selected, the URL arrives here, not via SwiftUI's .onOpenURL on
@@ -32,6 +33,35 @@ import SwiftUI
     /// doesn't fire unless we explicitly forward the context.
     func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
         SceneDelegate.deliverSharedURLs(URLContexts.map { $0.url })
+    }
+
+    func sceneDidBecomeActive(_ scene: UIScene) {
+        logScene("didBecomeActive", scene: scene)
+    }
+
+    func sceneWillResignActive(_ scene: UIScene) {
+        logScene("willResignActive", scene: scene)
+    }
+
+    func sceneWillEnterForeground(_ scene: UIScene) {
+        logScene("willEnterForeground", scene: scene)
+    }
+
+    func sceneDidEnterBackground(_ scene: UIScene) {
+        logScene("didEnterBackground", scene: scene)
+    }
+
+    func sceneDidDisconnect(_ scene: UIScene) {
+        logScene("didDisconnect", scene: scene)
+    }
+
+    private func logScene(_ event: String, scene: UIScene) {
+        guard let windowScene = scene as? UIWindowScene else { return }
+        let sceneSize = windowScene.effectiveGeometry.coordinateSpace.bounds.size
+        let visibleWindows = windowScene.windows.filter { !$0.isHidden && $0.alpha > 0 }.count
+        AppLogger.windowState.info(
+            "[Scene \(windowScene.session.persistentIdentifier, privacy: .public)] \(event, privacy: .public) activation=\(String(describing: windowScene.activationState), privacy: .public) scene=\(Int(sceneSize.width), privacy: .public)x\(Int(sceneSize.height), privacy: .public) windows=\(windowScene.windows.count, privacy: .public) visible=\(visibleWindows, privacy: .public)"
+        )
     }
 
     /// Broadcast notification consumed by every mounted `IncomingURLHandler`.
