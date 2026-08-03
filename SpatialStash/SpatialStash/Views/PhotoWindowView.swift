@@ -20,12 +20,16 @@ struct PhotoWindowView: View {
     private let onSizeSettled: (CGSize) -> Void
     @State private var windowModel: PhotoWindowModel
     @Environment(AppModel.self) private var appModel
+    @Environment(SceneDelegate.self) private var sceneDelegate: SceneDelegate?
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismissWindow) private var dismissWindow
 
     @State private var pendingPopOutImage: GalleryImage? = nil
     @State private var showDuplicateWindowAlert: Bool = false
     @State private var showRestorationPlaceholder: Bool = false
+    @State private var metalRendererGeneration = 0
+    @State private var renderRecoveryAttempt = 0
+    @State private var renderRecoveryTask: Task<Void, Never>?
 
     init(windowValue: PhotoWindowValue, appModel: AppModel, onSizeSettled: @escaping (CGSize) -> Void = { _ in }) {
         self.wasPushed = windowValue.wasPushed
@@ -59,7 +63,9 @@ struct PhotoWindowView: View {
                 enableSwipeNavigation: true,
                 restoredSize: wasPushed ? nil : restoredSize,
                 onSizeSettled: wasPushed ? nil : onSizeSettled,
-                onFirstFramePresented: markRestoredContentPresented
+                onFirstFramePresented: markContentPresented,
+                metalRendererGeneration: metalRendererGeneration,
+                onMetalRenderStalled: recoverStalledRenderer
             )
         }
         .opacity(appModel.allWindowsHidden ? 0 : 1)
@@ -127,6 +133,7 @@ struct PhotoWindowView: View {
             }
         }
         .onDisappear {
+            renderRecoveryTask?.cancel()
             windowModel.cleanup()
         }
         .alert(
@@ -174,7 +181,10 @@ struct PhotoWindowView: View {
         return "Preparing media renderer"
     }
 
-    private func markRestoredContentPresented() {
+    private func markContentPresented() {
+        renderRecoveryTask?.cancel()
+        renderRecoveryTask = nil
+        renderRecoveryAttempt = 0
         guard showRestorationPlaceholder else { return }
         showRestorationPlaceholder = false
         if let popOutWindowID {
@@ -183,6 +193,52 @@ struct PhotoWindowView: View {
             )
         }
         windowModel.startAutoHideTimer()
+    }
+
+    private func recoverStalledRenderer() {
+        guard renderRecoveryAttempt < 3 else {
+            AppLogger.windowState.error(
+                "[Photo \(self.popOutWindowID?.uuidString ?? "pushed", privacy: .public)] renderer recovery exhausted"
+            )
+            return
+        }
+        renderRecoveryAttempt += 1
+        showRestorationPlaceholder = true
+        windowModel.cancelAutoHideTimer()
+        windowModel.isUIHidden = false
+        metalRendererGeneration += 1
+        AppLogger.windowState.warning(
+            "[Photo \(self.popOutWindowID?.uuidString ?? "pushed", privacy: .public)] rebuilding Metal renderer attempt=\(self.renderRecoveryAttempt, privacy: .public)"
+        )
+
+        renderRecoveryTask?.cancel()
+        renderRecoveryTask = Task { @MainActor in
+            // Let SwiftUI tear down the exhausted MTKView and mount the new
+            // generation before publishing a replacement texture.
+            try? await Task.sleep(for: .milliseconds(50))
+            guard !Task.isCancelled else { return }
+            await windowModel.applyResolutionOverride(windowModel.resolutionOverride)
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled, showRestorationPlaceholder else { return }
+            await nudgeSceneForRenderRecovery()
+        }
+    }
+
+    private func nudgeSceneForRenderRecovery() async {
+        guard let scene = sceneDelegate?.windowScene else { return }
+        let base = scene.effectiveGeometry.coordinateSpace.bounds.size
+        guard base.width > 2, base.height > 2 else { return }
+        let nudged = CGSize(width: base.width + 1, height: base.height + 1)
+        AppLogger.windowState.warning(
+            "[Photo \(self.popOutWindowID?.uuidString ?? "pushed", privacy: .public)] nudging scene for render recovery"
+        )
+        UIView.performWithoutAnimation {
+            scene.requestGeometryUpdate(.Vision(size: nudged))
+        }
+        try? await Task.sleep(for: .milliseconds(150))
+        UIView.performWithoutAnimation {
+            scene.requestGeometryUpdate(.Vision(size: base))
+        }
     }
 
 }

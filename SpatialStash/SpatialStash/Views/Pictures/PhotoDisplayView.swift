@@ -38,6 +38,8 @@ struct PhotoDisplayView: View {
     /// visible frame. Used by restored windows to remove their diagnostic
     /// placeholder only after media has reached the presentation layer.
     var onFirstFramePresented: (() -> Void)? = nil
+    var metalRendererGeneration: Int = 0
+    var onMetalRenderStalled: (() -> Void)? = nil
 
     /// Effective swipe navigation state: disabled when window is snapped to a surface,
     /// and only active while the viewer's UI chrome is visible so swipes don't fire
@@ -642,8 +644,10 @@ struct PhotoDisplayView: View {
                 saturation: Float(windowModel.effectiveAdjustments.saturation),
                 sharpen: Float(windowModel.effectiveAdjustments.sharpen),
                 diagnosticLabel: "photo-\(windowModel.popOutWindowValue?.id.uuidString.prefix(8) ?? "shared")",
-                onFramePresented: onFirstFramePresented
+                onFramePresented: onFirstFramePresented,
+                onRenderStalled: onMetalRenderStalled
             )
+            .id(metalRendererGeneration)
             .opacity(windowModel.effectiveAdjustments.opacity)
             .aspectRatio(windowModel.imageAspectRatio, contentMode: .fit)
             .clipShape(RoundedRectangle(cornerRadius: appModel.roundedCorners ? 50 : 0, style: .continuous))

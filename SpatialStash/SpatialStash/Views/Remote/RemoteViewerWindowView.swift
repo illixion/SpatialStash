@@ -30,6 +30,9 @@ struct RemoteViewerWindowView: View {
     @State private var didArmInitialAutoHide = false
     @State private var isRestoredWindow = false
     @State private var showRestorationPlaceholder = false
+    @State private var metalRendererGeneration = 0
+    @State private var renderRecoveryAttempt = 0
+    @State private var renderRecoveryTask: Task<Void, Never>?
 
     // Ken Burns animation state
     @State private var kenBurnsScale: CGFloat = 1.0
@@ -187,8 +190,6 @@ struct RemoteViewerWindowView: View {
             // never leaves a transparent, non-interactive window.
             if !isRestoredWindow {
                 RestoredWindowTracker.markSeen(windowValue.id)
-                resetAutoHideTimer()
-                didArmInitialAutoHide = true
             }
             // Restore the user's custom window size/aspect ratio from the scene
             // archive. visionOS restores wall-snapped windows at the scene
@@ -205,6 +206,7 @@ struct RemoteViewerWindowView: View {
             appModel.unregisterRemoteViewerWindow(configId: windowValue.configId, windowValueId: windowValue.id)
             viewerModel?.stop()
             autoHideTimer?.cancel()
+            renderRecoveryTask?.cancel()
         }
         .onChange(of: viewerModel?.isTransitioning) { _, isTransitioning in
             // Refresh IPC's off-axis blur calibration mid-crossfade so
@@ -223,12 +225,6 @@ struct RemoteViewerWindowView: View {
         }
         .onChange(of: viewerModel?.currentPost?.id) { _, postId in
             guard postId != nil else { return }
-            if isRestoredWindow {
-                Task { @MainActor in
-                    try? await Task.sleep(for: .milliseconds(500))
-                    viewerModel?.refreshCurrentTextureForRestoration()
-                }
-            }
         }
         .onChange(of: scenePhase) { oldPhase, newPhase in
             viewerModel?.handleScenePhaseChange(from: oldPhase, to: newPhase)
@@ -403,7 +399,7 @@ struct RemoteViewerWindowView: View {
                     },
                     onSpatial3DGenerated: { image in
                         model.notifySpatial3DGenerated(image: image)
-                        markRestoredContentPresented(renderer: "RealityKit")
+                        markContentPresented(renderer: "RealityKit")
                     }
                 )
             }
@@ -559,7 +555,7 @@ struct RemoteViewerWindowView: View {
                 .contrast(model.effectiveContrast)
                 .saturation(model.effectiveSaturation)
                 .onAppear {
-                    markRestoredContentPresented(renderer: "WebKit video")
+                    markContentPresented(renderer: "WebKit video")
                 }
             }
         }
@@ -596,9 +592,11 @@ struct RemoteViewerWindowView: View {
                 sharpen: 0,
                 diagnosticLabel: "remote-\(windowValue.id.uuidString.prefix(8))",
                 onFramePresented: {
-                    markRestoredContentPresented(renderer: "Metal")
-                }
+                    markContentPresented(renderer: "Metal")
+                },
+                onRenderStalled: recoverStalledRenderer
             )
+            .id(metalRendererGeneration)
         } else {
             Image(uiImage: image)
                 .resizable()
@@ -606,7 +604,7 @@ struct RemoteViewerWindowView: View {
                 .contrast(model.effectiveContrast)
                 .saturation(model.effectiveSaturation)
                 .onAppear {
-                    markRestoredContentPresented(renderer: "SwiftUI image")
+                    markContentPresented(renderer: "SwiftUI image")
                 }
         }
     }
@@ -723,16 +721,62 @@ struct RemoteViewerWindowView: View {
         return "Waiting for \(String(describing: model.currentMediaType))"
     }
 
-    private func markRestoredContentPresented(renderer: String) {
-        guard showRestorationPlaceholder else { return }
-        showRestorationPlaceholder = false
-        AppLogger.windowState.info(
-            "[Remote \(windowValue.id.uuidString, privacy: .public)] first content frame reported renderer=\(renderer, privacy: .public)"
-        )
+    private func markContentPresented(renderer: String) {
+        renderRecoveryTask?.cancel()
+        renderRecoveryTask = nil
+        renderRecoveryAttempt = 0
+        if showRestorationPlaceholder {
+            showRestorationPlaceholder = false
+            AppLogger.windowState.info(
+                "[Remote \(windowValue.id.uuidString, privacy: .public)] content frame reported renderer=\(renderer, privacy: .public)"
+            )
+        }
         if !didArmInitialAutoHide {
             didArmInitialAutoHide = true
             controlsVisible = true
             resetAutoHideTimer()
+        }
+    }
+
+    private func recoverStalledRenderer() {
+        guard renderRecoveryAttempt < 3 else {
+            AppLogger.windowState.error(
+                "[Remote \(windowValue.id.uuidString, privacy: .public)] renderer recovery exhausted"
+            )
+            return
+        }
+        renderRecoveryAttempt += 1
+        showRestorationPlaceholder = true
+        controlsVisible = true
+        autoHideTimer?.cancel()
+        metalRendererGeneration += 1
+        viewerModel?.refreshCurrentTextureForRenderRecovery()
+        AppLogger.windowState.warning(
+            "[Remote \(windowValue.id.uuidString, privacy: .public)] rebuilding Metal renderer attempt=\(self.renderRecoveryAttempt, privacy: .public)"
+        )
+
+        renderRecoveryTask?.cancel()
+        renderRecoveryTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled, showRestorationPlaceholder else { return }
+            await nudgeSceneForRenderRecovery()
+        }
+    }
+
+    private func nudgeSceneForRenderRecovery() async {
+        guard let scene = resolvedWindowScene else { return }
+        let base = scene.effectiveGeometry.coordinateSpace.bounds.size
+        guard Self.isPlausibleWindowSize(base) else { return }
+        let nudged = CGSize(width: base.width + 1, height: base.height + 1)
+        AppLogger.windowState.warning(
+            "[Remote \(windowValue.id.uuidString, privacy: .public)] nudging scene for render recovery"
+        )
+        UIView.performWithoutAnimation {
+            scene.requestGeometryUpdate(.Vision(size: nudged))
+        }
+        try? await Task.sleep(for: .milliseconds(150))
+        UIView.performWithoutAnimation {
+            scene.requestGeometryUpdate(.Vision(size: base))
         }
     }
 

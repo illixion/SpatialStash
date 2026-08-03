@@ -1627,9 +1627,9 @@ class SlideshowEngine {
     /// texture. Restored scenes can receive a GPU resource before their window
     /// surface is ready; replacing it after the post is mounted separates a
     /// stale-resource failure from an MTKView/compositor failure.
-    func refreshCurrentTextureForRestoration() {
+    func refreshCurrentTextureForRenderRecovery() {
         guard currentMediaType == .image, let image = currentImage else { return }
-        AppLogger.windowState.info("[Remote] refreshing current texture for restored window")
+        AppLogger.windowState.info("[Remote] refreshing current texture for render recovery")
         Task { [weak self, weak image] in
             guard let self, let image else { return }
             let texture = await Self.makeTexture(from: image)
