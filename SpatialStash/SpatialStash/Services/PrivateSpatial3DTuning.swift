@@ -40,20 +40,49 @@ import RealityKit
 // setter left values unchanged and a getter returned 1.18e-35. Declared as
 // extension methods, every knob below round-trips exactly.
 //
+// MARK: Resilient enum properties
+//
+// mxiSceneRepositionMode is an MXIComponent.MXISceneRepositionMode, a two-case
+// enum {alignToViewDepth, alignToHeadPosition}. Being resilient it is passed and
+// returned INDIRECTLY, so it needs different signatures from the Bool/Float
+// knobs above — a direct-value declaration crashes the process:
+//
+//   * setter takes it @in, i.e. an address in the first argument register, which
+//     an extension method expresses as UnsafeRawPointer.
+//   * getter returns it @out, i.e. into a caller-supplied buffer whose address
+//     arrives in x8. Declaring the return as a 64-byte struct reproduces that,
+//     because Swift returns anything that large indirectly.
+//
+// Verified round-tripping on visionOS 27.0 (24M5326f).
+//
 // MARK: Deliberately excluded
-//
-// Two further properties exist and are NOT exposed here, both verified broken:
-//
-//   * mxiSceneRepositionMode (MXIComponent.MXISceneRepositionMode) — the most
-//     on-the-nose knob, a two-case enum {alignToViewDepth, alignToHeadPosition}.
-//     It is a resilient enum, so it is passed/returned indirectly; calling the
-//     accessor with a direct-value signature crashes the process. Reaching it
-//     needs the field offset from the struct's runtime metadata, not @_silgen_name.
 //
 //   * mxiTuningOverrides ([String: Any]) — accepts the CoreRE tuning keys
 //     (enableAdaptiveScaling, allowReposition, customSceneScale, sceneScale, …)
 //     but is not a plain stored property: a 4-key write reads back as 0 entries,
 //     and repeated access returns a corrupt Dictionary. Unsafe to touch.
+
+/// Buffer for an `@out` return. Large enough (64 bytes) that Swift returns it
+/// indirectly via x8, matching the resilient-enum getter convention. Only the
+/// first byte is meaningful for a payload-free two-case enum.
+private struct PrivateOutBuffer64 {
+    var a = 0, b = 0, c = 0, d = 0, e = 0, f = 0, g = 0, h = 0
+}
+
+/// Zero-parallax alignment for the immersive spatial-3D scene.
+enum PrivateSceneRepositionMode: UInt8, Codable, CaseIterable, Identifiable {
+    case alignToViewDepth = 0
+    case alignToHeadPosition = 1
+
+    var id: UInt8 { rawValue }
+
+    var label: String {
+        switch self {
+        case .alignToViewDepth: "Align to View Depth"
+        case .alignToHeadPosition: "Align to Head Position"
+        }
+    }
+}
 
 // MARK: - Private accessors
 
@@ -96,8 +125,31 @@ extension ImagePresentationComponent {
     func __privateGetForceUpdateWhenInactive() -> Bool
     @_silgen_name("$s17RealityFoundation26ImagePresentationComponentV29enableForceUpdateWhenInactiveSbvs")
     mutating func __privateSetForceUpdateWhenInactive(_ newValue: Bool)
+
+    // Resilient enum — indirect conventions, see the note above. fileprivate
+    // because the @out buffer type is file-scoped; the wrappers below are the
+    // supported entry points.
+    @_silgen_name("$s17RealityFoundation26ImagePresentationComponentV22mxiSceneRepositionModeAA12MXIComponentV08MXIScenehI0Ovg")
+    fileprivate func __privateGetSceneRepositionModeOut() -> PrivateOutBuffer64
+    @_silgen_name("$s17RealityFoundation26ImagePresentationComponentV22mxiSceneRepositionModeAA12MXIComponentV08MXIScenehI0Ovs")
+    fileprivate mutating func __privateSetSceneRepositionModeIn(_ value: UnsafeRawPointer)
     #endif
 }
+
+#if SPATIALSTASH_PRIVATE_API_V27
+extension ImagePresentationComponent {
+    /// Raw tag of `mxiSceneRepositionMode`, read through the `@out` convention.
+    var privateSceneRepositionModeRaw: UInt8 {
+        withUnsafeBytes(of: __privateGetSceneRepositionModeOut()) { $0[0] }
+    }
+
+    /// Write `mxiSceneRepositionMode` through the `@in` convention.
+    mutating func privateSetSceneRepositionMode(_ mode: PrivateSceneRepositionMode) {
+        var raw = mode.rawValue
+        withUnsafeBytes(of: &raw) { __privateSetSceneRepositionModeIn($0.baseAddress!) }
+    }
+}
+#endif
 
 // MARK: - Settings
 
@@ -110,11 +162,13 @@ struct PrivateSpatial3DSettings: Codable, Equatable {
     var userInteractionEnabled: Bool?
     var renderTwoPass: Bool?
     var forceUpdateWhenInactive: Bool?
+    var sceneRepositionMode: PrivateSceneRepositionMode?
 
     var isNoOp: Bool {
         collapseStrength == nil && cornerRadiusInPoints == nil
             && specularAndFresnelEffects == nil && userInteractionEnabled == nil
             && renderTwoPass == nil && forceUpdateWhenInactive == nil
+            && sceneRepositionMode == nil
     }
 
     /// Values observed on visionOS 27.0 (24M5326f), shown in the UI so a knob
@@ -126,6 +180,7 @@ struct PrivateSpatial3DSettings: Codable, Equatable {
         static let userInteractionEnabled = true
         static let renderTwoPass = true
         static let forceUpdateWhenInactive = false
+        static let sceneRepositionMode = PrivateSceneRepositionMode.alignToViewDepth
     }
 }
 
@@ -208,6 +263,10 @@ final class PrivateSpatial3DTuningStore {
         if let v = settings.forceUpdateWhenInactive,
            component.__privateGetForceUpdateWhenInactive() != v {
             component.__privateSetForceUpdateWhenInactive(v); changed = true
+        }
+        if let v = settings.sceneRepositionMode,
+           component.privateSceneRepositionModeRaw != v.rawValue {
+            component.privateSetSceneRepositionMode(v); changed = true
         }
         #endif
 

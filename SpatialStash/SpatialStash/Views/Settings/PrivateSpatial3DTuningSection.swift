@@ -25,19 +25,21 @@ struct PrivateSpatial3DTuningSection: View {
                 .foregroundStyle(.secondary)
 
             if store.isEnabled {
+                // Captions record what was actually observed on device
+                // (visionOS 27.0) so knobs with no effect aren't retried blind.
                 floatKnob(
                     title: "Collapse Strength",
                     keyPath: \.collapseStrength,
                     stock: PrivateSpatial3DSettings.Stock.collapseStrength,
                     range: 0...1,
-                    caption: "Flattens the spatial-3D effect. Stock is 0."
+                    caption: "Confirmed working — flattens the spatial-3D effect. Stock is 0."
                 )
 
                 boolKnob(
                     title: "Specular & Fresnel Effects",
                     keyPath: \.specularAndFresnelEffects,
                     stock: PrivateSpatial3DSettings.Stock.specularAndFresnelEffects,
-                    caption: "Stock is on."
+                    caption: "No visible effect observed. Stock is on."
                 )
 
                 floatKnob(
@@ -45,29 +47,31 @@ struct PrivateSpatial3DTuningSection: View {
                     keyPath: \.cornerRadiusInPoints,
                     stock: PrivateSpatial3DSettings.Stock.cornerRadiusInPoints,
                     range: 0...200,
-                    caption: "Stock is 44."
+                    caption: "No visible effect observed. Stock is 44."
                 )
 
                 #if SPATIALSTASH_PRIVATE_API_V27
-                boolKnob(
-                    title: "User Interaction Enabled",
-                    keyPath: \.userInteractionEnabled,
-                    stock: PrivateSpatial3DSettings.Stock.userInteractionEnabled,
-                    caption: "Best candidate for stopping the viewpoint-driven view shift. Stock is on."
-                )
+                repositionModeKnob()
 
                 boolKnob(
                     title: "MXI Render Two-Pass",
                     keyPath: \.renderTwoPass,
                     stock: PrivateSpatial3DSettings.Stock.renderTwoPass,
-                    caption: "Stock is on. Off may change reprojection cost and quality."
+                    caption: "Off makes immersive mode show the raw gaussian splat with eye reprojection tracking viewing distance. Stock is on."
+                )
+
+                boolKnob(
+                    title: "User Interaction Enabled",
+                    keyPath: \.userInteractionEnabled,
+                    stock: PrivateSpatial3DSettings.Stock.userInteractionEnabled,
+                    caption: "No visible effect observed. Stock is on."
                 )
 
                 boolKnob(
                     title: "Force Update When Inactive",
                     keyPath: \.forceUpdateWhenInactive,
                     stock: PrivateSpatial3DSettings.Stock.forceUpdateWhenInactive,
-                    caption: "Stock is off."
+                    caption: "No visible effect observed. Stock is off."
                 )
                 #else
                 Text("Three further knobs (User Interaction Enabled, MXI Render Two-Pass, Force Update When Inactive) exist only on visionOS 27. Build with SPATIALSTASH_PRIVATE_API_V27 and a 27.0 deployment target to expose them.")
@@ -82,6 +86,34 @@ struct PrivateSpatial3DTuningSection: View {
     }
 
     // MARK: - Knob builders
+
+    #if SPATIALSTASH_PRIVATE_API_V27
+    /// The zero-parallax alignment mode. RealityKit may re-assert its own value
+    /// when entering the immersive presentation; the tuning is re-applied on
+    /// every viewing-mode change, so toggle 3D off and on after changing it.
+    @ViewBuilder
+    private func repositionModeKnob() -> some View {
+        let presence = presenceBinding(
+            \.sceneRepositionMode,
+            stock: PrivateSpatial3DSettings.Stock.sceneRepositionMode
+        )
+        Toggle("Override Scene Reposition Mode", isOn: presence)
+        if presence.wrappedValue {
+            Picker("Scene Reposition Mode", selection: valueBinding(
+                \.sceneRepositionMode,
+                stock: PrivateSpatial3DSettings.Stock.sceneRepositionMode
+            )) {
+                ForEach(PrivateSceneRepositionMode.allCases) { mode in
+                    Text(mode.label).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+        }
+        Text("Chooses how the immersive scene anchors: to a fixed view depth, or tracking head position. Stock is Align to View Depth.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+    }
+    #endif
 
     /// Binding that turns an override on (seeding it with the stock value) or off.
     private func presenceBinding<T>(
