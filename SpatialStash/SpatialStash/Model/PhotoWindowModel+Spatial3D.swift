@@ -633,6 +633,14 @@ extension PhotoWindowModel {
         } else {
             contentEntity.components.remove(BillboardComponent.self)
         }
+
+        // GitHub-only build: re-assert the private ImagePresentationComponent
+        // knobs. Unlike the billboard above this is not restricted to windowed
+        // .spatial3D — the visionOS 27 behaviour it counteracts is in the
+        // immersive mode. No-op unless the tuning is enabled and non-default.
+        #if SPATIALSTASH_PRIVATE_API
+        applyPrivateSpatial3DTuning()
+        #endif
     }
 
     /// Ask the view layer to nudge the window's geometry so IPC re-anchors

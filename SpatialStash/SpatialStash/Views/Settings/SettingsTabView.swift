@@ -426,6 +426,10 @@ struct SettingsTabView: View {
                     .disabled(!hasSecondaryWindows)
                 }
 
+                #if SPATIALSTASH_PRIVATE_API
+                PrivateSpatial3DTuningSection()
+                #endif
+
                 Section("About") {
                     HStack {
                         Text("App Name")

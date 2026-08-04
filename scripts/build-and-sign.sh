@@ -14,6 +14,7 @@ set -euo pipefail
 #   ./scripts/build-and-sign.sh --no-deploy      # Sign but don't install to device
 #   ./scripts/build-and-sign.sh --sign-only      # Skip build, sign existing IPA
 #   ./scripts/build-and-sign.sh --ipa path.ipa   # Sign a specific IPA (implies --sign-only)
+#   ./scripts/build-and-sign.sh --private-api    # GitHub-only: private spatial-3D tuning (visionOS 27+)
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -57,6 +58,7 @@ SIGN_ONLY=false
 NO_DEPLOY=false
 USE_DIST=false
 INPUT_IPA=""
+PRIVATE_API=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -64,14 +66,43 @@ while [[ $# -gt 0 ]]; do
         --distribution)  USE_DIST=true; shift ;;
         --sign-only)     SIGN_ONLY=true; shift ;;
         --no-deploy)     NO_DEPLOY=true; shift ;;
+        --private-api)   PRIVATE_API=true; shift ;;
         --ipa)           INPUT_IPA="$2"; SIGN_ONLY=true; shift 2 ;;
         -h|--help)
-            sed -n '3,17p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '3,18p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
+
+# --private-api compiles the undocumented ImagePresentationComponent tuning
+# (Services/PrivateSpatial3DTuning.swift). It must never reach the App Store,
+# so it is mutually exclusive with the distribution signing identity. The
+# deployment target is raised to 27.0 because the visionOS 27-only symbols are
+# linked non-weakly — on 26.x dyld would fail at launch.
+if [[ "$PRIVATE_API" == true ]]; then
+    if [[ "$USE_DIST" == true ]]; then
+        echo "ERROR: --private-api cannot be combined with --distribution." >&2
+        echo "       Private API is for GitHub-only builds and would be rejected by App Review." >&2
+        exit 1
+    fi
+    # The visionOS 27-only accessors are only present in the 27.0 SDK's .tbd, so
+    # an older Xcode fails at link time with a bare "Undefined symbol" naming a
+    # mangled Swift accessor. Fail here with something actionable instead.
+    SDK_VER="$(xcrun --sdk xros --show-sdk-version 2>/dev/null || echo 0)"
+    if [[ "${SDK_VER%%.*}" -lt 27 ]]; then
+        echo "ERROR: --private-api needs the visionOS 27 SDK; active xrOS SDK is $SDK_VER." >&2
+        echo "       Point DEVELOPER_DIR at an Xcode 27 install, e.g.:" >&2
+        echo "         DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer $0 --private-api" >&2
+        exit 1
+    fi
+    EXTRA_BUILD_SETTINGS+=(
+        "PRIVATE_API_CONDITION=SPATIALSTASH_PRIVATE_API SPATIALSTASH_PRIVATE_API_V27"
+        "XROS_DEPLOYMENT_TARGET=27.0"
+    )
+    echo "NOTE: building with private-API spatial-3D tuning (visionOS 27.0+ only, xrOS SDK $SDK_VER)."
+fi
 
 if [[ "$USE_DIST" == true ]]; then
     P12_PATH="$DIST_P12_PATH"

@@ -12,3 +12,17 @@
 // BuildInfo.xcconfig is gitignored; the optional include means builds work
 // without it (COMMIT_HASH resolves empty → Settings shows version only).
 #include? "../SpatialStash/BuildInfo.xcconfig"
+
+// Private-API tuning, for GitHub-only builds. Empty here so every ordinary
+// build — including anything destined for the App Store — compiles the private
+// code out entirely. Opt in with `scripts/build-and-sign.sh --private-api`,
+// which sets PRIVATE_API_CONDITION on the xcodebuild command line.
+//
+// The visionOS 27-only symbols are linked non-weakly, so a build exposing them
+// must not claim to run on 26.x or dyld fails at launch. The deployment target
+// can't be raised from here — the target's own XROS_DEPLOYMENT_TARGET = 26.0
+// outranks an xcconfig — so --private-api passes it on the xcodebuild command
+// line, which outranks both.
+PRIVATE_API_CONDITION =
+
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) $(PRIVATE_API_CONDITION)
