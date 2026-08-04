@@ -40,6 +40,26 @@ DEVICE_NAME="Apple Vision Pro"
 # Script executed before xcodebuild (relative to repo root). Leave empty to skip.
 PRE_BUILD_HOOK="./scripts/set-build-info.sh"
 
+# --- Optional toolchain override ---
+# ~/bin/build-and-sign never sets DEVELOPER_DIR, so it builds with whatever
+# xcode-select points at. Export it here to pin this repo to a specific Xcode
+# without changing the system default — required for the private spatial-3D
+# tuning, whose accessors only exist in the visionOS 27.0 SDK.
+# export DEVELOPER_DIR="/Applications/Xcode-beta.app/Contents/Developer"
+
 # --- Optional extra xcodebuild settings (bash array) ---
 # Appended to the build invocation, e.g. compilation conditions:
 # EXTRA_BUILD_SETTINGS=('SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) SOME_FLAG')
+#
+# To enable the GitHub-only private spatial-3D tuning on every build from this
+# machine (see Services/PrivateSpatial3DTuning.swift). The deployment target must
+# be raised on the command line — the target's own 26.0 outranks an xcconfig —
+# because the visionOS 27-only symbols are linked non-weakly.
+#
+# NOTE: ~/bin/build-and-sign has no --private-api guard (only the repo's
+# scripts/build-and-sign.sh refuses to combine it with --distribution). Clear the
+# condition for an App Store build: --distribution --set PRIVATE_API_CONDITION=
+# EXTRA_BUILD_SETTINGS=(
+#     'PRIVATE_API_CONDITION=SPATIALSTASH_PRIVATE_API SPATIALSTASH_PRIVATE_API_V27'
+#     'XROS_DEPLOYMENT_TARGET=27.0'
+# )
