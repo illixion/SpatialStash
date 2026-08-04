@@ -1,9 +1,10 @@
 /*
  Spatial Stash - Pseudo 3D Settings
 
- Per-window tuning for the real-time "fake 3D" video conversion. The mono frame
- is warped per-eye in a Metal fragment shader (see videoPseudo3DEyeFragmentShader)
- using a cheap heuristic depth estimate, so there is no pre-compute step.
+ Per-window tuning for the "fake 3D" video conversion. The mono frame is warped
+ per-eye in a Metal fragment shader (see videoPseudo3DEyeFragmentShader) against
+ a real depth map — Core ML inference per frame (realtime) or a pre-processed
+ DepthCacheStore entry. There is no heuristic-depth fallback.
 
  `depthStrength` is the maximum horizontal disparity expressed in normalized UV
  (a fraction of frame width). `convergence` selects which depth sample sits on
@@ -41,7 +42,15 @@ struct Pseudo3DSettings: Codable, Hashable {
     /// Depth (0..1, inverse — 1 = near) that maps to zero parallax / the window
     /// plane. Higher pushes the scene back; 1.0 puts each frame's nearest
     /// content on the glass with everything behind it.
-    var convergence: Double = 0.45
+    ///
+    /// Defaults to 1.0, which on-device reads correctly across content: the
+    /// realtime map is min/max normalized per frame, so 1.0 tracks each frame's
+    /// own near point (scene-adaptive for free) and nothing can cross in front
+    /// of the window frame. The prior 0.45 put mid-depth on the glass and
+    /// pushed over half of every frame out through the window.
+    var convergence: Double = 1.0
+    /// The default this replaced. Normalized away on decode (see `init(from:)`).
+    static let legacyConvergenceDefault = 0.45
 
     static let `default` = Pseudo3DSettings()
 
@@ -67,6 +76,17 @@ extension Pseudo3DSettings {
         // persisted values prevents them from making an otherwise-default
         // per-window setting shadow the active global convergence settings.
         depthStrength = defaults.depthStrength
-        convergence = try container.decodeIfPresent(Double.self, forKey: .convergence) ?? defaults.convergence
+        let decodedConvergence = try container.decodeIfPresent(Double.self, forKey: .convergence)
+            ?? defaults.convergence
+        // Adopt the new default for anyone still carrying the old one. Two
+        // reasons this can't just be left alone: a persisted global would keep
+        // the old plane forever, and — because `isModified` compares against
+        // `.default` — a per-window 0.45 would start counting as "modified" and
+        // shadow the global (the same trap the legacy depthStrength above
+        // sidesteps). Safe to key on the exact value: the slider is continuous
+        // and unstepped, so 0.45 is only ever reachable as the old default.
+        convergence = decodedConvergence == Self.legacyConvergenceDefault
+            ? defaults.convergence
+            : decodedConvergence
     }
 }

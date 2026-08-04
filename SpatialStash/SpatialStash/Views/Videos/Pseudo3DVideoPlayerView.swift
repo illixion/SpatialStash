@@ -861,7 +861,9 @@ final class StereoPump: @unchecked Sendable {
         /// Matches Pseudo3DSettings' Subtle default — always overwritten by
         /// makePumpConfig, but a missed config path should fail conservative.
         var depthStrength: Float = 0.008
-        var convergence: Float = 0.45
+        /// Matches Pseudo3DSettings' default. Also the conservative fallback if a
+        /// config path is ever missed: at 1.0 nothing crosses the window frame.
+        var convergence: Float = 1.0
         var mirror: Bool = false
     }
 
