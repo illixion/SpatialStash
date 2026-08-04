@@ -264,6 +264,7 @@ struct SlideshowSpatial3DSlotView: View {
             // generated for this slot stays valid across the toggle.
             guard var ipc = entity.components[ImagePresentationComponent.self] else { return }
             ipc.desiredViewingMode = newValue ? .spatial3DImmersive : .spatial3D
+            ipc.applyPrivateSpatial3DTuningIfAvailable()
             entity.components.set(ipc)
         }
     }
@@ -358,6 +359,7 @@ struct SlideshowSpatial3DSlotView: View {
             let spatial = try await Self.makeSpatial3DImage(from: sourceData)
             var ipc = ImagePresentationComponent(spatial3DImage: spatial)
             ipc.desiredViewingMode = immersive ? .spatial3DImmersive : .spatial3D
+            ipc.applyPrivateSpatial3DTuningIfAvailable()
             entity.components.set(ipc)
             loadedKey = key
             // Kick off the depth-map generation in a detached task that
