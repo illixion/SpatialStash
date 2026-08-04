@@ -409,7 +409,15 @@ struct VideoWindowView: View {
                     stereoscopicOverride: windowModel.stereoscopicOverride,
                     video3DSettings: windowModel.video3DSettings,
                     pseudo3DEnabled: windowModel.pseudo3DEnabled,
-                    pseudo3DSettings: windowModel.pseudo3DSettings
+                    // Only carry a *genuine* per-window override. Snapshotting
+                    // an unmodified value would persist whatever `.default` is
+                    // today, and since `effectivePseudo3DSettings` decides
+                    // per-window-vs-global on `isModified`, a later change to
+                    // that default would make the baked-in old value start
+                    // counting as modified and shadow the global. nil keeps the
+                    // window following the global, which is what it was doing.
+                    pseudo3DSettings: windowModel.pseudo3DSettings.isModified
+                        ? windowModel.pseudo3DSettings : nil
                 )
                 openWindow(id: "video-detail", value: newValue)
                 dismissWindow()
