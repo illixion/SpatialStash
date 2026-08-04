@@ -288,11 +288,15 @@ class SlideshowEngine {
     /// path is opt-in per-window.
     var slideshow3DMode: Slideshow3DMode = .off {
         didSet {
+            guard slideshow3DMode != oldValue else { return }
             if slideshow3DMode != .off {
                 // Ken Burns + diorama don't apply to the RealityKit pipeline.
                 if enableKenBurns { enableKenBurns = false }
                 if enableDiorama { enableDiorama = false }
             }
+            // A video already on screen converts (or drops back to flat)
+            // immediately, matching how the image layer swaps renderers.
+            refreshPseudo3DForActiveVideo()
         }
     }
 
@@ -306,6 +310,117 @@ class SlideshowEngine {
     /// so a single download per post is enough.
     var effectiveDownloadResolution: Int {
         isSlideshow3DActive ? maxImageResolution3D : maxImageResolution
+    }
+
+    // MARK: - Slideshow 3D Video (real-time fake 3D)
+
+    /// A video post cleared for real-time mono→stereo conversion, together with
+    /// the URL that has to be played to get it (the raw source when AVFoundation
+    /// can decode it, otherwise the server's HLS transcode).
+    struct Pseudo3DVideoTarget: Equatable {
+        let postId: Int
+        let url: URL
+    }
+
+    /// Resolved target for the video post currently being displayed. Never read
+    /// directly by the view — see `activePseudo3DVideoURL`, which re-checks that
+    /// the target still belongs to the video on screen.
+    private(set) var pseudo3DVideoTarget: Pseudo3DVideoTarget?
+    private var pseudo3DResolveTask: Task<Void, Never>?
+
+    /// Memoized decodability answers, keyed by URL. RAM-only and bounded — a
+    /// looping slideshow revisits the same clips, and each probe costs an
+    /// `AVURLAsset` metadata round-trip.
+    private var nativeDecodeProbeCache: [URL: Bool] = [:]
+    private static let nativeDecodeProbeCacheLimit = 64
+    /// Per-candidate probe budget. Bounded because it sits in front of a video
+    /// transition; a source that hasn't answered by then plays flat.
+    private static let nativeDecodeProbeTimeout: TimeInterval = 2.0
+
+    /// URL to hand `Pseudo3DVideoPlayerView`, or nil when the active video
+    /// should play flat. Gated on the resolved target still matching the video
+    /// on screen, so it self-invalidates on every post change without any
+    /// clearing at the call sites — during an image→video crossfade the video is
+    /// `nextPost`, after the commit it's `currentPost`.
+    var activePseudo3DVideoURL: URL? {
+        guard isSlideshow3DActive, activeVideoURL != nil,
+              let target = pseudo3DVideoTarget else { return nil }
+        let activeId = (nextVideoURL != nil ? nextPost?._id : nil) ?? currentPost?._id
+        guard target.postId == activeId else { return nil }
+        return target.url
+    }
+
+    /// The stereo pipeline couldn't play this source (no usable depth, decode
+    /// failure). Drop back to the flat tiers for this post; the next post
+    /// resolves fresh.
+    func reportPseudo3DVideoFailure() {
+        // Ignore a late report from a player torn down for a post we've moved
+        // past — that would wrongly disable 3D for the clip now on screen.
+        guard let target = pseudo3DVideoTarget, activePseudo3DVideoURL == target.url else { return }
+        AppLogger.remoteViewer.warning("Slideshow fake-3D failed for post \(target.postId, privacy: .public); falling back to flat playback")
+        pseudo3DVideoTarget = nil
+    }
+
+    /// Decide whether `post`'s video can be converted in real time, and on which
+    /// URL. Requires slideshow 3D on, an installed real-time depth model, and an
+    /// AVFoundation-decodable source — the stereo pump pulls frames from an
+    /// `AVPlayerItemVideoOutput`, so WebKit-only sources (WebM/VP9) are reachable
+    /// only via the server transcode.
+    ///
+    /// Real-time inference only: depth lives in GPU/RAM for the frame it warps
+    /// and is never written to disk (no `DepthConverter` / `DepthCacheStore`
+    /// involvement), so a slideshow can't quietly fill storage with depth
+    /// videos for everything it cycles past.
+    private func resolvePseudo3DTarget(url: URL, hlsURL: URL?, post: RemotePost) async -> Pseudo3DVideoTarget? {
+        guard isSlideshow3DActive else { return nil }
+        guard CoreMLDepthProvider.hasAvailableModel(role: .realtime) else {
+            AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "Slideshow 3D on but no real-time depth model installed — video plays flat")
+            return nil
+        }
+        // Raw source first (no transcode cost); HLS transcode as the fallback
+        // for containers AVFoundation won't touch.
+        var candidates = [url]
+        if let hlsURL, hlsURL != url { candidates.append(hlsURL) }
+        for candidate in candidates {
+            if await canDecodeNatively(candidate) {
+                return Pseudo3DVideoTarget(postId: post._id, url: candidate)
+            }
+        }
+        AppLogger.remoteViewer.info("Slideshow post \(post._id, privacy: .public) isn't AVFoundation-decodable — video plays flat in 2D")
+        return nil
+    }
+
+    private func canDecodeNatively(_ url: URL) async -> Bool {
+        if let cached = nativeDecodeProbeCache[url] { return cached }
+        let result = await NativeVideoDecodeProbe.canPlayNatively(
+            url: url, timeout: Self.nativeDecodeProbeTimeout
+        )
+        if nativeDecodeProbeCache.count >= Self.nativeDecodeProbeCacheLimit {
+            nativeDecodeProbeCache.removeAll(keepingCapacity: true)
+        }
+        nativeDecodeProbeCache[url] = result
+        return result
+    }
+
+    /// Re-resolve (or tear down) fake-3D for the video already on screen. Used
+    /// when the 3D mode is toggled mid-video from the ornament.
+    private func refreshPseudo3DForActiveVideo() {
+        pseudo3DResolveTask?.cancel()
+        pseudo3DResolveTask = nil
+        guard isSlideshow3DActive else {
+            pseudo3DVideoTarget = nil
+            return
+        }
+        guard let url = activeVideoURL,
+              let post = (nextVideoURL != nil ? nextPost : nil) ?? currentPost,
+              pseudo3DVideoTarget?.postId != post._id else { return }
+        let hls = currentVideoHLSURL
+        pseudo3DResolveTask = Task { [weak self] in
+            guard let self else { return }
+            let target = await self.resolvePseudo3DTarget(url: url, hlsURL: hls, post: post)
+            guard !Task.isCancelled else { return }
+            self.pseudo3DVideoTarget = target
+        }
     }
 
     /// First image queued for the next crossfade. Exposed so the 3D
@@ -635,6 +750,8 @@ class SlideshowEngine {
         gifConversionTask = nil
         watchdogTask?.cancel()
         watchdogTask = nil
+        pseudo3DResolveTask?.cancel()
+        pseudo3DResolveTask = nil
         tagListManager?.removeChangeHandler(id: engineId)
     }
 
@@ -1275,6 +1392,21 @@ class SlideshowEngine {
     // MARK: - Display
 
     func displayVideo(url: URL, post: RemotePost, asImage: Bool = false, hlsURL: URL? = nil) async {
+        // Resolve real-time fake-3D before the transition so the clip mounts
+        // straight into the stereo player; resolving afterwards would paint a
+        // flat frame and then swap renderers under the viewer. Returns without
+        // suspending when slideshow 3D is off, so the 2D path pays nothing.
+        let entryState = state
+        pseudo3DResolveTask?.cancel()
+        pseudo3DResolveTask = nil
+        let resolvedPseudo3D = await resolvePseudo3DTarget(url: url, hlsURL: hlsURL, post: post)
+        // The probe suspends — if the slideshow moved on meanwhile this display
+        // is superseded (callers already treat a state change as implicit
+        // success rather than failure). Bail before touching the target so the
+        // video still on screen keeps the one it's playing with.
+        guard state == entryState else { return }
+        pseudo3DVideoTarget = resolvedPseudo3D
+
         trackPreviousPost()
         trackHistory(post: post, url: url)
         Task { await contentProvider?.onPostDisplayed(post) }

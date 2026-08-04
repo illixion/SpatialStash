@@ -94,6 +94,17 @@ struct Pseudo3DVideoPlayerView: View {
     /// Initial mute state applied when a video loads (autoplay always starts
     /// playback; this only controls whether it opens with audio).
     var startMuted: Bool = true
+    /// Restart from the top at end of playback. The video window always loops;
+    /// the slideshow only loops clips shorter than its dwell interval (a longer
+    /// clip plays through once and the server times the advance off its end).
+    var loops: Bool = true
+    /// Scene-space opacity for the video plane, applied via `OpacityComponent`.
+    /// RealityKit content on visionOS ignores SwiftUI's `.opacity`, so a caller
+    /// that crossfades (the slideshow) has to drive the fade through here.
+    var contentOpacity: Double = 1
+    /// Fired once per loaded item when its duration becomes known — the
+    /// AVPlayer equivalent of the web player's `loadedmetadata`.
+    var onDurationKnown: ((Double) -> Void)? = nil
     var onPlaybackError: (() -> Void)? = nil
     /// Tap on the video surface (toggles chrome) — handled as a RealityKit tap
     /// target because a 2D overlay can't catch gaze over a RealityView.
@@ -122,7 +133,10 @@ struct Pseudo3DVideoPlayerView: View {
                 )
                 engine.onVideoSizeKnown = onVideoSizeKnown
                 engine.onPlaybackError = onPlaybackError
+                engine.onDurationKnown = onDurationKnown
                 engine.startMuted = startMuted
+                engine.loops = loops
+                engine.setContentOpacity(contentOpacity)
                 content.add(engine.makeVideoEntity())
                 engine.observeVideoSize(content: content)
                 engine.load(url: videoURL, roomActive: isRoomActive, depthMode: depthMode, startAt: startAtSeconds, startPaused: startPaused)
@@ -166,11 +180,20 @@ struct Pseudo3DVideoPlayerView: View {
         }
         .onAppear {
             engine.startMuted = startMuted
+            engine.loops = loops
+            engine.onDurationKnown = onDurationKnown
             engine.bindCommands(loopController: loopController, playbackModel: playbackModel)
             engine.configure(visualAdjustments: visualAdjustments, settings: settings, isFlipped: isFlipped)
             engine.setRoomActive(isRoomActive)
             engine.setChromeOpen(chromeOpen)
+            engine.setContentOpacity(contentOpacity)
         }
+        .onChange(of: loops) { _, new in
+            engine.loops = new
+        }
+        .modifier(AnimatableSceneOpacity(opacity: contentOpacity) { [engine] value in
+            engine.setContentOpacity(value)
+        })
         .onChange(of: chromeOpen) { _, open in
             engine.setChromeOpen(open)
         }
@@ -190,6 +213,31 @@ struct Pseudo3DVideoPlayerView: View {
             engine.cleanup()
         }
     }
+}
+
+/// Bridges a SwiftUI-animated opacity out to RealityKit. SwiftUI interpolates
+/// `animatableData` frame-by-frame for the duration of the enclosing
+/// `withAnimation`, so the callback sees the whole ramp; a plain
+/// `.onChange(of:)` only ever observes the endpoints, which would turn a
+/// crossfade into a cut to black. Needed because RealityKit content on visionOS
+/// ignores SwiftUI's `.opacity` — the fade has to reach `OpacityComponent`.
+private struct AnimatableSceneOpacity: ViewModifier, Animatable {
+    var opacity: Double
+    let apply: @MainActor (Double) -> Void
+
+    /// `nonisolated` to satisfy `Animatable`, which SwiftUI drives from outside
+    /// the main-actor-isolated `ViewModifier` surface. Animation ticks do run on
+    /// the main thread, hence `assumeIsolated` rather than a hop (a hop would
+    /// land after the tick it belongs to).
+    nonisolated var animatableData: Double {
+        get { opacity }
+        set {
+            opacity = newValue
+            MainActor.assumeIsolated { apply(newValue) }
+        }
+    }
+
+    func body(content: Content) -> some View { content }
 }
 
 // MARK: - Engine (main-actor: SwiftUI + transport only)
@@ -236,6 +284,9 @@ final class Pseudo3DStereoEngine {
     @ObservationIgnored private var chromeOpen = false
     /// Video opacity while a menu/popover is open (low = chrome clearly visible).
     @ObservationIgnored private let chromeDimOpacity: Float = 0.12
+    /// Caller-driven opacity (slideshow crossfades), multiplied with the chrome
+    /// dim. SwiftUI's `.opacity` doesn't reach RealityKit content on visionOS.
+    @ObservationIgnored private var contentOpacity: Float = 1
 
     // Config
     private var visualAdjustments = VisualAdjustments()
@@ -256,10 +307,16 @@ final class Pseudo3DStereoEngine {
 
     /// Initial mute state applied to a freshly loaded player.
     @ObservationIgnored var startMuted = true
+    /// Restart at the top when playback reaches the end.
+    @ObservationIgnored var loops = true
 
     // Callbacks
     @ObservationIgnored var onVideoSizeKnown: ((CGSize) -> Void)?
     @ObservationIgnored var onPlaybackError: (() -> Void)?
+    @ObservationIgnored var onDurationKnown: ((Double) -> Void)?
+    /// One-shot latch for `onDurationKnown` (duration is polled from the
+    /// periodic time observer, which fires ~30×/s). Reset per loaded item.
+    @ObservationIgnored private var didReportDuration = false
     @ObservationIgnored private var onPlaybackUpdate: ((NativeMetalVideoPlayerView.Coordinator.PlaybackState) -> Void)?
 
     init() {
@@ -419,12 +476,22 @@ final class Pseudo3DStereoEngine {
         applyChromeOpacity()
     }
 
+    /// Caller-driven plane opacity (slideshow crossfade). Composes with the
+    /// chrome dim rather than replacing it.
+    func setContentOpacity(_ opacity: Double) {
+        let clamped = Float(max(0, min(1, opacity)))
+        guard abs(contentOpacity - clamped) > 0.001 else { return }
+        contentOpacity = clamped
+        applyChromeOpacity()
+    }
+
     /// Reflect `chromeOpen` on the entity. Called from setChromeOpen AND after
     /// the entity is (re)fit, so the state is consistent even when the entity is
     /// created after the first setChromeOpen (which otherwise left it desynced —
     /// the first menu wouldn't fade, later ones would).
     private func applyChromeOpacity() {
-        videoEntity?.components.set(OpacityComponent(opacity: chromeOpen ? chromeDimOpacity : 1.0))
+        let opacity = contentOpacity * (chromeOpen ? chromeDimOpacity : 1.0)
+        videoEntity?.components.set(OpacityComponent(opacity: opacity))
     }
 
     /// Plane width (meters) above which `depthStrength` is attenuated. The warp
@@ -586,8 +653,15 @@ final class Pseudo3DStereoEngine {
             forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
-                self?.seek(to: 0)
-                if self?.isRoomActive == true { self?.play() }
+                guard let self else { return }
+                // Non-looping (slideshow clip longer than the dwell interval):
+                // park on the last frame and let the caller time the advance.
+                guard self.loops else {
+                    self.reportPlaybackState()
+                    return
+                }
+                self.seek(to: 0)
+                if self.isRoomActive { self.play() }
             }
         }
         failureObserver = NotificationCenter.default.addObserver(
@@ -712,6 +786,10 @@ final class Pseudo3DStereoEngine {
             .map { $0.start.seconds + $0.duration.seconds }
             .filter { $0.isFinite }
             .max() ?? 0
+        if !didReportDuration, duration.isFinite, duration > 0 {
+            didReportDuration = true
+            onDurationKnown?(duration)
+        }
         onPlaybackUpdate?(
             .init(
                 currentTime: currentTime ?? player.currentTime().seconds,
@@ -741,6 +819,7 @@ final class Pseudo3DStereoEngine {
         videoRenderer.flush()
         onVideoSizeKnown = nil
         onPlaybackError = nil
+        onDurationKnown = nil
         onPlaybackUpdate = nil
     }
 
@@ -765,6 +844,7 @@ final class Pseudo3DStereoEngine {
         loadedURL = nil
         loopA = nil
         loopB = nil
+        didReportDuration = false
     }
 }
 

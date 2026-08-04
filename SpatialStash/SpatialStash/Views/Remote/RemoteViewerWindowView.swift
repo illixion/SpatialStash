@@ -513,7 +513,39 @@ struct RemoteViewerWindowView: View {
             if let videoURL = model.activeVideoURL {
                 let isOutgoing = model.isTransitioning && model.nextVideoURL == nil
                 Group {
-                    if model.activeVideoIsAnimatedImage {
+                    if let url3D = model.activePseudo3DVideoURL {
+                        // Slideshow 3D + an installed real-time depth model:
+                        // convert the mono clip to windowed stereoscopic 3D on
+                        // the fly. Always `.realtime` — the pre-processed mode
+                        // would write a depth video per clip to disk, and a
+                        // slideshow cycles through far too much content for
+                        // that. Depth here lives only as long as the frame it
+                        // warps.
+                        Pseudo3DVideoPlayerView(
+                            videoURL: url3D,
+                            isRoomActive: model.isRoomActive,
+                            // RealityKit ignores SwiftUI's .brightness/.contrast/
+                            // .saturation, so the slideshow's adjustments (incl.
+                            // dynamic brightness) ride the warp shader instead.
+                            visualAdjustments: pseudo3DAdjustments(model: model),
+                            settings: appModel.globalPseudo3DSettings,
+                            depthMode: .realtime,
+                            loops: model.currentVideoLoops,
+                            // Same reason as the adjustments: the .opacity below
+                            // can't fade RealityKit content, so the crossfade is
+                            // driven through the scene's OpacityComponent.
+                            contentOpacity: isOutgoing ? 0 : 1,
+                            onDurationKnown: { [weak model] seconds in
+                                guard let model, let post = model.nextPost ?? model.currentPost else { return }
+                                model.onVideoDurationKnown(seconds, for: post)
+                            },
+                            onPlaybackError: { [weak model] in
+                                // No usable depth or the stereo pipeline can't
+                                // decode this source — drop to the flat tiers.
+                                model?.reportPseudo3DVideoFailure()
+                            }
+                        )
+                    } else if model.activeVideoIsAnimatedImage {
                         // Native tier: WebKit plays H.264 in an <img>, managing
                         // playback lifecycle itself (pause / resume on room
                         // transitions) — no AVPlayer, no isRoomActive/duration
@@ -555,7 +587,10 @@ struct RemoteViewerWindowView: View {
                 .contrast(model.effectiveContrast)
                 .saturation(model.effectiveSaturation)
                 .onAppear {
-                    markContentPresented(renderer: "WebKit video")
+                    markContentPresented(
+                        renderer: model.activePseudo3DVideoURL != nil
+                            ? "RealityKit stereo video" : "WebKit video"
+                    )
                 }
             }
         }
@@ -574,6 +609,20 @@ struct RemoteViewerWindowView: View {
                 resetKenBurns()
             }
         }
+    }
+
+    /// Packs the slideshow's effective adjustments for the fake-3D warp shader.
+    /// RealityKit content on visionOS doesn't honor SwiftUI's compositing
+    /// modifiers, so brightness/contrast/saturation have to be baked into the
+    /// per-eye warp the way `SlideshowSpatial3DSlotView` bakes them into the
+    /// image bytes. `VisualAdjustments` declares its own init, so there's no
+    /// memberwise one to call inline.
+    private func pseudo3DAdjustments(model: RemoteViewerModel) -> VisualAdjustments {
+        var adjustments = VisualAdjustments()
+        adjustments.brightness = model.effectiveBrightness
+        adjustments.contrast = model.effectiveContrast
+        adjustments.saturation = model.effectiveSaturation
+        return adjustments
     }
 
     /// Renders the current image via Metal when a GPU texture is available,

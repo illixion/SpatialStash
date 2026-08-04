@@ -767,23 +767,7 @@ final class VideoWindowModel {
     }
 
     private nonisolated static func canPlayNatively(url: URL) async -> Bool {
-        let asset = AVURLAsset(url: url)
-        do {
-            let isPlayable = try await asset.load(.isPlayable)
-            guard isPlayable else { return false }
-            // HLS assets expose their video through AVAssetVariant rather than
-            // classic tracks, so `loadTracks(.video)` comes back empty even when
-            // the stream is perfectly playable. Requiring a non-empty track list
-            // would wrongly route HLS to WebKit (disabling the native renderer
-            // and the fake-3D toggle), so trust `isPlayable` for HLS.
-            if url.pathExtension.lowercased() == "m3u8" {
-                return true
-            }
-            let tracks = try await asset.loadTracks(withMediaType: .video)
-            return !tracks.isEmpty
-        } catch {
-            return false
-        }
+        await NativeVideoDecodeProbe.canPlayNatively(url: url)
     }
 
     func toggleFlip() {

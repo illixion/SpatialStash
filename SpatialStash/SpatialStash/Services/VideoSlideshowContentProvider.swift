@@ -20,6 +20,11 @@ class VideoSlideshowContentProvider: SlideshowContentProvider {
     private var page: Int = 0
     /// URL mapping for video posts (RemotePost._id → streamURL)
     private var videoURLMap: [Int: URL] = [:]
+    /// Server-side transcode per post (RemotePost._id → transcodeStreamURL).
+    /// Reserve stream, exactly as in the video window: the flat `<video>` tier
+    /// escalates to it when the device can't decode the original, and slideshow
+    /// fake-3D needs it for containers AVFoundation won't open at all (WebM).
+    private var transcodeURLMap: [Int: URL] = [:]
 
     init(videoSource: any VideoSource, filter: SceneFilterCriteria? = nil) {
         self.videoSource = videoSource
@@ -56,6 +61,9 @@ class VideoSlideshowContentProvider: SlideshowContentProvider {
             }
             for (video, post) in zip(result.videos, posts) {
                 videoURLMap[post._id] = video.streamURL
+                if let transcode = video.transcodeStreamURL {
+                    transcodeURLMap[post._id] = transcode
+                }
             }
             AppLogger.remoteViewer.info("Video slideshow: fetched \(posts.count, privacy: .public) videos")
             return posts
@@ -75,6 +83,10 @@ class VideoSlideshowContentProvider: SlideshowContentProvider {
         videoURLMap[post._id]
     }
 
+    func hlsURL(for post: RemotePost) -> URL? {
+        transcodeURLMap[post._id]
+    }
+
     func onPostDisplayed(_ post: RemotePost) async {
         // No server-side history for video slideshow mode
     }
@@ -82,5 +94,6 @@ class VideoSlideshowContentProvider: SlideshowContentProvider {
     func resetPagination() {
         page = 0
         videoURLMap.removeAll()
+        transcodeURLMap.removeAll()
     }
 }
