@@ -70,9 +70,20 @@ private struct PrivateOutBuffer64 {
 }
 
 /// Zero-parallax alignment for the immersive spatial-3D scene.
+///
+/// Confirmed on device (visionOS 27.0). The mapping is the opposite of what the
+/// case names suggest, so don't "fix" it from intuition:
+///
+///   * `alignToViewDepth` — the **stock visionOS 27 value**, and the behaviour
+///     change itself: zooms toward the subject and shifts the view with the
+///     viewer's head position.
+///   * `alignToHeadPosition` — **restores the pre-27 static portal**.
 enum PrivateSceneRepositionMode: UInt8, Codable, CaseIterable, Identifiable {
     case alignToViewDepth = 0
     case alignToHeadPosition = 1
+
+    /// The value that reproduces the pre-visionOS 27 presentation.
+    static let restoresLegacyPresentation = PrivateSceneRepositionMode.alignToHeadPosition
 
     var id: UInt8 { rawValue }
 

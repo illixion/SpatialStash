@@ -25,6 +25,22 @@ struct PrivateSpatial3DTuningSection: View {
                 .foregroundStyle(.secondary)
 
             if store.isEnabled {
+                #if SPATIALSTASH_PRIVATE_API_V27
+                // The one knob confirmed to fix the visionOS 27 immersive
+                // change, as a single tap so it needn't be rediscovered.
+                Button("Restore Pre-visionOS 27 Immersive Look") {
+                    var s = store.settings
+                    s.sceneRepositionMode = .restoresLegacyPresentation
+                    store.settings = s
+                    store.markChanged()
+                }
+                .disabled(store.settings.sceneRepositionMode == .restoresLegacyPresentation)
+
+                Text("Sets Scene Reposition Mode to Align to Head Position. Cycle 3D off and on to apply.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                #endif
+
                 // Captions record what was actually observed on device
                 // (visionOS 27.0) so knobs with no effect aren't retried blind.
                 floatKnob(
@@ -109,7 +125,7 @@ struct PrivateSpatial3DTuningSection: View {
             }
             .pickerStyle(.segmented)
         }
-        Text("Chooses how the immersive scene anchors: to a fixed view depth, or tracking head position. Stock is Align to View Depth.")
+        Text("Confirmed fix for the visionOS 27 immersive change. Align to Head Position restores the pre-27 static portal; Align to View Depth is the stock 27 behaviour that zooms toward the subject and shifts with viewpoint. The mapping is the opposite of what the names suggest.")
             .font(.caption)
             .foregroundStyle(.secondary)
     }
