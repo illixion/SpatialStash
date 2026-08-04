@@ -175,7 +175,9 @@ struct VideoStereoUniforms {
     float contrast;
     float saturation;
     float depthStrength;  // max horizontal disparity in UV (fraction of width)
-    float convergence;    // depth mapped to zero parallax (0 = far, 1 = near)
+    float convergence;    // depth put on the window plane. Inverse depth, so 1
+                          // is NEAR: raising this pushes the scene BACK (at 1.0
+                          // nothing crosses in front of the window frame).
     float eyeSign;        // +1 = left eye, -1 = right eye
     float mirror;         // 1 = mirror horizontally (flip), 0 = normal
     float useDepth;       // 1 = sample real depth from depthTex, 0 = heuristic

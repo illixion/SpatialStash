@@ -520,7 +520,6 @@ final class Pseudo3DStereoEngine {
             saturation: Float(visualAdjustments.saturation),
             depthStrength: strength,
             convergence: Float(settings.convergence),
-            autoConvergence: settings.autoConvergence,
             mirror: isFlipped
         )
     }
@@ -863,9 +862,6 @@ final class StereoPump: @unchecked Sendable {
         /// makePumpConfig, but a missed config path should fail conservative.
         var depthStrength: Float = 0.008
         var convergence: Float = 0.45
-        /// Use the depth source's per-frame median as the zero-parallax plane
-        /// when it provides one (cached mode); falls back to `convergence`.
-        var autoConvergence: Bool = false
         var mirror: Bool = false
     }
 
@@ -1123,15 +1119,12 @@ final class StereoPump: @unchecked Sendable {
         config: Config,
         commandBuffer: MTLCommandBuffer
     ) {
-        // Auto-convergence: keep the (smoothed) median depth on the window
-        // plane when the depth source provides one; manual value otherwise.
-        let convergence = (config.autoConvergence ? depth?.median : nil) ?? config.convergence
         var uniforms = VideoStereoUniforms(
             brightness: config.brightness,
             contrast: config.contrast,
             saturation: config.saturation,
             depthStrength: config.depthStrength,
-            convergence: convergence,
+            convergence: config.convergence,
             eyeSign: eyeSign,
             mirror: config.mirror ? 1.0 : 0.0,
             useDepth: depth != nil ? 1.0 : 0.0,

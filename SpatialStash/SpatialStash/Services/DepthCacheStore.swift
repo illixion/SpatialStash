@@ -74,8 +74,16 @@ enum DepthCacheStore {
         /// display range, so playback needs no further stats work.
         let displayScale: [Float]
         let displayBias: [Float]
-        /// Per-frame median depth in display space (0-1), lookahead-smoothed —
-        /// drives auto-convergence.
+        /// Per-frame median depth in display space (0-1), lookahead-smoothed.
+        /// Vestigial: it drove auto-convergence, which was removed once
+        /// convergence 1.0 proved to work across content (the realtime map is
+        /// normalized per frame, so a fixed 1.0 already pins each frame's
+        /// nearest content to the window plane — and unlike a tracked median it
+        /// can't wander). Still written, and still required here, because the
+        /// converter computes it as a by-product of the histogram it needs for
+        /// p2/p98 anyway: dropping it would change the converter's output and
+        /// force a `pipelineVersion` bump, invalidating every existing cache
+        /// entry for no benefit.
         let displayMedian: [Float]
     }
 

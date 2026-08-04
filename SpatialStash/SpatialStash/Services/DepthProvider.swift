@@ -47,8 +47,6 @@ struct PumpFrameDepth {
     /// cached depth bakes its per-frame encode + display ranges here).
     let valueScale: Float
     let valueBias: Float
-    /// Display-space median depth (auto-convergence); nil when unknown.
-    let median: Float?
 }
 
 /// StereoPump's per-frame depth supplier. Implementations are called only on
@@ -139,7 +137,7 @@ final class RealtimeDepthSource: PumpDepthSource, @unchecked Sendable {
         )
         let depth = PumpFrameDepth(
             texture: texture, uvScale: uv.scale, uvOffset: uv.offset,
-            valueScale: 1, valueBias: 0, median: nil
+            valueScale: 1, valueBias: 0
         )
         held = depth
         heldItemSeconds = t.isFinite ? t : -.infinity

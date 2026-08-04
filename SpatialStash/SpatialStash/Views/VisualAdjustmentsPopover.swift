@@ -216,11 +216,10 @@ struct VisualAdjustmentsPopover: View {
             if let pseudo3DSettings {
                 Divider()
                 // (No Stereo Separation control: strength is fixed at the
-                // Subtle level — see Pseudo3DSettings.depthStrength.)
-                // Auto: track the video's smoothed median depth as the
-                // zero-parallax plane (pre-processed fake-3D only).
-                Toggle("Auto Convergence", isOn: pseudo3DSettings.autoConvergence)
-                    .font(.caption)
+                // Subtle level — see Pseudo3DSettings.depthStrength. No Auto
+                // Convergence either: it tracked the pre-processed median, which
+                // a fixed convergence against the per-frame-normalized map
+                // already does more stably.)
                 adjustmentSlider(
                     label: "Convergence",
                     value: pseudo3DSettings.convergence,
@@ -228,7 +227,6 @@ struct VisualAdjustmentsPopover: View {
                     defaultValue: Pseudo3DSettings.default.convergence,
                     linear: true
                 )
-                .disabled(pseudo3DSettings.wrappedValue.autoConvergence)
             }
 
             Button("Reset") {
@@ -313,8 +311,6 @@ struct VisualAdjustmentsPopover: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                Toggle("Auto Convergence", isOn: globalPseudo3DSettings.autoConvergence)
-                    .font(.caption)
                 adjustmentSlider(
                     label: "Convergence",
                     value: globalPseudo3DSettings.convergence,
@@ -322,7 +318,6 @@ struct VisualAdjustmentsPopover: View {
                     defaultValue: Pseudo3DSettings.default.convergence,
                     linear: true
                 )
-                .disabled(globalPseudo3DSettings.wrappedValue.autoConvergence)
             }
 
             Button("Reset") {

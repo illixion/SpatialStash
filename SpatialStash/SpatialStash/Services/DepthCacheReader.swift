@@ -331,16 +331,15 @@ final class DepthCacheReader: @unchecked Sendable {
         // Per-frame display mapping by nearest PTS (binary search).
         var valueScale: Float = 1
         var valueBias: Float = 0
-        var median: Float?
         if !meta.framePTS.isEmpty {
             let index = nearestIndex(in: meta.framePTS, to: decoded.pts.seconds)
             if index < meta.displayScale.count { valueScale = meta.displayScale[index] }
             if index < meta.displayBias.count { valueBias = meta.displayBias[index] }
-            if index < meta.displayMedian.count { median = meta.displayMedian[index] }
+            // meta.displayMedian is no longer consumed — see DepthCacheStore.
         }
         return PumpFrameDepth(
             texture: decoded.texture, uvScale: uvScale, uvOffset: uvOffset,
-            valueScale: valueScale, valueBias: valueBias, median: median
+            valueScale: valueScale, valueBias: valueBias
         )
     }
 

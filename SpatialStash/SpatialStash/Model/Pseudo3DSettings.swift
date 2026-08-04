@@ -6,9 +6,15 @@
  using a cheap heuristic depth estimate, so there is no pre-compute step.
 
  `depthStrength` is the maximum horizontal disparity expressed in normalized UV
- (a fraction of frame width). `convergence` is the depth value (0 = far, 1 = near)
- mapped to zero parallax — pixels at this depth sit on the window plane, nearer
- pixels pop out, farther pixels recede.
+ (a fraction of frame width). `convergence` selects which depth sample sits on
+ the window plane (disparity = (depth - convergence) * depthStrength): content
+ nearer than it pops out, farther content recedes.
+
+ Note the depth scale is inverse depth — 1 is the NEAR end — so raising
+ convergence pushes the scene *back*, it doesn't bring it forward. At 1.0 every
+ frame's nearest content lands on the glass and nothing can cross in front of
+ the window frame. Since the realtime map is min/max normalized per frame (see
+ CoreMLDepthProvider.makeTexture), 1.0 is scene-adaptive for free.
  */
 
 import Foundation
@@ -32,13 +38,10 @@ struct Pseudo3DSettings: Codable, Hashable {
     /// video planes wider than 1 m — see Pseudo3DStereoEngine.makePumpConfig)
     /// and ignores whatever this decodes to.
     var depthStrength: Double = 0.008
-    /// Depth (0..1) that maps to zero parallax / the window plane.
+    /// Depth (0..1, inverse — 1 = near) that maps to zero parallax / the window
+    /// plane. Higher pushes the scene back; 1.0 puts each frame's nearest
+    /// content on the glass with everything behind it.
     var convergence: Double = 0.45
-    /// Track the video's (lookahead-smoothed) median depth as the zero-parallax
-    /// plane, keeping the main subject on the window plane as scenes change.
-    /// Effective only for pre-processed fake-3D (realtime has no median); the
-    /// manual Convergence slider is disabled while on.
-    var autoConvergence: Bool = false
 
     static let `default` = Pseudo3DSettings()
 
@@ -49,13 +52,14 @@ struct Pseudo3DSettings: Codable, Hashable {
 
 extension Pseudo3DSettings {
     private enum CodingKeys: String, CodingKey {
-        case depthStrength, convergence, autoConvergence
+        case depthStrength, convergence
     }
 
     /// Hand-written so previously persisted JSON (UserDefaults global settings,
     /// per-window VideoWindowValue) keeps decoding as fields are added —
     /// synthesized Codable would throw on the missing key and silently reset
-    /// users to `.default`.
+    /// users to `.default`. Retired keys (`autoConvergence`) need no handling:
+    /// keyed decoding ignores JSON keys with no matching case.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let defaults = Pseudo3DSettings()
@@ -64,6 +68,5 @@ extension Pseudo3DSettings {
         // per-window setting shadow the active global convergence settings.
         depthStrength = defaults.depthStrength
         convergence = try container.decodeIfPresent(Double.self, forKey: .convergence) ?? defaults.convergence
-        autoConvergence = try container.decodeIfPresent(Bool.self, forKey: .autoConvergence) ?? defaults.autoConvergence
     }
 }
