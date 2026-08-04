@@ -313,7 +313,25 @@ codesign -dvvv "$APP_BUNDLE" 2>&1 | grep -E "^(Authority|TeamIdentifier|Identifi
 if [[ "$NO_DEPLOY" == false ]]; then
     echo ""
     echo "==> Deploying to $DEVICE_NAME..."
-    DEVICE_ID=$(xcrun devicectl list devices 2>/dev/null | grep "$DEVICE_NAME" | awk '{print $3}')
+    # Resolve the device UUID by pattern, never by column position: the Hostname
+    # column is empty while a device sits in the `connected` state, which shifts
+    # every later field left and made `awk '{print $3}'` return the literal
+    # string "connected" as the identifier. Simulator rows are skipped since
+    # devicectl only installs to physical devices. `|| true` is required under
+    # `set -euo pipefail`, which would otherwise abort on grep's no-match exit
+    # before the friendly error below could run.
+    DEVICE_LIST=$(xcrun devicectl list devices 2>/dev/null || true)
+    _device_uuid() {
+        grep -v "simulated" \
+            | grep -oiE '[0-9A-F]{8}(-[0-9A-F]{4}){3}-[0-9A-F]{12}' \
+            | head -1
+    }
+    # Prefer an exact match in the Name column, then fall back to a loose match
+    # so configs that name a model substring keep working.
+    DEVICE_ID=$(printf '%s\n' "$DEVICE_LIST" | grep -E "^${DEVICE_NAME}[[:space:]]" | _device_uuid || true)
+    if [[ -z "$DEVICE_ID" ]]; then
+        DEVICE_ID=$(printf '%s\n' "$DEVICE_LIST" | grep -F "$DEVICE_NAME" | _device_uuid || true)
+    fi
     if [[ -z "$DEVICE_ID" ]]; then
         echo "ERROR: Device '$DEVICE_NAME' not found. Is it connected and paired?" >&2
         echo "Available devices:"
