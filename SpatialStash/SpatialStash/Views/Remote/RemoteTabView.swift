@@ -73,7 +73,7 @@ struct RemoteTabView: View {
                     Text("Mode")
                 } footer: {
                     Text(editingConfig.mode == .webPage
-                         ? "Pins a web page in your space. The page keeps its state and window size; it only accepts input while the ornaments are visible."
+                         ? "Pins a website in your space. The page keeps its state and window size; it only accepts input while the ornaments are visible."
                          : "Slideshow driven by a RoboFrame server (or the app's own gallery when the endpoint is blank).")
                 }
 
@@ -93,7 +93,7 @@ struct RemoteTabView: View {
                         appModel.saveRemoteConfig(editingConfig)
                         launchViewer(config: editingConfig)
                     } label: {
-                        Text(editingConfig.mode == .webPage ? "Open Page" : "Launch Viewer")
+                        Text(editingConfig.mode == .webPage ? "Open Website" : "Launch Viewer")
                             .foregroundStyle(.blue)
                     }
                     .disabled(editingConfig.mode == .webPage && editingConfig.resolvedWebPageURL == nil)
@@ -167,7 +167,7 @@ struct RemoteTabView: View {
                     .foregroundColor(.secondary)
             }
         } header: {
-            Text("Web Page")
+            Text("Website")
         } footer: {
             Text("Tap the window to reveal the controls and unlock the page; hide them again (eye button, or let them auto-hide) to block input and stop visionOS from highlighting links as you look around.")
         }
@@ -198,7 +198,7 @@ struct RemoteTabView: View {
 
     @ViewBuilder
     private var slideshowSections: some View {
-        Section("API") {
+        Section {
             TextField("RoboFrame API Endpoint", text: $editingConfig.apiEndpoint)
                 .textContentType(.URL)
                 .autocorrectionDisabled()
@@ -215,6 +215,13 @@ struct RemoteTabView: View {
             SecureField("Access Token", text: $editingConfig.accessToken)
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
+
+            Link("RoboFrame on GitHub", destination: RemoteViewerConfig.roboFrameRepositoryURL)
+                .font(.caption)
+        } header: {
+            Text("RoboFrame Server")
+        } footer: {
+            Text("Leave the endpoint blank to run the slideshow off this app's own gallery instead of a RoboFrame server.")
         }
 
         Section("Display") {

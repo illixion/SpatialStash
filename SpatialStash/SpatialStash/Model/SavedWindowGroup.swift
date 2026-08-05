@@ -240,7 +240,7 @@ struct SavedWindowEntry: Codable, Identifiable, Hashable {
             let total = Int(duration.rounded())
             return String(format: "Video · %d:%02d", total / 60, total % 60)
         case .remote:
-            let kindLabel = remoteWasWebPage ? "Web Page" : "Slideshow"
+            let kindLabel = (remoteWasWebPage ? RemoteViewerMode.webPage : .slideshow).label
             guard let detail = remoteDetail?.trimmingCharacters(in: .whitespaces), !detail.isEmpty else {
                 return kindLabel
             }

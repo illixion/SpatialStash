@@ -42,6 +42,9 @@ enum Slideshow3DMode: String, Codable, CaseIterable, Identifiable {
 /// What a viewer profile actually opens. `.slideshow` is the original
 /// RoboFrame / gallery slideshow; `.webPage` pins an arbitrary web page as an
 /// interactive panel in the user's space (no slideshow engine, no WebSocket).
+///
+/// The raw values are persisted, so they keep the original spelling; only the
+/// user-facing `label` names the actual thing each mode drives.
 enum RemoteViewerMode: String, Codable, CaseIterable, Identifiable {
     case slideshow
     case webPage
@@ -50,8 +53,8 @@ enum RemoteViewerMode: String, Codable, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .slideshow: return "Slideshow"
-        case .webPage: return "Web Page"
+        case .slideshow: return "RoboFrame"
+        case .webPage: return "Website"
         }
     }
 
@@ -122,6 +125,11 @@ struct RemoteViewerConfig: Codable, Identifiable {
     /// The countdown restarts on page interaction, so a page being actively
     /// used isn't reloaded out from under the user.
     var webAutoRefreshInterval: TimeInterval = 0
+
+    /// The RoboFrame slideshow server this mode talks to. Linked from the
+    /// Remote tab so the endpoint field isn't the only clue about what's
+    /// expected on the other end.
+    static let roboFrameRepositoryURL = URL(string: "https://github.com/illixion/RoboFrame")!
 
     /// Selectable auto-refresh intervals. Index 0 is "off"; the Remote tab
     /// drives a slider over these indices rather than a linear seconds range,
