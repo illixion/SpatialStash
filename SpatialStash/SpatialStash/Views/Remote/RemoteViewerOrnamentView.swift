@@ -135,10 +135,38 @@ struct RemoteViewerOrnamentView: View {
                 .disabled(model.currentPost == nil)
                 .help("Block Post")
             }
+
+            Divider()
+                .frame(height: 24)
+
+            identityLabel
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
         .glassBackgroundEffect()
+    }
+
+    /// Which viewer this is. Slideshow windows are otherwise indistinguishable
+    /// from each other — same chrome, content that changes every few seconds — so
+    /// restoring several from a saved window group left no way to tell which
+    /// window is which. The profile name plus its RoboFrame device id (or the
+    /// endpoint host when the profile has no device id) is that identity, and it
+    /// matches what the window group's tile shows for the same profile.
+    private var identityLabel: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(model.config.name)
+                .font(.callout)
+                .lineLimit(1)
+            if let detail = AppModel.remoteIdentityDetail(for: model.config) {
+                Text(detail)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
+        .frame(maxWidth: 220, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
+        .help("Profile and display id for this viewer")
     }
 
     private var tagListMenu: some View {
