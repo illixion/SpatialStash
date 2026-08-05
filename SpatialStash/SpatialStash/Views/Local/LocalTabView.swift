@@ -361,21 +361,10 @@ struct LocalMediaListView: View {
     }
 
     private func launchFolderSlideshow() {
-        let config: RemoteViewerConfig
-        if let existing = appModel.gallerySlideshowConfig {
-            config = existing
-        } else {
-            var newConfig = RemoteViewerConfig(name: "Gallery Slideshow")
-            newConfig.apiEndpoint = ""
-            appModel.applySlideshowDefaults(to: &newConfig)
-            appModel.gallerySlideshowConfig = newConfig
-            config = newConfig
-        }
-        appModel.pendingGallerySlideshowSource = GallerySlideshowSourceOverride(
+        appModel.startGallerySlideshow(
             imageSource: LocalImageSource(rootURL: currentFolderURL),
             filter: nil
         )
-        appModel.enqueueRemoteViewerOpen(configId: config.id)
     }
 
     private func loadContent() {

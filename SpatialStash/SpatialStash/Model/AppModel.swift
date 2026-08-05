@@ -455,6 +455,16 @@ class AppModel {
         bypassDuplicatePrompt: Bool = false,
         restoredSize: CGSize? = nil
     ) {
+        // A profile that can't describe what to show has nothing to open. The
+        // window would come up empty (or, before this was refused, quietly
+        // showing whatever the Pictures tab happened to be on).
+        if let config = remoteViewerConfig(id: configId), !config.isLaunchable {
+            AppLogger.remoteViewer.error(
+                "Refusing to open “\(config.name, privacy: .public)”: \(config.launchBlockedReason ?? "not launchable", privacy: .public)"
+            )
+            return
+        }
+
         let request = RemoteViewerOpenRequest(
             configId: configId,
             bypassDuplicatePrompt: bypassDuplicatePrompt,
@@ -902,6 +912,52 @@ class AppModel {
 
     static let gallerySlideshowConfigKey = "gallerySlideshowConfig"
     static let videoSlideshowConfigKey = "videoSlideshowConfig"
+
+    /// Start a slideshow of the content the user is looking at right now.
+    ///
+    /// The *profile* is a reused `.appGallery` one, so display tweaks made in
+    /// the slideshow's ornament (clock, Ken Burns, 3D mode…) persist between
+    /// launches. The *content* rides along as a transient override, because it
+    /// is by definition not something a saved profile can describe — trying to
+    /// make a profile mean "whatever I'm looking at" is what made the old
+    /// blank-endpoint mode unpredictable.
+    func startGallerySlideshow(imageSource: any ImageSource, filter: ImageFilterCriteria?) {
+        let config = gallerySlideshowConfig ?? makeAppGallerySlideshowConfig(name: "Gallery Slideshow")
+        gallerySlideshowConfig = config
+        pendingGallerySlideshowSource = GallerySlideshowSourceOverride(
+            imageSource: imageSource,
+            filter: filter
+        )
+        enqueueRemoteViewerOpen(configId: config.id)
+    }
+
+    /// Video counterpart of `startGallerySlideshow`, with its own profile slot
+    /// so image and video slideshows keep separate display settings.
+    func startVideoSlideshow(videoSource: any VideoSource, filter: SceneFilterCriteria?) {
+        let config: RemoteViewerConfig
+        if let existing = videoSlideshowConfig {
+            config = existing
+        } else {
+            var fresh = makeAppGallerySlideshowConfig(name: "Video Slideshow")
+            // Spatial 3D is image-only — never engage it for a video slideshow.
+            fresh.slideshow3DMode = .off
+            config = fresh
+        }
+        videoSlideshowConfig = config
+        pendingVideoSlideshowSource = VideoSlideshowSourceOverride(
+            videoSource: videoSource,
+            filter: filter
+        )
+        enqueueRemoteViewerOpen(configId: config.id)
+    }
+
+    private func makeAppGallerySlideshowConfig(name: String) -> RemoteViewerConfig {
+        var config = RemoteViewerConfig(name: name)
+        config.mode = .appGallery
+        config.apiEndpoint = ""
+        applySlideshowDefaults(to: &config)
+        return config
+    }
 
     private func persistImplicitSlideshowConfig(_ config: RemoteViewerConfig?, key: String) {
         guard let config, let data = try? JSONEncoder().encode(config) else {
@@ -1830,7 +1886,11 @@ class AppModel {
 
     private func loadImplicitSlideshowConfig(key: String, assign: (RemoteViewerConfig) -> Void) {
         guard let data = UserDefaults.standard.data(forKey: key),
-              let config = try? JSONDecoder().decode(RemoteViewerConfig.self, from: data) else { return }
+              var config = try? JSONDecoder().decode(RemoteViewerConfig.self, from: data) else { return }
+        // These slots are always the app-content slideshow, whatever mode they
+        // were stored with — they predate `.appGallery`, and a `.slideshow`
+        // profile with no endpoint is refused now.
+        config.mode = .appGallery
         assign(config)
     }
 
@@ -1856,8 +1916,11 @@ class AppModel {
             )
             // A slot restored from its own key wins — it's the one the
             // slideshow has actually been using since the leak was fixed.
-            guard slot == nil else { return nil }
-            return stranded.max { $0.savedDate < $1.savedDate }
+            guard slot == nil, var adopted = stranded.max(by: { $0.savedDate < $1.savedDate }) else {
+                return nil
+            }
+            adopted.mode = .appGallery
+            return adopted
         }
 
         if let adopted = reclaim(name: "Gallery Slideshow", slot: gallerySlideshowConfig) {

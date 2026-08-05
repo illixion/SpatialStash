@@ -88,7 +88,7 @@ struct RemoteTabView: View {
 
                 Section {
                     Picker("Mode", selection: $editingConfig.mode) {
-                        ForEach(RemoteViewerMode.allCases) { mode in
+                        ForEach(RemoteViewerMode.userSelectable) { mode in
                             Text(mode.label).tag(mode)
                         }
                     }
@@ -98,7 +98,7 @@ struct RemoteTabView: View {
                 } footer: {
                     Text(editingConfig.mode == .webPage
                          ? "Pins a website in your space. The page keeps its state and window size; it only accepts input while the ornaments are visible."
-                         : "Slideshow driven by a RoboFrame server (or the app's own gallery when the endpoint is blank).")
+                         : "Slideshow driven by a RoboFrame server. For a slideshow of the pictures, videos or folder you're browsing, use the play button at the end of the tab bar instead.")
                 }
 
                 if editingConfig.mode == .webPage {
@@ -114,13 +114,18 @@ struct RemoteTabView: View {
                         Text(launchButtonTitle)
                             .foregroundStyle(.blue)
                     }
-                    .disabled(trimmedName.isEmpty
-                              || (editingConfig.mode == .webPage && editingConfig.resolvedWebPageURL == nil))
+                    .disabled(trimmedName.isEmpty || !editingConfig.isLaunchable)
                 } footer: {
-                    if needsSaveToLaunch {
-                        Text(isNewDraft
-                             ? "Saves the draft as a new profile first — launching always opens a saved profile."
-                             : "Saves your changes to “\(storedCopy?.name ?? trimmedName)” first — launching always opens a saved profile.")
+                    VStack(alignment: .leading, spacing: 4) {
+                        if let reason = editingConfig.launchBlockedReason {
+                            Text(reason)
+                                .foregroundStyle(.red)
+                        }
+                        if needsSaveToLaunch {
+                            Text(isNewDraft
+                                 ? "Saves the draft as a new profile first — launching always opens a saved profile."
+                                 : "Saves your changes to “\(storedCopy?.name ?? trimmedName)” first — launching always opens a saved profile.")
+                        }
                     }
                 }
             }
@@ -205,9 +210,15 @@ struct RemoteTabView: View {
                             )
                     }
                 }
-                Text(config.savedDate, style: .date)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                if let reason = config.launchBlockedReason {
+                    Text(reason)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                } else {
+                    Text(config.savedDate, style: .date)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
             }
             Spacer()
             Button(isEditing ? "Reload" : "Load") {
@@ -225,6 +236,7 @@ struct RemoteTabView: View {
                 launchViewer(config: config)
             }
             .buttonStyle(.borderedProminent)
+            .disabled(!config.isLaunchable)
         }
     }
 
@@ -361,6 +373,13 @@ struct RemoteTabView: View {
     }
 
     private func load(_ config: RemoteViewerConfig) {
+        var config = config
+        // The Mode picker only lists the user-selectable modes; a profile
+        // carrying anything else (a restored backup from a build that stored
+        // one) would leave the picker showing nothing.
+        if !RemoteViewerMode.userSelectable.contains(config.mode) {
+            config.mode = .slideshow
+        }
         editingConfig = config
         baseline = config
         storeChangedUnderDraft = false

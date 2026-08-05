@@ -49,12 +49,28 @@ enum RemoteViewerMode: String, Codable, CaseIterable, Identifiable {
     case slideshow
     case webPage
 
+    /// Slideshow over the app's own content — whatever the user is looking at
+    /// when they press the main window's play button, handed over as a
+    /// transient source override.
+    ///
+    /// Deliberately absent from `userSelectable`: a saved profile cannot
+    /// describe "what I'm looking at", which is precisely what made the old
+    /// blank-endpoint option a trap. It showed a different set of images
+    /// depending on which tab you'd visited last, and the profile recorded
+    /// none of it.
+    case appGallery
+
     var id: String { rawValue }
+
+    /// The modes the Remote tab offers. `.appGallery` profiles are created by
+    /// the play button, not by hand.
+    static let userSelectable: [RemoteViewerMode] = [.slideshow, .webPage]
 
     var label: String {
         switch self {
         case .slideshow: return "RoboFrame"
         case .webPage: return "Website"
+        case .appGallery: return "Gallery Slideshow"
         }
     }
 
@@ -62,6 +78,7 @@ enum RemoteViewerMode: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .slideshow: return "photo.stack"
         case .webPage: return "globe"
+        case .appGallery: return "play.rectangle"
         }
     }
 }
@@ -143,6 +160,40 @@ struct RemoteViewerConfig: Codable, Identifiable, Equatable {
     static let webAutoRefreshOptions: [TimeInterval] = [
         0, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600
     ]
+
+    /// Whether a RoboFrame server is actually configured.
+    var hasAPIEndpoint: Bool {
+        !apiEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Whether this profile can open a window at all.
+    ///
+    /// A RoboFrame profile with no endpoint used to silently fall through to a
+    /// slideshow of whatever the Pictures tab was showing — content the profile
+    /// itself recorded nothing about, so the same profile showed something
+    /// different on every launch. That's refused now; the main window's play
+    /// button covers "slideshow of what I'm looking at" properly, as an
+    /// `.appGallery` window carrying the live source.
+    var isLaunchable: Bool {
+        switch mode {
+        case .slideshow: return hasAPIEndpoint
+        case .webPage: return resolvedWebPageURL != nil
+        case .appGallery: return true
+        }
+    }
+
+    /// Why `isLaunchable` is false, for the editor to show inline.
+    var launchBlockedReason: String? {
+        guard !isLaunchable else { return nil }
+        switch mode {
+        case .slideshow:
+            return "Needs a RoboFrame API endpoint."
+        case .webPage:
+            return "Needs a usable page URL."
+        case .appGallery:
+            return nil
+        }
+    }
 
     /// Normalized page URL, or nil when the field is empty/unparseable. A
     /// scheme-less host gets `https://` so "example.com" just works.

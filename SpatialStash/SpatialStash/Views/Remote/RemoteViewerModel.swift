@@ -24,7 +24,15 @@ class RemoteViewerModel: SlideshowEngine {
 
     // MARK: - Gallery Mode
 
-    var isGalleryMode: Bool { contentProvider is GalleryContentProvider }
+    /// Whether this window plays the app's own content rather than a RoboFrame
+    /// channel — no WebSocket, no orchestrator, so the engine keeps its own
+    /// dwell clock and handles block/advance locally.
+    ///
+    /// Keyed on the profile's mode, not on the content provider: a *video*
+    /// slideshow also has no server, but its provider isn't a
+    /// `GalleryContentProvider`, so the old provider test called it remote and
+    /// left it `serverDriven` with nothing to drive it.
+    var isGalleryMode: Bool { config.mode == .appGallery }
 
     // MARK: - Display State (remote-specific)
 
@@ -554,8 +562,8 @@ class RemoteViewerModel: SlideshowEngine {
         set {
             // Optimistic local update for slider responsiveness.
             delay = newValue
-            if config.apiEndpoint.isEmpty {
-                // Gallery mode — no server to defer to, so persist locally.
+            if isGalleryMode {
+                // No server to defer to, so persist locally.
                 if config.delay != newValue {
                     config.delay = newValue
                     onConfigChanged?(config)

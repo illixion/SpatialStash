@@ -860,41 +860,50 @@ struct RemoteViewerWindowView: View {
         }
         model.modTagManager = appModel.modTagManager
 
-        // Set up content provider based on mode
-        if config.apiEndpoint.isEmpty {
+        // Which content this window shows follows from the profile's mode. It
+        // used to hinge on `apiEndpoint.isEmpty`, which made "no server
+        // configured" indistinguishable from "show me the app's own gallery".
+        switch config.mode {
+        case .appGallery:
+            // Launched by the play button, which parks the live source in a
+            // transient override right before opening the window.
             if let videoOverride = appModel.pendingVideoSlideshowSource,
                appModel.videoSlideshowConfig?.id == config.id {
-                // Video slideshow mode: iterate over the video source/filter
-                // snapshot from the launching video viewer.
                 appModel.pendingVideoSlideshowSource = nil
                 model.contentProvider = VideoSlideshowContentProvider(
                     videoSource: videoOverride.videoSource,
                     filter: videoOverride.filter
                 )
+            } else if let override = appModel.pendingGallerySlideshowSource {
+                appModel.pendingGallerySlideshowSource = nil
+                model.contentProvider = GalleryContentProvider(
+                    imageSource: override.imageSource,
+                    filter: override.filter
+                )
             } else {
-                // Gallery mode: prefer a transient override set by the launching
-                // photo viewer (e.g. local-folder slideshow), otherwise fall back
-                // to the app-wide image source and current filter.
-                let source: any ImageSource
-                let filter: ImageFilterCriteria?
-                if let override = appModel.pendingGallerySlideshowSource {
-                    source = override.imageSource
-                    filter = override.filter
-                    appModel.pendingGallerySlideshowSource = nil
-                } else {
-                    source = appModel.imageSource
-                    filter = appModel.currentFilter
-                }
-                model.contentProvider = GalleryContentProvider(imageSource: source, filter: filter)
+                // No override: a window group restored this slideshow at
+                // launch, long after the source that started it was handed
+                // over. The app-wide source and filter is the closest thing to
+                // what it was showing.
+                model.contentProvider = GalleryContentProvider(
+                    imageSource: appModel.imageSource,
+                    filter: appModel.currentFilter
+                )
             }
-        } else {
-            // Remote API mode
+        case .slideshow:
             model.contentProvider = RemoteContentProvider(
                 apiClient: model.apiClient,
                 baseURL: config.apiEndpoint,
                 accessToken: config.accessToken,
                 deviceId: model.slideshowDeviceId
             )
+        case .webPage:
+            // A `.webPage` profile is built by WebPageWindowView, not here;
+            // RemoteViewerSceneRoot routes on the same mode.
+            AppLogger.remoteViewer.error(
+                "Website profile “\(config.name, privacy: .public)” reached the slideshow window"
+            )
+            return
         }
 
         // Wire up window callbacks

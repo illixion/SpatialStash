@@ -300,24 +300,11 @@ struct VideoOrnamentsView: View {
     // MARK: - Helpers
 
     private func launchVideoSlideshow() {
-        let config: RemoteViewerConfig
-        if let existing = appModel.videoSlideshowConfig {
-            config = existing
-        } else {
-            var newConfig = RemoteViewerConfig(name: "Video Slideshow")
-            newConfig.apiEndpoint = ""
-            appModel.applySlideshowDefaults(to: &newConfig)
-            // Spatial 3D is image-only — never engage it for a video slideshow.
-            newConfig.slideshow3DMode = .off
-            appModel.videoSlideshowConfig = newConfig
-            config = newConfig
-        }
         // Run the slideshow over the same video source/filter this window is browsing.
-        appModel.pendingVideoSlideshowSource = VideoSlideshowSourceOverride(
+        appModel.startVideoSlideshow(
             videoSource: windowModel.videoSource,
             filter: windowModel.snapshotFilter
         )
-        appModel.enqueueRemoteViewerOpen(configId: config.id)
     }
 
     // MARK: - View Mode Menu

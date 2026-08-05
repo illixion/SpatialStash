@@ -175,22 +175,10 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
     }
 
     private func launchGallerySlideshow() {
-        let appModel = windowModel.appModel
-        let config: RemoteViewerConfig
-        if let existing = appModel.gallerySlideshowConfig {
-            config = existing
-        } else {
-            var newConfig = RemoteViewerConfig(name: "Gallery Slideshow")
-            newConfig.apiEndpoint = ""
-            appModel.applySlideshowDefaults(to: &newConfig)
-            appModel.gallerySlideshowConfig = newConfig
-            config = newConfig
-        }
-        appModel.pendingGallerySlideshowSource = GallerySlideshowSourceOverride(
+        windowModel.appModel.startGallerySlideshow(
             imageSource: windowModel.imageSource,
             filter: windowModel.snapshotFilter
         )
-        appModel.enqueueRemoteViewerOpen(configId: config.id)
     }
 
     // MARK: - 3D Menu
