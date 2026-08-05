@@ -107,10 +107,11 @@ struct SpatialStashApp: App {
         .windowResizability(.contentSize)
         .defaultLaunchBehavior(.suppressed)
 
-        // Remote viewer - slideshow from RoboFrame API
+        // Remote viewer - RoboFrame/gallery slideshow, or a pinned web page
+        // (the profile's `mode` decides; see RemoteViewerSceneRoot).
         WindowGroup(id: "remote-viewer", for: RemoteViewerWindowValue.self) { $windowValue in
             if let windowValue = windowValue {
-                RemoteViewerWindowView(windowValue: windowValue, onSizeSettled: { size in
+                RemoteViewerSceneRoot(windowValue: windowValue, appModel: appModel, onSizeSettled: { size in
                     $windowValue.wrappedValue?.restoredSize = CodableSize(size)
                 })
                     .environment(appModel)

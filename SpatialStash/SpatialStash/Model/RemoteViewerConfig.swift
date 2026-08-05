@@ -39,10 +39,38 @@ enum Slideshow3DMode: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+/// What a viewer profile actually opens. `.slideshow` is the original
+/// RoboFrame / gallery slideshow; `.webPage` pins an arbitrary web page as an
+/// interactive panel in the user's space (no slideshow engine, no WebSocket).
+enum RemoteViewerMode: String, Codable, CaseIterable, Identifiable {
+    case slideshow
+    case webPage
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .slideshow: return "Slideshow"
+        case .webPage: return "Web Page"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .slideshow: return "photo.stack"
+        case .webPage: return "globe"
+        }
+    }
+}
+
 struct RemoteViewerConfig: Codable, Identifiable {
-    let id: UUID
+    private(set) var id: UUID
     var name: String
-    let savedDate: Date
+    private(set) var savedDate: Date
+
+    /// Which window this profile launches. Defaults to `.slideshow` so every
+    /// pre-existing saved profile keeps behaving exactly as before.
+    var mode: RemoteViewerMode = .slideshow
 
     // API
     var apiEndpoint: String = "https://example.com/api"
@@ -73,6 +101,57 @@ struct RemoteViewerConfig: Codable, Identifiable {
     /// Per-profile cap fed into RealityKit when slideshow 3D is enabled.
     /// `nil` = inherit `AppModel.slideshowMaxImageResolution3D`.
     var maxImageResolution3D: Int?
+
+    // MARK: - Web page mode
+
+    /// Page loaded by a `.webPage` profile. A scheme-less entry is treated as
+    /// `https://` (see `resolvedWebPageURL`).
+    var webPageURL: String = ""
+
+    /// Injects CSS making `html`/`body` paint transparent, and makes the
+    /// WebView itself non-opaque, so the page's own content floats in the
+    /// user's space with no window backing.
+    ///
+    /// Deliberately *not* the slideshow's `transparentBackground`: that one is
+    /// seeded from the user's slideshow defaults by
+    /// `AppModel.applySlideshowDefaults(to:)`, and a page-transparency toggle
+    /// silently inheriting a slideshow preference would be a surprise.
+    var webTransparentBackground: Bool = false
+
+    /// Seconds between automatic reloads. `0` (the default) disables it.
+    /// The countdown restarts on page interaction, so a page being actively
+    /// used isn't reloaded out from under the user.
+    var webAutoRefreshInterval: TimeInterval = 0
+
+    /// Selectable auto-refresh intervals. Index 0 is "off"; the Remote tab
+    /// drives a slider over these indices rather than a linear seconds range,
+    /// so both "every 15 seconds" and "every hour" are one gesture away.
+    static let webAutoRefreshOptions: [TimeInterval] = [
+        0, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600
+    ]
+
+    /// Normalized page URL, or nil when the field is empty/unparseable. A
+    /// scheme-less host gets `https://` so "example.com" just works.
+    var resolvedWebPageURL: URL? {
+        let trimmed = webPageURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let candidate = trimmed.contains("://") ? trimmed : "https://" + trimmed
+        guard let url = URL(string: candidate), url.host != nil else { return nil }
+        return url
+    }
+
+    /// Human-readable label for an auto-refresh interval.
+    static func webAutoRefreshLabel(_ interval: TimeInterval) -> String {
+        guard interval > 0 else { return "Off" }
+        let seconds = Int(interval.rounded())
+        if seconds < 60 { return "\(seconds) sec" }
+        let minutes = seconds / 60
+        if minutes < 60 {
+            return minutes == 1 ? "1 min" : "\(minutes) min"
+        }
+        let hours = minutes / 60
+        return hours == 1 ? "1 hour" : "\(hours) hours"
+    }
 
     init(name: String) {
         self.id = UUID()
@@ -106,9 +185,22 @@ struct RemoteViewerConfig: Codable, Identifiable {
         return url
     }
 
+    /// A fresh profile carrying every setting of this one, under a new name.
+    /// The Remote tab's Copy button used to enumerate fields by hand and had
+    /// silently drifted out of date (it dropped diorama, 3D mode and the
+    /// resolution caps) — copying wholesale can't drift.
+    func duplicated(name: String) -> RemoteViewerConfig {
+        var copy = self
+        copy.id = UUID()
+        copy.savedDate = Date()
+        copy.name = name
+        return copy
+    }
+
     private enum CodingKeys: String, CodingKey {
-        case id, name, savedDate
+        case id, name, savedDate, mode
         case apiEndpoint, wsDeviceId, accessToken
+        case webPageURL, webTransparentBackground, webAutoRefreshInterval
         case delay, showClock, showSensors, useAspectRatio, enableKenBurns
         case enableDynamicBrightness, enableDiorama
         case transparentBackground, textSize
@@ -128,6 +220,7 @@ struct RemoteViewerConfig: Codable, Identifiable {
         id = try container.decode(UUID.self, forKey: .id)
         name = try container.decode(String.self, forKey: .name)
         savedDate = try container.decode(Date.self, forKey: .savedDate)
+        mode = try container.decodeIfPresent(RemoteViewerMode.self, forKey: .mode) ?? .slideshow
 
         apiEndpoint = try container.decodeIfPresent(String.self, forKey: .apiEndpoint) ?? "https://example.com/api"
         wsDeviceId = try container.decodeIfPresent(String.self, forKey: .wsDeviceId) ?? ""
@@ -145,6 +238,10 @@ struct RemoteViewerConfig: Codable, Identifiable {
         slideshow3DMode = try container.decodeIfPresent(Slideshow3DMode.self, forKey: .slideshow3DMode) ?? .off
         maxImageResolution2D = try container.decodeIfPresent(Int.self, forKey: .maxImageResolution2D)
         maxImageResolution3D = try container.decodeIfPresent(Int.self, forKey: .maxImageResolution3D)
+
+        webPageURL = try container.decodeIfPresent(String.self, forKey: .webPageURL) ?? ""
+        webTransparentBackground = try container.decodeIfPresent(Bool.self, forKey: .webTransparentBackground) ?? false
+        webAutoRefreshInterval = try container.decodeIfPresent(TimeInterval.self, forKey: .webAutoRefreshInterval) ?? 0
 
         // Older saved configs may carry these fields. Swallow them so the
         // decode succeeds and they're dropped on next save — the server
@@ -166,6 +263,7 @@ struct RemoteViewerConfig: Codable, Identifiable {
         try container.encode(id, forKey: .id)
         try container.encode(name, forKey: .name)
         try container.encode(savedDate, forKey: .savedDate)
+        try container.encode(mode, forKey: .mode)
 
         try container.encode(apiEndpoint, forKey: .apiEndpoint)
         try container.encode(wsDeviceId, forKey: .wsDeviceId)
@@ -183,5 +281,9 @@ struct RemoteViewerConfig: Codable, Identifiable {
         try container.encode(slideshow3DMode, forKey: .slideshow3DMode)
         try container.encodeIfPresent(maxImageResolution2D, forKey: .maxImageResolution2D)
         try container.encodeIfPresent(maxImageResolution3D, forKey: .maxImageResolution3D)
+
+        try container.encode(webPageURL, forKey: .webPageURL)
+        try container.encode(webTransparentBackground, forKey: .webTransparentBackground)
+        try container.encode(webAutoRefreshInterval, forKey: .webAutoRefreshInterval)
     }
 }

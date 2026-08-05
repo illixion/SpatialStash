@@ -44,13 +44,9 @@ struct RemoteViewerWindowView: View {
     /// across image swaps and only a real geometry change reasserts it.
     @State private var nudgeAlternator: Bool = false
 
-    /// Debounce task for persisting the resolved window size back into the
-    /// Codable window value (scene-restoration write-back).
-    @State private var sizeWritebackTask: Task<Void, Never>?
-
-    /// True for ~1s after applying a restored size on launch, so the transient
-    /// scene-default geometry isn't persisted over the user's custom size.
-    @State private var suppressSizeWriteback: Bool = false
+    /// Persists / re-asserts the user's custom window size across cold
+    /// relaunches. Shared with the pinned web-page window.
+    @State private var sizePersistence: WindowSizePersistence?
 
     private let clockTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
@@ -154,11 +150,13 @@ struct RemoteViewerWindowView: View {
             }
             .onAppear {
                 windowSize = geo.size
+                sizePersistence?.currentSize = geo.size
             }
             .onChange(of: geo.size) { _, newSize in
                 windowSize = newSize
                 viewerModel?.updateWindowAspectRatio(newSize)
-                scheduleSizeWriteback(newSize)
+                sizePersistence?.currentSize = newSize
+                sizePersistence?.scheduleWriteback(newSize)
             }
         }
         .ornament(
@@ -194,7 +192,7 @@ struct RemoteViewerWindowView: View {
             // Restore the user's custom window size/aspect ratio from the scene
             // archive. visionOS restores wall-snapped windows at the scene
             // `.defaultSize` (1400×900), so reassert the persisted size here.
-            applyRestoredSizeIfNeeded()
+            setupSizePersistence()
         }
         .onDisappear {
             if let model = viewerModel {
@@ -207,6 +205,7 @@ struct RemoteViewerWindowView: View {
             viewerModel?.stop()
             autoHideTimer?.cancel()
             renderRecoveryTask?.cancel()
+            sizePersistence?.cancel()
         }
         .onChange(of: viewerModel?.isTransitioning) { _, isTransitioning in
             // Refresh IPC's off-axis blur calibration mid-crossfade so
@@ -832,15 +831,8 @@ struct RemoteViewerWindowView: View {
     private func setupModel() {
         guard viewerModel == nil else { return }
 
-        // Look up config from saved configs or the gallery slideshow config
-        let config: RemoteViewerConfig
-        if let saved = appModel.savedRemoteConfigs.first(where: { $0.id == windowValue.configId }) {
-            config = saved
-        } else if let gallery = appModel.gallerySlideshowConfig, gallery.id == windowValue.configId {
-            config = gallery
-        } else if let videoSlideshow = appModel.videoSlideshowConfig, videoSlideshow.id == windowValue.configId {
-            config = videoSlideshow
-        } else {
+        // Look up config from saved configs or the gallery/video slideshow configs
+        guard let config = appModel.remoteViewerConfig(id: windowValue.configId) else {
             AppLogger.remoteViewer.error("No config found for id \(windowValue.configId.uuidString, privacy: .public)")
             return
         }
@@ -952,14 +944,13 @@ struct RemoteViewerWindowView: View {
 
     /// Smallest geometry this window is allowed to occupy, and the floor below
     /// which a persisted size is treated as corrupt rather than restored.
-    static let minimumWindowSize = CGSize(width: 480, height: 320)
+    static let minimumWindowSize = WindowSizePersistence.defaultMinimumSize
 
     /// Whether a size is one the user could plausibly have resized to, as
     /// opposed to transient layout noise from a window the compositor hasn't
     /// placed yet. Guards both ends of the persist/restore round-trip.
     static func isPlausibleWindowSize(_ size: CGSize) -> Bool {
-        size.width >= minimumWindowSize.width && size.height >= minimumWindowSize.height
-            && size.width.isFinite && size.height.isFinite
+        WindowSizePersistence.isPlausible(size, minimum: minimumWindowSize)
     }
 
     /// Resolve the window scene hosting this viewer for geometry updates
@@ -971,90 +962,20 @@ struct RemoteViewerWindowView: View {
         sceneDelegate?.windowScene
     }
 
-    /// Apply the persisted custom window size (if any) on launch.
-    ///
-    /// `requestGeometryUpdate` is routinely ignored while visionOS is still
-    /// mid-restoration (the photo viewer works around the same problem with
-    /// its delayed size verifier), and at `onAppear` time this window's scene
-    /// may not even be connected yet. So instead of a single fire-and-forget
-    /// request, retry until the live geometry actually matches the restored
-    /// size (within 5%), targeting only THIS window's scene via the
-    /// SceneDelegate — never the foreground-active fallback, which can be a
-    /// different window during cold launch. Write-back stays suppressed for
-    /// the duration so the transient scene-default size isn't persisted.
-    private func applyRestoredSizeIfNeeded() {
-        // Suppress the write-back for the settle period on *every* restored
-        // window, before the restored-size guard — not just ones that already
-        // have a size persisted. The window that most needs protecting is the
-        // one being restored for the first time: it has no archived size, so
-        // arming suppression after the guard meant its transient restoration
-        // geometry sailed straight into the archive. That is how a window gets
-        // poisoned in the first place.
-        if RestoredWindowTracker.isRestored(windowValue.id) {
-            suppressSizeWriteback = true
-            Task { @MainActor in
-                try? await Task.sleep(for: .seconds(6))
-                suppressSizeWriteback = false
-            }
-        }
-
-        // Prefer the scene-archive value; fall back to the UserDefaults store
-        // (written in lockstep) in case the archive round-trip dropped it.
-        guard let restored = windowValue.restoredSize?.cgSize
-                ?? RestoredWindowTracker.windowSize(for: windowValue.id) else { return }
-        // Reject a degenerate archived size instead of re-asserting it. An
-        // already-poisoned archive heals here: we fall through to the scene
-        // default rather than spending 5s forcing the window back to nothing.
-        guard Self.isPlausibleWindowSize(restored) else {
-            AppLogger.remoteViewer.warning("Ignoring implausible restored window size \(Int(restored.width), privacy: .public)x\(Int(restored.height), privacy: .public) — falling back to the scene default")
-            RestoredWindowTracker.clearWindowSize(for: windowValue.id)
-            return
-        }
-        suppressSizeWriteback = true
-        let source = windowValue.restoredSize != nil ? "scene archive" : "defaults fallback"
-        AppLogger.remoteViewer.info("Applying restored window size \(Int(restored.width), privacy: .public)x\(Int(restored.height), privacy: .public) (\(source, privacy: .public))")
-        Task { @MainActor in
-            defer { suppressSizeWriteback = false }
-            for attempt in 0..<8 {
-                if let windowScene = sceneDelegate?.windowScene {
-                    UIView.performWithoutAnimation {
-                        windowScene.requestGeometryUpdate(.Vision(size: restored))
-                    }
-                }
-                // Give the OS time to resolve (or ignore) the request, then
-                // check the live size reported by the GeometryReader. The
-                // geo size is content size (insets differ from the scene
-                // size), so compare with a tolerance.
-                try? await Task.sleep(for: .milliseconds(attempt == 0 ? 400 : 700))
-                let current = windowSize
-                if current.width > 2, current.height > 2,
-                   abs(current.width - restored.width) / restored.width < 0.05,
-                   abs(current.height - restored.height) / restored.height < 0.05 {
-                    return
-                }
-            }
-            AppLogger.remoteViewer.warning("Restored window size did not apply after retries (wanted \(Int(restored.width), privacy: .public)x\(Int(restored.height), privacy: .public), have \(Int(windowSize.width), privacy: .public)x\(Int(windowSize.height), privacy: .public))")
-        }
-    }
-
-    /// Debounce a write-back of the resolved window size into the Codable window
-    /// value so visionOS persists it for the next cold relaunch.
-    private func scheduleSizeWriteback(_ size: CGSize) {
-        guard let onSizeSettled else { return }
-        // The old floor here was `> 2`, which happily persisted the transient
-        // geometry a not-yet-placed window reports during restoration. That
-        // value then got re-asserted on every subsequent launch, so the window
-        // came back invisible until its scene session was destroyed ("Close All
-        // Windows"). Only persist a size a user could plausibly have chosen.
-        guard !suppressSizeWriteback, Self.isPlausibleWindowSize(size) else { return }
-        sizeWritebackTask?.cancel()
-        sizeWritebackTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(500))
-            guard !Task.isCancelled else { return }
-            onSizeSettled(size)
-            // UserDefaults backup in case the scene archive drops the value
-            RestoredWindowTracker.setWindowSize(size, for: windowValue.id)
-        }
+    /// Create the size-persistence helper for this window and re-assert the
+    /// user's custom size. The mechanics live in `WindowSizePersistence` so the
+    /// pinned web-page window gets the same behaviour from one implementation.
+    private func setupSizePersistence() {
+        let persistence = WindowSizePersistence(
+            windowId: windowValue.id,
+            minimumSize: Self.minimumWindowSize,
+            log: AppLogger.remoteViewer
+        )
+        persistence.currentSize = windowSize
+        persistence.onSizeSettled = onSizeSettled
+        persistence.windowScene = { [weak sceneDelegate] in sceneDelegate?.windowScene }
+        sizePersistence = persistence
+        persistence.applyRestoredSizeIfNeeded(archived: windowValue.restoredSize?.cgSize)
     }
 
     private func nudgeWindowSizeForCalibration() {

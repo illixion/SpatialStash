@@ -923,6 +923,18 @@ class AppModel {
         }
     }
 
+    /// Resolve a viewer profile by id across the saved profiles and the two
+    /// implicit slideshow profiles (gallery / video), which are stored outside
+    /// `savedRemoteConfigs` so they don't clutter the Remote tab. The
+    /// `remote-viewer` scene needs this before it can decide which window to
+    /// build for a given window value.
+    func remoteViewerConfig(id: UUID) -> RemoteViewerConfig? {
+        if let saved = savedRemoteConfigs.first(where: { $0.id == id }) { return saved }
+        if let gallery = gallerySlideshowConfig, gallery.id == id { return gallery }
+        if let video = videoSlideshowConfig, video.id == id { return video }
+        return nil
+    }
+
     func deleteRemoteConfig(_ config: RemoteViewerConfig) {
         savedRemoteConfigs.removeAll { $0.id == config.id }
     }

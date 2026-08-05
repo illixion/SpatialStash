@@ -29,6 +29,9 @@ struct RemoteTabView: View {
                     } else {
                         ForEach(appModel.savedRemoteConfigs) { config in
                             HStack {
+                                Image(systemName: config.mode.systemImage)
+                                    .foregroundStyle(.secondary)
+                                    .help(config.mode.label)
                                 VStack(alignment: .leading) {
                                     Text(config.name)
                                     Text(config.savedDate, style: .date)
@@ -42,18 +45,7 @@ struct RemoteTabView: View {
                                 }
                                 .buttonStyle(.borderless)
                                 Button("Copy") {
-                                    var copy = RemoteViewerConfig(name: config.name + " (Copy)")
-                                    copy.apiEndpoint = config.apiEndpoint
-                                    copy.wsDeviceId = config.wsDeviceId
-                                    copy.accessToken = config.accessToken
-                                    copy.delay = config.delay
-                                    copy.showClock = config.showClock
-                                    copy.showSensors = config.showSensors
-                                    copy.useAspectRatio = config.useAspectRatio
-                                    copy.enableKenBurns = config.enableKenBurns
-                                    copy.transparentBackground = config.transparentBackground
-                                    copy.textSize = config.textSize
-                                    appModel.saveRemoteConfig(copy)
+                                    appModel.saveRemoteConfig(config.duplicated(name: config.name + " (Copy)"))
                                 }
                                 .buttonStyle(.borderless)
                                 Button("Launch") {
@@ -70,60 +62,26 @@ struct RemoteTabView: View {
                     }
                 }
 
-                Section("API") {
-                    TextField("RoboFrame API Endpoint", text: $editingConfig.apiEndpoint)
-                        .textContentType(.URL)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-
-                    TextField("WebSocket Device ID", text: $editingConfig.wsDeviceId)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-
-                    Text("Home Assistant uses this stable ID. The server keeps each window's slideshow session independent.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-
-                    SecureField("Access Token", text: $editingConfig.accessToken)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-                }
-
-                Section("Display") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text("Image Interval")
-                            Spacer()
-                            Text(formatDelay(editingConfig.delay))
-                                .foregroundColor(.secondary)
-                        }
-                        Slider(value: $editingConfig.delay, in: 3...120, step: 1)
-                    }
-
-                    Picker("3D Mode", selection: $editingConfig.slideshow3DMode) {
-                        ForEach(Slideshow3DMode.allCases) { mode in
+                Section {
+                    Picker("Mode", selection: $editingConfig.mode) {
+                        ForEach(RemoteViewerMode.allCases) { mode in
                             Text(mode.label).tag(mode)
                         }
                     }
-
-                    Toggle("Show Clock", isOn: $editingConfig.showClock)
-                    Toggle("Show Sensors", isOn: $editingConfig.showSensors)
-                    Toggle("Fit to Window Aspect Ratio", isOn: $editingConfig.useAspectRatio)
-                    Toggle("Ken Burns Effect", isOn: $editingConfig.enableKenBurns)
-                    Toggle("Transparent Background", isOn: $editingConfig.transparentBackground)
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text("Text Size")
-                            Spacer()
-                            Text(String(format: "%.0f%%", editingConfig.textSize * 100))
-                                .foregroundColor(.secondary)
-                        }
-                        Slider(value: $editingConfig.textSize, in: 0.5...3.0, step: 0.1)
-                    }
+                    .pickerStyle(.segmented)
+                } header: {
+                    Text("Mode")
+                } footer: {
+                    Text(editingConfig.mode == .webPage
+                         ? "Pins a web page in your space. The page keeps its state and window size; it only accepts input while the ornaments are visible."
+                         : "Slideshow driven by a RoboFrame server (or the app's own gallery when the endpoint is blank).")
                 }
 
-                modTagPresetsSection
+                if editingConfig.mode == .webPage {
+                    webPageSection
+                } else {
+                    slideshowSections
+                }
 
                 Section {
                     Button("Save Configuration") {
@@ -135,9 +93,10 @@ struct RemoteTabView: View {
                         appModel.saveRemoteConfig(editingConfig)
                         launchViewer(config: editingConfig)
                     } label: {
-                        Text("Launch Viewer")
+                        Text(editingConfig.mode == .webPage ? "Open Page" : "Launch Viewer")
                             .foregroundStyle(.blue)
                     }
+                    .disabled(editingConfig.mode == .webPage && editingConfig.resolvedWebPageURL == nil)
                 }
             }
             .navigationTitle("Remote Viewer")
@@ -161,6 +120,138 @@ struct RemoteTabView: View {
                 Button("Cancel", role: .cancel) {}
             }
         }
+    }
+
+    // MARK: - Web page mode
+
+    @ViewBuilder
+    private var webPageSection: some View {
+        Section {
+            TextField("Page URL", text: $editingConfig.webPageURL)
+                .textContentType(.URL)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                .keyboardType(.URL)
+
+            if !editingConfig.webPageURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               editingConfig.resolvedWebPageURL == nil {
+                Text("Not a usable URL.")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            } else if let resolved = editingConfig.resolvedWebPageURL,
+                      resolved.absoluteString != editingConfig.webPageURL.trimmingCharacters(in: .whitespacesAndNewlines) {
+                Text("Opens \(resolved.absoluteString)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Toggle("Transparent Background", isOn: $editingConfig.webTransparentBackground)
+            Text("Injects CSS so the page's own background paints through to your space. Pages that set a background on an inner element still paint it.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Auto-Refresh")
+                    Spacer()
+                    Text(RemoteViewerConfig.webAutoRefreshLabel(editingConfig.webAutoRefreshInterval))
+                        .foregroundColor(.secondary)
+                }
+                Slider(
+                    value: autoRefreshIndex,
+                    in: 0...Double(RemoteViewerConfig.webAutoRefreshOptions.count - 1),
+                    step: 1
+                )
+                Text("Reloads the page after this long with no interaction. Off by default.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        } header: {
+            Text("Web Page")
+        } footer: {
+            Text("Tap the window to reveal the controls and unlock the page; hide them again (eye button, or let them auto-hide) to block input and stop visionOS from highlighting links as you look around.")
+        }
+    }
+
+    /// Slider position for the auto-refresh interval. Snaps to the nearest
+    /// preset so a value restored from an older build (or a backup) still lands
+    /// on a real stop instead of reading as "Off".
+    private var autoRefreshIndex: Binding<Double> {
+        Binding(
+            get: {
+                let options = RemoteViewerConfig.webAutoRefreshOptions
+                let current = editingConfig.webAutoRefreshInterval
+                let nearest = options.enumerated().min { lhs, rhs in
+                    abs(lhs.element - current) < abs(rhs.element - current)
+                }
+                return Double(nearest?.offset ?? 0)
+            },
+            set: { newValue in
+                let options = RemoteViewerConfig.webAutoRefreshOptions
+                let index = min(max(Int(newValue.rounded()), 0), options.count - 1)
+                editingConfig.webAutoRefreshInterval = options[index]
+            }
+        )
+    }
+
+    // MARK: - Slideshow mode
+
+    @ViewBuilder
+    private var slideshowSections: some View {
+        Section("API") {
+            TextField("RoboFrame API Endpoint", text: $editingConfig.apiEndpoint)
+                .textContentType(.URL)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+
+            TextField("WebSocket Device ID", text: $editingConfig.wsDeviceId)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+
+            Text("Home Assistant uses this stable ID. The server keeps each window's slideshow session independent.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+            SecureField("Access Token", text: $editingConfig.accessToken)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+        }
+
+        Section("Display") {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Image Interval")
+                    Spacer()
+                    Text(formatDelay(editingConfig.delay))
+                        .foregroundColor(.secondary)
+                }
+                Slider(value: $editingConfig.delay, in: 3...120, step: 1)
+            }
+
+            Picker("3D Mode", selection: $editingConfig.slideshow3DMode) {
+                ForEach(Slideshow3DMode.allCases) { mode in
+                    Text(mode.label).tag(mode)
+                }
+            }
+
+            Toggle("Show Clock", isOn: $editingConfig.showClock)
+            Toggle("Show Sensors", isOn: $editingConfig.showSensors)
+            Toggle("Fit to Window Aspect Ratio", isOn: $editingConfig.useAspectRatio)
+            Toggle("Ken Burns Effect", isOn: $editingConfig.enableKenBurns)
+            Toggle("Transparent Background", isOn: $editingConfig.transparentBackground)
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Text Size")
+                    Spacer()
+                    Text(String(format: "%.0f%%", editingConfig.textSize * 100))
+                        .foregroundColor(.secondary)
+                }
+                Slider(value: $editingConfig.textSize, in: 0.5...3.0, step: 0.1)
+            }
+        }
+
+        modTagPresetsSection
     }
 
     // MARK: - Mod tag presets (local)
