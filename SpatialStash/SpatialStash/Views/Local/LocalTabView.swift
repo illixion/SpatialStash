@@ -11,7 +11,13 @@ import SwiftUI
 struct LocalTabView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(MainWindowModel.self) private var windowModel
-    @State private var selectedFolderPath: [String] = []
+
+    /// The folder being browsed. Held on the window model so the tab bar
+    /// ornament's slideshow button can see it (see `MainWindowModel`).
+    private var selectedFolderPath: [String] {
+        get { windowModel.localFolderPath }
+        nonmutating set { windowModel.localFolderPath = newValue }
+    }
 
     enum LocalMediaFolder: String, CaseIterable, Identifiable {
         case photos = "Photos"

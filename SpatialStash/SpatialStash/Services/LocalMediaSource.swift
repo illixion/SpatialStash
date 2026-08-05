@@ -113,6 +113,11 @@ actor LocalMediaSource {
         scanAllMedia().filter { $0.type == .video }
     }
 
+    /// Scan for local videos recursively under a specific folder
+    func scanVideos(under root: URL) -> [LocalMediaFile] {
+        scanDirectory(root, recursive: true).filter { $0.type == .video }
+    }
+
     /// Scan a directory for media files
     private func scanDirectory(_ directory: URL, recursive: Bool) -> [LocalMediaFile] {
         let fileManager = FileManager.default
@@ -276,8 +281,22 @@ final class LocalImageSource: ImageSource, @unchecked Sendable {
 
 /// VideoSource implementation for local files
 final class LocalVideoSource: VideoSource, @unchecked Sendable {
+    /// Optional folder root, mirroring `LocalImageSource`. When non-nil, scans
+    /// recursively from this folder — which is what a slideshow launched from
+    /// inside a Videos subfolder needs.
+    let rootURL: URL?
+
+    init(rootURL: URL? = nil) {
+        self.rootURL = rootURL
+    }
+
     func fetchVideos(page: Int, pageSize: Int) async throws -> VideoFetchResult {
-        let allVideos = await LocalMediaSource.shared.scanVideos()
+        let allVideos: [LocalMediaFile]
+        if let rootURL {
+            allVideos = await LocalMediaSource.shared.scanVideos(under: rootURL)
+        } else {
+            allVideos = await LocalMediaSource.shared.scanVideos()
+        }
 
         let startIndex = page * pageSize
         let endIndex = min(startIndex + pageSize, allVideos.count)
