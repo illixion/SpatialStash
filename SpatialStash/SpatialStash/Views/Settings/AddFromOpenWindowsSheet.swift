@@ -1,7 +1,9 @@
 /*
  Spatial Stash - Add From Open Windows Sheet
 
- Picker sheet for selecting currently-open pop-out images to add to a saved window group.
+ Picker for adding currently-open windows — photos, videos, Remote slideshows and
+ pinned web pages — to an existing saved window group. Each added entry captures
+ that window's current size, same as saving a fresh group does.
  */
 
 import SwiftUI
@@ -11,7 +13,12 @@ struct AddFromOpenWindowsSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     let group: SavedWindowGroup
-    @State private var selectedImageIds: Set<UUID> = []
+    @State private var selectedEntryIds: Set<UUID> = []
+
+    /// Snapshotted on appear rather than recomputed per pass: each entry carries
+    /// a freshly minted UUID, so re-deriving the list would invalidate the
+    /// selection on every redraw.
+    @State private var availableEntries: [SavedWindowEntry] = []
 
     private let columns = [
         GridItem(.adaptive(minimum: 150, maximum: 200), spacing: 12)
@@ -19,117 +26,71 @@ struct AddFromOpenWindowsSheet: View {
 
     var body: some View {
         NavigationStack {
-            let availableImages = appModel.openPopOutImagesNotInGroup(group)
+            Group {
+                if availableEntries.isEmpty {
+                    Text("No open windows to add")
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ScrollView {
+                        LazyVGrid(columns: columns, spacing: 12) {
+                            ForEach(availableEntries) { entry in
+                                let isSelected = selectedEntryIds.contains(entry.id)
+                                Button {
+                                    withAnimation(.easeInOut(duration: 0.15)) {
+                                        if isSelected {
+                                            selectedEntryIds.remove(entry.id)
+                                        } else {
+                                            selectedEntryIds.insert(entry.id)
+                                        }
+                                    }
+                                } label: {
+                                    ZStack(alignment: .topTrailing) {
+                                        WindowGroupEntryTile(entry: entry)
 
-            if availableImages.isEmpty {
-                Text("No open windows to add")
-                    .foregroundColor(.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .navigationTitle("Add to \(group.name)")
-                    .toolbar {
-                        ToolbarItem(placement: .cancellationAction) {
-                            Button("Cancel") { dismiss() }
-                        }
-                    }
-            } else {
-                ScrollView {
-                    LazyVGrid(columns: columns, spacing: 12) {
-                        ForEach(availableImages) { image in
-                            let isSelected = selectedImageIds.contains(image.id)
-                            Button {
-                                withAnimation(.easeInOut(duration: 0.15)) {
-                                    if isSelected {
-                                        selectedImageIds.remove(image.id)
-                                    } else {
-                                        selectedImageIds.insert(image.id)
+                                        Group {
+                                            if isSelected {
+                                                Image(systemName: "checkmark.circle.fill")
+                                                    .font(.title2)
+                                                    .foregroundStyle(.white, Color.accentColor)
+                                            } else {
+                                                Image(systemName: "circle")
+                                                    .font(.title2)
+                                                    .foregroundStyle(.white.opacity(0.7))
+                                                    .shadow(color: .black.opacity(0.5), radius: 2)
+                                            }
+                                        }
+                                        .padding(8)
                                     }
                                 }
-                            } label: {
-                                SelectableThumbnailView(image: image, isSelected: isSelected)
+                                .buttonStyle(.plain)
+                                .hoverEffectDisabled()
+                                .hoverEffect(LiftHoverEffect())
                             }
-                            .buttonStyle(.plain)
-                            .hoverEffectDisabled()
-                            .hoverEffect(LiftHoverEffect())
                         }
+                        .padding()
                     }
-                    .padding()
                 }
-                .navigationTitle("Add to \(group.name)")
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Cancel") { dismiss() }
-                    }
+            }
+            .navigationTitle("Add to \(group.name)")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                if !availableEntries.isEmpty {
                     ToolbarItem(placement: .confirmationAction) {
-                        Button("Add (\(selectedImageIds.count))") {
-                            let available = appModel.openPopOutImagesNotInGroup(group)
-                            let imagesToAdd = available.filter { selectedImageIds.contains($0.id) }
-                            appModel.addImagesToWindowGroup(group, images: imagesToAdd)
+                        Button("Add (\(selectedEntryIds.count))") {
+                            let toAdd = availableEntries.filter { selectedEntryIds.contains($0.id) }
+                            appModel.addEntriesToWindowGroup(group, entries: toAdd)
                             dismiss()
                         }
-                        .disabled(selectedImageIds.isEmpty)
+                        .disabled(selectedEntryIds.isEmpty)
                     }
                 }
             }
-        }
-    }
-}
-
-private struct SelectableThumbnailView: View {
-    let image: GalleryImage
-    let isSelected: Bool
-    @State private var loadedImage: UIImage?
-    @State private var isLoading = true
-
-    var body: some View {
-        ZStack(alignment: .topTrailing) {
-            ZStack {
-                Color.secondary.opacity(0.2)
-
-                if let loadedImage {
-                    Image(uiImage: loadedImage)
-                        .resizable()
-                        .scaledToFill()
-                } else if isLoading {
-                    ProgressView()
-                } else {
-                    Image(systemName: "photo")
-                        .font(.title)
-                        .foregroundColor(.secondary)
-                }
+            .onAppear {
+                availableEntries = appModel.openWindowEntriesNotInGroup(group)
             }
-            .frame(width: 150, height: 150)
-            .cornerRadius(12)
-            .clipped()
-
-            ZStack {
-                if isSelected {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.title2)
-                        .foregroundStyle(.white, Color.accentColor)
-                } else {
-                    Image(systemName: "circle")
-                        .font(.title2)
-                        .foregroundColor(.white.opacity(0.7))
-                        .shadow(color: .black.opacity(0.5), radius: 2)
-                }
-            }
-            .padding(8)
         }
-        .contentShape(Rectangle())
-        .task {
-            if let result = await ImageLoader.shared.loadThumbnailWithData(from: image.thumbnailURL) {
-                loadedImage = cropToSquare(result.image)
-            }
-            isLoading = false
-        }
-    }
-
-    private func cropToSquare(_ image: UIImage) -> UIImage {
-        let side = min(image.size.width, image.size.height)
-        let xOffset = (image.size.width - side) / 2
-        let yOffset = (image.size.height - side) / 2
-        let cropRect = CGRect(x: xOffset, y: yOffset, width: side, height: side)
-        guard let cgImage = image.cgImage?.cropping(to: cropRect) else { return image }
-        return UIImage(cgImage: cgImage, scale: image.scale, orientation: image.imageOrientation)
     }
 }

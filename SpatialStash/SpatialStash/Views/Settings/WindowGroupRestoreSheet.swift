@@ -1,8 +1,9 @@
 /*
  Spatial Stash - Window Group Restore Sheet
 
- Sheet displaying a thumbnail grid of images in a saved window group.
- Supports individual restore, context menu delete, and adding open windows.
+ Grid of the windows in a saved group — photos, videos, Remote slideshows and
+ pinned web pages alike. Supports restoring one at a time (each at the size it
+ was saved at), multi-select delete, and adding currently-open windows.
  */
 
 import SwiftUI
@@ -13,57 +14,44 @@ struct WindowGroupRestoreSheet: View {
     @Environment(\.dismissWindow) private var dismissWindow
 
     let group: SavedWindowGroup
-    @State private var restoredImageIds: Set<UUID> = []
+    @State private var restoredEntryIds: Set<UUID> = []
     @State private var showAddSheet = false
     @State private var isSelectionMode = false
-    @State private var selectedImageIds: Set<UUID> = []
-    @State private var pendingDuplicateImage: GalleryImage? = nil
+    @State private var selectedEntryIds: Set<UUID> = []
+    @State private var pendingDuplicateEntry: SavedWindowEntry? = nil
     @State private var showDuplicateWindowAlert = false
 
     private let columns = [
         GridItem(.adaptive(minimum: 150, maximum: 200), spacing: 12)
     ]
 
+    /// Re-read from AppModel each pass so deletes and additions land live.
+    private var entries: [SavedWindowEntry] {
+        appModel.savedWindowGroups.first { $0.id == group.id }?.entries ?? []
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
-                let liveGroup = appModel.savedWindowGroups.first { $0.id == group.id }
-                let images = liveGroup?.images ?? []
-
                 LazyVGrid(columns: columns, spacing: 12) {
-                    ForEach(images) { image in
+                    ForEach(entries) { entry in
                         ZStack(alignment: .topTrailing) {
                             Button {
-                                if isSelectionMode {
-                                    if selectedImageIds.contains(image.id) {
-                                        selectedImageIds.remove(image.id)
-                                    } else {
-                                        selectedImageIds.insert(image.id)
-                                    }
-                                } else {
-                                    if appModel.hasOpenPopOutWindow(for: image.fullSizeURL) {
-                                        pendingDuplicateImage = image
-                                        showDuplicateWindowAlert = true
-                                    } else {
-                                        appModel.enqueuePhotoWindowOpen(image)
-                                        restoredImageIds.insert(image.id)
-                                    }
-                                }
+                                handleTap(on: entry)
                             } label: {
-                                WindowGroupThumbnailView(image: image)
-                                    .opacity(restoredImageIds.contains(image.id) ? 0.5 : 1.0)
+                                WindowGroupEntryTile(entry: entry)
+                                    .opacity(restoredEntryIds.contains(entry.id) ? 0.5 : 1.0)
                             }
                             .buttonStyle(.plain)
                             .hoverEffectDisabled()
                             .hoverEffect(LiftHoverEffect())
 
-                            // Selection checkmark in selection mode
                             if isSelectionMode {
                                 ZStack {
                                     Circle()
-                                        .fill(selectedImageIds.contains(image.id) ? Color.accentColor : Color.secondary.opacity(0.3))
-                                    Image(systemName: selectedImageIds.contains(image.id) ? "checkmark.circle.fill" : "circle")
-                                        .foregroundColor(.white)
+                                        .fill(selectedEntryIds.contains(entry.id) ? Color.accentColor : Color.secondary.opacity(0.3))
+                                    Image(systemName: selectedEntryIds.contains(entry.id) ? "checkmark.circle.fill" : "circle")
+                                        .foregroundStyle(.white)
                                         .font(.title3)
                                 }
                                 .frame(width: 32, height: 32)
@@ -80,9 +68,9 @@ struct WindowGroupRestoreSheet: View {
                                 Color.secondary.opacity(0.2)
                                 Image(systemName: "plus")
                                     .font(.largeTitle)
-                                    .foregroundColor(.secondary)
+                                    .foregroundStyle(.secondary)
                             }
-                            .frame(width: 150, height: 150)
+                            .frame(width: WindowGroupEntryTile.side, height: WindowGroupEntryTile.side)
                             .cornerRadius(12)
                         }
                         .buttonStyle(.plain)
@@ -90,44 +78,42 @@ struct WindowGroupRestoreSheet: View {
                         .hoverEffect(LiftHoverEffect())
                     }
                 }
+                .padding()
             }
             .sheet(isPresented: $showAddSheet) {
                 AddFromOpenWindowsSheet(group: group)
+                    .environment(appModel)
             }
             .alert(
                 "Window Already Open",
                 isPresented: $showDuplicateWindowAlert
             ) {
                 Button("Summon") {
-                    if let image = pendingDuplicateImage {
-                        let existingValues = appModel.popOutWindowValues(for: image.fullSizeURL)
-                        for value in existingValues {
-                            dismissWindow(id: "photo-detail", value: value)
-                        }
-                        appModel.enqueuePhotoWindowOpen(image, bypassDuplicatePrompt: true)
-                        restoredImageIds.insert(image.id)
-                        pendingDuplicateImage = nil
+                    if let entry = pendingDuplicateEntry {
+                        summonExistingWindow(for: entry)
+                        restoredEntryIds.insert(entry.id)
+                        pendingDuplicateEntry = nil
                     }
                 }
                 Button("Open New") {
-                    if let image = pendingDuplicateImage {
-                        appModel.enqueuePhotoWindowOpen(image, bypassDuplicatePrompt: true)
-                        restoredImageIds.insert(image.id)
-                        pendingDuplicateImage = nil
+                    if let entry = pendingDuplicateEntry {
+                        appModel.restoreWindowEntry(entry, bypassDuplicatePrompt: true)
+                        restoredEntryIds.insert(entry.id)
+                        pendingDuplicateEntry = nil
                     }
                 }
                 Button("Cancel", role: .cancel) {
-                    pendingDuplicateImage = nil
+                    pendingDuplicateEntry = nil
                 }
             } message: {
-                Text("A window for this image is already open. You can summon it to your current position or open another window.")
+                Text("A window for this is already open. You can summon it to your current position or open another window.")
             }
             .navigationTitle(group.name)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
                         isSelectionMode.toggle()
-                        selectedImageIds.removeAll()
+                        selectedEntryIds.removeAll()
                     } label: {
                         Image(systemName: isSelectionMode ? "pencil.circle.fill" : "pencil.circle")
                             .font(.title2)
@@ -144,14 +130,12 @@ struct WindowGroupRestoreSheet: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     if isSelectionMode {
                         Button(role: .destructive) {
-                            for imageId in selectedImageIds {
-                                appModel.removeImageFromWindowGroup(group, imageId: imageId)
-                            }
-                            selectedImageIds.removeAll()
+                            appModel.removeEntriesFromWindowGroup(group, entryIds: selectedEntryIds)
+                            selectedEntryIds.removeAll()
                             isSelectionMode = false
 
-                            // If group is empty, dismiss
-                            if appModel.savedWindowGroups.first(where: { $0.id == group.id })?.images.isEmpty ?? true {
+                            // Removing the last entry deletes the group itself.
+                            if entries.isEmpty {
                                 dismiss()
                             }
                         } label: {
@@ -159,7 +143,7 @@ struct WindowGroupRestoreSheet: View {
                                 .font(.title3)
                         }
                         .buttonStyle(.bordered)
-                        .disabled(selectedImageIds.isEmpty)
+                        .disabled(selectedEntryIds.isEmpty)
                     } else {
                         Button {
                             dismiss()
@@ -172,47 +156,51 @@ struct WindowGroupRestoreSheet: View {
             }
         }
     }
-}
 
-private struct WindowGroupThumbnailView: View {
-    let image: GalleryImage
-    @State private var loadedImage: UIImage?
-    @State private var isLoading = true
+    // MARK: - Actions
 
-    var body: some View {
-        ZStack {
-            Color.secondary.opacity(0.2)
-
-            if let loadedImage {
-                Image(uiImage: loadedImage)
-                    .resizable()
-                    .scaledToFill()
-            } else if isLoading {
-                ProgressView()
+    private func handleTap(on entry: SavedWindowEntry) {
+        if isSelectionMode {
+            if selectedEntryIds.contains(entry.id) {
+                selectedEntryIds.remove(entry.id)
             } else {
-                Image(systemName: "photo")
-                    .font(.title)
-                    .foregroundColor(.secondary)
+                selectedEntryIds.insert(entry.id)
             }
+            return
         }
-        .frame(width: 150, height: 150)
-        .cornerRadius(12)
-        .clipped()
-        .contentShape(Rectangle())
-        .task {
-            if let result = await ImageLoader.shared.loadThumbnailWithData(from: image.thumbnailURL) {
-                loadedImage = cropToSquare(result.image)
-            }
-            isLoading = false
+
+        if appModel.hasOpenWindow(for: entry) {
+            pendingDuplicateEntry = entry
+            showDuplicateWindowAlert = true
+        } else {
+            appModel.restoreWindowEntry(entry)
+            restoredEntryIds.insert(entry.id)
         }
     }
 
-    private func cropToSquare(_ image: UIImage) -> UIImage {
-        let side = min(image.size.width, image.size.height)
-        let xOffset = (image.size.width - side) / 2
-        let yOffset = (image.size.height - side) / 2
-        let cropRect = CGRect(x: xOffset, y: yOffset, width: side, height: side)
-        guard let cgImage = image.cgImage?.cropping(to: cropRect) else { return image }
-        return UIImage(cgImage: cgImage, scale: image.scale, orientation: image.imageOrientation)
+    /// Bring the already-open window to the user's current position. Dismissing
+    /// the existing scene and re-opening the same window value is what actually
+    /// re-places it; re-opening alone leaves it where it was.
+    private func summonExistingWindow(for entry: SavedWindowEntry) {
+        switch entry.kind {
+        case .photo:
+            guard let image = entry.image else { return }
+            for value in appModel.popOutWindowValues(for: image.fullSizeURL) {
+                dismissWindow(id: "photo-detail", value: value)
+            }
+        case .video:
+            guard let video = entry.video else { return }
+            for value in appModel.videoWindowValues(for: video) {
+                dismissWindow(id: "video-detail", value: value)
+            }
+        case .remote:
+            guard let configId = entry.remoteConfigId else { return }
+            for value in appModel.remoteViewerWindowValues(for: configId) {
+                dismissWindow(id: "remote-viewer", value: value)
+            }
+        case .unknown:
+            return
+        }
+        appModel.restoreWindowEntry(entry, bypassDuplicatePrompt: true)
     }
 }

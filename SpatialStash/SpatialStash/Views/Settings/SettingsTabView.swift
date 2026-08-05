@@ -186,49 +186,7 @@ struct SettingsTabView: View {
                     Text("Used when starting a slideshow from any source. Saved Remote API profiles override these per-profile.")
                 }
 
-                Section("Window Groups") {
-                    Button("Save Current Windows") {
-                        newGroupName = ""
-                        showSaveGroupAlert = true
-                    }
-                    .disabled(appModel.openPopOutWindows.isEmpty)
-
-                    if appModel.savedWindowGroups.isEmpty {
-                        Text("No saved window groups")
-                            .foregroundColor(.secondary)
-                    } else {
-                        ForEach(appModel.savedWindowGroups) { group in
-                            HStack {
-                                VStack(alignment: .leading) {
-                                    Text(group.name)
-                                    Text("\(group.images.count) windows \u{00B7} \(group.savedDate, style: .date)")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-                                Spacer()
-                                Button("Rename") {
-                                    renamingGroup = group
-                                    renameGroupName = group.name
-                                    showRenameGroupAlert = true
-                                }
-                                .buttonStyle(.borderless)
-                                Button("Restore All") {
-                                    appModel.restoreAllImagesInGroup(group)
-                                }
-                                .buttonStyle(.borderless)
-                                Button("Restore...") {
-                                    restoreSheetGroup = group
-                                }
-                                .buttonStyle(.borderedProminent)
-                            }
-                        }
-                        .onDelete { indexSet in
-                            for index in indexSet {
-                                appModel.deleteSavedWindowGroup(appModel.savedWindowGroups[index])
-                            }
-                        }
-                    }
-                }
+                windowGroupsSection
 
                 Section("Stash Server") {
                     TextField("Server URL", text: $appModel.stashServerURL)
@@ -463,7 +421,7 @@ struct SettingsTabView: View {
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("Enter a name for this window group (\(appModel.openPopOutWindows.values.flatMap { $0 }.count) windows).")
+                Text("Enter a name for this arrangement of \(openWindowCount) open \(openWindowCount == 1 ? "window" : "windows"). Each window's position is remembered by visionOS; the group remembers what it showed and how big it was.")
             }
             .alert("Rename Window Group", isPresented: $showRenameGroupAlert) {
                 TextField("Group Name", text: $renameGroupName)
@@ -580,6 +538,71 @@ struct SettingsTabView: View {
             }
         }
         .pickerStyle(.menu)
+    }
+
+    // MARK: - Window Groups
+
+    /// Number of open windows a group would capture right now. Extracted (like
+    /// the whole section below) because inlining it in the `List` blew past the
+    /// type-checker's budget for that expression.
+    private var openWindowCount: Int {
+        appModel.openWindowEntries.count
+    }
+
+    @ViewBuilder
+    private var windowGroupsSection: some View {
+        Section {
+            Button("Save Current Windows") {
+                newGroupName = ""
+                showSaveGroupAlert = true
+            }
+            .disabled(openWindowCount == 0)
+
+            if appModel.savedWindowGroups.isEmpty {
+                Text("No saved window groups")
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(appModel.savedWindowGroups) { group in
+                    windowGroupRow(group)
+                }
+                .onDelete { indexSet in
+                    for index in indexSet {
+                        appModel.deleteSavedWindowGroup(appModel.savedWindowGroups[index])
+                    }
+                }
+            }
+        } header: {
+            Text("Window Groups")
+        } footer: {
+            Text("Saves every open pop-out window — photos, videos, RoboFrame slideshows and pinned web pages — and restores each one at the size it was saved at.")
+        }
+    }
+
+    @ViewBuilder
+    private func windowGroupRow(_ group: SavedWindowGroup) -> some View {
+        HStack {
+            VStack(alignment: .leading) {
+                Text(group.name)
+                Text("\(group.contentSummary) \u{00B7} \(group.savedDate, style: .date)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Rename") {
+                renamingGroup = group
+                renameGroupName = group.name
+                showRenameGroupAlert = true
+            }
+            .buttonStyle(.borderless)
+            Button("Restore All") {
+                appModel.restoreWindowGroup(group)
+            }
+            .buttonStyle(.borderless)
+            Button("Restore...") {
+                restoreSheetGroup = group
+            }
+            .buttonStyle(.borderedProminent)
+        }
     }
 
     /// Presenting an alert directly from the fileImporter completion handler

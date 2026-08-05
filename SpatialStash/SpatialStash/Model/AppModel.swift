@@ -1765,12 +1765,14 @@ class AppModel {
     private func loadSavedWindowGroups() {
         if let data = UserDefaults.standard.data(forKey: Self.savedWindowGroupsKey),
            var groups = try? JSONDecoder().decode([SavedWindowGroup].self, from: data) {
-            // Re-resolve local image file URLs — the app sandbox container UUID
-            // changes on every launch, so persisted absolute file URLs become stale.
             for groupIndex in groups.indices {
-                for imageIndex in groups[groupIndex].images.indices {
-                    groups[groupIndex].images[imageIndex] = groups[groupIndex].images[imageIndex].resolvingLocalFileURL()
-                }
+                // Drop entries this build can't restore (a kind written by a
+                // newer version) rather than showing dead tiles, and re-resolve
+                // local file URLs — the app sandbox container UUID changes on
+                // every launch, so persisted absolute file URLs go stale.
+                groups[groupIndex].entries = groups[groupIndex].entries
+                    .filter(\.isRestorable)
+                    .map { $0.resolvingLocalFileURLs() }
             }
             savedWindowGroups = groups
             persistSavedWindowGroups()
@@ -1795,15 +1797,71 @@ class AppModel {
         }
     }
 
-    func saveCurrentWindowGroup(name: String) {
-        let images = openPopOutWindows.values.flatMap { $0 }.map(\.image)
-        guard !images.isEmpty else { return }
-        let group = SavedWindowGroup(name: name, images: images)
-        savedWindowGroups.append(group)
-        persistSavedWindowGroups()
-        AppLogger.windowState.info("Saved window group '\(name, privacy: .public)' with \(images.count, privacy: .public) windows")
+    // MARK: - Snapshotting Open Windows
+
+    /// Every currently-open standalone window, as group entries, each carrying
+    /// the geometry that window is at right now.
+    ///
+    /// Sizes come from `RestoredWindowTracker`, which every window type writes
+    /// its settled size into: it's the one store that's already kept in lockstep
+    /// with the live geometry for photo, video and Remote windows alike. A window
+    /// that hasn't reported a size yet yields `nil`, and restores at its natural
+    /// size rather than a guess.
+    var openWindowEntries: [SavedWindowEntry] {
+        var entries: [SavedWindowEntry] = []
+
+        for value in openPopOutWindows.values.flatMap({ $0 }) {
+            entries.append(.photo(value.image, size: RestoredWindowTracker.windowSize(for: value.id)))
+        }
+
+        for value in openVideoWindows.values.flatMap({ $0 }) {
+            entries.append(.video(
+                value.video,
+                size: RestoredWindowTracker.windowSize(for: value.id),
+                stereoscopicOverride: value.stereoscopicOverride,
+                settings3D: value.video3DSettings,
+                pseudo3DEnabled: value.pseudo3DEnabled,
+                pseudo3DSettings: value.pseudo3DSettings
+            ))
+        }
+
+        for value in openRemoteViewerWindows.values.flatMap({ $0 }) {
+            guard let config = remoteViewerConfig(id: value.configId) else { continue }
+            entries.append(.remote(
+                configId: config.id,
+                name: config.name,
+                detail: Self.remoteIdentityDetail(for: config),
+                isWebPage: config.mode == .webPage,
+                size: RestoredWindowTracker.windowSize(for: value.id)
+            ))
+        }
+
+        return entries
     }
 
+    /// Short identity for a Remote profile — the RoboFrame device id for a
+    /// slideshow, the page host for a pinned web page. Mirrors what each
+    /// window's ornament shows so a saved entry and a live window read alike.
+    static func remoteIdentityDetail(for config: RemoteViewerConfig) -> String? {
+        if config.mode == .webPage {
+            return config.resolvedWebPageURL?.host ?? config.webPageURL
+        }
+        let deviceId = config.wsDeviceId.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !deviceId.isEmpty { return deviceId }
+        if config.apiEndpoint.trimmingCharacters(in: .whitespaces).isEmpty { return "Gallery" }
+        return URL(string: config.apiEndpoint)?.host
+    }
+
+    // MARK: - Saved Window Group Mutations
+
+    func saveCurrentWindowGroup(name: String) {
+        let entries = openWindowEntries
+        guard !entries.isEmpty else { return }
+        let group = SavedWindowGroup(name: name, entries: entries)
+        savedWindowGroups.append(group)
+        persistSavedWindowGroups()
+        AppLogger.windowState.info("Saved window group '\(name, privacy: .public)' with \(entries.count, privacy: .public) windows (\(group.contentSummary, privacy: .public))")
+    }
 
     func deleteSavedWindowGroup(_ group: SavedWindowGroup) {
         savedWindowGroups.removeAll { $0.id == group.id }
@@ -1817,39 +1875,105 @@ class AppModel {
         }
     }
 
-    func removeImageFromWindowGroup(_ group: SavedWindowGroup, imageId: UUID) {
-        guard let groupIndex = savedWindowGroups.firstIndex(where: { $0.id == group.id }) else { return }
-        savedWindowGroups[groupIndex].images.removeAll { $0.id == imageId }
-        if savedWindowGroups[groupIndex].images.isEmpty {
+    func removeEntriesFromWindowGroup(_ group: SavedWindowGroup, entryIds: Set<UUID>) {
+        guard !entryIds.isEmpty,
+              let groupIndex = savedWindowGroups.firstIndex(where: { $0.id == group.id }) else { return }
+        savedWindowGroups[groupIndex].entries.removeAll { entryIds.contains($0.id) }
+        if savedWindowGroups[groupIndex].entries.isEmpty {
             savedWindowGroups.remove(at: groupIndex)
         }
         persistSavedWindowGroups()
-        AppLogger.windowState.info("Removed image from window group '\(group.name, privacy: .public)'")
+        AppLogger.windowState.info("Removed \(entryIds.count, privacy: .public) windows from group '\(group.name, privacy: .public)'")
     }
 
-    func addImagesToWindowGroup(_ group: SavedWindowGroup, images: [GalleryImage]) {
-        guard let groupIndex = savedWindowGroups.firstIndex(where: { $0.id == group.id }) else { return }
-        savedWindowGroups[groupIndex].images.append(contentsOf: images)
+    func addEntriesToWindowGroup(_ group: SavedWindowGroup, entries: [SavedWindowEntry]) {
+        guard !entries.isEmpty,
+              let groupIndex = savedWindowGroups.firstIndex(where: { $0.id == group.id }) else { return }
+        savedWindowGroups[groupIndex].entries.append(contentsOf: entries)
         persistSavedWindowGroups()
-        let count = images.count
-        AppLogger.windowState.info("Added \(count, privacy: .public) images to window group '\(group.name, privacy: .public)'")
+        AppLogger.windowState.info("Added \(entries.count, privacy: .public) windows to group '\(group.name, privacy: .public)'")
     }
 
-    func restoreAllImagesInGroup(_ group: SavedWindowGroup) {
-        Task { @MainActor in
-            for image in group.images {
-                enqueuePhotoWindowOpen(image)
-                try? await Task.sleep(for: .seconds(0.3))
-            }
-            AppLogger.windowState.info("Restored all \(group.images.count, privacy: .public) windows from group '\(group.name, privacy: .public)'")
+    /// Open windows not already represented in this group, offered by the
+    /// "add from open windows" picker.
+    func openWindowEntriesNotInGroup(_ group: SavedWindowGroup) -> [SavedWindowEntry] {
+        let existing = Set(group.entries.map(\.dedupeKey))
+        return openWindowEntries.filter { !existing.contains($0.dedupeKey) }
+    }
+
+    // MARK: - Restoring Window Groups
+
+    /// Whether a window showing this entry's content is already on screen.
+    func hasOpenWindow(for entry: SavedWindowEntry) -> Bool {
+        switch entry.kind {
+        case .photo:
+            guard let image = entry.image else { return false }
+            return hasOpenPopOutWindow(for: image.fullSizeURL)
+        case .video:
+            guard let video = entry.video else { return false }
+            return hasOpenVideoWindow(for: video)
+        case .remote:
+            guard let configId = entry.remoteConfigId else { return false }
+            return !remoteViewerWindowValues(for: configId).isEmpty
+        case .unknown:
+            return false
         }
     }
 
-    func openPopOutImagesNotInGroup(_ group: SavedWindowGroup) -> [GalleryImage] {
-        let groupURLs = Set(group.images.map(\.fullSizeURL))
-        return openPopOutWindows.values.flatMap { $0 }
-            .map(\.image)
-            .filter { !groupURLs.contains($0.fullSizeURL) }
+    /// Open one saved window at the geometry it was saved at.
+    ///
+    /// - Parameter bypassDuplicatePrompt: skip the "window already open" dialog
+    ///   for the kinds that have one, e.g. after the user chose "Open New".
+    func restoreWindowEntry(_ entry: SavedWindowEntry, bypassDuplicatePrompt: Bool = false) {
+        let size = entry.size?.cgSize
+
+        switch entry.kind {
+        case .photo:
+            guard let image = entry.image else { return }
+            enqueuePhotoWindowOpen(
+                image,
+                bypassDuplicatePrompt: bypassDuplicatePrompt,
+                restoredSize: size
+            )
+
+        case .video:
+            guard let video = entry.video else { return }
+            var value = VideoWindowValue(
+                video: video,
+                stereoscopicOverride: entry.videoStereoscopicOverride,
+                video3DSettings: entry.video3DSettings,
+                pseudo3DEnabled: entry.videoPseudo3DEnabled,
+                pseudo3DSettings: entry.videoPseudo3DSettings
+            )
+            value.restoredSize = size.map(CodableSize.init)
+            enqueueVideoWindowOpen(value)
+
+        case .remote:
+            guard let configId = entry.remoteConfigId, remoteViewerConfig(id: configId) != nil else {
+                AppLogger.windowState.warning("Skipping restore of Remote window: profile \(entry.remoteConfigId?.uuidString ?? "?", privacy: .public) no longer exists")
+                return
+            }
+            enqueueRemoteViewerOpen(
+                configId: configId,
+                bypassDuplicatePrompt: bypassDuplicatePrompt,
+                restoredSize: size
+            )
+
+        case .unknown:
+            break
+        }
+    }
+
+    /// Restore every window in the group, staggered so visionOS places them one
+    /// at a time instead of stacking them all at the same spot.
+    func restoreWindowGroup(_ group: SavedWindowGroup) {
+        Task { @MainActor in
+            for entry in group.entries where entry.isRestorable {
+                restoreWindowEntry(entry, bypassDuplicatePrompt: true)
+                try? await Task.sleep(for: .seconds(0.3))
+            }
+            AppLogger.windowState.info("Restored all \(group.entries.count, privacy: .public) windows from group '\(group.name, privacy: .public)'")
+        }
     }
 
     /// Update the image tracked for a pop-out window (called when user navigates prev/next)
