@@ -66,7 +66,13 @@ enum RemoteViewerMode: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-struct RemoteViewerConfig: Codable, Identifiable {
+/// `Equatable` is load-bearing for the Remote tab editor: it diffs the draft
+/// against the profile it was loaded from to decide whether a Save would
+/// overwrite anything, and against the stored copy to notice a viewer window
+/// persisting its own change underneath the draft. Every stored property is
+/// value-typed, so the synthesized `==` is the whole comparison — new fields
+/// join it automatically.
+struct RemoteViewerConfig: Codable, Identifiable, Equatable {
     private(set) var id: UUID
     var name: String
     private(set) var savedDate: Date

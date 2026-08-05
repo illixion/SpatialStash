@@ -5,62 +5,86 @@
  blocked posts, and blocked tags are owned by the RoboFrame server and
  synced over the WebSocket; this view edits per-viewer display settings
  and the local "Default List" preference.
+
+ Everything below the profile list is a *draft*. Nothing reaches
+ `savedRemoteConfigs` until an explicit Save (or a Save & Launch), and the
+ Editing section always names the profile a Save would overwrite plus
+ whether the draft currently differs from it — so "am I about to change a
+ saved profile?" is answerable without remembering what was loaded.
+
+ Open viewer windows write their own ornament tweaks back into the same
+ store (`RemoteViewerModel.onConfigChanged`). A clean draft silently follows
+ those; a draft with edits of its own can't, so it gets flagged rather than
+ letting the next Save quietly revert the window's change.
  */
 
 import SwiftUI
 
 struct RemoteTabView: View {
     @Environment(AppModel.self) private var appModel
-    @State private var editingConfig = RemoteViewerConfig(name: "New Configuration")
-    @State private var showSaveAlert = false
-    @State private var saveName = ""
-    @State private var selectedConfigId: UUID?
+
+    /// The profile being edited. Only ever persisted through `save()`.
+    @State private var editingConfig: RemoteViewerConfig
+
+    /// The draft as it looked at load / new / save time. "Has the user
+    /// changed anything" is exactly `editingConfig != baseline`.
+    @State private var baseline: RemoteViewerConfig
+
+    /// A load / new-draft request parked behind the discard confirmation.
+    @State private var pendingSwitch: PendingSwitch?
+
+    /// Set when the loaded profile changed in the store while this draft had
+    /// unsaved edits — saving would replace whatever changed it.
+    @State private var storeChangedUnderDraft = false
+
+    @State private var didSeedDefaults = false
     @State private var newModTagPreset = ""
 
-    var body: some View {
-        @Bindable var appModel = appModel
+    /// What a discard confirmation is holding up.
+    private enum PendingSwitch: Equatable {
+        case load(UUID)
+        case newDraft
+    }
 
+    init() {
+        // Both start as the same value (same `id`), so a freshly opened
+        // editor reads as an untouched new draft rather than a modified one.
+        let draft = RemoteViewerConfig(name: "New Configuration")
+        _editingConfig = State(initialValue: draft)
+        _baseline = State(initialValue: draft)
+    }
+
+    // MARK: - Draft state
+
+    /// The stored profile this draft would overwrite. `nil` when the draft has
+    /// never been saved — or when its profile was deleted elsewhere, which is
+    /// the same situation from the draft's point of view: a Save creates a row.
+    private var storedCopy: RemoteViewerConfig? {
+        appModel.savedRemoteConfigs.first { $0.id == editingConfig.id }
+    }
+
+    private var isNewDraft: Bool { storedCopy == nil }
+
+    private var hasUnsavedChanges: Bool { editingConfig != baseline }
+
+    private var trimmedName: String {
+        editingConfig.name.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// A Save is only meaningful when there's something to write.
+    private var canSave: Bool {
+        !trimmedName.isEmpty && (isNewDraft || hasUnsavedChanges)
+    }
+
+    /// Launching always opens a *saved* profile, so a draft that differs from
+    /// the store has to be written first.
+    private var needsSaveToLaunch: Bool { isNewDraft || hasUnsavedChanges }
+
+    var body: some View {
         NavigationStack {
             List {
-                Section("Saved Configurations") {
-                    if appModel.savedRemoteConfigs.isEmpty {
-                        Text("No saved configurations")
-                            .foregroundColor(.secondary)
-                    } else {
-                        ForEach(appModel.savedRemoteConfigs) { config in
-                            HStack {
-                                Image(systemName: config.mode.systemImage)
-                                    .foregroundStyle(.secondary)
-                                    .help(config.mode.label)
-                                VStack(alignment: .leading) {
-                                    Text(config.name)
-                                    Text(config.savedDate, style: .date)
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-                                Spacer()
-                                Button("Load") {
-                                    editingConfig = config
-                                    selectedConfigId = config.id
-                                }
-                                .buttonStyle(.borderless)
-                                Button("Copy") {
-                                    appModel.saveRemoteConfig(config.duplicated(name: config.name + " (Copy)"))
-                                }
-                                .buttonStyle(.borderless)
-                                Button("Launch") {
-                                    launchViewer(config: config)
-                                }
-                                .buttonStyle(.borderedProminent)
-                            }
-                        }
-                        .onDelete { indexSet in
-                            for index in indexSet {
-                                appModel.deleteRemoteConfig(appModel.savedRemoteConfigs[index])
-                            }
-                        }
-                    }
-                }
+                savedConfigurationsSection
+                editingSection
 
                 Section {
                     Picker("Mode", selection: $editingConfig.mode) {
@@ -84,45 +108,336 @@ struct RemoteTabView: View {
                 }
 
                 Section {
-                    Button("Save Configuration") {
-                        saveName = editingConfig.name
-                        showSaveAlert = true
-                    }
-
                     Button {
-                        appModel.saveRemoteConfig(editingConfig)
-                        launchViewer(config: editingConfig)
+                        launchDraft()
                     } label: {
-                        Text(editingConfig.mode == .webPage ? "Open Website" : "Launch Viewer")
+                        Text(launchButtonTitle)
                             .foregroundStyle(.blue)
                     }
-                    .disabled(editingConfig.mode == .webPage && editingConfig.resolvedWebPageURL == nil)
+                    .disabled(trimmedName.isEmpty
+                              || (editingConfig.mode == .webPage && editingConfig.resolvedWebPageURL == nil))
+                } footer: {
+                    if needsSaveToLaunch {
+                        Text(isNewDraft
+                             ? "Saves the draft as a new profile first — launching always opens a saved profile."
+                             : "Saves your changes to “\(storedCopy?.name ?? trimmedName)” first — launching always opens a saved profile.")
+                    }
                 }
             }
             .navigationTitle("Remote Viewer")
-            .onAppear {
-                // Seed the "New Configuration" editor with the user's slideshow
-                // defaults the first time it's shown. Once the user edits or
-                // loads a saved config the defaults stop being relevant.
-                if selectedConfigId == nil {
-                    appModel.applySlideshowDefaults(to: &editingConfig)
-                }
+            .onAppear(perform: seedDefaultsIfUntouched)
+            .onChange(of: appModel.savedRemoteConfigs) { _, _ in
+                adoptStoreChange()
             }
-            .alert("Save Configuration", isPresented: $showSaveAlert) {
-                TextField("Name", text: $saveName)
-                Button("Save") {
-                    let name = saveName.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !name.isEmpty {
-                        editingConfig.name = name
-                        appModel.saveRemoteConfig(editingConfig)
-                    }
+            .confirmationDialog(
+                pendingSwitchTitle,
+                isPresented: Binding(
+                    get: { pendingSwitch != nil },
+                    set: { if !$0 { pendingSwitch = nil } }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button(isNewDraft ? "Save as New Profile and Continue" : "Save Changes and Continue") {
+                    resolvePendingSwitch(saveFirst: true)
                 }
-                Button("Cancel", role: .cancel) {}
+                Button("Discard Changes", role: .destructive) {
+                    resolvePendingSwitch(saveFirst: false)
+                }
+                Button("Cancel", role: .cancel) { pendingSwitch = nil }
             }
         }
     }
 
-    // MARK: - Web page mode
+    // MARK: - Saved configurations
+
+    @ViewBuilder
+    private var savedConfigurationsSection: some View {
+        Section {
+            if appModel.savedRemoteConfigs.isEmpty {
+                Text("No saved configurations")
+                    .foregroundColor(.secondary)
+            } else {
+                ForEach(appModel.savedRemoteConfigs) { config in
+                    savedConfigRow(config)
+                }
+                .onDelete { indexSet in
+                    for index in indexSet {
+                        appModel.deleteRemoteConfig(appModel.savedRemoteConfigs[index])
+                    }
+                }
+            }
+        } header: {
+            HStack {
+                Text("Saved Configurations")
+                Spacer()
+                Button {
+                    requestNewDraft()
+                } label: {
+                    Label("New", systemImage: "plus")
+                }
+                .buttonStyle(.borderless)
+            }
+            .textCase(nil)
+        } footer: {
+            Text("Launch opens the saved version of a profile; unsaved edits stay in the editor below.")
+        }
+    }
+
+    @ViewBuilder
+    private func savedConfigRow(_ config: RemoteViewerConfig) -> some View {
+        let isEditing = config.id == editingConfig.id
+
+        HStack {
+            Image(systemName: config.mode.systemImage)
+                .foregroundStyle(.secondary)
+                .help(config.mode.label)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(config.name)
+                    if isEditing {
+                        Text(hasUnsavedChanges ? "Editing · unsaved" : "Editing")
+                            .font(.caption2)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 2)
+                            .background(
+                                hasUnsavedChanges ? Color.orange.opacity(0.3) : Color.secondary.opacity(0.2),
+                                in: .capsule
+                            )
+                    }
+                }
+                Text(config.savedDate, style: .date)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            Spacer()
+            Button(isEditing ? "Reload" : "Load") {
+                requestLoad(config)
+            }
+            .buttonStyle(.borderless)
+            .disabled(isEditing && !hasUnsavedChanges)
+            Button("Copy") {
+                appModel.saveRemoteConfig(
+                    config.duplicated(name: uniqueName(from: config.name + " (Copy)"))
+                )
+            }
+            .buttonStyle(.borderless)
+            Button("Launch") {
+                launchViewer(config: config)
+            }
+            .buttonStyle(.borderedProminent)
+        }
+    }
+
+    // MARK: - Editing status
+
+    @ViewBuilder
+    private var editingSection: some View {
+        Section {
+            TextField("Name", text: $editingConfig.name)
+
+            HStack(spacing: 8) {
+                Image(systemName: statusSymbol)
+                    .foregroundStyle(statusTint)
+                Text(statusText)
+                    .font(.callout)
+                Spacer()
+            }
+
+            if storeChangedUnderDraft {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("This profile changed in an open viewer window.")
+                        Text("Saving replaces that change with your edits.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    Button("Reload") { revertToStored() }
+                        .buttonStyle(.bordered)
+                }
+            }
+
+            HStack {
+                Button(isNewDraft ? "Save as New Profile" : "Save") { save() }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!canSave)
+                Button("Revert") { revertToStored() }
+                    .buttonStyle(.bordered)
+                    .disabled(isNewDraft || !hasUnsavedChanges)
+                Spacer()
+                if !isNewDraft {
+                    Button("Save as Copy") { saveAsNew() }
+                        .buttonStyle(.bordered)
+                        .disabled(trimmedName.isEmpty)
+                }
+            }
+        } header: {
+            Text("Editing")
+        } footer: {
+            Text(isNewDraft
+                 ? "Nothing is written until you save. Launching saves first."
+                 : "“Save as Copy” branches these settings into a new profile instead of overwriting “\(storedCopy?.name ?? trimmedName)”.")
+        }
+    }
+
+    private var statusSymbol: String {
+        if isNewDraft { return "doc.badge.plus" }
+        return hasUnsavedChanges ? "pencil.circle.fill" : "checkmark.circle.fill"
+    }
+
+    private var statusTint: Color {
+        if isNewDraft { return .secondary }
+        return hasUnsavedChanges ? .orange : .green
+    }
+
+    private var statusText: String {
+        guard let stored = storedCopy else {
+            return "New profile — not saved yet"
+        }
+        return hasUnsavedChanges
+            ? "Unsaved changes to “\(stored.name)”"
+            : "Matches the saved profile “\(stored.name)”"
+    }
+
+    private var launchButtonTitle: String {
+        let verb = editingConfig.mode == .webPage ? "Open Website" : "Launch Viewer"
+        return needsSaveToLaunch ? "Save & \(verb)" : verb
+    }
+
+    private var pendingSwitchTitle: String {
+        guard let stored = storedCopy else {
+            return "“\(trimmedName)” hasn't been saved yet"
+        }
+        return "“\(stored.name)” has unsaved changes"
+    }
+
+    // MARK: - Draft actions
+
+    private func save() {
+        var config = editingConfig
+        config.name = trimmedName.isEmpty ? "Untitled" : trimmedName
+        editingConfig = config
+        appModel.saveRemoteConfig(config)
+        baseline = config
+        storeChangedUnderDraft = false
+    }
+
+    /// Branch the draft into a fresh profile, leaving the one it was loaded
+    /// from untouched. The escape hatch when settings were tweaked for a
+    /// one-off and shouldn't land on the original.
+    private func saveAsNew() {
+        let copy = editingConfig.duplicated(name: uniqueName(from: trimmedName))
+        appModel.saveRemoteConfig(copy)
+        editingConfig = copy
+        baseline = copy
+        storeChangedUnderDraft = false
+    }
+
+    /// Throw away the draft's edits and re-read the profile from the store —
+    /// which also picks up anything an open viewer window wrote meanwhile.
+    private func revertToStored() {
+        guard let stored = storedCopy else { return }
+        editingConfig = stored
+        baseline = stored
+        storeChangedUnderDraft = false
+    }
+
+    private func requestLoad(_ config: RemoteViewerConfig) {
+        guard hasUnsavedChanges else {
+            load(config)
+            return
+        }
+        pendingSwitch = .load(config.id)
+    }
+
+    private func requestNewDraft() {
+        guard hasUnsavedChanges else {
+            newDraft()
+            return
+        }
+        pendingSwitch = .newDraft
+    }
+
+    private func load(_ config: RemoteViewerConfig) {
+        editingConfig = config
+        baseline = config
+        storeChangedUnderDraft = false
+        // A loaded profile carries its own display settings; re-seeding the
+        // app-level slideshow defaults over them would be an overwrite.
+        didSeedDefaults = true
+    }
+
+    private func newDraft() {
+        var draft = RemoteViewerConfig(name: uniqueName(from: "New Configuration"))
+        appModel.applySlideshowDefaults(to: &draft)
+        editingConfig = draft
+        baseline = draft
+        storeChangedUnderDraft = false
+        didSeedDefaults = true
+    }
+
+    private func resolvePendingSwitch(saveFirst: Bool) {
+        let pending = pendingSwitch
+        pendingSwitch = nil
+        if saveFirst { save() }
+        switch pending {
+        case .load(let id):
+            if let config = appModel.savedRemoteConfigs.first(where: { $0.id == id }) {
+                load(config)
+            }
+        case .newDraft:
+            newDraft()
+        case nil:
+            break
+        }
+    }
+
+    private func launchDraft() {
+        if needsSaveToLaunch { save() }
+        launchViewer(config: editingConfig)
+    }
+
+    /// Seed the untouched draft with the user's slideshow defaults the first
+    /// time the editor is shown. Once anything is loaded or edited the
+    /// defaults stop being relevant.
+    private func seedDefaultsIfUntouched() {
+        guard !didSeedDefaults, isNewDraft, !hasUnsavedChanges else { return }
+        var seeded = editingConfig
+        appModel.applySlideshowDefaults(to: &seeded)
+        editingConfig = seeded
+        baseline = seeded
+        didSeedDefaults = true
+    }
+
+    /// An open viewer window persists ornament tweaks straight into
+    /// `savedRemoteConfigs`. A clean draft just follows along; a draft with
+    /// edits of its own can't, so flag it instead of letting the next Save
+    /// quietly revert the window's change.
+    private func adoptStoreChange() {
+        guard let stored = storedCopy, stored != baseline else { return }
+        if hasUnsavedChanges {
+            storeChangedUnderDraft = true
+        } else {
+            editingConfig = stored
+            baseline = stored
+        }
+    }
+
+    /// A name no saved profile is using yet, so copies and new drafts can't
+    /// produce rows the user has no way to tell apart.
+    private func uniqueName(from base: String) -> String {
+        let trimmed = base.trimmingCharacters(in: .whitespacesAndNewlines)
+        let candidate = trimmed.isEmpty ? "New Configuration" : trimmed
+        let taken = Set(appModel.savedRemoteConfigs.map(\.name))
+        guard taken.contains(candidate) else { return candidate }
+        var index = 2
+        while taken.contains("\(candidate) \(index)") { index += 1 }
+        return "\(candidate) \(index)"
+    }
+
+    // MARK: - Website mode
 
     @ViewBuilder
     private var webPageSection: some View {
@@ -194,7 +509,7 @@ struct RemoteTabView: View {
         )
     }
 
-    // MARK: - Slideshow mode
+    // MARK: - RoboFrame mode
 
     @ViewBuilder
     private var slideshowSections: some View {
@@ -267,6 +582,9 @@ struct RemoteTabView: View {
     /// for whichever channel this device is on. The catalog of presets
     /// lives entirely on this device; switching presets in the ornament
     /// pushes the active set to the server (and clears its query cache).
+    ///
+    /// Deliberately outside the draft/Save flow: these are device-wide, not
+    /// per-profile, so they apply the moment they're edited.
     @ViewBuilder
     private var modTagPresetsSection: some View {
         let mtm = appModel.modTagManager
@@ -275,7 +593,7 @@ struct RemoteTabView: View {
             set: { mtm.modTagLists = $0 }
         )
 
-        Section("Mod Tag Presets") {
+        Section {
             ForEach(mtm.modTagLists.indices, id: \.self) { index in
                 HStack {
                     Text("Preset \(index + 1)")
@@ -334,9 +652,12 @@ struct RemoteTabView: View {
                 }
             }
             .pickerStyle(.menu)
+        } header: {
+            Text("Mod Tag Presets")
+        } footer: {
+            Text("Shared by every RoboFrame window on this device — saved as you type, not part of the profile above.")
         }
     }
-
 
     private func launchViewer(config: RemoteViewerConfig) {
         appModel.enqueueRemoteViewerOpen(configId: config.id)
