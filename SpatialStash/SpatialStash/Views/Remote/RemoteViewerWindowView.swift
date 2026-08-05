@@ -906,7 +906,17 @@ struct RemoteViewerWindowView: View {
         }
 
         model.onConfigChanged = { [appModel] updatedConfig in
-            appModel.saveRemoteConfig(updatedConfig)
+            // `updatedConfig` is this window's snapshot from when it opened
+            // plus whatever the ornament just changed. Saving it as-is would
+            // revert every unrelated edit the Remote tab made since the window
+            // opened, so merge the viewer-owned display fields onto whatever
+            // the profile looks like now.
+            guard var current = appModel.remoteViewerConfig(id: updatedConfig.id) else {
+                appModel.saveRemoteConfig(updatedConfig)
+                return
+            }
+            current.applyViewerDisplaySettings(from: updatedConfig)
+            appModel.saveRemoteConfig(current)
         }
 
         model.windowValue = windowValue

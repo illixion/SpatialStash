@@ -211,6 +211,30 @@ struct RemoteViewerConfig: Codable, Identifiable, Equatable {
         return copy
     }
 
+    /// Overwrite exactly the fields an open viewer window can change from its
+    /// ornament and adjustments panel, leaving everything else alone.
+    ///
+    /// A window holds the profile as it was when it opened, so persisting that
+    /// snapshot wholesale reverts anything the Remote tab saved in the
+    /// meantime — a clock toggle would silently undo an endpoint edit. The
+    /// window's write-back merges through here instead. Keep this list in sync
+    /// with the `display*` setters on `RemoteViewerModel` plus the ornament's
+    /// 3D-mode and resolution menus; a field nothing in the viewer mutates
+    /// must stay out of it, or the stale snapshot leaks back in through it.
+    mutating func applyViewerDisplaySettings(from source: RemoteViewerConfig) {
+        delay = source.delay
+        showClock = source.showClock
+        showSensors = source.showSensors
+        useAspectRatio = source.useAspectRatio
+        enableKenBurns = source.enableKenBurns
+        enableDynamicBrightness = source.enableDynamicBrightness
+        enableDiorama = source.enableDiorama
+        transparentBackground = source.transparentBackground
+        slideshow3DMode = source.slideshow3DMode
+        maxImageResolution2D = source.maxImageResolution2D
+        maxImageResolution3D = source.maxImageResolution3D
+    }
+
     private enum CodingKeys: String, CodingKey {
         case id, name, savedDate, mode
         case apiEndpoint, wsDeviceId, accessToken
