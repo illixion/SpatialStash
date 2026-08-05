@@ -35,6 +35,12 @@ struct VideoWindowValue: Identifiable, Codable, Hashable {
     /// vs openWindow (standalone pop-out with gallery button)
     var wasPushed: Bool
 
+    /// Geometry to open at, set when the window is restored from a saved window
+    /// group. The video window's aspect lock fits the video inside this box
+    /// instead of its default cap, so a saved arrangement comes back at the size
+    /// the user left it at. `nil` on ordinary opens.
+    var restoredSize: CodableSize?
+
     init(
         video: GalleryVideo,
         galleryVideos: [GalleryVideo]? = nil,
@@ -52,5 +58,14 @@ struct VideoWindowValue: Identifiable, Codable, Hashable {
         self.pseudo3DEnabled = pseudo3DEnabled
         self.pseudo3DSettings = pseudo3DSettings
         self.wasPushed = wasPushed
+        self.restoredSize = nil
     }
+
+    /// Identity is the window id alone — see the note on `PhotoWindowValue`: a
+    /// synthesized conformance folds in every mutable field, so a tracked value
+    /// stops matching its own scene the moment one of them changes and
+    /// `openWindow(id:value:)` spawns a duplicate instead of summoning.
+    static func == (lhs: Self, rhs: Self) -> Bool { lhs.id == rhs.id }
+
+    func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }

@@ -31,6 +31,18 @@ struct VideoWindowView: View {
     /// system actually granted and re-locks if it was clamped (tall videos).
     @State private var aspectRelockTask: Task<Void, Never>?
 
+    /// Debounced mirror of the window's settled size into
+    /// `RestoredWindowTracker`, so "save the current window arrangement" can read
+    /// this window's live geometry. Debounced because a resize drag emits a
+    /// geometry change per frame and each write hits UserDefaults.
+    @State private var sizeWritebackTask: Task<Void, Never>?
+
+    /// True once a group-restored size has been consumed by the aspect lock.
+    /// The lock runs again on every prev/next, and after the first video the
+    /// window is at the user's live size — re-applying the saved box would undo
+    /// any resize they've since made.
+    @State private var didApplyRestoredSize = false
+
     /// Reserved space below the video so the bottom ornament (which floats at the
     /// window's bottom edge) doesn't overlap the video. Larger for fake-3D, whose
     /// two-row ornament is taller and needs more clearance from the video plane.
@@ -290,6 +302,11 @@ struct VideoWindowView: View {
             }
         }
         .animation(.easeInOut(duration: 0.2), value: windowModel.isUIHidden)
+        .onGeometryChange(for: CGSize.self) { proxy in
+            proxy.size
+        } action: { newSize in
+            recordWindowSize(newSize)
+        }
         .persistentSystemOverlays(windowModel.isWindowControlsHidden ? .hidden : .visible)
         .ornament(
             visibility: windowModel.isUIHidden ? .hidden : .visible,
@@ -379,6 +396,7 @@ struct VideoWindowView: View {
         }
         .onDisappear {
             aspectRelockTask?.cancel()
+            sizeWritebackTask?.cancel()
             windowModel.cleanup()
             restoreWindowResizing()
         }
@@ -443,21 +461,35 @@ struct VideoWindowView: View {
         let videoAspectRatio = videoSize.width / videoSize.height
         windowModel.videoAspectRatio = videoAspectRatio
 
-        // Fit the video area into a bounded box, capping the LONGER side. Fixing
-        // width at 1200 meant a tall (e.g. 1080x1920) video requested a ~2200pt
-        // window; visionOS clamps that height, leaving a window wider than the
-        // video — and the Metal renderer stretches the frame to fill it. Capping
-        // the longer side keeps the requested window within limits and correctly
-        // proportioned for portrait, square, and landscape alike.
+        // Fit the video area into a bounded box. The default box is square, so
+        // the LONGER side is what gets capped: fixing width at 1200 meant a tall
+        // (e.g. 1080x1920) video requested a ~2200pt window; visionOS clamps that
+        // height, leaving a window wider than the video — and the Metal renderer
+        // stretches the frame to fill it. Capping the longer side keeps the
+        // requested window within limits and correctly proportioned for portrait,
+        // square, and landscape alike.
+        //
+        // A window restored from a saved group instead fits the video inside the
+        // geometry it was saved at, so the arrangement comes back as it was.
+        // Consumed once — see `didApplyRestoredSize`.
         let maxVideoDimension: CGFloat = 1200
+        var box = CGSize(width: maxVideoDimension, height: maxVideoDimension)
+        if !didApplyRestoredSize,
+           let saved = windowValue.restoredSize?.cgSize,
+           saved.width > 2, saved.height > 2 {
+            box = CGSize(width: saved.width, height: max(saved.height - ornamentBottomPadding, 100))
+            didApplyRestoredSize = true
+            AppLogger.videoWindow.info("Aspect lock: fitting video into restored group size \(Int(saved.width))x\(Int(saved.height))")
+        }
+
         let videoWidth: CGFloat
         let videoHeight: CGFloat
-        if videoAspectRatio >= 1 {
-            videoWidth = maxVideoDimension
-            videoHeight = maxVideoDimension / videoAspectRatio
+        if box.height * videoAspectRatio <= box.width {
+            videoHeight = box.height
+            videoWidth = box.height * videoAspectRatio
         } else {
-            videoHeight = maxVideoDimension
-            videoWidth = maxVideoDimension * videoAspectRatio
+            videoWidth = box.width
+            videoHeight = box.width / videoAspectRatio
         }
         let totalHeight = videoHeight + ornamentBottomPadding
         let windowSize = CGSize(width: videoWidth, height: totalHeight)
@@ -501,6 +533,22 @@ struct VideoWindowView: View {
     private func restoreWindowResizing() {
         guard let windowScene = resolvedWindowScene else { return }
         windowScene.requestGeometryUpdate(.Vision(resizingRestrictions: .freeform))
+    }
+
+    // MARK: - Live Size Reporting
+
+    /// Debounced write of the settled window size into `RestoredWindowTracker`,
+    /// which is where saved window groups read each open window's geometry from.
+    /// Only standalone windows are tracked — a pushed window isn't independently
+    /// restorable, so it has no group entry to size.
+    private func recordWindowSize(_ size: CGSize) {
+        guard !windowValue.wasPushed, WindowSizePersistence.isPlausible(size) else { return }
+        sizeWritebackTask?.cancel()
+        sizeWritebackTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled else { return }
+            RestoredWindowTracker.setWindowSize(size, for: windowValue.id)
+        }
     }
 
     private func phaseLabel(_ phase: ScenePhase) -> String {

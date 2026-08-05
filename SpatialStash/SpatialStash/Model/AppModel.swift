@@ -190,6 +190,9 @@ class AppModel {
         let id = UUID()
         let image: GalleryImage
         let bypassDuplicatePrompt: Bool
+        /// Geometry to open at, when the request comes from a saved window group
+        /// (`nil` = size from the image aspect ratio / scene default).
+        var restoredSize: CGSize?
     }
 
     /// Current open request being processed
@@ -203,11 +206,13 @@ class AppModel {
 
     func enqueuePhotoWindowOpen(
         _ image: GalleryImage,
-        bypassDuplicatePrompt: Bool = false
+        bypassDuplicatePrompt: Bool = false,
+        restoredSize: CGSize? = nil
     ) {
         let request = PhotoWindowOpenRequest(
             image: image,
-            bypassDuplicatePrompt: bypassDuplicatePrompt
+            bypassDuplicatePrompt: bypassDuplicatePrompt,
+            restoredSize: restoredSize
         )
         queuedPhotoWindowOpenRequests.append(request)
 
@@ -292,6 +297,89 @@ class AppModel {
         return openPopOutWindows[key] ?? []
     }
 
+    // MARK: - Video Window Tracking
+
+    /// Tracks open standalone (non-pushed) video windows, keyed by video
+    /// identity. Mirrors `openPopOutWindows` — needed so a saved window group
+    /// can capture video windows alongside photos, and so the group UI can tell
+    /// which ones are already on screen.
+    var openVideoWindows: [String: [VideoWindowValue]] = [:]
+
+    /// Stable identity for a video across windows and app launches. Stash
+    /// scenes have an id; local files and streamed URLs fall back to the URL.
+    static func videoIdentityKey(for video: GalleryVideo) -> String {
+        video.stashId.isEmpty ? video.streamURL.absoluteString : video.stashId
+    }
+
+    func registerVideoWindow(video: GalleryVideo, windowValue: VideoWindowValue) {
+        let key = Self.videoIdentityKey(for: video)
+        var values = openVideoWindows[key] ?? []
+        values.append(windowValue)
+        openVideoWindows[key] = values
+    }
+
+    func unregisterVideoWindow(video: GalleryVideo, windowValueId: UUID) {
+        let key = Self.videoIdentityKey(for: video)
+        openVideoWindows[key]?.removeAll { $0.id == windowValueId }
+        if openVideoWindows[key]?.isEmpty == true {
+            openVideoWindows.removeValue(forKey: key)
+        }
+    }
+
+    /// Re-key a tracked video window after the user navigated prev/next, so the
+    /// registry reflects what the window is actually showing (parallels
+    /// `updatePopOutWindowImage`).
+    func updateVideoWindowVideo(windowValueId: UUID, oldVideo: GalleryVideo, newVideo: GalleryVideo) {
+        let oldKey = Self.videoIdentityKey(for: oldVideo)
+        let newKey = Self.videoIdentityKey(for: newVideo)
+        guard oldKey != newKey, var values = openVideoWindows[oldKey] else { return }
+        guard let index = values.firstIndex(where: { $0.id == windowValueId }) else { return }
+        var windowValue = values.remove(at: index)
+        windowValue.video = newVideo
+        var newValues = openVideoWindows[newKey] ?? []
+        newValues.append(windowValue)
+        openVideoWindows[newKey] = newValues
+        if values.isEmpty {
+            openVideoWindows.removeValue(forKey: oldKey)
+        } else {
+            openVideoWindows[oldKey] = values
+        }
+    }
+
+    func hasOpenVideoWindow(for video: GalleryVideo) -> Bool {
+        !(openVideoWindows[Self.videoIdentityKey(for: video)]?.isEmpty ?? true)
+    }
+
+    func videoWindowValues(for video: GalleryVideo) -> [VideoWindowValue] {
+        openVideoWindows[Self.videoIdentityKey(for: video)] ?? []
+    }
+
+    // MARK: - Video Window Open Queue
+
+    /// Video windows carry no duplicate-summon dialog (unlike photos), so the
+    /// queue exists purely to hand a fully-built window value to a view that
+    /// owns an `openWindow` action, and to stagger a batch of group restores.
+    struct VideoWindowOpenRequest: Identifiable {
+        let id = UUID()
+        let windowValue: VideoWindowValue
+    }
+
+    var activeVideoWindowOpenRequest: VideoWindowOpenRequest?
+    private var queuedVideoWindowOpenRequests: [VideoWindowOpenRequest] = []
+
+    func enqueueVideoWindowOpen(_ windowValue: VideoWindowValue) {
+        queuedVideoWindowOpenRequests.append(VideoWindowOpenRequest(windowValue: windowValue))
+        if activeVideoWindowOpenRequest == nil {
+            activeVideoWindowOpenRequest = queuedVideoWindowOpenRequests.removeFirst()
+        }
+    }
+
+    func advanceVideoWindowOpenQueue() {
+        activeVideoWindowOpenRequest = queuedVideoWindowOpenRequests.isEmpty
+            ? nil
+            : queuedVideoWindowOpenRequests.removeFirst()
+    }
+
     // MARK: - Window Summon (Same-Room Detection)
 
     enum ExistingWindowState {
@@ -354,6 +442,8 @@ class AppModel {
         let id = UUID()
         let configId: UUID
         let bypassDuplicatePrompt: Bool
+        /// Geometry to open at, when the request comes from a saved window group.
+        var restoredSize: CGSize?
     }
 
     var activeRemoteViewerOpenRequest: RemoteViewerOpenRequest?
@@ -362,11 +452,13 @@ class AppModel {
 
     func enqueueRemoteViewerOpen(
         configId: UUID,
-        bypassDuplicatePrompt: Bool = false
+        bypassDuplicatePrompt: Bool = false,
+        restoredSize: CGSize? = nil
     ) {
         let request = RemoteViewerOpenRequest(
             configId: configId,
-            bypassDuplicatePrompt: bypassDuplicatePrompt
+            bypassDuplicatePrompt: bypassDuplicatePrompt,
+            restoredSize: restoredSize
         )
         queuedRemoteViewerOpenRequests.append(request)
 

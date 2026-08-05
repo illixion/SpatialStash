@@ -40,6 +40,11 @@ final class VideoWindowModel {
     /// The originating window value's UUID (used for RestoredWindowTracker).
     let windowValueId: UUID
 
+    /// This window's originating value, for standalone (non-pushed) windows only.
+    /// Registered with AppModel so saved window groups can capture open video
+    /// windows; nil for pushed windows, which aren't independently restorable.
+    let popOutWindowValue: VideoWindowValue?
+
     /// Shared app state (browse list, global settings, API client).
     let appModel: AppModel
 
@@ -178,6 +183,7 @@ final class VideoWindowModel {
         self.video = windowValue.video
         self.wasPushed = windowValue.wasPushed
         self.windowValueId = windowValue.id
+        self.popOutWindowValue = windowValue.wasPushed ? nil : windowValue
         self.appModel = appModel
         self.stereoscopicOverride = windowValue.stereoscopicOverride
         self.video3DSettings = windowValue.video3DSettings
@@ -214,6 +220,9 @@ final class VideoWindowModel {
         guard !didStart else { return }
         didStart = true
         appModel.lastViewedVideoId = video.id
+        if let popOutWindowValue {
+            appModel.registerVideoWindow(video: video, windowValue: popOutWindowValue)
+        }
         // A restored window re-engages fake-3D with the default realtime mode;
         // prefer the pre-processed cache when one exists for this video.
         if pseudo3DEnabled, pseudo3DDepthMode == .realtime,
@@ -225,6 +234,9 @@ final class VideoWindowModel {
 
     /// Call from onDisappear.
     func cleanup() {
+        if popOutWindowValue != nil {
+            appModel.unregisterVideoWindow(video: video, windowValueId: windowValueId)
+        }
         cancelAutoHideTimer()
         dismissDepthReadyPrompt()
         progressiveEngageTask?.cancel()
@@ -267,6 +279,15 @@ final class VideoWindowModel {
     /// WebVideoPlayerView reloads automatically because its `videoURL` changes.
     func switchToVideo(_ newVideo: GalleryVideo) {
         appModel.lastViewedVideoId = newVideo.id
+        // Keep the open-window registry pointed at what this window actually
+        // shows, so a window group saved after prev/next captures the right video.
+        if popOutWindowValue != nil {
+            appModel.updateVideoWindowVideo(
+                windowValueId: windowValueId,
+                oldVideo: video,
+                newVideo: newVideo
+            )
+        }
         video = newVideo
 
         // Reset per-window viewing state

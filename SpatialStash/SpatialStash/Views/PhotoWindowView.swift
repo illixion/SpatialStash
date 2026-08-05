@@ -35,7 +35,22 @@ struct PhotoWindowView: View {
         self.wasPushed = windowValue.wasPushed
         self.popOutWindowID = windowValue.wasPushed ? nil : windowValue.id
         self.restoredSize = windowValue.restoredSize?.cgSize
-        self.onSizeSettled = onSizeSettled
+        // Mirror the settled size into RestoredWindowTracker as well as the
+        // scene archive. It's the store every window type writes to, so it's
+        // where "save the current window arrangement" reads live geometry from
+        // — and it doubles as a fallback if the archive round-trip drops the
+        // mutated window value.
+        let trackedWindowID: UUID? = windowValue.wasPushed ? nil : windowValue.id
+        if let id = trackedWindowID {
+            self.onSizeSettled = { size in
+                if WindowSizePersistence.isPlausible(size) {
+                    RestoredWindowTracker.setWindowSize(size, for: id)
+                }
+                onSizeSettled(size)
+            }
+        } else {
+            self.onSizeSettled = onSizeSettled
+        }
         // Re-resolve local file URLs in case this is a visionOS scene restoration
         // where the sandbox container UUID has changed since the window was saved.
         let resolvedImage = windowValue.image.resolvingLocalFileURL()

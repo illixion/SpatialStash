@@ -101,10 +101,14 @@ struct ContentView: View {
         .onAppear {
             consumePendingGalleryFilterIfNeeded()
             handlePhotoWindowOpenIfNeeded()
+            handleVideoWindowOpenIfNeeded()
             handleRemoteViewerOpenIfNeeded()
         }
         .onChange(of: appModel.activePhotoWindowOpenRequest?.id) { _, _ in
             handlePhotoWindowOpenIfNeeded()
+        }
+        .onChange(of: appModel.activeVideoWindowOpenRequest?.id) { _, _ in
+            handleVideoWindowOpenIfNeeded()
         }
         .onChange(of: appModel.activeRemoteViewerOpenRequest?.id) { _, _ in
             handleRemoteViewerOpenIfNeeded()
@@ -148,7 +152,22 @@ struct ContentView: View {
         }
 
         appModel.advancePhotoWindowOpenQueue()
-        openWindow(id: "photo-detail", value: PhotoWindowValue(image: request.image))
+        var value = PhotoWindowValue(image: request.image)
+        // Group restores carry the geometry the window was saved at; the display
+        // view applies it on appear.
+        value.restoredSize = request.restoredSize.map(CodableSize.init)
+        openWindow(id: "photo-detail", value: value)
+    }
+
+    // MARK: - Video Window Opens
+
+    /// Video windows have no duplicate-summon dialog; the queue only exists so
+    /// AppModel can hand a fully-built window value to a view that owns an
+    /// `openWindow` action (window-group restores).
+    private func handleVideoWindowOpenIfNeeded() {
+        guard let request = appModel.activeVideoWindowOpenRequest else { return }
+        appModel.advanceVideoWindowOpenQueue()
+        openWindow(id: "video-detail", value: request.windowValue)
     }
 
     private func summonDuplicatePhotoWindow() {
@@ -183,7 +202,9 @@ struct ContentView: View {
         }
 
         appModel.advanceRemoteViewerOpenQueue()
-        openWindow(id: "remote-viewer", value: RemoteViewerWindowValue(configId: request.configId))
+        var value = RemoteViewerWindowValue(configId: request.configId)
+        value.restoredSize = request.restoredSize.map(CodableSize.init)
+        openWindow(id: "remote-viewer", value: value)
     }
 
     private func summonDuplicateRemoteViewer() {
