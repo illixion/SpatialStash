@@ -889,12 +889,27 @@ class AppModel {
 
     /// Persistent config for the gallery slideshow launched from photo viewer ornament.
     /// Stored separately from savedRemoteConfigs so it doesn't clutter the Remote tab.
-    var gallerySlideshowConfig: RemoteViewerConfig?
+    var gallerySlideshowConfig: RemoteViewerConfig? {
+        didSet { persistImplicitSlideshowConfig(gallerySlideshowConfig, key: Self.gallerySlideshowConfigKey) }
+    }
 
     /// Persistent config for the video slideshow launched from the video viewer
     /// ornament. Stored separately from savedRemoteConfigs and the gallery
     /// (image) slideshow config so each keeps its own display settings.
-    var videoSlideshowConfig: RemoteViewerConfig?
+    var videoSlideshowConfig: RemoteViewerConfig? {
+        didSet { persistImplicitSlideshowConfig(videoSlideshowConfig, key: Self.videoSlideshowConfigKey) }
+    }
+
+    static let gallerySlideshowConfigKey = "gallerySlideshowConfig"
+    static let videoSlideshowConfigKey = "videoSlideshowConfig"
+
+    private func persistImplicitSlideshowConfig(_ config: RemoteViewerConfig?, key: String) {
+        guard let config, let data = try? JSONEncoder().encode(config) else {
+            UserDefaults.standard.removeObject(forKey: key)
+            return
+        }
+        UserDefaults.standard.set(data, forKey: key)
+    }
 
     /// When true, the Remote tab appears in the tab bar ornament
     var enableRemoteViewer: Bool {
@@ -1012,6 +1027,26 @@ class AppModel {
             savedRemoteConfigs[index] = config
         } else {
             savedRemoteConfigs.append(config)
+        }
+    }
+
+    /// Persist a profile back into whichever store owns it.
+    ///
+    /// The gallery and video slideshow profiles live in their own slots
+    /// precisely so they stay out of the Remote tab's list, but a viewer window
+    /// persisting an ornament tweak only knows an id. Routing through here
+    /// keeps that write-back from appending a copy of them to the saved list —
+    /// which it did on every launch, since those slots start empty and the
+    /// launching ornament mints a fresh id when it finds no config.
+    func persistRemoteViewerConfig(_ config: RemoteViewerConfig) {
+        if gallerySlideshowConfig?.id == config.id,
+           !savedRemoteConfigs.contains(where: { $0.id == config.id }) {
+            gallerySlideshowConfig = config
+        } else if videoSlideshowConfig?.id == config.id,
+                  !savedRemoteConfigs.contains(where: { $0.id == config.id }) {
+            videoSlideshowConfig = config
+        } else {
+            saveRemoteConfig(config)
         }
     }
 
@@ -1786,6 +1821,50 @@ class AppModel {
             savedRemoteConfigs = configs
             AppLogger.remoteViewer.info("Loaded \(configs.count, privacy: .public) saved remote configs")
             refreshAllRemoteHistoryStores()
+        }
+
+        loadImplicitSlideshowConfig(key: Self.gallerySlideshowConfigKey) { self.gallerySlideshowConfig = $0 }
+        loadImplicitSlideshowConfig(key: Self.videoSlideshowConfigKey) { self.videoSlideshowConfig = $0 }
+        adoptStrandedImplicitSlideshowConfigs()
+    }
+
+    private func loadImplicitSlideshowConfig(key: String, assign: (RemoteViewerConfig) -> Void) {
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let config = try? JSONDecoder().decode(RemoteViewerConfig.self, from: data) else { return }
+        assign(config)
+    }
+
+    /// Reclaim the gallery/video slideshow profiles that older builds leaked
+    /// into the saved list.
+    ///
+    /// Those two profiles were never persisted in their own right, so each
+    /// launch minted a fresh one, and the first ornament tweak in the resulting
+    /// window appended it to `savedRemoteConfigs` — one throwaway row per
+    /// launch, in the list that's supposed to hold profiles the user made. The
+    /// newest of each kind becomes the profile for its slot (so its display
+    /// settings survive) and the rest are dropped. Matched narrowly: our own
+    /// name, blank endpoint, slideshow mode.
+    private func adoptStrandedImplicitSlideshowConfigs() {
+        func reclaim(name: String, slot: RemoteViewerConfig?) -> RemoteViewerConfig? {
+            let stranded = savedRemoteConfigs.filter {
+                $0.name == name && $0.mode == .slideshow && $0.apiEndpoint.isEmpty
+            }
+            guard !stranded.isEmpty else { return nil }
+            savedRemoteConfigs.removeAll { config in stranded.contains { $0.id == config.id } }
+            AppLogger.remoteViewer.info(
+                "Reclaimed \(stranded.count, privacy: .public) stranded “\(name, privacy: .public)” config(s) from the saved list"
+            )
+            // A slot restored from its own key wins — it's the one the
+            // slideshow has actually been using since the leak was fixed.
+            guard slot == nil else { return nil }
+            return stranded.max { $0.savedDate < $1.savedDate }
+        }
+
+        if let adopted = reclaim(name: "Gallery Slideshow", slot: gallerySlideshowConfig) {
+            gallerySlideshowConfig = adopted
+        }
+        if let adopted = reclaim(name: "Video Slideshow", slot: videoSlideshowConfig) {
+            videoSlideshowConfig = adopted
         }
     }
 

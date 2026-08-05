@@ -912,11 +912,11 @@ struct RemoteViewerWindowView: View {
             // opened, so merge the viewer-owned display fields onto whatever
             // the profile looks like now.
             guard var current = appModel.remoteViewerConfig(id: updatedConfig.id) else {
-                appModel.saveRemoteConfig(updatedConfig)
+                appModel.persistRemoteViewerConfig(updatedConfig)
                 return
             }
             current.applyViewerDisplaySettings(from: updatedConfig)
-            appModel.saveRemoteConfig(current)
+            appModel.persistRemoteViewerConfig(current)
         }
 
         model.windowValue = windowValue
