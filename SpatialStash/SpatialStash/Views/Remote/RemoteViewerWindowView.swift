@@ -33,6 +33,7 @@ struct RemoteViewerWindowView: View {
     @State private var metalRendererGeneration = 0
     @State private var renderRecoveryAttempt = 0
     @State private var renderRecoveryTask: Task<Void, Never>?
+    @State private var didRecreateDeadScene = false
 
     // Ken Burns animation state
     @State private var kenBurnsScale: CGFloat = 1.0
@@ -791,6 +792,7 @@ struct RemoteViewerWindowView: View {
             AppLogger.windowState.error(
                 "[Remote \(windowValue.id.uuidString, privacy: .public)] renderer recovery exhausted"
             )
+            recreateDeadSceneIfNeeded()
             return
         }
         renderRecoveryAttempt += 1
@@ -809,6 +811,32 @@ struct RemoteViewerWindowView: View {
             guard !Task.isCancelled, showRestorationPlaceholder else { return }
             await nudgeSceneForRenderRecovery()
         }
+    }
+
+    /// Last rung after renderer rebuilds and scene nudges have all failed: the
+    /// scene claims to be active but has never produced a frame. On visionOS 27
+    /// the room-persistence machinery can activate a summoned/restored scene
+    /// without ever re-attaching it to a compositor placement — nothing inside
+    /// the scene (new views, geometry updates) can revive it, so the only
+    /// recovery is recreating the scene session: Apple's own documented beta
+    /// workaround ("close the blank window and relaunch"), done
+    /// programmatically. One attempt per window, and only while the scene
+    /// claims foreground-active so a healthily parked window is never touched.
+    private func recreateDeadSceneIfNeeded() {
+        guard scenePhase == .active, !didRecreateDeadScene else { return }
+        didRecreateDeadScene = true
+        AppLogger.windowState.error(
+            "[Remote \(windowValue.id.uuidString, privacy: .public)] scene never produced a frame — recreating window"
+        )
+        var value = RemoteViewerWindowValue(configId: windowValue.configId)
+        if let scene = resolvedWindowScene {
+            let size = scene.effectiveGeometry.coordinateSpace.bounds.size
+            if Self.isPlausibleWindowSize(size) {
+                value.restoredSize = CodableSize(size)
+            }
+        }
+        openWindow(id: "remote-viewer", value: value)
+        dismissWindow(id: "remote-viewer", value: windowValue)
     }
 
     private func nudgeSceneForRenderRecovery() async {

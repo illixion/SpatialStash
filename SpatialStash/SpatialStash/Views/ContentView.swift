@@ -145,10 +145,13 @@ struct ContentView: View {
         guard let request = appModel.activePhotoWindowOpenRequest else { return }
         guard !appModel.shouldConfirmDuplicateOpen(for: request) else { return }
 
-        if case .backgroundedInOtherRoom(let existingValue) = appModel.existingWindowState(for: request.image.fullSizeURL) {
-            appModel.advancePhotoWindowOpenQueue()
-            openWindow(id: "photo-detail", value: existingValue)
-            return
+        // Same visionOS 27 parked-scene hazard as the remote viewer (see
+        // handleRemoteViewerOpenIfNeeded): dismiss the parked scene and open a
+        // fresh window instead of recalling the same value.
+        if case .backgroundedInOtherRoom = appModel.existingWindowState(for: request.image.fullSizeURL) {
+            for value in appModel.popOutWindowValues(for: request.image.fullSizeURL) {
+                dismissWindow(id: "photo-detail", value: value)
+            }
         }
 
         appModel.advancePhotoWindowOpenQueue()
@@ -195,10 +198,18 @@ struct ContentView: View {
         guard let request = appModel.activeRemoteViewerOpenRequest else { return }
         guard !appModel.shouldConfirmDuplicateRemoteViewerOpen(for: request) else { return }
 
-        if case .backgroundedInOtherRoom(let existingValue) = appModel.existingRemoteViewerWindowState(for: request.configId) {
-            appModel.advanceRemoteViewerOpenQueue()
-            openWindow(id: "remote-viewer", value: existingValue)
-            return
+        // Never recall a scene parked in another room by re-opening its value:
+        // visionOS 27's room persistence can activate the parked scene without
+        // ever re-attaching it to a placement, leaving the window permanently
+        // invisible and non-interactable (reproduces with the stock Clock app;
+        // see internal_docs/visionos27-invisible-window-feedback.md). Destroy
+        // the parked scene and open a fresh one at the user instead —
+        // re-opening alone never re-placed the window anyway (see
+        // WindowGroupRestoreSheet.summonExistingWindow).
+        if case .backgroundedInOtherRoom = appModel.existingRemoteViewerWindowState(for: request.configId) {
+            for value in appModel.remoteViewerWindowValues(for: request.configId) {
+                dismissWindow(id: "remote-viewer", value: value)
+            }
         }
 
         appModel.advanceRemoteViewerOpenQueue()

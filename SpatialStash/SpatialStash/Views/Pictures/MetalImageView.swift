@@ -254,11 +254,17 @@ struct MetalImageView: UIViewRepresentable {
                 guard let self, let view,
                       self.redrawGeneration == generation,
                       !self.hasPresentedFrame else { return }
-                guard view.window != nil else {
-                    self.retryActive = false
-                    return
+                // Only draw while attached (a detached layer can't vend a
+                // drawable), but keep the retry chain alive either way: on
+                // visionOS 27 a scene can report active while its views are
+                // never re-attached to a compositor placement, and aborting
+                // here silently made that state unobservable — running to
+                // exhaustion is what surfaces it through onRenderStalled.
+                // A genuinely torn-down view still ends the chain via the
+                // weak references above.
+                if view.window != nil {
+                    self.triggerDraw(in: view)
                 }
-                self.triggerDraw(in: view)
                 self.scheduleRetry(in: view, generation: generation, attempt: attempt + 1)
             }
         }
