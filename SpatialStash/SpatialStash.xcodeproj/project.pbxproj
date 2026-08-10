@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		AA01000000000000000000A3 /* RAVENet in Frameworks */ = {isa = PBXBuildFile; productRef = AA01000000000000000000A2 /* RAVENet */; };
+		AA05000000000000000000B3 /* RAVEDiagnostics in Frameworks */ = {isa = PBXBuildFile; productRef = AA05000000000000000000B2 /* RAVEDiagnostics */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -38,6 +39,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				AA01000000000000000000A3 /* RAVENet in Frameworks */,
+				AA05000000000000000000B3 /* RAVEDiagnostics in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -102,6 +104,7 @@
 			name = SpatialStash;
 			packageProductDependencies = (
 				AA01000000000000000000A2 /* RAVENet */,
+				AA05000000000000000000B2 /* RAVEDiagnostics */,
 			);
 			productName = SpatialStash;
 			productReference = 0778651A2D811C5500BCF113 /* SpatialStash.app */;
@@ -134,6 +137,7 @@
 			mainGroup = 077865112D811C5500BCF113;
 			packageReferences = (
 				AA01000000000000000000A1 /* XCLocalSwiftPackageReference "../../RAVESDK" */,
+				AA05000000000000000000B1 /* XCLocalSwiftPackageReference "../../RAVEEngine" */,
 			);
 			productRefGroup = 0778651B2D811C5500BCF113 /* Products */;
 			projectDirPath = "";
@@ -374,6 +378,10 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
+		AA05000000000000000000B1 /* XCLocalSwiftPackageReference "../../RAVEEngine" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../../RAVEEngine;
+		};
 		AA01000000000000000000A1 /* XCLocalSwiftPackageReference "../../RAVESDK" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../../RAVESDK;
@@ -381,6 +389,11 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		AA05000000000000000000B2 /* RAVEDiagnostics */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AA05000000000000000000B1 /* XCLocalSwiftPackageReference "../../RAVEEngine" */;
+			productName = RAVEDiagnostics;
+		};
 		AA01000000000000000000A2 /* RAVENet */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = RAVENet;

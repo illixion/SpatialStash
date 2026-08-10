@@ -7,16 +7,19 @@
  */
 
 import Metal
+import RAVEDiagnostics
 import SwiftUI
 
 struct GPUMemoryMonitorView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.openWindow) private var openWindow
 
-    /// Current GPU allocation in bytes, polled on a timer
-    @State private var currentAllocation: Int = 0
+    /// The latest reading. GPU allocation is the number this window exists for
+    /// — it is what moves when texture compression changes, whereas the process
+    /// footprint (which jetsam judges) barely does.
+    @State private var reading = RAVEMemoryReading()
 
-    /// Peak allocation observed during this session
+    /// Peak GPU allocation observed during this session
     @State private var peakAllocation: Int = 0
 
     /// Timer task for polling
@@ -24,6 +27,8 @@ struct GPUMemoryMonitorView: View {
 
     /// The Metal device reference
     private var device: MTLDevice? { MetalImageRenderer.shared?.device }
+
+    private var currentAllocation: Int { reading.gpuAllocated ?? 0 }
 
     /// Recommended allocation size for the gauge maximum (in bytes).
     /// Vision Pro M2 has ~5.5 GB shared memory; use 3 GB as a reasonable
@@ -57,6 +62,14 @@ struct GPUMemoryMonitorView: View {
                 StatBox(label: "Current", value: formatBytes(currentAllocation))
                 StatBox(label: "Peak", value: formatBytes(peakAllocation))
                 StatBox(label: "Windows", value: "\(appModel.openPhotoWindowCount)")
+            }
+
+            HStack(spacing: 32) {
+                // The footprint is what jetsam counts and the headroom is what
+                // it counts against — neither is derivable from the GPU figure,
+                // and both come free with the shared probe.
+                StatBox(label: "Footprint", value: optionalBytes(reading.processFootprint))
+                StatBox(label: "Headroom", value: optionalBytes(reading.availableMemory))
             }
 
             HStack(spacing: 32) {
@@ -114,8 +127,7 @@ struct GPUMemoryMonitorView: View {
     }
 
     private func sample() {
-        guard let device else { return }
-        currentAllocation = device.currentAllocatedSize
+        reading = RAVEMemoryProbe.reading(device: device)
         if currentAllocation > peakAllocation {
             peakAllocation = currentAllocation
         }
@@ -124,10 +136,11 @@ struct GPUMemoryMonitorView: View {
     // MARK: - Formatting
 
     private func formatBytes(_ bytes: Int) -> String {
-        let formatter = ByteCountFormatter()
-        formatter.allowedUnits = [.useKB, .useMB, .useGB]
-        formatter.countStyle = .memory
-        return formatter.string(fromByteCount: Int64(bytes))
+        RAVEMemoryProbe.format(bytes)
+    }
+
+    private func optionalBytes(_ bytes: Int?) -> String {
+        bytes.map(RAVEMemoryProbe.format) ?? "—"
     }
 
     private var allocationColor: Color {
