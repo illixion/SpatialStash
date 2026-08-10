@@ -6,6 +6,10 @@
 	objectVersion = 70;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		AA01000000000000000000A3 /* RAVENet in Frameworks */ = {isa = PBXBuildFile; productRef = AA01000000000000000000A2 /* RAVENet */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		0778651A2D811C5500BCF113 /* SpatialStash.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SpatialStash.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		1DE40D9B2F67E27D00990AE2 /* BuildInfo.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = BuildInfo.xcconfig; sourceTree = "<group>"; };
@@ -33,6 +37,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AA01000000000000000000A3 /* RAVENet in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -95,6 +100,9 @@
 				0778651C2D811C5500BCF113 /* SpatialStash */,
 			);
 			name = SpatialStash;
+			packageProductDependencies = (
+				AA01000000000000000000A2 /* RAVENet */,
+			);
 			productName = SpatialStash;
 			productReference = 0778651A2D811C5500BCF113 /* SpatialStash.app */;
 			productType = "com.apple.product-type.application";
@@ -124,6 +132,9 @@
 				Base,
 			);
 			mainGroup = 077865112D811C5500BCF113;
+			packageReferences = (
+				AA01000000000000000000A1 /* XCLocalSwiftPackageReference "../../RAVESDK" */,
+			);
 			productRefGroup = 0778651B2D811C5500BCF113 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -361,6 +372,20 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		AA01000000000000000000A1 /* XCLocalSwiftPackageReference "../../RAVESDK" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../../RAVESDK;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		AA01000000000000000000A2 /* RAVENet */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = RAVENet;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 077865122D811C5500BCF113 /* Project object */;
 }

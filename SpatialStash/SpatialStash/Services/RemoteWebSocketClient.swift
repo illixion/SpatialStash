@@ -1,12 +1,24 @@
 /*
  Spatial Stash - Remote WebSocket Client
 
- Manages WebSocket connection for real-time control, sensor data,
- and cross-device synchronization with the RoboFrame server.
+ Real-time control, sensor data, and cross-device synchronization with the
+ RoboFrame server.
+
+ The connection-management core — ephemeral session, exponential backoff,
+ keepalive, NWPathMonitor wake, probe-on-wake, suspend/revive — now lives in
+ `RAVEWebSocketTransport`, shared with Spatial Home's Home Assistant client
+ (which adapted most of it from here in the first place, then drifted).
+
+ What stays here is everything RoboFrame-shaped: the `{action, payload}`
+ framing, session multiplexing, the presence/visibility scene state machine,
+ and the replay that has to happen after every reconnect. In particular
+ **readiness is declared from here**, on the first inbound frame — the
+ transport has no opinion about when a socket becomes usable, because Spatial
+ Home promotes on a parsed `auth_ok` instead.
  */
 
 import Foundation
-import Network
+import RAVENet
 import os
 
 struct HASensorReading: Identifiable {
@@ -76,40 +88,28 @@ final class RemoteWSSessionHandlers {
 @Observable
 class RemoteWebSocketClient {
     var sensorData: [String: HASensorReading] = [:]
-    var isConnected: Bool = false
 
-    private var webSocketTask: URLSessionWebSocketTask?
-    private var session: URLSession?
+    /// Mirrors the transport, plus the app-declared promotion to `.ready` on
+    /// the first inbound frame.
+    private(set) var state: RAVEConnectionState = .idle
+
+    /// True once the socket is actually carrying traffic — not merely upgraded.
+    /// An in-progress upgrade can look healthy for a long time before failing,
+    /// and consumers (including force-reconnect callers) rely on this meaning
+    /// "frames are flowing".
+    var isConnected: Bool { state.isReady }
+
+    private var transport: RAVEWebSocketTransport?
+    private var eventTask: Task<Void, Never>?
     private var wsURL: URL?
-    private var reconnectTask: Task<Void, Never>?
-    private var receiveTask: Task<Void, Never>?
-    private var keepaliveTask: Task<Void, Never>?
-    private var retryCount: Int = 0
-    /// Wall-clock timestamp of the last `doConnect` call. Used to floor
-    /// the reconnect interval — without this, when the new socket fails
-    /// inside a millisecond (ENOTCONN during sleep / interface flap), the
-    /// retry firehose hammers the server even if `retryCount` is climbing.
-    private var lastConnectAttemptAt: Date = .distantPast
-    private static let minRetryDelay: TimeInterval = 2
-    private static let maxRetryDelay: TimeInterval = 30
-    /// Interval between application-level `ping` frames. The server
-    /// expects JSON `{action: "ping"}` and replies with `{action: "pong"}`.
-    private static let pingInterval: TimeInterval = 25
-    /// How long to wait for any inbound traffic (pong or otherwise)
-    /// after sending a ping before declaring the socket dead.
-    private static let pongTimeout: TimeInterval = 10
-    /// Monotonic timestamp of the last frame we received. Used by the
-    /// keepalive loop to decide whether the connection is silently dead.
-    private var lastReceiveAt: Date = .distantPast
-    /// NWPathMonitor that drives an immediate reconnect when the network
-    /// path goes from unsatisfied → satisfied (e.g. headset wakes from
-    /// sleep, Wi-Fi reattaches).
-    private var pathMonitor: NWPathMonitor?
-    private var lastPathSatisfied: Bool = true
-    /// Set when the server rejects the upgrade with 1008. Suppresses
-    /// further reconnect attempts so we don't spam the server with
-    /// requests that will keep failing for the same reason.
-    private var halted: Bool = false
+
+    /// Outgoing frames are funnelled through a stream consumed by one task, so
+    /// they reach the transport actor in the order they were produced. Sending
+    /// each frame from its own `Task` would leave ordering to the scheduler,
+    /// and this protocol is order-sensitive (slideshowConfig must precede the
+    /// scene-state replay).
+    private var outboundContinuation: AsyncStream<String>.Continuation?
+    private var outboundTask: Task<Void, Never>?
 
     /// Multiplexing — multiple viewer windows can share one underlying
     /// connection, each addressed by a sessionId. `playback` frames carry
@@ -129,52 +129,35 @@ class RemoteWebSocketClient {
         if let existing = sessions[sessionId] { return existing }
         let entry = RemoteWSSessionHandlers()
         sessions[sessionId] = entry
+
         if wsURL == nil, !wsEndpoint.isEmpty, let url = URL(string: wsEndpoint) {
-            self.wsURL = url
-            self.halted = false
-            startPathMonitor()
-            doConnect()
-        } else if isConnected, webSocketTask != nil {
+            connect(to: url)
+        } else if isConnected {
             // Connection already alive — fire onConnected for late joiners
             // immediately (after the caller wires the closure; they'll do
-            // that synchronously after this returns). Re-check the transport
-            // inside the callback: suspendSocket can run before this block.
+            // that synchronously after this returns). Re-check liveness
+            // inside the callback: a suspend can run before this block.
             DispatchQueue.main.async { [weak self, weak entry] in
                 guard let self else { return }
-                guard self.isConnected, self.webSocketTask != nil else {
-                    self.isConnected = false
+                guard self.isConnected else {
                     self.reviveIfIdle()
                     return
                 }
                 entry?.onConnected?()
             }
         } else {
-            // A receive completion from a socket cancelled by suspendSocket
-            // used to be able to restore this flag after webSocketTask was
-            // cleared. Never let that stale flag suppress the reconnect.
-            if webSocketTask == nil { isConnected = false }
-            // The connection exists but is down — almost always `suspendSocket`
-            // releasing it once every sibling window went absent (it keeps
-            // `wsURL`, so the first branch above doesn't fire either). Attaching
-            // used to do nothing at all here: no connect, and no `onConnected`,
-            // so a window pinned while the other rooms' windows were away never
-            // sent `slideshowConfig`, never got a `playback` frame, and sat on
-            // its loading spinner until some unrelated scene-phase edge revived
-            // the socket. A new session is its own reason to reconnect.
+            // The connection exists but is down — almost always a suspend
+            // releasing it once every sibling window went absent (the endpoint
+            // is retained, so the first branch above doesn't fire either).
+            // Attaching used to do nothing at all here: no connect, and no
+            // `onConnected`, so a window pinned while the other rooms' windows
+            // were away never sent `slideshowConfig`, never got a `playback`
+            // frame, and sat on its loading spinner until some unrelated
+            // scene-phase edge revived the socket. A new session is its own
+            // reason to reconnect.
             reviveIfIdle()
         }
         return entry
-    }
-
-    /// Bring a released/idle connection back up. Deliberately does nothing when
-    /// an upgrade or a backoff retry is already in flight — tearing those down
-    /// is `forceReconnectNow`'s job and doing it here would turn several windows
-    /// attaching at once into a reconnect stampede.
-    private func reviveIfIdle() {
-        guard !halted, wsURL != nil, session != nil else { return }
-        guard webSocketTask == nil, reconnectTask == nil else { return }
-        AppLogger.remoteViewer.info("WebSocket revive — session attached to a released connection")
-        doConnect()
     }
 
     /// Detach a session. Sends a best-effort `sessionEnd` to the server
@@ -217,17 +200,59 @@ class RemoteWebSocketClient {
         }
     }
 
-    /// Fresh URLSession per connect attempt. Reusing across reconnects
-    /// lets stale HTTP/2 multiplex state and connection-pool entries
-    /// survive an EPIPE — symptom: the new `webSocketTask` resumes, the
-    /// server logs the upgrade, but no frames ever reach our receive
-    /// loop. Ephemeral config also avoids any cookie/credential carry.
-    private func makeSession() -> URLSession {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.waitsForConnectivity = true
-        configuration.timeoutIntervalForRequest = 15
-        configuration.timeoutIntervalForResource = 30
-        return URLSession(configuration: configuration)
+    // MARK: - Lifecycle
+
+    private func connect(to url: URL) {
+        wsURL = url
+
+        let transport = RAVEWebSocketTransport(
+            configuration: .init(url: url),
+            logger: RAVENetAppLogger(),
+            pingFrameProvider: { #"{"action":"ping"}"# },
+            failurePolicy: { failure in
+                // The broker closes unauthenticated upgrades with 1008
+                // (policy violation). Reconnecting won't fix a bad token, so
+                // halt the loop and surface the reason once — the app sees it
+                // as a `.failed` state change and broadcasts `.fatalAuthError`.
+                guard failure.closeCode == .policyViolation else { return .reconnect }
+                let reason = failure.closeReason.flatMap { $0.isEmpty ? nil : $0 } ?? "invalid token"
+                return .halt("Server rejected WebSocket: \(reason). Check the Access Token in viewer settings.")
+            }
+        )
+        self.transport = transport
+
+        let (outbound, continuation) = AsyncStream<String>.makeStream(bufferingPolicy: .unbounded)
+        outboundContinuation = continuation
+        outboundTask = Task {
+            for await frame in outbound {
+                await transport.send(frame)
+            }
+        }
+
+        // Inherits this class's main-actor isolation, so `handle` is a direct
+        // call — only the stream iteration suspends.
+        eventTask = Task { [weak self] in
+            for await event in transport.events {
+                guard let self else { return }
+                self.handle(event)
+            }
+        }
+
+        Task { await transport.start() }
+    }
+
+    func disconnect() {
+        eventTask?.cancel()
+        eventTask = nil
+        outboundContinuation?.finish()
+        outboundContinuation = nil
+        outboundTask?.cancel()
+        outboundTask = nil
+        let outgoing = transport
+        transport = nil
+        wsURL = nil
+        Task { await outgoing?.stop() }
+        state = .idle
     }
 
     /// Probe the socket with a JSON ping; if no inbound traffic arrives
@@ -237,120 +262,85 @@ class RemoteWebSocketClient {
     /// and we leave it alone, avoiding spurious displayDisconnect
     /// broadcasts to peer kiosks.
     func probeOrReconnect(timeout: TimeInterval = 3) {
-        if halted { return }
-        guard wsURL != nil else { return }
-        if !isConnected || webSocketTask == nil {
-            forceReconnectNow()
-            return
-        }
-        let sentAt = Date()
-        AppLogger.remoteViewer.info("WebSocket probe ping (timeout=\(timeout, privacy: .public)s)")
-        sendJSON(["action": "ping"])
-        Task { [weak self] in
-            try? await Task.sleep(for: .seconds(timeout))
-            guard let self else { return }
-            if self.lastReceiveAt < sentAt {
-                AppLogger.remoteViewer.warning("WebSocket probe timed out — forcing reconnect")
-                self.forceReconnectNow()
-            }
-        }
+        guard let transport else { return }
+        Task { await transport.probeOrReconnect(timeout: timeout) }
     }
 
     /// Force an immediate reconnect attempt, cancelling any sleeping
     /// backoff. Called by viewers when returning to the foreground so
     /// recovery doesn't have to wait out the exponential delay.
     func forceReconnectNow() {
-        if halted { return }
-        guard wsURL != nil, session != nil else { return }
-        // Always tear down — `isConnected`/`webSocketTask` can both look
-        // healthy while the underlying TCP path is dead (classic iOS
-        // sleep/wake zombie socket: `receive()` doesn't error until the
-        // OS finally tries to deliver a frame, which can take minutes).
-        // Probing with a ping isn't enough either, since the server's
-        // pong would race the reconnect we want anyway.
-        reconnectTask?.cancel()
-        reconnectTask = nil
-        receiveTask?.cancel()
-        receiveTask = nil
-        keepaliveTask?.cancel()
-        keepaliveTask = nil
-        webSocketTask?.cancel(with: .goingAway, reason: nil)
-        webSocketTask = nil
-        isConnected = false
-        // Intentionally NOT resetting retryCount here. forceReconnectNow
-        // is fired on path-up transitions and scenePhase wakes — neither
-        // proves the connection will actually succeed. Resetting here
-        // produced a 1 s reconnect storm whenever the socket failed
-        // instantly with ENOTCONN: each failure called scheduleReconnect,
-        // some other caller fired forceReconnectNow, retryCount went back
-        // to 0, and the cycle repeated. retryCount only resets after
-        // we've actually received a frame (see receiveLoop).
-        AppLogger.remoteViewer.info("WebSocket force reconnect requested")
-        doConnect()
+        guard let transport else { return }
+        Task { await transport.forceReconnectNow() }
+    }
+
+    /// Bring a released/idle connection back up.
+    private func reviveIfIdle() {
+        guard let transport else { return }
+        Task { await transport.reviveIfIdle() }
     }
 
     /// Flush anything queued (notably a just-reported `present:false`) and, if
     /// nothing on this connection is present any more, hand the server a clean
     /// close.
     ///
-    /// Two problems this solves on visionOS background. First, `sendJSON` is
-    /// fire-and-forget, and the app can suspend before the OFF frame reaches the
-    /// transport — so the server never learns we left. WebSocket sends complete
-    /// in order, so awaiting a trailing frame proves the frames ahead of it went
-    /// out. Second, a suspended client leaves the socket half-open: `close`
-    /// never fires server-side and the channel only parks once the broker's
-    /// liveness heartbeat reaps us, 5-10s later. Closing explicitly parks it
-    /// immediately, and per protocol.md a parked channel keeps its queue, cursor
-    /// and current post for the life of the server process and rebinds us on the
-    /// next `slideshowConfig` — so there is nothing to lose by letting go.
-    ///
     /// Must be awaited under a background-task assertion or the app suspends
-    /// mid-flush and we're back to the fire-and-forget failure mode.
+    /// mid-flush and the frames never reach the transport. See
+    /// `RAVEWebSocketTransport.flushAndSuspend` for why the trailing frame is
+    /// what proves the ones ahead of it went out.
     func flushAndSuspendIfAbsent() async {
-        guard let task = webSocketTask else { return }
-        await withCheckedContinuation { continuation in
-            task.send(.string("{\"action\":\"ping\"}")) { _ in
-                continuation.resume()
-            }
+        guard let transport else { return }
+        await transport.flushAndSuspend { [weak self] in
+            // Re-checked after the flush: a window may have come back while we
+            // were waiting for it to complete.
+            await self?.allSessionsAbsent ?? false
         }
-        // A window may have come back while we were flushing.
-        guard allSessionsAbsent, task === webSocketTask else { return }
-        AppLogger.remoteViewer.info("WebSocket suspending — every session absent, releasing socket for background")
-        suspendSocket()
     }
 
-    /// Tear down the socket while keeping the session registry, endpoint,
-    /// URLSession and path monitor, so returning to the foreground reconnects
-    /// straight away instead of rediscovering everything. `retryCount` is reset
-    /// because this close is ours by choice, not a failure — the return path
-    /// must not inherit somebody else's backoff.
-    private func suspendSocket() {
-        reconnectTask?.cancel()
-        reconnectTask = nil
-        receiveTask?.cancel()
-        receiveTask = nil
-        keepaliveTask?.cancel()
-        keepaliveTask = nil
-        webSocketTask?.cancel(with: .goingAway, reason: nil)
-        webSocketTask = nil
-        isConnected = false
-        retryCount = 0
+    // MARK: - Transport events
+
+    private func handle(_ event: RAVENetEvent) {
+        switch event {
+        case .frame(let text):
+            if !isConnected { promoteToConnected() }
+            handleMessage(text)
+
+        case .stateChanged(let newState):
+            // Ignore an echo of the promotion this class already applied.
+            guard state != newState else { return }
+            state = newState
+            if case .failed(let reason) = newState {
+                broadcastToSessions(.fatalAuthError(reason: reason))
+                AppLogger.remoteViewer.error("\(reason, privacy: .public)")
+            }
+
+        case .failure:
+            // Already logged with full diagnostics by the transport, and the
+            // reconnect-vs-halt decision came from our own failure policy.
+            break
+        }
     }
 
-    func disconnect() {
-        reconnectTask?.cancel()
-        reconnectTask = nil
-        receiveTask?.cancel()
-        receiveTask = nil
-        keepaliveTask?.cancel()
-        keepaliveTask = nil
-        webSocketTask?.cancel(with: .goingAway, reason: nil)
-        webSocketTask = nil
-        isConnected = false
-        retryCount = 0
-        stopPathMonitor()
-        session?.invalidateAndCancel()
-        session = nil
+    /// First frame from the upgraded connection. Promote to fully-connected and
+    /// notify every attached session so each re-sends `slideshowConfig` — the
+    /// server forgets per-session channel binding when a socket dies.
+    private func promoteToConnected() {
+        // Readiness is ours to declare, so apply it here rather than waiting to
+        // hear it back — the replay below sends immediately and `sendJSON`'s
+        // callers gate on `isConnected`.
+        state = .ready
+        if let transport {
+            Task { await transport.markReady() }
+        }
+        for entry in sessions.values { entry.onConnected?() }
+        // The server forgot our presence/visibility when the old socket died,
+        // so re-state every aggregate. Runs after the sessions' onConnected
+        // (slideshowConfig first, per the protocol checklist) and doesn't
+        // depend on their debounced re-reports, which would be deduped as
+        // unchanged anyway.
+        sentPresenceBySession.removeAll()
+        sentVisibilityByDevice.removeAll()
+        flushSceneState(force: true)
     }
 
     // MARK: - Scene state (present / visibility)
@@ -533,159 +523,6 @@ class RemoteWebSocketClient {
 
     // MARK: - Private
 
-    private func doConnect() {
-        guard let url = wsURL else { return }
-
-        // Reuse the URLSession across reconnects. An earlier version of
-        // this code rebuilt the session on every doConnect to clear stale
-        // HTTP/2 multiplex state, but that produced an even worse failure
-        // mode: invalidating the old session and immediately resuming a
-        // new task on a freshly-built session races kernel socket teardown,
-        // and the new task throws ENOTCONN inside a millisecond. That's
-        // the storm the user saw — instant fail, retry, instant fail.
-        // WebSocket tasks are HTTP/1.1 (no multiplexing) so there's no
-        // pool state to worry about; the previous fix was solving a
-        // problem that doesn't apply here.
-        if session == nil {
-            session = makeSession()
-        }
-        guard let session else { return }
-
-        webSocketTask = session.webSocketTask(with: url)
-        webSocketTask?.resume()
-        lastConnectAttemptAt = Date()
-        // Don't flip `isConnected` until the first inbound frame arrives —
-        // an in-progress upgrade can look healthy for a long time before
-        // failing, and consumers (incl. forceReconnect callers) rely on
-        // this flag to mean "the socket is actually carrying traffic."
-        isConnected = false
-        lastReceiveAt = Date()
-
-        AppLogger.remoteViewer.info("WebSocket connecting to \(url.absoluteString, privacy: .private)")
-
-        // RoboFrame's rpcserver pushes `tagLists` and `currentTagList`
-        // automatically on connect — no need to request them. Sessions
-        // announce their own visibility from `onConnected`.
-
-        receiveTask = Task { [weak self] in
-            await self?.receiveLoop()
-        }
-        keepaliveTask = Task { [weak self] in
-            await self?.keepaliveLoop()
-        }
-    }
-
-    private func receiveLoop() async {
-        AppLogger.remoteViewer.info("WebSocket receive loop entered")
-        defer { AppLogger.remoteViewer.info("WebSocket receive loop exited") }
-        let myTask = webSocketTask
-        while !Task.isCancelled {
-            guard let task = myTask, task === webSocketTask else {
-                AppLogger.remoteViewer.info("WebSocket receive loop: task no longer current, exiting")
-                break
-            }
-
-            do {
-                let message = try await task.receive()
-                // Cancellation does not guarantee URLSession's pending receive
-                // stops before returning. suspendSocket/forceReconnectNow may
-                // have replaced or cleared the task while this await was in
-                // flight; accepting that stale completion would resurrect
-                // isConnected=true with no transport and strand late joiners.
-                guard !Task.isCancelled, task === webSocketTask else {
-                    AppLogger.remoteViewer.info("WebSocket stale receive completion discarded")
-                    break
-                }
-                lastReceiveAt = Date()
-                if !isConnected {
-                    // First frame from the upgraded connection — promote
-                    // to fully-connected and reset backoff so the next
-                    // failure starts fresh. Notify every attached session
-                    // so each one re-sends slideshowConfig (the server
-                    // forgets per-session channel binding when a socket
-                    // dies).
-                    isConnected = true
-                    retryCount = 0
-                    for entry in sessions.values { entry.onConnected?() }
-                    // The server forgot our presence/visibility when the old
-                    // socket died, so re-state every aggregate. Runs after the
-                    // sessions' onConnected (slideshowConfig first, per the
-                    // protocol checklist) and doesn't depend on their debounced
-                    // re-reports, which would be deduped as unchanged anyway.
-                    sentPresenceBySession.removeAll()
-                    sentVisibilityByDevice.removeAll()
-                    flushSceneState(force: true)
-                }
-                switch message {
-                case .string(let text):
-                    handleMessage(text)
-                case .data(let data):
-                    if let text = String(data: data, encoding: .utf8) {
-                        handleMessage(text)
-                    }
-                @unknown default:
-                    break
-                }
-            } catch {
-                // If we're not the current task, the connection has
-                // already been swapped (forceReconnectNow / disconnect);
-                // bail without rescheduling. Otherwise both loops race
-                // scheduleReconnect, the second cancels the first's
-                // backoff timer, and retryCount effectively never climbs.
-                guard !Task.isCancelled, task === webSocketTask else {
-                    AppLogger.remoteViewer.info("WebSocket stale receive loop exiting (current task swapped)")
-                    break
-                }
-                logWebSocketFailure(error, task: task)
-                isConnected = false
-                keepaliveTask?.cancel()
-                keepaliveTask = nil
-                // The broker closes unauthenticated upgrades with 1008
-                // (policy violation). Reconnecting won't fix a bad token,
-                // so halt the loop and surface the reason once.
-                if task.closeCode == .policyViolation {
-                    halted = true
-                    let reasonStr: String = {
-                        if let data = task.closeReason, let s = String(data: data, encoding: .utf8), !s.isEmpty {
-                            return s
-                        }
-                        return "invalid token"
-                    }()
-                    let msg = "Server rejected WebSocket: \(reasonStr). Check the Access Token in viewer settings."
-                    AppLogger.remoteViewer.error("\(msg, privacy: .public)")
-                    broadcastToSessions(.fatalAuthError(reason: msg))
-                    break
-                }
-                scheduleReconnect()
-                break
-            }
-        }
-    }
-
-    /// Dump enough detail when a receive fails (handshake rejection, server
-    /// closed mid-stream, etc.) that we can tell whether nginx returned a
-    /// 4xx/5xx, sent a non-Upgrade response, or the TLS layer was unhappy.
-    private func logWebSocketFailure(_ error: Error, task: URLSessionWebSocketTask) {
-        let nsError = error as NSError
-        var detail = "domain=\(nsError.domain) code=\(nsError.code) desc=\(error.localizedDescription)"
-        if let urlError = error as? URLError {
-            detail += " urlErrorCode=\(urlError.code.rawValue)"
-            if let response = urlError.userInfo[NSURLErrorFailingURLPeerTrustErrorKey] {
-                detail += " peerTrust=\(response)"
-            }
-            if let failing = urlError.failingURL {
-                detail += " url=\(failing.absoluteString)"
-            }
-        }
-        if task.closeCode != .invalid {
-            detail += " closeCode=\(task.closeCode.rawValue)"
-        }
-        if let reason = task.closeReason, let reasonStr = String(data: reason, encoding: .utf8), !reasonStr.isEmpty {
-            detail += " closeReason=\(reasonStr)"
-        }
-        AppLogger.remoteViewer.warning("WebSocket receive error: \(detail, privacy: .public)")
-    }
-
     private func handleMessage(_ text: String) {
         guard let data = text.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -802,8 +639,8 @@ class RemoteWebSocketClient {
             sendJSON(["action": "pong"])
 
         case "pong":
-            // Reply to our own keepalive ping. `lastReceiveAt` already
-            // updated in the receive loop; nothing more to do.
+            // Reply to our own keepalive ping. The transport already recorded
+            // the liveness; nothing more to do.
             break
 
         default:
@@ -814,107 +651,6 @@ class RemoteWebSocketClient {
     private func sendJSON(_ dict: [String: Any]) {
         guard let data = try? JSONSerialization.data(withJSONObject: dict),
               let text = String(data: data, encoding: .utf8) else { return }
-
-        webSocketTask?.send(.string(text)) { error in
-            if let error {
-                AppLogger.remoteViewer.warning("WebSocket send error: \(error.localizedDescription, privacy: .public)")
-            }
-        }
-    }
-
-    /// Periodic application-level ping. The RoboFrame server replies with
-    /// `{action: "pong"}` (see protocol.md). We don't match individual
-    /// pings to pongs — any inbound frame counts as liveness, so the
-    /// timeout check is "did *anything* arrive within pongTimeout of the
-    /// last ping send?". On timeout we force a reconnect; this is the
-    /// primary detector for half-open sockets after sleep/wake.
-    private func keepaliveLoop() async {
-        AppLogger.remoteViewer.info("WebSocket keepalive loop entered")
-        defer { AppLogger.remoteViewer.info("WebSocket keepalive loop exited") }
-        while !Task.isCancelled {
-            try? await Task.sleep(for: .seconds(Self.pingInterval))
-            if Task.isCancelled { return }
-            guard webSocketTask != nil else { return }
-            let sentAt = Date()
-            AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "WebSocket sending keepalive ping")
-            sendJSON(["action": "ping"])
-            try? await Task.sleep(for: .seconds(Self.pongTimeout))
-            if Task.isCancelled { return }
-            if lastReceiveAt < sentAt {
-                AppLogger.remoteViewer.warning("WebSocket pong timeout (last rx \(self.lastReceiveAt.timeIntervalSinceNow, privacy: .public)s ago) — forcing reconnect")
-                forceReconnectNow()
-                return
-            }
-        }
-    }
-
-    private func startPathMonitor() {
-        if pathMonitor != nil { return }
-        let monitor = NWPathMonitor()
-        pathMonitor = monitor
-        monitor.pathUpdateHandler = { [weak self] path in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                let satisfied = (path.status == .satisfied)
-                let wasSatisfied = self.lastPathSatisfied
-                self.lastPathSatisfied = satisfied
-                // Only react to unsatisfied → satisfied transitions. The
-                // initial callback is usually `.satisfied` and we don't
-                // want to tear down a perfectly good connection on launch.
-                if satisfied, !wasSatisfied {
-                    AppLogger.remoteViewer.info("Network path satisfied — forcing WebSocket reconnect")
-                    self.forceReconnectNow()
-                }
-            }
-        }
-        monitor.start(queue: DispatchQueue(label: "RemoteWebSocketClient.path"))
-    }
-
-    private func stopPathMonitor() {
-        pathMonitor?.cancel()
-        pathMonitor = nil
-    }
-
-    private func scheduleReconnect() {
-        if halted { return }
-        // If the OS reports the network path as unsatisfied, retrying on
-        // a 1 s timer just produces an immediate ENOTCONN (errno 57) on
-        // every attempt and burns battery for the entire outage. Park
-        // here and let the path monitor's unsatisfied → satisfied
-        // callback wake us via forceReconnectNow().
-        if !lastPathSatisfied {
-            AppLogger.remoteViewer.info("WebSocket reconnect deferred — network path unsatisfied")
-            reconnectTask?.cancel()
-            reconnectTask = nil
-            return
-        }
-        reconnectTask?.cancel()
-        let attempt = retryCount
-        retryCount += 1
-        // Two flooring rules:
-        //  1. Min 2 s between attempts. ENOTCONN can throw inside a
-        //     millisecond, and a 1 s loop on top of that hammered the
-        //     server hard enough to keep emitting `displayDisconnect`
-        //     broadcasts to peer kiosks every cycle.
-        //  2. Subtract elapsed-since-last-attempt from the exponential
-        //     delay so a long connect (waitsForConnectivity stalled for
-        //     20 s before failing) doesn't then add another long sleep
-        //     on top.
-        let exponential = min(pow(2.0, Double(attempt)), Self.maxRetryDelay)
-        let sinceLast = Date().timeIntervalSince(lastConnectAttemptAt)
-        let delay = max(Self.minRetryDelay, exponential - sinceLast)
-        reconnectTask = Task { [weak self] in
-            guard let self else { return }
-            AppLogger.remoteViewer.info("WebSocket reconnecting in \(delay, privacy: .public)s (attempt=\(attempt, privacy: .public))")
-            try? await Task.sleep(for: .seconds(delay))
-            guard !Task.isCancelled, !halted else { return }
-            // Re-check the path right before connecting — the path may
-            // have flipped during the backoff sleep.
-            if !self.lastPathSatisfied {
-                AppLogger.remoteViewer.info("WebSocket reconnect aborted — path went unsatisfied during backoff")
-                return
-            }
-            doConnect()
-        }
+        outboundContinuation?.yield(text)
     }
 }
