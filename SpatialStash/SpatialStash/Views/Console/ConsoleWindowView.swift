@@ -1,10 +1,12 @@
 /*
- Spatial Stash - Console Window View
+ Console pop-out window.
 
- Standalone pop-out window for the debug console.
- Wraps DebugConsoleView with an ornament for navigating back to the main window.
+ The console itself — the OSLogStore polling, the level/category/search
+ filtering, the clipboard export — is RAVEConsole now, shared with the four
+ other apps. What stays here is this app's way back to its main window.
  */
 
+import RAVEConsole
 import SwiftUI
 
 struct ConsoleWindowView: View {
@@ -12,11 +14,10 @@ struct ConsoleWindowView: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        DebugConsoleView(isPopOut: true)
-            .padding(.bottom, 56) // Add padding to prevent overlap with ornament
-            .ornament(
-                attachmentAnchor: .scene(.bottomFront)
-            ) {
+        // No pop-out button: this *is* the pop-out.
+        RAVEConsoleScreen()
+            .padding(.bottom, 56)   // clear the ornament
+            .ornament(attachmentAnchor: .scene(.bottomFront)) {
                 HStack(spacing: 16) {
                     Button {
                         appModel.showMainWindow(openWindow: openWindow)
@@ -27,5 +28,14 @@ struct ConsoleWindowView: View {
                 .padding(12)
                 .glassBackgroundEffect()
             }
+    }
+}
+
+/// The console as a tab: the same screen, plus the button that pops it out.
+struct ConsoleTabView: View {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        RAVEConsoleScreen { openWindow(id: "console") }
     }
 }

@@ -1,4 +1,5 @@
 import Foundation
+import RAVEConsole
 import os
 
 /// Centralized logging facility for SpatialStash
@@ -30,7 +31,7 @@ enum AppLogger {
     /// Pass this to `Logger.log(level:_:)` for entries that should be
     /// visible in the in-app debug console.
     static var effectiveDebugLevel: OSLogType {
-        LogStore.hasActiveViewers ? .info : .debug
+        RAVELogStore.isViewing ? .info : .debug
     }
 
     // MARK: - Logger Categories

@@ -29,7 +29,7 @@ struct ContentView: View {
                 case .remote:
                     RemoteTabView()
                 case .console:
-                    DebugConsoleView()
+                    ConsoleTabView()
                 }
             }
             .id(windowModel.selectedTab)

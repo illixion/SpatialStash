@@ -9,6 +9,8 @@
 /* Begin PBXBuildFile section */
 		AA01000000000000000000A3 /* RAVENet in Frameworks */ = {isa = PBXBuildFile; productRef = AA01000000000000000000A2 /* RAVENet */; };
 		AA05000000000000000000B3 /* RAVEDiagnostics in Frameworks */ = {isa = PBXBuildFile; productRef = AA05000000000000000000B2 /* RAVEDiagnostics */; };
+		AA06000000000000000000C3 /* RAVEUI in Frameworks */ = {isa = PBXBuildFile; productRef = AA06000000000000000000C2 /* RAVEUI */; };
+		AA06000000000000000000C5 /* RAVEConsole in Frameworks */ = {isa = PBXBuildFile; productRef = AA06000000000000000000C4 /* RAVEConsole */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -40,6 +42,8 @@
 			files = (
 				AA01000000000000000000A3 /* RAVENet in Frameworks */,
 				AA05000000000000000000B3 /* RAVEDiagnostics in Frameworks */,
+				AA06000000000000000000C3 /* RAVEUI in Frameworks */,
+				AA06000000000000000000C5 /* RAVEConsole in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -105,6 +109,8 @@
 			packageProductDependencies = (
 				AA01000000000000000000A2 /* RAVENet */,
 				AA05000000000000000000B2 /* RAVEDiagnostics */,
+				AA06000000000000000000C2 /* RAVEUI */,
+				AA06000000000000000000C4 /* RAVEConsole */,
 			);
 			productName = SpatialStash;
 			productReference = 0778651A2D811C5500BCF113 /* SpatialStash.app */;
@@ -393,6 +399,16 @@
 			isa = XCSwiftPackageProductDependency;
 			package = AA05000000000000000000B1 /* XCLocalSwiftPackageReference "../../RAVEEngine" */;
 			productName = RAVEDiagnostics;
+		};
+		AA06000000000000000000C2 /* RAVEUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AA01000000000000000000A1 /* XCLocalSwiftPackageReference "../../RAVESDK" */;
+			productName = RAVEUI;
+		};
+		AA06000000000000000000C4 /* RAVEConsole */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AA01000000000000000000A1 /* XCLocalSwiftPackageReference "../../RAVESDK" */;
+			productName = RAVEConsole;
 		};
 		AA01000000000000000000A2 /* RAVENet */ = {
 			isa = XCSwiftPackageProductDependency;

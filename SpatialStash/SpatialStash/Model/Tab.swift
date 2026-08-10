@@ -5,8 +5,9 @@
  */
 
 import Foundation
+import RAVEUI
 
-enum Tab: String, CaseIterable, Identifiable {
+enum Tab: String, CaseIterable, RAVETabItem {
     case pictures = "Pictures"
     case videos = "Videos"
     case local = "Local"
@@ -15,7 +16,6 @@ enum Tab: String, CaseIterable, Identifiable {
     case remote = "Remote"
     case console = "Console"
 
-    var id: String { rawValue }
 
     var systemImage: String {
         switch self {

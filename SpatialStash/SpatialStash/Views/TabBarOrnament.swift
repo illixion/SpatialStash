@@ -4,6 +4,7 @@
  visionOS ornament-based tab navigation for Pictures, Videos, and Settings.
  */
 
+import RAVEUI
 import SwiftUI
 
 struct TabBarOrnament: View {
@@ -25,31 +26,27 @@ struct TabBarOrnament: View {
     }
 
     var body: some View {
-        HStack(spacing: 8) {
-            ForEach(visibleTabs) { tab in
-                TabBarButton(
-                    tab: tab,
-                    isSelected: windowModel.selectedTab == tab,
-                    action: { select(tab) }
-                )
-            }
-
+        @Bindable var windowModel = windowModel
+        RAVETabBar(
+            tabs: visibleTabs,
+            selection: $windowModel.selectedTab,
+            // Routed through `select` rather than straight to the binding:
+            // re-tapping Local is a "pop to the folder root" gesture, which a
+            // plain selection binding cannot see.
+            onSelect: select
+        ) {
             // Slideshow of what's on screen. Separated from the tabs because it
             // acts on the current tab rather than navigating, and only present
             // on the tabs that show media.
             if let launch = slideshowLaunch {
-                Divider()
-                    .frame(height: 28)
-                    .padding(.horizontal, 4)
-                SlideshowLaunchButton(help: launch.help, action: launch.start)
+                RAVETabBarDivider()
+                RAVETabBarActionButton(
+                    systemImage: "play.fill",
+                    help: launch.help,
+                    action: launch.start
+                )
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .glassBackgroundEffect()
-        // Sit below the window's bottom edge so a protruding diorama
-        // foreground layer doesn't visually clip the tab bar.
-        .padding(.top, 20)
         .animation(.smooth(duration: 0.22), value: slideshowLaunch?.help)
     }
 
@@ -126,72 +123,5 @@ private struct LocalFolderSlideshowTarget {
         } else {
             appModel.startGallerySlideshow(imageSource: LocalImageSource(rootURL: folderURL), filter: nil)
         }
-    }
-}
-
-private struct SlideshowLaunchButton: View {
-    let help: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: "play.fill")
-                .font(.title3)
-                .frame(minWidth: 44, minHeight: 32)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .contentShape(Capsule())
-        }
-        .buttonStyle(TabBarButtonStyle(isSelected: false))
-        .hoverEffect(.highlight)
-        .help(help)
-    }
-}
-
-private struct TabBarButton: View {
-    let tab: Tab
-    let isSelected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 8) {
-                Image(systemName: tab.systemImage)
-                    .font(.title3)
-                if isSelected {
-                    Text(tab.rawValue)
-                        .font(.callout)
-                        .fontWeight(.medium)
-                        .transition(.opacity)
-                }
-            }
-            .frame(minWidth: 44, minHeight: 32)
-            .padding(.horizontal, isSelected ? 14 : 10)
-            .padding(.vertical, 8)
-            .contentShape(Capsule())
-        }
-        .buttonStyle(TabBarButtonStyle(isSelected: isSelected))
-        .hoverEffect(.highlight)
-        .help(tab.rawValue)
-        .animation(.smooth(duration: 0.22), value: isSelected)
-    }
-}
-
-private struct TabBarButtonStyle: ButtonStyle {
-    let isSelected: Bool
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .foregroundStyle(isSelected ? .primary : .secondary)
-            .background {
-                if isSelected {
-                    Capsule()
-                        .fill(.thinMaterial)
-                        .overlay(
-                            Capsule()
-                                .strokeBorder(.white.opacity(0.18), lineWidth: 0.5)
-                        )
-                }
-            }
     }
 }
