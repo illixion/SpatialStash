@@ -4,6 +4,7 @@
  Settings view with server configuration and source selection.
  */
 
+import RAVEMedia
 import os
 import SwiftUI
 import UniformTypeIdentifiers

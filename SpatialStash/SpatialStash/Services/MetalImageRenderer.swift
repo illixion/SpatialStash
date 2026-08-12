@@ -38,47 +38,6 @@ final class MetalImageRenderer: Sendable {
     let rcasPipelineState: MTLRenderPipelineState
     /// Pass-1 RCAS pipeline, renders to a 16-bit intermediate.
     let rcasPipelineState16: MTLRenderPipelineState
-    /// Pseudo-3D eye-warp pipeline (per-pixel backward warp; heuristic fallback
-    /// when no depth map is available).
-    let pseudo3DEyePipelineState: MTLRenderPipelineState
-    /// Pseudo-3D depth-displaced mesh pipeline (occlusion-correct, used when a
-    /// real depth map is available). Renders into bgra8 with a depth attachment,
-    /// multisampled at `pseudo3DMSAASampleCount` and resolved into the eye buffer.
-    let pseudo3DMeshPipelineState: MTLRenderPipelineState
-    /// Depth-test state for the mesh pipeline (nearer geometry wins).
-    let pseudo3DMeshDepthState: MTLDepthStencilState
-    /// Mesh-pass multisample count. The displaced mesh's occlusion boundaries
-    /// (near geometry covering far after displacement) are rasterized edges with
-    /// no texture-side AA — without MSAA they stairstep, worst on crisp CG
-    /// silhouettes. 4× is effectively free on Apple TBDR tile memory.
-    let pseudo3DMSAASampleCount: Int
-    /// Shared grid geometry for the mesh warp ([0,1] positions + triangle
-    /// indices). MTLBuffer isn't declared Sendable (unlike the pipeline/device
-    /// types), but these are immutable thread-safe GPU resource handles.
-    /// Fake-3D warp grid density (vertices per axis). Two densities:
-    /// - Moderate (193×109): realtime depth. Denser grids rendered the model's
-    ///   high-frequency depth detail as visible per-vertex wobble, so the live
-    ///   (gaussian-stabilized but unrefined) path stays moderate.
-    /// - Dense (769×433): cached depth. Pre-processed depth is edge-aware
-    ///   (joint-bilateral) + lookahead-smoothed, so the wobble objection doesn't
-    ///   apply — and a coarse grid's cell pitch quantizes sharp depth edges into
-    ///   visible stairsteps along smooth silhouettes (per-grid-row steps, worst
-    ///   on CG content at high strength). 769 columns oversample the 518-wide
-    ///   depth map (~0.67 texel/cell), so the grid stops being the limiter and
-    ///   silhouettes are bounded by the depth map's own (bilinear-smoothed)
-    ///   resolution. ~333k verts/eye at 60fps is trivial vertex load on Apple
-    ///   Silicon. (385×217 still stepped visibly at 1080p on Blender renders.)
-    static let pseudo3DGridColumns = 193
-    static let pseudo3DGridRows = 109
-    static let pseudo3DDenseGridColumns = 769
-    static let pseudo3DDenseGridRows = 433
-
-    nonisolated(unsafe) let pseudo3DGridPositions: MTLBuffer
-    nonisolated(unsafe) let pseudo3DGridIndices: MTLBuffer
-    let pseudo3DGridIndexCount: Int
-    nonisolated(unsafe) let pseudo3DDenseGridPositions: MTLBuffer
-    nonisolated(unsafe) let pseudo3DDenseGridIndices: MTLBuffer
-    let pseudo3DDenseGridIndexCount: Int
     private let ciContext: CIContext
 
     /// Bounds the number of concurrent full-image CGImageSource decodes across
@@ -143,39 +102,9 @@ final class MetalImageRenderer: Sendable {
         guard let library = device.makeDefaultLibrary(),
               let vertexFunction = library.makeFunction(name: "imageVertexShader"),
               let aaTonalFn = library.makeFunction(name: "imageFragmentShader"),
-              let rcasFn = library.makeFunction(name: "rcasFragmentShader"),
-              let stereoEyeFn = library.makeFunction(name: "videoPseudo3DEyeFragmentShader"),
-              let meshVertexFn = library.makeFunction(name: "videoStereoMeshVertex"),
-              let meshFragmentFn = library.makeFunction(name: "videoStereoMeshFragment"),
-              let meshDepthState = device.makeDepthStencilState(descriptor: {
-                  let d = MTLDepthStencilDescriptor()
-                  // lessEqual, not less: the farthest geometry (sky) sits at
-                  // ndcZ == 1.0 == the cleared far value; `.less` would reject it
-                  // (1.0 < 1.0 is false), dropping sky fragments to the black
-                  // clear — speckled differently per eye → binocular rivalry.
-                  d.depthCompareFunction = .lessEqual
-                  d.isDepthWriteEnabled = true
-                  return d
-              }()) else {
+              let rcasFn = library.makeFunction(name: "rcasFragmentShader") else {
             return nil
         }
-        self.pseudo3DMeshDepthState = meshDepthState
-
-        // Build both displaced-grid geometries once (see the density rationale
-        // on the constants above). Vertex cost is trivial either way.
-        guard let moderate = Self.makeWarpGrid(
-            nx: Self.pseudo3DGridColumns, ny: Self.pseudo3DGridRows, device: device
-        ), let dense = Self.makeWarpGrid(
-            nx: Self.pseudo3DDenseGridColumns, ny: Self.pseudo3DDenseGridRows, device: device
-        ) else {
-            return nil
-        }
-        self.pseudo3DGridPositions = moderate.positions
-        self.pseudo3DGridIndices = moderate.indices
-        self.pseudo3DGridIndexCount = moderate.indexCount
-        self.pseudo3DDenseGridPositions = dense.positions
-        self.pseudo3DDenseGridIndices = dense.indices
-        self.pseudo3DDenseGridIndexCount = dense.indexCount
 
         // Pass-2 (final): alpha blending enabled so transparent pixels (bg removal)
         // composite over whatever's behind the MTKView.
@@ -208,57 +137,9 @@ final class MetalImageRenderer: Sendable {
             rcasDesc.colorAttachments[0].pixelFormat = .rgba16Float
             self.rcasPipelineState16 = try device.makeRenderPipelineState(descriptor: rcasDesc)
 
-            // Pseudo-3D eye warp: opaque write into a bgra8 IOSurface-backed eye
-            // texture (no blending — each eye is a full opaque frame).
-            let stereoDesc = MTLRenderPipelineDescriptor()
-            stereoDesc.vertexFunction = vertexFunction
-            stereoDesc.fragmentFunction = stereoEyeFn
-            stereoDesc.colorAttachments[0].isBlendingEnabled = false
-            stereoDesc.colorAttachments[0].pixelFormat = .bgra8Unorm
-            self.pseudo3DEyePipelineState = try device.makeRenderPipelineState(descriptor: stereoDesc)
-
-            // Depth-displaced mesh pipeline: opaque bgra8 color + depth
-            // attachment, multisampled (resolved into the eye buffer by the
-            // render pass).
-            let msaa = device.supportsTextureSampleCount(4) ? 4 : 1
-            self.pseudo3DMSAASampleCount = msaa
-            let meshDesc = MTLRenderPipelineDescriptor()
-            meshDesc.vertexFunction = meshVertexFn
-            meshDesc.fragmentFunction = meshFragmentFn
-            meshDesc.colorAttachments[0].isBlendingEnabled = false
-            meshDesc.colorAttachments[0].pixelFormat = .bgra8Unorm
-            meshDesc.depthAttachmentPixelFormat = .depth32Float
-            meshDesc.rasterSampleCount = msaa
-            self.pseudo3DMeshPipelineState = try device.makeRenderPipelineState(descriptor: meshDesc)
         } catch {
             return nil
         }
-    }
-
-    /// Build one fake-3D warp grid: [0,1]² positions row-major, two triangles
-    /// per cell.
-    private static func makeWarpGrid(
-        nx: Int, ny: Int, device: MTLDevice
-    ) -> (positions: MTLBuffer, indices: MTLBuffer, indexCount: Int)? {
-        var gridPositions = [SIMD2<Float>](); gridPositions.reserveCapacity(nx * ny)
-        for j in 0..<ny {
-            for i in 0..<nx {
-                gridPositions.append(SIMD2(Float(i) / Float(nx - 1), Float(j) / Float(ny - 1)))
-            }
-        }
-        var gridIndices = [UInt32](); gridIndices.reserveCapacity((nx - 1) * (ny - 1) * 6)
-        for j in 0..<(ny - 1) {
-            for i in 0..<(nx - 1) {
-                let a = UInt32(j * nx + i), b = a + 1
-                let c = UInt32((j + 1) * nx + i), d = c + 1
-                gridIndices.append(contentsOf: [a, c, b, b, c, d])
-            }
-        }
-        guard let posBuf = device.makeBuffer(bytes: gridPositions, length: gridPositions.count * MemoryLayout<SIMD2<Float>>.stride),
-              let idxBuf = device.makeBuffer(bytes: gridIndices, length: gridIndices.count * MemoryLayout<UInt32>.stride) else {
-            return nil
-        }
-        return (posBuf, idxBuf, gridIndices.count)
     }
 
     // MARK: - Texture Creation

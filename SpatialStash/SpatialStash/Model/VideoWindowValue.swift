@@ -7,6 +7,7 @@
  */
 
 import Foundation
+import RAVEMedia
 
 struct VideoWindowValue: Identifiable, Codable, Hashable {
     /// Unique per window instance — ensures visionOS treats each opening as a new window

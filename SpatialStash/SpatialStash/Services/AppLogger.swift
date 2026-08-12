@@ -108,12 +108,12 @@ enum AppLogger {
     /// Streamable-URL handoff (custom scheme, URL classification, web-yt-dlp proxy)
     static let streamURL = Logger(subsystem: subsystem, category: "StreamURL")
 
-    // MARK: - Signposters
-
-    /// Per-stage intervals for the fake-3D pipeline (inference, stabilize, warp,
-    /// transfer) — view in Instruments' os_signpost track to see where a pump
-    /// tick or a depth-conversion frame spends its time.
-    static let pseudo3DSignposter = OSSignposter(subsystem: subsystem, category: "Pseudo3D")
+    // The fake-3D signposter moved to RAVEMedia (`RAVEMediaLog.signposter`)
+    // with the pipeline it instruments. Its subsystem is still this app's
+    // bundle id, so Instruments and the in-app console see it unchanged; only
+    // the two depth log categories were renamed (VideoCache/VideoWindow →
+    // DepthCache/Pseudo3D), since those names belonged to this app's window
+    // and download layers rather than to depth.
 }
 
 extension URL {

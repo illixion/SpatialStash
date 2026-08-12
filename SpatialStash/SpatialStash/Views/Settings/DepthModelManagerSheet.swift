@@ -9,6 +9,7 @@
  manages what's on disk.
  */
 
+import RAVEMedia
 import SwiftUI
 
 struct DepthModelManagerSheet: View {

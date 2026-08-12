@@ -13,6 +13,7 @@
 
 import CoreGraphics
 import Foundation
+import RAVEMedia
 
 /// One window inside a saved group.
 ///

@@ -7,6 +7,7 @@
  a Reset button. Photos also get an auto-enhance toggle.
  */
 
+import RAVEMedia
 import SwiftUI
 
 struct VisualAdjustmentsPopover: View {

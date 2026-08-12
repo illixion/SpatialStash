@@ -8,6 +8,7 @@
  match at playback and can be re-converted.
  */
 
+import RAVEMedia
 import SwiftUI
 
 struct DepthCacheSettingsView: View {

@@ -7,6 +7,7 @@
 
 import AVKit
 import CoreMedia
+import RAVEMedia
 import os
 import RealityKit
 import SwiftUI

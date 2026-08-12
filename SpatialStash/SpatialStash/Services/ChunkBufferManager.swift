@@ -6,6 +6,7 @@
  */
 
 import AVFoundation
+import RAVEMedia
 
 /// State of the chunk buffer
 enum ChunkBufferState: Equatable, Sendable {

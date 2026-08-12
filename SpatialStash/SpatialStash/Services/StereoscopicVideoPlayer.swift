@@ -7,6 +7,7 @@
 
 import AVFoundation
 import Combine
+import RAVEMedia
 import os
 import RealityKit
 

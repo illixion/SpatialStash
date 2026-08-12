@@ -14,6 +14,7 @@
 
 import CoreGraphics
 import Metal
+import RAVEMedia
 import os
 import SwiftUI
 import UIKit

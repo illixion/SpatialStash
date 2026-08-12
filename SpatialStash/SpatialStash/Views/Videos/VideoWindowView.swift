@@ -12,6 +12,7 @@
  PhotoWindowModel), so multiple video windows are fully independent.
  */
 
+import RAVEMedia
 import os
 import SwiftUI
 

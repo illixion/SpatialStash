@@ -7,6 +7,7 @@
  button, and totals with the volume's free space.
  */
 
+import RAVEMedia
 import SwiftUI
 
 struct CacheSettingsSection: View {

@@ -70,6 +70,24 @@ Uses RealityKit's `ImagePresentationComponent` for 2D→3D conversion. States tr
 **visionOS limitation:** `PostProcessEffect` / `PostProcessEffectContext` are unavailable on visionOS. Custom post-processing on `RealityView` content must use SwiftUI-level modifiers (`.mask()`, `.overlay()`) instead.
 
 ### Video Infrastructure
+
+**The fake-3D pipeline now lives in `RAVEMedia`** (`~/Projects/RAVESDK`), linked as a local
+Swift package: `Pseudo3DStereoEngine`, `StereoPump`, `PumpDepthSource` and its two
+implementations, `CoreMLDepthProvider`, the whole `Depth*` family, `Pseudo3DSettings`, and
+the stereo/depth Metal shaders. The descriptions below still hold — they describe the same
+code — but the sources are in the package, and files that touch any of it need
+`import RAVEMedia`. What stayed here: `Pseudo3DVideoPlayerView` itself (the SwiftUI
+surface, window-chrome constants, gestures, and the `bindCommands` extension that wires the
+engine's transport to `VideoWindowModel`/`VideoLoopController`).
+
+Three seams that migration created, and that will bite if missed:
+- `AppModel.init` sets `RAVEMediaPolicy.depthCacheCap`. Remove it and the depth cache
+  never evicts — the package has no notion of `CacheBudget`.
+- `Shaders.metal` here holds only the image shaders. The pseudo-3D warp and every depth
+  kernel are in the package's own `default.metallib`; `MetalImageRenderer` no longer has
+  any `pseudo3D*` member.
+- The two depth log categories were renamed with the move (`VideoCache`/`VideoWindow` →
+  `DepthCache`/`Pseudo3D`). Same subsystem, so the in-app console still shows them.
 - **VideoWindowModel** - Per-window `@MainActor @Observable` model (mirrors `PhotoWindowModel`) owning the window's current video, navigation snapshot (own copy of `galleryVideos` + `currentIndex` + lazy pagination), 3D intent (`stereoscopicOverride`/`video3DSettings`), flip, per-window `currentAdjustments`, playback state (`currentTime`/`duration`/`isPaused`/`isMuted`/`bufferedEnd`/`isScrubbing`), the `VideoLoopController`, share state, and auto-hide timers. Side-effect-free `init`; side effects in `start()`; `cleanup()` on dismiss. This replaced the old shared `AppModel.selectedVideo`/`videoStereoscopicOverride`/`video3DSettings`/`isVideoFlipped`/`videoVisualAdjustments` + app-level auto-hide, so multiple video windows are fully independent (fixes the bug where every pushed window showed the last-selected video). Created with `@State` in `VideoWindowView(windowValue:appModel:)`.
 - **VideoWindowView** - Thin wrapper handling both pushed and standalone modes via `wasPushed` (same pattern as `PhotoWindowView`). Picks the render path per `windowModel`: immersive `StereoscopicVideoView` (`shouldUse3DMode`), real-time `Pseudo3DVideoPlayerView` (`shouldUsePseudo3D`), else the flat player (`playbackRenderer`: `.resolving` → `.nativeMetal` `NativeMetalVideoPlayerView` → `.webKit` `WebVideoPlayerView`). Also hosts the `VideoControlBar` overlay (2D players only) and the ornament. Locks window aspect ratio using **this** window's scene via `@Environment(SceneDelegate.self)` (not an arbitrary foreground scene); after each lock request a one-shot follow-up (`aspectRelockTask`) reads back the *granted* scene size and re-locks to a video-true size fitting inside it — portrait videos hit the platform's max window height, and a clamped grant under `.uniform` otherwise locks a wrong ratio (permanent letterbox between video and chrome, no room to enlarge). **Fake-3D chrome depth:** the ornament is kept coplanar with the visionOS window controls (`pseudo3DChromeZOffset = 0`; an earlier 20cm push floated the chrome off that plane and occluded the window controls) and the video is pulled back to that same plane by `Pseudo3DVideoPlayerView.videoPlaneZRecess` (90pt ≈ 9cm; the front-aligned `.frame(depth: 0, alignment: .front)` slab sits at the front of the window's depth region, measured ~9cm proud of the chrome on-device — the recess is applied as `.offset(z:)` on the GeometryReader3D so the fit math is unaffected; both constants stay tunable). `pseudo3DChromeBottomLift`/`ornamentBottomPadding` give the taller two-row fake-3D ornament clearance from the controls below.
 - **VideoControlBar** - Custom SwiftUI transport controls for the 2D web player, replacing Safari's native `<video>` controls. Layout: `[play/pause] [elapsed] [scrubber] [duration] [A-B] [clear?] [mute]`. The scrubber shows the buffered range and A/B loop markers and supports tap-to-seek / drag-to-scrub. Shown only for the 2D player and gated by `!windowModel.isUIHidden` (hides in sync with the ornament; window controls follow ~1.5s later via `persistentSystemOverlays`). Drives the `<video>` entirely through `VideoWindowModel`'s command closures.

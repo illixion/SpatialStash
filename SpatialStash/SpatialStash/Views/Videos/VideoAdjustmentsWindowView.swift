@@ -11,6 +11,7 @@
  real time (same @Observable instance).
  */
 
+import RAVEMedia
 import SwiftUI
 
 struct VideoAdjustmentsWindowView: View {

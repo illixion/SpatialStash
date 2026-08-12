@@ -13,6 +13,7 @@
  which hosts Flip + the fake-3D stereo sliders), Slideshow, and Pop Out (pushed only).
  */
 
+import RAVEMedia
 import SwiftUI
 
 struct VideoOrnamentsView: View {

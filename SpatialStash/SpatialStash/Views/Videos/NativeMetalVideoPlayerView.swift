@@ -9,6 +9,7 @@
 import AVFoundation
 import CoreVideo
 import MetalKit
+import RAVEMedia
 import os
 import SwiftUI
 

@@ -29,6 +29,7 @@
  auto-hide, aspect lock) fire.
  */
 
+import RAVEMedia
 import os
 import SwiftUI
 import UIKit

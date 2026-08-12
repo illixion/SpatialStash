@@ -5,6 +5,7 @@
  wrapper for SwiftUI fileExporter / fileImporter.
  */
 
+import RAVEMedia
 import SwiftUI
 import UniformTypeIdentifiers
 

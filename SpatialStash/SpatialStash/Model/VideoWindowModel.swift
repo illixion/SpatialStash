@@ -16,6 +16,7 @@
 
 import Foundation
 import AVFoundation
+import RAVEMedia
 import os
 import SwiftUI
 

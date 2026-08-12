@@ -12,6 +12,7 @@
  happens through the ViewMode "Depth Model" submenu and Settings.
  */
 
+import RAVEMedia
 import SwiftUI
 
 struct DepthModelSetupSheet: View {
