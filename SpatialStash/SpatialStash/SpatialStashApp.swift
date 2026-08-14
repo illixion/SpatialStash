@@ -5,6 +5,7 @@
  */
 
 import os
+import RAVEUI
 import SwiftUI
 
 @main
@@ -178,12 +179,9 @@ private struct MainWindowView: View {
         ContentView()
             .environment(appModel)
             .frame(minWidth: 320, maxWidth: 3000, minHeight: 320, maxHeight: 3000)
+            .registerAsMainWindow()
             .onAppear {
-                WindowSessionRegistry.shared.registerMainWindow()
-                WindowSessionRegistry.shared.openWindow = openWindow
-            }
-            .onDisappear {
-                WindowSessionRegistry.shared.unregisterMainWindow()
+                RAVEWindowSessionRegistry.shared.openWindow = openWindow
             }
     }
 }

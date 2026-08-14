@@ -6,6 +6,7 @@ The delegate class for the application.
 */
 
 import os
+import RAVEUI
 import SwiftUI
 
 @Observable
@@ -20,6 +21,13 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         // Trigger the LAN access permission prompt early so the user sees it
         // before the app tries to connect to the Stash server.
         triggerLocalNetworkAccessPrompt()
+
+        // Route the shared window-session registry's diagnostics into our logger.
+        Task { @MainActor in
+            RAVEWindowSessionRegistry.shared.log = { message in
+                AppLogger.windowState.info("\(message, privacy: .public)")
+            }
+        }
 
         // Ensure local media directories exist so the app shows up in Files app
         Task {
@@ -45,7 +53,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
             // Give SwiftUI a moment to attach restored scenes and run their
             // onAppear so `mainWindowCount` reflects reality.
             try? await Task.sleep(for: .milliseconds(400))
-            WindowSessionRegistry.shared.ensureMainWindowVisible()
+            RAVEWindowSessionRegistry.shared.ensureMainWindowVisible()
         }
     }
 
