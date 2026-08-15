@@ -9,6 +9,7 @@
  */
 
 import os
+import RAVEUI
 import SwiftUI
 
 struct PhotoWindowView: View {

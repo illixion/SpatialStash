@@ -14,6 +14,7 @@
 
 import RAVEMedia
 import os
+import RAVEUI
 import SwiftUI
 
 struct VideoWindowView: View {

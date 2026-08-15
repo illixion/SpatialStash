@@ -14,6 +14,7 @@
 import CoreGraphics
 import Foundation
 import RAVEMedia
+import RAVEUI
 
 /// One window inside a saved group.
 ///
@@ -47,7 +48,7 @@ struct SavedWindowEntry: Codable, Identifiable, Hashable {
     /// Window size at save time, in points. `nil` when the window never
     /// reported a size, in which case the restored window sizes itself the way
     /// a fresh open would.
-    var size: CodableSize?
+    var size: RAVECodableSize?
 
     // MARK: Photo
 
@@ -95,7 +96,7 @@ struct SavedWindowEntry: Codable, Identifiable, Hashable {
     ) {
         self.id = UUID()
         self.kind = kind
-        self.size = size.map(CodableSize.init)
+        self.size = size.map(RAVECodableSize.init)
         self.image = image
         self.video = video
         self.videoStereoscopicOverride = videoStereoscopicOverride
@@ -161,7 +162,7 @@ struct SavedWindowEntry: Codable, Identifiable, Hashable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
         self.kind = try container.decodeIfPresent(Kind.self, forKey: .kind) ?? .unknown
-        self.size = try container.decodeIfPresent(CodableSize.self, forKey: .size)
+        self.size = try container.decodeIfPresent(RAVECodableSize.self, forKey: .size)
         self.image = try container.decodeIfPresent(GalleryImage.self, forKey: .image)
         self.video = try container.decodeIfPresent(GalleryVideo.self, forKey: .video)
         self.videoStereoscopicOverride = try container.decodeIfPresent(Bool.self, forKey: .videoStereoscopicOverride)

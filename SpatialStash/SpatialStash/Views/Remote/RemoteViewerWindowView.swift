@@ -9,6 +9,7 @@
 import Combine
 import RAVEMedia
 import os
+import RAVEUI
 import SwiftUI
 
 struct RemoteViewerWindowView: View {
@@ -833,7 +834,7 @@ struct RemoteViewerWindowView: View {
         if let scene = resolvedWindowScene {
             let size = scene.effectiveGeometry.coordinateSpace.bounds.size
             if Self.isPlausibleWindowSize(size) {
-                value.restoredSize = CodableSize(size)
+                value.restoredSize = RAVECodableSize(size)
             }
         }
         openWindow(id: "remote-viewer", value: value)

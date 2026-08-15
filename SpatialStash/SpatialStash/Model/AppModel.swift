@@ -7,6 +7,7 @@
 
 import RAVEMedia
 import os
+import RAVEUI
 import RealityKit
 import SwiftUI
 
@@ -2096,7 +2097,7 @@ class AppModel {
                 pseudo3DEnabled: entry.videoPseudo3DEnabled,
                 pseudo3DSettings: entry.videoPseudo3DSettings
             )
-            value.restoredSize = size.map(CodableSize.init)
+            value.restoredSize = size.map(RAVECodableSize.init)
             enqueueVideoWindowOpen(value)
 
         case .remote:

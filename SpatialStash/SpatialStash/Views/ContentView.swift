@@ -4,6 +4,7 @@
  Root view with tab-based content switching and ornament navigation.
  */
 
+import RAVEUI
 import SwiftUI
 
 struct ContentView: View {
@@ -158,7 +159,7 @@ struct ContentView: View {
         var value = PhotoWindowValue(image: request.image)
         // Group restores carry the geometry the window was saved at; the display
         // view applies it on appear.
-        value.restoredSize = request.restoredSize.map(CodableSize.init)
+        value.restoredSize = request.restoredSize.map(RAVECodableSize.init)
         openWindow(id: "photo-detail", value: value)
     }
 
@@ -214,7 +215,7 @@ struct ContentView: View {
 
         appModel.advanceRemoteViewerOpenQueue()
         var value = RemoteViewerWindowValue(configId: request.configId)
-        value.restoredSize = request.restoredSize.map(CodableSize.init)
+        value.restoredSize = request.restoredSize.map(RAVECodableSize.init)
         openWindow(id: "remote-viewer", value: value)
     }
 

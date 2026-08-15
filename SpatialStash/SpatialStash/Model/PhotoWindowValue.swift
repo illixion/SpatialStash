@@ -7,6 +7,7 @@
  */
 
 import Foundation
+import RAVEUI
 
 struct PhotoWindowValue: Identifiable, Codable, Hashable {
     /// Unique per window instance — ensures visionOS treats each opening as a new window
@@ -21,7 +22,7 @@ struct PhotoWindowValue: Identifiable, Codable, Hashable {
     /// Persisted by visionOS into the scene-restoration archive so a wall-snapped
     /// pop-out can be restored to its custom size after a cold relaunch. `nil` on
     /// fresh opens — those size from the image aspect ratio / scene default.
-    var restoredSize: CodableSize?
+    var restoredSize: RAVECodableSize?
 
     init(image: GalleryImage, wasPushed: Bool = false) {
         self.id = UUID()

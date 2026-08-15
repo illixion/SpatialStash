@@ -6,6 +6,7 @@
  */
 
 import Foundation
+import RAVEUI
 
 struct RemoteViewerWindowValue: Identifiable, Codable, Hashable {
     let id: UUID
@@ -15,7 +16,7 @@ struct RemoteViewerWindowValue: Identifiable, Codable, Hashable {
     /// Persisted by visionOS into the scene-restoration archive so a wall-snapped
     /// slideshow window can be restored to its custom size and aspect ratio after
     /// a cold relaunch. `nil` until the window has been sized at least once.
-    var restoredSize: CodableSize?
+    var restoredSize: RAVECodableSize?
 
     init(configId: UUID) {
         self.id = UUID()

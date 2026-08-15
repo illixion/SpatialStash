@@ -8,6 +8,7 @@
 
 import Foundation
 import RAVEMedia
+import RAVEUI
 
 struct VideoWindowValue: Identifiable, Codable, Hashable {
     /// Unique per window instance — ensures visionOS treats each opening as a new window
@@ -40,7 +41,7 @@ struct VideoWindowValue: Identifiable, Codable, Hashable {
     /// group. The video window's aspect lock fits the video inside this box
     /// instead of its default cap, so a saved arrangement comes back at the size
     /// the user left it at. `nil` on ordinary opens.
-    var restoredSize: CodableSize?
+    var restoredSize: RAVECodableSize?
 
     init(
         video: GalleryVideo,
