@@ -97,6 +97,30 @@ struct SlideshowSpatial3DLayer: View {
                 .animation(.easeInOut(duration: model.reduceMotion ? 0 : 1.0), value: transitioning)
         }
         .onAppear { syncSlots(force: true) }
+        .onChange(of: identity(model.nextImage)) { _, newId in
+            // Crossfade starting: the engine publishes the exact incoming
+            // image (the same instance the commit will make `currentImage`)
+            // in `nextImage`, inside the same `withAnimation` that flips
+            // `isTransitioning`. The hidden slot is about to fade in, so this
+            // is the last moment to guarantee it holds the right image.
+            // Normally it already does (peek pre-generation) and this is a
+            // no-op that preserves the finished depth map. But in
+            // server-driven mode the peek can miss — the announced `next`
+            // hadn't downloaded before the advance frame landed, or the
+            // server advanced to a different post than it announced — leaving
+            // the hidden slot holding a stale image from a previous cycle.
+            // Without this sync that stale (visibly unrelated) image fades in
+            // at full opacity and only snaps to the correct image's
+            // generation animation when `handleCommit` reassigns at commit.
+            // nil transitions are ignored: the commit clears `nextImage`, and
+            // video crossfades never set it.
+            guard newId != nil, let incoming = model.nextImage else { return }
+            let hiddenSlot = 1 - visibleSlot
+            let hiddenImage = hiddenSlot == 0 ? slotA : slotB
+            if identity(hiddenImage) != newId {
+                assignSlot(hiddenSlot, image: incoming)
+            }
+        }
         .onChange(of: identity(model.currentImage)) { _, _ in
             // Crossfade just committed — the previously hidden slot now
             // holds the visible image. Flip roles, then refill the freshly
@@ -232,6 +256,12 @@ struct SlideshowSpatial3DSlotView: View {
 
     @State private var entity = Entity()
     @State private var loadedKey: String?
+    /// Identity of the image whose IPC is currently installed on the entity.
+    /// Lets `reload` distinguish "different image replacing this slot" (drop
+    /// the old IPC immediately — its picture is wrong now) from "same image
+    /// re-baking with new adjustments" (keep showing the old IPC until the
+    /// re-derived one is ready, avoiding a flash).
+    @State private var loadedImageId: ObjectIdentifier?
 
     var body: some View {
         // GeometryReader3D + scale-to-fit mirrors PhotoDisplayView's
@@ -329,10 +359,23 @@ struct SlideshowSpatial3DSlotView: View {
         guard let image else {
             entity.components.remove(ImagePresentationComponent.self)
             loadedKey = nil
+            loadedImageId = nil
             return
         }
         let key = cacheKey
         if loadedKey == key { return }
+
+        // A different image is replacing this slot's content. Drop the old
+        // IPC up front so the slot renders empty (then the generation
+        // placeholder) while the new Spatial3DImage builds — if the slot was
+        // corrected at crossfade start, keeping the old component would fade
+        // the previous (wrong) picture in for the several hundred ms the
+        // rebuild takes. Same-image adjustment re-bakes skip this and keep
+        // the old IPC visible until the re-derived one lands.
+        let imageId = ObjectIdentifier(image)
+        if let loadedImageId, loadedImageId != imageId {
+            entity.components.remove(ImagePresentationComponent.self)
+        }
 
         guard let data = image.jpegData(compressionQuality: 0.95) else {
             AppLogger.remoteViewer.warning("SlideshowSpatial3DView: could not encode image data")
@@ -362,6 +405,7 @@ struct SlideshowSpatial3DSlotView: View {
             ipc.applyPrivateSpatial3DTuningIfAvailable()
             entity.components.set(ipc)
             loadedKey = key
+            loadedImageId = imageId
             // Kick off the depth-map generation in a detached task that
             // captures the entity and Spatial3DImage strongly. RealityKit's
             // generate() ignores Swift cooperative cancellation and crashes

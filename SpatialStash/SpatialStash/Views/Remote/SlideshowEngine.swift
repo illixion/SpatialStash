@@ -189,6 +189,31 @@ class SlideshowEngine {
         serverNextPost = post
     }
 
+    /// Drop prefetched images the orchestrator has moved past (remote mode
+    /// only). In server-driven mode the buffer is drained solely by exact id
+    /// match in `fetchAndDisplayPost`, so entries whose post never becomes a
+    /// future `current` are stranded forever: the copy prefetch finished
+    /// downloading *after* the display path already fetched the same post
+    /// directly (a race every short-interval channel hits), and any announced
+    /// next/upcoming the server skipped past (block from another device,
+    /// requestNext, dark advance, merge-driver change). The provider's
+    /// `seenIds` dedup guarantees a stranded id never re-enqueues. Once
+    /// strays fill the buffer to `prefetchTarget`, prefetch stops downloading
+    /// entirely and `peekedNextImage` can never resolve again — the 3D
+    /// layer's hidden slot then fades in stale content on every crossfade.
+    /// Called on each `playback` frame with the server's full announced
+    /// look-ahead (current + next + upcoming), so a stray lives at most one
+    /// interval.
+    func pruneStalePrefetchedImages(keepingPostIds ids: Set<Int>) {
+        guard serverDriven else { return }
+        let before = prefetchedImages.count
+        prefetchedImages.removeAll { !ids.contains($0.post._id) }
+        let dropped = before - prefetchedImages.count
+        if dropped > 0 {
+            AppLogger.remoteViewer.log(level: AppLogger.effectiveDebugLevel, "Pruned \(dropped, privacy: .public) stale prefetched image(s) the server moved past")
+        }
+    }
+
     /// True once the slideshow has shown a real image at least once. Used to
     /// distinguish the cold-start case (allow a bounded wait for the first
     /// image, show spinner) from steady state (show placeholder immediately on

@@ -1145,14 +1145,23 @@ class RemoteViewerModel: SlideshowEngine {
             // Because the engine only ever transitions to a server `current`,
             // the post it displays — and therefore the id it reports in
             // imageReady — always matches what the server is waiting on.
-            provider?.enqueueFromPlayback([cur] + (next.map { [$0] } ?? []) + upcoming)
+            let announced = [cur] + (next.map { [$0] } ?? []) + upcoming
+            provider?.enqueueFromPlayback(announced)
+            // Evict buffered images the server moved past *before* kicking
+            // prefetch, so the freed slots refill in the same pass. Without
+            // this, stranded entries (double-download races, server skips)
+            // accumulate until they fill the buffer and prefetch — and the 3D
+            // layer's look-ahead — wedges permanently.
+            pruneStalePrefetchedImages(keepingPostIds: Set(announced.map(\._id)))
             // Record the look-ahead so the 3D layer's `peekedNextImage`
             // resolves the real next post (not a stale prefetch-buffer head).
             setServerNext(next)
             triggerPrefetch()
             setServerCurrent(cur)
         } else if let n = next {
-            provider?.enqueueFromPlayback([n] + upcoming)
+            let announced = [n] + upcoming
+            provider?.enqueueFromPlayback(announced)
+            pruneStalePrefetchedImages(keepingPostIds: Set(announced.map(\._id)))
             setServerNext(n)
             triggerPrefetch()
         }
