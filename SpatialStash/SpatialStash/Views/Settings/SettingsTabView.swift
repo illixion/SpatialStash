@@ -12,7 +12,6 @@ import UniformTypeIdentifiers
 struct SettingsTabView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(MainWindowModel.self) private var windowModel
-    @Environment(SceneDelegate.self) private var sceneDelegate: SceneDelegate?
     @Environment(\.openWindow) private var openWindow
     @State private var showSaveGroupAlert = false
     @State private var newGroupName = ""
@@ -278,6 +277,8 @@ struct SettingsTabView: View {
                     }
                 }
 
+                WindowManagerSection()
+
                 Section("Developer") {
                     Toggle("Enable RoboFrame Viewer", isOn: Binding(
                         get: { appModel.enableRemoteViewer },
@@ -372,17 +373,6 @@ struct SettingsTabView: View {
                     } label: {
                         Label("Open GPU Memory Monitor", systemImage: "memorychip")
                     }
-
-                    Button(appModel.allWindowsHidden ? "Unhide All Windows" : "Hide All Windows") {
-                        appModel.allWindowsHidden.toggle()
-                    }
-                    .disabled(!hasSecondaryWindows && !appModel.allWindowsHidden)
-
-                    Button("Close All Windows", role: .destructive) {
-                        closeAllSecondaryWindows()
-                        appModel.allWindowsHidden = false
-                    }
-                    .disabled(!hasSecondaryWindows)
                 }
 
                 #if SPATIALSTASH_PRIVATE_API
@@ -698,34 +688,4 @@ struct SettingsTabView: View {
         return version
     }
 
-    /// Whether any secondary (non-main) window scenes are currently connected
-    private var hasSecondaryWindows: Bool {
-        let mainSession = sceneDelegate?.windowScene?.session
-        return UIApplication.shared.connectedScenes.contains { scene in
-            guard let windowScene = scene as? UIWindowScene,
-                  windowScene.session.role == .windowApplication else {
-                return false
-            }
-            return windowScene.session !== mainSession
-        }
-    }
-
-    /// Close all secondary windows (photo, video, shared) by requesting scene destruction
-    private func closeAllSecondaryWindows() {
-        let mainSession = sceneDelegate?.windowScene?.session
-        let secondaryScenes = UIApplication.shared.connectedScenes.compactMap { scene -> UISceneSession? in
-            guard let windowScene = scene as? UIWindowScene,
-                  windowScene.session.role == .windowApplication,
-                  windowScene.session !== mainSession else {
-                return nil
-            }
-            return windowScene.session
-        }
-
-        for session in secondaryScenes {
-            UIApplication.shared.requestSceneSessionDestruction(session, options: nil)
-        }
-
-        AppLogger.settings.info("Closed \(secondaryScenes.count, privacy: .public) secondary windows")
-    }
 }

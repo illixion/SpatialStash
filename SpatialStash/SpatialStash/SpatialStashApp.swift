@@ -36,6 +36,7 @@ struct SpatialStashApp: App {
                     .environment(appModel)
                     .captureOpenWindowAction()
                     .handleIncomingMediaURLs(appModel: appModel)
+                    .managedWindow("photo-detail", content: .photo(windowValue))
             }
         }
         .windowStyle(.plain)
@@ -49,6 +50,7 @@ struct SpatialStashApp: App {
                     .environment(appModel)
                     .captureOpenWindowAction()
                     .handleIncomingMediaURLs(appModel: appModel)
+                    .managedWindow("video-detail", content: .video(windowValue))
             }
         }
         .windowStyle(.plain)
@@ -62,6 +64,7 @@ struct SpatialStashApp: App {
                     .environment(appModel)
                     .captureOpenWindowAction()
                     .handleIncomingMediaURLs(appModel: appModel)
+                    .managedWindow("shared-photo", content: .sharedMedia(item))
             }
         }
         .windowStyle(.plain)
@@ -80,6 +83,7 @@ struct SpatialStashApp: App {
                 .environment(appModel)
                 .captureOpenWindowAction()
                 .handleIncomingMediaURLs(appModel: appModel)
+                .managedWindow("console")
         }
         .defaultSize(width: 900, height: 600)
         .windowResizability(.contentMinSize)
@@ -91,6 +95,7 @@ struct SpatialStashApp: App {
                 .environment(appModel)
                 .captureOpenWindowAction()
                 .handleIncomingMediaURLs(appModel: appModel)
+                .managedWindow("gpu-memory")
         }
         .defaultSize(width: 500, height: 350)
         .windowResizability(.contentMinSize)
@@ -103,6 +108,7 @@ struct SpatialStashApp: App {
                 .environment(appModel)
                 .captureOpenWindowAction()
                 .handleIncomingMediaURLs(appModel: appModel)
+                .managedWindow("video-adjustments")
         }
         .defaultSize(width: 380, height: 640)
         .windowResizability(.contentSize)
@@ -118,6 +124,7 @@ struct SpatialStashApp: App {
                     .environment(appModel)
                     .captureOpenWindowAction()
                     .handleIncomingMediaURLs(appModel: appModel)
+                    .managedWindow("remote-viewer", content: .remoteViewer(windowValue))
                     // Structural floor. This view's root is a GeometryReader,
                     // which has no intrinsic size and greedily accepts whatever
                     // it's proposed — during restoration of a window the
@@ -143,6 +150,7 @@ struct SpatialStashApp: App {
                 RemoteAlertWindowView(windowValue: windowValue)
                     .captureOpenWindowAction()
                     .handleIncomingMediaURLs(appModel: appModel)
+                    .managedWindow("remote-alert", content: .remoteAlert(windowValue))
             }
         }
         .windowStyle(.plain)
