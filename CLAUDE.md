@@ -31,6 +31,15 @@ xcodebuild -quiet -project SpatialStash/SpatialStash.xcodeproj -scheme SpatialSt
   - **PhotoWindowModel+GalleryNavigation.swift** - Gallery image switching, prev/next navigation, lazy loading pagination, rating/O-counter updates
   - **PhotoWindowModel+UIControls.swift** - Share sheet, UI auto-hide timers, image flip
 
+### Windows Tab (window manager)
+`WindowsTabView` is the app's window inventory: every open window with **Summon** and **Close** on each, plus Hide All / Close All underneath. The registry, the rows and the recycle mechanics are **RAVEUI's** `RAVEWindowRegistry` / `RAVEWindowManagerView`; the app supplies only labels and fresh-identity clones, in `Model/ManagedWindows.swift`, applied to each scene root in `SpatialStashApp` via `.manageWindow(...)`.
+
+**Summon is a recycle, not a recall** — it dismisses the scene and opens an equivalent fresh one. That serves the ordinary case (fetch a window snapped in another room) *and* the visionOS 27 regression where a summoned scene is activated but never re-attached to a compositor placement, leaving the window permanently invisible while the scene still reports itself active and visible (`internal_docs/visionos27-invisible-window-feedback.md`; reproduces with stock Clock). Nothing app-side redraws such a scene, so destroying it is the only recovery — and `openWindow` against the live scene is the call that *causes* it, which is why the same dismiss-then-reopen shape already guards the cross-room summon in `ContentView.handleRemoteViewerOpenIfNeeded` / `handlePhotoWindowOpenIfNeeded`.
+
+The `recreated()` clones on `PhotoWindowValue` / `VideoWindowValue` / `RemoteViewerWindowValue` / `RemoteAlertWindowValue` carry the same content under a **new window id**, which is what lets the dismiss and the open be issued in the same turn without the fresh window matching the dying scene. `SharedMediaItem` has no separable identity, so its window reopens verbatim after waiting for teardown. Recreated windows drop `wasPushed` — there is no originating gallery window left to pop back to.
+
+Main windows are managed too, so a second Gallery window parked in another room is recoverable; each Windows tab excludes the window it is displayed in (RAVEUI's `raveWindowToken` environment value). Close All goes underneath SwiftUI to UIKit scene sessions (`RAVEWindowScenes.destroyAll(except:)`) because a window that never got a layout pass never registered — which is exactly the launch-time variant of the same bug.
+
 ### Data Flow
 Three media source types configurable in Settings:
 1. **StaticURLImageSource** - Demo mode with hardcoded image URLs
@@ -42,7 +51,7 @@ Source protocols:
 - `VideoSource` - Protocol for paginated video fetching
 
 ### Tab Navigation
-Tabs defined in `Tab.swift`: Pictures, Videos, Local, Filters, Settings, Remote (developer), Console (developer). Tab switching managed by `ContentView` with ornament-based navigation via `TabBarOrnament`. Remote and Console tabs are conditionally visible based on `appModel.enableRemoteViewer` and `appModel.showDebugConsole`.
+Tabs defined in `Tab.swift`: Pictures, Videos, Local, Filters, Windows, Settings, Remote (developer), Console (developer). Tab switching managed by `ContentView` with ornament-based navigation via `TabBarOrnament`. Remote and Console tabs are conditionally visible based on `appModel.enableRemoteViewer` and `appModel.showDebugConsole`.
 
 Past a separator at the **end of the tab bar**, `TabBarOrnament` shows a **play button** that starts a slideshow of what the current tab is showing (Pictures/Videos with the filter in force, or the Local tab's current folder — images from a Photos folder, videos from a Videos one via `LocalVideoSource(rootURL:)`). It's absent on other tabs, and on Pictures/Videos until content has loaded. This is the supported way to get "slideshow of what I'm looking at"; see Gallery mode under Remote API Viewer. The Local tab's browsed folder lives on `MainWindowModel.localFolderPath` so the ornament can see it (`ContentView` keys tab content on `selectedTab`, so view-local state wouldn't survive a tab switch anyway).
 

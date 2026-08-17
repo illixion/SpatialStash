@@ -25,6 +25,8 @@ struct ContentView: View {
                     LocalTabView()
                 case .filters:
                     FiltersTabView()
+                case .windows:
+                    WindowsTabView()
                 case .settings:
                     SettingsTabView()
                 case .remote:

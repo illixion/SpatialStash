@@ -277,8 +277,6 @@ struct SettingsTabView: View {
                     }
                 }
 
-                WindowManagerSection()
-
                 Section("Developer") {
                     Toggle("Enable RoboFrame Viewer", isOn: Binding(
                         get: { appModel.enableRemoteViewer },

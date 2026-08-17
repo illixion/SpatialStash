@@ -17,7 +17,10 @@ struct SpatialStashApp: App {
         // Main gallery window — WindowGroup allows multiple instances.
         // UUID identity ensures each openWindow call creates a new window.
         WindowGroup("Spatial Stash", id: "main", for: UUID.self) { $windowId in
-            MainWindowView(appModel: appModel)
+            // Main windows are managed too (inside `MainWindowView`): the app
+            // opens several, and one parked in another room is exactly what the
+            // Windows tab is for. Each tab lists every main window but its own.
+            MainWindowView(appModel: appModel, windowId: windowId)
                 .handleIncomingMediaURLs(appModel: appModel)
         } defaultValue: {
             UUID()
@@ -36,7 +39,7 @@ struct SpatialStashApp: App {
                     .environment(appModel)
                     .captureOpenWindowAction()
                     .handleIncomingMediaURLs(appModel: appModel)
-                    .managedWindow("photo-detail", content: .photo(windowValue))
+                    .manageWindow(ManagedWindows.photo(windowValue))
             }
         }
         .windowStyle(.plain)
@@ -50,7 +53,7 @@ struct SpatialStashApp: App {
                     .environment(appModel)
                     .captureOpenWindowAction()
                     .handleIncomingMediaURLs(appModel: appModel)
-                    .managedWindow("video-detail", content: .video(windowValue))
+                    .manageWindow(ManagedWindows.video(windowValue))
             }
         }
         .windowStyle(.plain)
@@ -64,7 +67,7 @@ struct SpatialStashApp: App {
                     .environment(appModel)
                     .captureOpenWindowAction()
                     .handleIncomingMediaURLs(appModel: appModel)
-                    .managedWindow("shared-photo", content: .sharedMedia(item))
+                    .manageWindow(ManagedWindows.sharedPhoto(item))
             }
         }
         .windowStyle(.plain)
@@ -83,7 +86,7 @@ struct SpatialStashApp: App {
                 .environment(appModel)
                 .captureOpenWindowAction()
                 .handleIncomingMediaURLs(appModel: appModel)
-                .managedWindow("console")
+                .manageWindow(ManagedWindows.console())
         }
         .defaultSize(width: 900, height: 600)
         .windowResizability(.contentMinSize)
@@ -95,7 +98,7 @@ struct SpatialStashApp: App {
                 .environment(appModel)
                 .captureOpenWindowAction()
                 .handleIncomingMediaURLs(appModel: appModel)
-                .managedWindow("gpu-memory")
+                .manageWindow(ManagedWindows.gpuMemory())
         }
         .defaultSize(width: 500, height: 350)
         .windowResizability(.contentMinSize)
@@ -108,7 +111,7 @@ struct SpatialStashApp: App {
                 .environment(appModel)
                 .captureOpenWindowAction()
                 .handleIncomingMediaURLs(appModel: appModel)
-                .managedWindow("video-adjustments")
+                .manageWindow(ManagedWindows.videoAdjustments())
         }
         .defaultSize(width: 380, height: 640)
         .windowResizability(.contentSize)
@@ -124,7 +127,7 @@ struct SpatialStashApp: App {
                     .environment(appModel)
                     .captureOpenWindowAction()
                     .handleIncomingMediaURLs(appModel: appModel)
-                    .managedWindow("remote-viewer", content: .remoteViewer(windowValue))
+                    .manageWindow(ManagedWindows.remoteViewer(windowValue, appModel: appModel))
                     // Structural floor. This view's root is a GeometryReader,
                     // which has no intrinsic size and greedily accepts whatever
                     // it's proposed — during restoration of a window the
@@ -150,7 +153,7 @@ struct SpatialStashApp: App {
                 RemoteAlertWindowView(windowValue: windowValue)
                     .captureOpenWindowAction()
                     .handleIncomingMediaURLs(appModel: appModel)
-                    .managedWindow("remote-alert", content: .remoteAlert(windowValue))
+                    .manageWindow(ManagedWindows.remoteAlert(windowValue))
             }
         }
         .windowStyle(.plain)
@@ -181,6 +184,13 @@ struct SpatialStashApp: App {
 /// Wrapper view for the main window that handles shared media URLs
 private struct MainWindowView: View {
     let appModel: AppModel
+    /// The scene's presented value. Unreachable as nil in practice — the group
+    /// declares a `defaultValue` — but the binding is optional, so the window
+    /// manager needs an identity that survives body re-evaluation either way:
+    /// a fresh `UUID()` per evaluation would leave Close addressing a value no
+    /// scene holds.
+    let windowId: UUID?
+    @State private var fallbackWindowId = UUID()
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -188,6 +198,7 @@ private struct MainWindowView: View {
             .environment(appModel)
             .frame(minWidth: 320, maxWidth: 3000, minHeight: 320, maxHeight: 3000)
             .registerAsMainWindow()
+            .manageWindow(ManagedWindows.main(windowId ?? fallbackWindowId))
             .onAppear {
                 RAVEWindowSessionRegistry.shared.openWindow = openWindow
             }
