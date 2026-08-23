@@ -72,6 +72,15 @@ struct PhotoDisplayView: View {
     /// Suppresses window resize during swipe transitions
     @State private var suppressWindowResize: Bool = false
 
+    /// One-shot follow-up after an immersive resize request, verifying that the
+    /// request actually took effect. visionOS can drop a geometry request made
+    /// while the scene is still being placed, and nothing else re-requests — so
+    /// the window silently keeps its pre-immersive size (seen once on an
+    /// immersive pop-out, which asks to grow moments after its scene appears,
+    /// and stable on every attempt after). Mirrors `VideoWindowView`'s
+    /// `aspectRelockTask`, which exists for the same reason on the video side.
+    @State private var immersiveResizeVerifyTask: Task<Void, Never>?
+
     /// Task for delayed window size verification (catches restoration timing issues)
     @State private var sizeVerificationTask: Task<Void, Never>?
 
@@ -88,6 +97,13 @@ struct PhotoDisplayView: View {
 
     /// Very large window size for immersive mode (fills field of vision)
     private let immersiveWindowSize: CGSize = CGSize(width: 3000, height: 3000)
+
+    /// How many times an unsettled immersive resize is re-requested before
+    /// giving up. Bounded so a window the system genuinely refuses to size as
+    /// asked can't spin; with the front-loaded cadence below this spans ~1.9s,
+    /// which covered every competing request observed on device.
+    private static let immersiveResizeVerifyAttempts = 6
+
 
     /// The bounds used to fit images into — starts as saved window size or main window size, then tracks viewer size
     private var currentBounds: CGSize {
@@ -325,6 +341,8 @@ struct PhotoDisplayView: View {
             }
         }
         .onDisappear {
+            immersiveResizeVerifyTask?.cancel()
+            immersiveResizeVerifyTask = nil
             if windowModel.hostFullyImmersiveSpace {
                 windowModel.hostFullyImmersiveSpace = false
                 appModel.immersiveLoanEntity = nil
@@ -604,10 +622,13 @@ struct PhotoDisplayView: View {
                         
                         if isImmersive {
                             // Store current size before entering immersive
-                            windowModel.preImmersiveWindowSize = viewerWindowSize ?? currentBounds
-                            resizeWindowToFit(windowModel.imageAspectRatio, within: immersiveWindowSize, forceImmersive: true)
+                            let preImmersiveSize = viewerWindowSize ?? currentBounds
+                            windowModel.preImmersiveWindowSize = preImmersiveSize
+                            requestVerifiedImmersiveResize(from: preImmersiveSize)
                         } else {
                             // Exiting immersive - restore original size
+                            immersiveResizeVerifyTask?.cancel()
+                            immersiveResizeVerifyTask = nil
                             let restoreSize = windowModel.preImmersiveWindowSize ?? appModel.mainWindowSize
                             resizeWindowToFit(windowModel.imageAspectRatio, within: restoreSize, forceImmersive: false)
                             windowModel.preImmersiveWindowSize = nil
@@ -845,12 +866,23 @@ struct PhotoDisplayView: View {
     private func resizeWindowToFit(_ aspectRatio: CGFloat, within bounds: CGSize, forceImmersive: Bool? = nil) {
         guard let windowScene = resolvedWindowScene else { return }
 
-        // Use explicit immersive flag if provided, otherwise detect automatically
+        // Use explicit immersive flag if provided, otherwise detect automatically.
+        //
+        // Detection has to include the *desired* mode, not just the settled
+        // one. `viewingMode` lags a mode change by hundreds of milliseconds,
+        // and every other resize path (load completion, aspect change) fires
+        // inside that gap — computing a non-immersive size and overwriting the
+        // immersive geometry that was already requested. That is what left an
+        // immersive pop-out at its small windowed size: not a dropped request,
+        // a later request that disagreed about which mode the window was in.
         let shouldUseImmersive: Bool
         if let forceImmersive {
             shouldUseImmersive = forceImmersive
         } else {
+            let desired = windowModel.contentEntity
+                .components[ImagePresentationComponent.self]?.desiredViewingMode
             shouldUseImmersive = windowModel.isViewingSpatial3DImmersive
+                || desired == .spatial3DImmersive
         }
         
         let effectiveBounds = shouldUseImmersive ? immersiveWindowSize : bounds
@@ -858,6 +890,100 @@ struct PhotoDisplayView: View {
         
         UIView.performWithoutAnimation {
             windowScene.requestGeometryUpdate(.Vision(size: size))
+        }
+    }
+
+    /// Grow the window for immersive 3D, then verify the grant is actually an
+    /// answer to that request.
+    ///
+    /// A window opened straight into immersive (a pop-out of a window already
+    /// in immersive 3D) would otherwise be left at the `photo-detail` group's
+    /// `.defaultSize` of 1200x900: the immersive request goes out within ~25ms
+    /// of the window appearing, and the system then applies that scene default
+    /// on top of it. Nothing else re-requested, so the window simply stayed
+    /// small — intermittently, since it depends on which request lands last.
+    ///
+    /// Deliberately *not* tested here: whether the grant matches `intended`.
+    /// The request is `immersiveWindowSize`-fitted and far larger than the
+    /// platform ceiling (~1360pt tall), so every grant is clamped; treating a
+    /// clamp as failure would fight the steady state on every immersive entry.
+    /// See the two tests inline for what failure actually looks like.
+    private func requestVerifiedImmersiveResize(from preImmersiveSize: CGSize) {
+        let intended = windowSize(for: windowModel.imageAspectRatio, within: immersiveWindowSize)
+
+        AppLogger.views.log(
+            level: AppLogger.effectiveDebugLevel,
+            "Immersive resize: pre=\(Int(preImmersiveSize.width), privacy: .public)x\(Int(preImmersiveSize.height), privacy: .public) intended=\(Int(intended.width), privacy: .public)x\(Int(intended.height), privacy: .public) aspect=\(self.windowModel.imageAspectRatio, privacy: .public) fullyImmersiveMode=\(self.appModel.fullyImmersive3DMode, privacy: .public)"
+        )
+
+        // Requested immediately, not after waiting for the scene to settle:
+        // deferring it delays the common case (a window already on screen
+        // entering immersive, which lands correct on the first request) into a
+        // visible lag, which measured worse than the snap it was meant to
+        // avoid. A freshly opened window's dropped request is recovered by the
+        // verifier below instead.
+        resizeWindowToFit(windowModel.imageAspectRatio, within: immersiveWindowSize, forceImmersive: true)
+
+        immersiveResizeVerifyTask?.cancel()
+        immersiveResizeVerifyTask = Task { @MainActor in
+            // Largest grant seen so far; the window starts at its pre-immersive
+            // size, so anything at or below that has not taken effect yet.
+            var lastGranted = CGSize(
+                width: max(preImmersiveSize.width - 3, 0),
+                height: max(preImmersiveSize.height - 3, 0)
+            )
+            for attempt in 1...Self.immersiveResizeVerifyAttempts {
+                // Front-loaded cadence: a correction the user can see as a
+                // "snap" is far less noticeable at 150ms than at 500ms, while
+                // the later, longer waits still catch a grant that settles slowly.
+                try? await Task.sleep(for: .milliseconds(attempt == 1 ? 150 : 350))
+                guard !Task.isCancelled, let scene = resolvedWindowScene else { return }
+
+                // The *desired* mode, not the settled one: `viewingMode` lags
+                // the request by well over a sample, so gating on it made this
+                // verifier bail during exactly the interval it exists to watch.
+                let ipc = windowModel.contentEntity.components[ImagePresentationComponent.self]
+                let stillHeadingImmersive = ipc?.desiredViewingMode == .spatial3DImmersive
+                let granted = scene.effectiveGeometry.coordinateSpace.bounds.size
+
+                AppLogger.views.log(
+                    level: AppLogger.effectiveDebugLevel,
+                    "Immersive resize readback #\(attempt, privacy: .public): granted=\(Int(granted.width), privacy: .public)x\(Int(granted.height), privacy: .public) mode=\(String(describing: ipc?.viewingMode), privacy: .public) desired=\(String(describing: ipc?.desiredViewingMode), privacy: .public) suppressed=\(self.suppressWindowResize, privacy: .public)"
+                )
+
+                guard stillHeadingImmersive, !suppressWindowResize else { return }
+                guard granted.width > 2, granted.height > 2 else { continue }
+
+                // Two independent things can be wrong with the grant, and
+                // each needs its own test.
+                //
+                // Wrong *shape*: a competing geometry request lands on top of
+                // ours with a size that isn't derived from the image at all
+                // (measured: 1200x900 granted for a 1.78 image, while a clean
+                // entry at that same aspect reached 2579x1360). Every sizing
+                // path here preserves aspect, so an aspect-mismatched grant is
+                // never an answer to this request and must be re-requested —
+                // "it stopped changing" is not consent.
+                //
+                // Wrong *size*: the grant is aspect-correct but still growing
+                // toward the platform ceiling (~1360pt tall), which a 3000pt
+                // request always hits. There is no point comparing against
+                // `intended` — it is deliberately larger than any grant — so
+                // convergence is the test: stop once a correctly-shaped grant
+                // stops growing.
+                defer { lastGranted = granted }
+                let aspect = windowModel.imageAspectRatio
+                let grantedAspect = granted.width / granted.height
+                let aspectMatches = abs(grantedAspect - aspect) <= aspect * 0.02
+                let stalled = granted.width <= lastGranted.width + 2
+                    && granted.height <= lastGranted.height + 2
+                if aspectMatches && stalled { return }
+
+                AppLogger.views.info(
+                    "Immersive resize not settled (granted \(Int(granted.width), privacy: .public)x\(Int(granted.height), privacy: .public) aspect=\(grantedAspect, privacy: .public) want=\(aspect, privacy: .public) shapeOK=\(aspectMatches, privacy: .public) stalled=\(stalled, privacy: .public)); re-requesting, attempt \(attempt, privacy: .public)"
+                )
+                resizeWindowToFit(windowModel.imageAspectRatio, within: immersiveWindowSize, forceImmersive: true)
+            }
         }
     }
 
