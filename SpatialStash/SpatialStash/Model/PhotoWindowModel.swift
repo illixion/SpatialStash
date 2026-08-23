@@ -27,6 +27,10 @@ class PhotoWindowModel {
     var contentEntity: Entity = Entity()
     var spatial3DImageState: Spatial3DImageState = .notGenerated
     var spatial3DImage: ImagePresentationComponent.Spatial3DImage? = nil
+    /// Handoff registry key this window holds a claimed reference for, so
+    /// `cleanup()` can drop it. Only the *claiming* window takes a reference;
+    /// a depositing window keeps its instance through `spatial3DImage`.
+    var spatial3DHandoffKey: Spatial3DImageHandoff.Key? = nil
     /// Whether to show the 3D restore prompt pill at the bottom of the viewer
     var showAutoRestorePrompt: Bool = false
     /// Whether the auto-restore target is immersive 3D (vs regular 3D)
@@ -648,6 +652,17 @@ class PhotoWindowModel {
                     self.lastWindowSize = savedSize
                 }
             }
+            // A generated Spatial3DImage was handed over for this image (a
+            // pop-out of a window already in 3D), so open straight into 3D and
+            // let createImagePresentationComponent claim it — nothing to
+            // generate. Deposits only exist for the moment around a pop-out, so
+            // this cannot override the general "images open in 2D" policy.
+            if Spatial3DImageHandoff.shared.has(key: self.spatial3DHandoffLookupKey) {
+                AppLogger.photoWindow.info(
+                    "[Handoff] window opening with a waiting instance — activating 3D directly"
+                )
+                self.activate3DMode(explicit: true)
+            }
             await self.loadImageDataForDetail(url: self.imageURL)
             // Restore slider values (brightness/contrast/saturation).
             // Auto-enhance restoration is handled by autoRestorePreviousEnhancement()
@@ -1151,7 +1166,13 @@ class PhotoWindowModel {
 
         pendingViewingMode = nil
 
-        // Release Spatial3DImage GPU texture
+        // Release Spatial3DImage GPU texture. A handoff reference (deposited
+        // for, or claimed from, another window) is refcounted separately — the
+        // registry keeps the instance alive for whoever else holds it.
+        if let handoffKey = spatial3DHandoffKey {
+            Spatial3DImageHandoff.shared.release(key: handoffKey)
+            spatial3DHandoffKey = nil
+        }
         spatial3DImage = nil
         spatial3DImageState = .notGenerated
 

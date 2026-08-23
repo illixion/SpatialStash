@@ -208,6 +208,14 @@ extension PhotoWindowModel {
 
         isLoadingDetailImage = true
 
+        // Reuse a generated instance handed over by another window (pop-out)
+        // instead of decoding and regenerating the same depth scene.
+        if let claimed = claimHandoffSpatial3DImage() {
+            spatial3DImage = claimed
+            isLoadingDetailImage = false
+            return
+        }
+
         do {
             // Prefer cached file URL to avoid network when reopening
             let sourceURL: URL
@@ -709,5 +717,124 @@ extension PhotoWindowModel {
         if let ar = ipc.aspectRatio(for: mode) { imageAspectRatio = CGFloat(ar) }
         if mode == .spatial3DImmersive { immersiveResizeTrigger += 1 }
         updateExperimentalSpatial3DTuning()
+    }
+}
+
+// MARK: - Spatial 3D Handoff
+
+extension PhotoWindowModel {
+
+    /// Registry key for this image's spatial-3D instance — the same key on both
+    /// sides of a handoff, so a window that has generated nothing yet can still
+    /// look up what another window deposited.
+    ///
+    /// Keyed on the *effective cap*, not `currentSpatial3DSourceDimension`: an
+    /// image smaller than the cap skips downsampling entirely and records its own
+    /// native dimension, so keying on the actual dimension made every deposit
+    /// from a sub-cap image unfindable. The cap is the better identity anyway —
+    /// it is the input that decides the result.
+    var spatial3DHandoffLookupKey: Spatial3DImageHandoff.Key {
+        Spatial3DImageHandoff.Key(
+            imageURL: imageURL.absoluteString,
+            sourceDimension: effectiveSpatial3DMaxResolution
+        )
+    }
+
+    /// Publish this window's generated instance so a window opened next can
+    /// pick it up. Returns true when something was deposited.
+    @discardableResult
+    ///
+    /// Waits out any in-flight generation first: depositing a half-generated
+    /// instance would hand the next window an object RealityKit is still
+    /// writing to.
+    func depositSpatial3DForHandoff() async -> Bool {
+        await settleActiveGeneration()
+
+        guard spatial3DImageState == .generated, let spatial3DImage else {
+            // The common case — most pop-outs are of 2D images.
+            AppLogger.photoWindow.log(
+                level: AppLogger.effectiveDebugLevel,
+                "[Handoff] nothing to deposit state=\(String(describing: self.spatial3DImageState), privacy: .public)"
+            )
+            return false
+        }
+
+        let key = spatial3DHandoffLookupKey
+        // The component's live mode, not `desiredViewingMode` — the latter can
+        // still be pointing at a mode the component refused (e.g. a Fully
+        // Immersive entry the owner guard turned down).
+        let sourceMode = contentEntity.components[ImagePresentationComponent.self]?.viewingMode
+            ?? desiredViewingMode
+        AppLogger.photoWindow.log(
+            level: AppLogger.effectiveDebugLevel,
+            "[Handoff] depositing generated instance mode=\(String(describing: sourceMode), privacy: .public)"
+        )
+
+        Spatial3DImageHandoff.shared.deposit(
+            key: key,
+            image: spatial3DImage,
+            aspectRatio: imageAspectRatio,
+            viewingMode: sourceMode
+        )
+        return true
+    }
+
+    /// Try to adopt a handed-over instance for the image this window is opening.
+    /// On success the component is installed already-generated, so no
+    /// `generate()` ever runs here — device-confirmed, see the file header on
+    /// `Spatial3DImageHandoff`.
+    func claimHandoffSpatial3DImage() -> ImagePresentationComponent.Spatial3DImage? {
+        let key = spatial3DHandoffLookupKey
+        guard let claimed = Spatial3DImageHandoff.shared.claim(key: key) else { return nil }
+
+        spatial3DHandoffKey = key
+
+        // The generated state lives on the instance, not the component, so a
+        // second component built from it starts out already generated.
+        let supported = ImagePresentationComponent.supportedViewingModes(for: claimed.image)
+        guard supported.contains(.spatial3D) else {
+            // Nothing generated after all — release and fall back to the
+            // normal decode + generate path rather than installing a component
+            // that can only ever show mono.
+            AppLogger.photoWindow.warning("[Handoff] claimed instance reports no spatial3D mode; falling back to generation")
+            Spatial3DImageHandoff.shared.release(key: key)
+            spatial3DHandoffKey = nil
+            return nil
+        }
+
+        spatial3DImageState = .generated
+
+        var component = ImagePresentationComponent(spatial3DImage: claimed.image)
+        // Windowed 3D first even when the source was immersive: the immersive
+        // switch needs this window to exist (and, in Fully Immersive, to win the
+        // owner guard), so it is applied below once the make pass is over.
+        component.desiredViewingMode = .spatial3D
+        contentEntity.components.set(component)
+        desiredViewingMode = .spatial3D
+        if let aspect = component.aspectRatio(for: .spatial3D) ?? claimed.aspectRatio.map(Float.init) {
+            imageAspectRatio = CGFloat(aspect)
+        }
+
+        updateExperimentalSpatial3DTuning()
+        // Nothing has been baked into this instance's pixels by *this* window.
+        lastBakedAdjustments = VisualAdjustments()
+        displayTexture = nil
+        displayImage = nil
+        currentImageData = nil
+
+        // Carry the source window's mode over. Deferred out of the RealityView
+        // make pass, and routed through switchToViewingMode so the Fully
+        // Immersive owner guard and tracker writes all still apply.
+        if claimed.viewingMode == .spatial3DImmersive {
+            Task { @MainActor [weak self] in
+                await self?.switchToViewingMode(.spatial3DImmersive)
+            }
+        }
+
+        AppLogger.photoWindow.log(
+            level: AppLogger.effectiveDebugLevel,
+            "[Handoff] adopted generated instance, no regeneration (sourceMode=\(String(describing: claimed.viewingMode), privacy: .public))"
+        )
+        return claimed.image
     }
 }

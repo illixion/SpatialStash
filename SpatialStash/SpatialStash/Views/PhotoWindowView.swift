@@ -110,8 +110,17 @@ struct PhotoWindowView: View {
                                     pendingPopOutImage = image
                                     showDuplicateWindowAlert = true
                                 case .none:
-                                    appModel.enqueuePhotoWindowOpen(image)
-                                    dismissWindow()
+                                    // Hand the generated Spatial3DImage to the
+                                    // window that is about to open, so it opens
+                                    // in 3D immediately instead of decoding and
+                                    // regenerating the same depth scene. The
+                                    // deposit must land before the dismiss —
+                                    // cleanup() releases this window's reference.
+                                    Task {
+                                        await windowModel.depositSpatial3DForHandoff()
+                                        appModel.enqueuePhotoWindowOpen(image)
+                                        dismissWindow()
+                                    }
                                 }
                             } label: {
                                 Label("Pop Out", systemImage: "rectangle.portrait.and.arrow.forward")
@@ -168,9 +177,12 @@ struct PhotoWindowView: View {
             }
             Button("Open Copy") {
                 if let image = pendingPopOutImage {
-                    appModel.enqueuePhotoWindowOpen(image, bypassDuplicatePrompt: true)
                     pendingPopOutImage = nil
-                    dismissWindow()
+                    Task {
+                        await windowModel.depositSpatial3DForHandoff()
+                        appModel.enqueuePhotoWindowOpen(image, bypassDuplicatePrompt: true)
+                        dismissWindow()
+                    }
                 }
             }
             Button("Cancel", role: .cancel) {

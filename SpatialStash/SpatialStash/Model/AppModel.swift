@@ -1634,6 +1634,9 @@ class AppModel {
 
             if event.contains(.critical) {
                 AppLogger.appModel.warning("DispatchSource: critical memory pressure (respectMemoryAlerts=\(self.respectMemoryAlerts, privacy: .public))")
+                // Unclaimed spatial-3D handoffs are pure cache — the windows
+                // still showing an instance own it themselves.
+                Spatial3DImageHandoff.shared.evictAll()
             } else if event.contains(.warning) {
                 AppLogger.appModel.info("DispatchSource: warning memory pressure — no action (OS handles page eviction)")
             }
