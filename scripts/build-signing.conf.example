@@ -1,8 +1,8 @@
 # Build & sign configuration — copy to build-signing.conf and edit.
 # build-signing.conf is gitignored and will never be committed.
 #
-# This configures signing for scripts/build-and-sign.sh. The script imports
-# the .p12 certs into a temporary keychain, so signing works over SSH without
+# This configures signing for ~/bin/build-and-sign. The script imports the
+# .p12 certs into a temporary keychain, so signing works over SSH without
 # any login-keychain setup. Nothing needs to be pre-installed on the machine.
 #
 # BUILD_BUNDLE_ID overrides PRODUCT_BUNDLE_IDENTIFIER at build time — this
@@ -56,9 +56,9 @@ PRE_BUILD_HOOK="./scripts/set-build-info.sh"
 # be raised on the command line — the target's own 26.0 outranks an xcconfig —
 # because the visionOS 27-only symbols are linked non-weakly.
 #
-# NOTE: ~/bin/build-and-sign has no --private-api guard (only the repo's
-# scripts/build-and-sign.sh refuses to combine it with --distribution). Clear the
-# condition for an App Store build: --distribution --set PRIVATE_API_CONDITION=
+# NOTE: ~/bin/build-and-sign has no --private-api guard, so it will happily
+# combine this with --distribution. Clear the condition yourself for an App
+# Store build: --distribution --set PRIVATE_API_CONDITION=
 # EXTRA_BUILD_SETTINGS=(
 #     'PRIVATE_API_CONDITION=SPATIALSTASH_PRIVATE_API SPATIALSTASH_PRIVATE_API_V27'
 #     'XROS_DEPLOYMENT_TARGET=27.0'
