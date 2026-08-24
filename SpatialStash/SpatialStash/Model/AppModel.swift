@@ -2211,7 +2211,7 @@ class AppModel {
         let video3DData = await Video3DSettingsTracker.shared.exportData()
         let imageEnhancementData = await ImageEnhancementTracker.shared.exportData()
 
-        return SettingsBackup(
+        var backup = SettingsBackup(
             version: SettingsBackup.currentVersion,
             exportDate: Date(),
             appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown",
@@ -2277,6 +2277,11 @@ class AppModel {
             globalPseudo3DSettings: try? JSONEncoder().encode(globalPseudo3DSettings),
             cacheSizePreset: UserDefaults.standard.string(forKey: CacheBudget.presetKey)
         )
+#if SPATIALSTASH_PRIVATE_API
+        backup.privateSpatial3DTuningEnabled = PrivateSpatial3DTuningStore.shared.isEnabled
+        backup.privateSpatial3DTuningSettings = PrivateSpatial3DTuningStore.shared.settings
+#endif
+        return backup
     }
 
     func importSettingsBackup(_ backup: SettingsBackup) async {
@@ -2327,6 +2332,20 @@ class AppModel {
         if let raw = backup.cacheSizePreset, CacheSizePreset(rawValue: raw) != nil {
             UserDefaults.standard.set(raw, forKey: CacheBudget.presetKey)
         }
+#if SPATIALSTASH_PRIVATE_API
+        var privateSpatial3DTuningChanged = false
+        if let v = backup.privateSpatial3DTuningEnabled {
+            PrivateSpatial3DTuningStore.shared.isEnabled = v
+            privateSpatial3DTuningChanged = true
+        }
+        if let v = backup.privateSpatial3DTuningSettings {
+            PrivateSpatial3DTuningStore.shared.settings = v
+            privateSpatial3DTuningChanged = true
+        }
+        if privateSpatial3DTuningChanged {
+            PrivateSpatial3DTuningStore.shared.markChanged()
+        }
+#endif
 
         // Complex settings
         if let v = backup.savedViews {

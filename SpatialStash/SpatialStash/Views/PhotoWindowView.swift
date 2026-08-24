@@ -256,17 +256,10 @@ struct PhotoWindowView: View {
         guard let scene = sceneDelegate?.windowScene else { return }
         let base = scene.effectiveGeometry.coordinateSpace.bounds.size
         guard base.width > 2, base.height > 2 else { return }
-        let nudged = CGSize(width: base.width + 1, height: base.height + 1)
         AppLogger.windowState.warning(
             "[Photo \(self.popOutWindowID?.uuidString ?? "pushed", privacy: .public)] nudging scene for render recovery"
         )
-        UIView.performWithoutAnimation {
-            scene.requestGeometryUpdate(.Vision(size: nudged))
-        }
-        try? await Task.sleep(for: .milliseconds(150))
-        UIView.performWithoutAnimation {
-            scene.requestGeometryUpdate(.Vision(size: base))
-        }
+        await WindowSizeNudge.perform(on: scene, base: base, delta: 1)
     }
 
 }

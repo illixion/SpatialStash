@@ -1009,15 +1009,8 @@ struct PhotoDisplayView: View {
         guard base.width > 2, base.height > 2 else { return }
         let delta: CGFloat = nudgeAlternator ? 1 : -1
         nudgeAlternator.toggle()
-        let nudged = CGSize(width: base.width + delta, height: base.height + delta)
         Task { @MainActor in
-            UIView.performWithoutAnimation {
-                windowScene.requestGeometryUpdate(.Vision(size: nudged))
-            }
-            try? await Task.sleep(for: .milliseconds(150))
-            UIView.performWithoutAnimation {
-                windowScene.requestGeometryUpdate(.Vision(size: base))
-            }
+            await WindowSizeNudge.perform(on: windowScene, base: base, delta: delta)
         }
     }
 

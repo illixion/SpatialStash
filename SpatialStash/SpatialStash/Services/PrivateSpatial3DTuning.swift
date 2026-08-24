@@ -211,6 +211,7 @@ final class PrivateSpatial3DTuningStore {
         didSet {
             guard isEnabled != oldValue else { return }
             UserDefaults.standard.set(isEnabled, forKey: Self.enabledKey)
+            syncNudgeSuppression()
         }
     }
 
@@ -220,7 +221,19 @@ final class PrivateSpatial3DTuningStore {
             if let data = try? JSONEncoder().encode(settings) {
                 UserDefaults.standard.set(data, forKey: Self.settingsKey)
             }
+            syncNudgeSuppression()
         }
+    }
+
+    /// Turning MXI Render Two-Pass off shows the raw gaussian splat directly;
+    /// the calibration nudge exists to fix IPC's off-axis blur in the normal
+    /// two-pass render, so it has nothing to fix — and can visibly glitch the
+    /// raw splat — once two-pass is off.
+    private static let renderTwoPassOffNudgeReason = "mxiRenderTwoPassOff"
+
+    private func syncNudgeSuppression() {
+        let shouldSuppress = isEnabled && settings.renderTwoPass == false
+        WindowSizeNudge.setSuppressed(shouldSuppress, reason: Self.renderTwoPassOffNudgeReason)
     }
 
     /// Bumped whenever the values change so open viewers can re-apply.
@@ -234,6 +247,9 @@ final class PrivateSpatial3DTuningStore {
         } else {
             settings = PrivateSpatial3DSettings()
         }
+        // didSet doesn't fire for a property's own initial assignment above,
+        // so establish suppression state from whatever was just restored.
+        syncNudgeSuppression()
     }
 
     func markChanged() { revision &+= 1 }

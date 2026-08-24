@@ -845,17 +845,10 @@ struct RemoteViewerWindowView: View {
         guard let scene = resolvedWindowScene else { return }
         let base = scene.effectiveGeometry.coordinateSpace.bounds.size
         guard Self.isPlausibleWindowSize(base) else { return }
-        let nudged = CGSize(width: base.width + 1, height: base.height + 1)
         AppLogger.windowState.warning(
             "[Remote \(windowValue.id.uuidString, privacy: .public)] nudging scene for render recovery"
         )
-        UIView.performWithoutAnimation {
-            scene.requestGeometryUpdate(.Vision(size: nudged))
-        }
-        try? await Task.sleep(for: .milliseconds(150))
-        UIView.performWithoutAnimation {
-            scene.requestGeometryUpdate(.Vision(size: base))
-        }
+        await WindowSizeNudge.perform(on: scene, base: base, delta: 1)
     }
 
     private func setupModel() {
@@ -1038,15 +1031,8 @@ struct RemoteViewerWindowView: View {
         guard Self.isPlausibleWindowSize(base) else { return }
         let delta: CGFloat = nudgeAlternator ? 1 : -1
         nudgeAlternator.toggle()
-        let nudged = CGSize(width: base.width + delta, height: base.height + delta)
         Task { @MainActor in
-            UIView.performWithoutAnimation {
-                windowScene.requestGeometryUpdate(.Vision(size: nudged))
-            }
-            try? await Task.sleep(for: .milliseconds(150))
-            UIView.performWithoutAnimation {
-                windowScene.requestGeometryUpdate(.Vision(size: base))
-            }
+            await WindowSizeNudge.perform(on: windowScene, base: base, delta: delta)
         }
     }
 
