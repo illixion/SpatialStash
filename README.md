@@ -34,16 +34,50 @@ A visionOS app for Apple Vision Pro that transforms your 2D images into immersiv
 - visionOS 26.0+
 - (Optional) [Stash](https://github.com/stashapp/stash) server for media library integration
 
+## Dependencies
+
+Spatial Stash links two shared packages:
+
+| Package | Products used |
+|---|---|
+| [`RAVESDK`](https://github.com/illixion/RAVESDK) | `RAVENet`, `RAVEUI`, `RAVEConsole`, `RAVEMedia` |
+| [`RAVEEngine`](https://github.com/illixion/RAVEEngine) | `RAVEDiagnostics` |
+
+Both are referenced as **local** Swift packages by relative path —
+`../../RAVESDK` and `../../RAVEEngine`, resolved against the directory holding
+`SpatialStash.xcodeproj` — not as versioned remote dependencies. So a clone does
+not fetch them: check them out as **siblings** of this repo, which is what step 1
+below does.
+
+The requirement is only that this repo's parent directory also contains
+directories named exactly `RAVESDK` and `RAVEEngine`; this repo's own directory
+name does not matter. Get it wrong and Xcode fails at package resolution, before
+compiling anything.
+
+Why path references and not versions: the packages and the apps co-evolve
+continuously — several of these targets arrived in the packages by being lifted
+out of this app — and a path reference keeps "move this into the package and
+update its callers" a single atomic edit.
+
 ## Installation
 
-1. Clone the repository:
+1. Clone this repository and both packages into the same parent directory:
    ```bash
    git clone https://github.com/illixion/spatialstash.git
-   cd spatialstash
+   git clone https://github.com/illixion/RAVESDK.git
+   git clone https://github.com/illixion/RAVEEngine.git
+   ```
+   giving you:
+   ```
+   some-parent/
+   ├── RAVESDK/
+   ├── RAVEEngine/
+   └── spatialstash/
    ```
 
 2. Open the project in Xcode:
    ```bash
+   cd spatialstash
    open SpatialStash/SpatialStash.xcodeproj
    ```
 
