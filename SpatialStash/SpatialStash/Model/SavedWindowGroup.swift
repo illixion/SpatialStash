@@ -193,7 +193,7 @@ struct SavedWindowEntry: Codable, Identifiable, Hashable {
     var dedupeKey: String {
         switch kind {
         case .photo:
-            return "photo:\(image?.fullSizeURL.absoluteString ?? "?")"
+            return "photo:\(image?.identity ?? "?")"
         case .video:
             guard let video else { return "video:?" }
             return "video:\(video.identity.isEmpty ? video.streamURL.absoluteString : video.identity)"

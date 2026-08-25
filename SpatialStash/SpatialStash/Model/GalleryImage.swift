@@ -82,40 +82,25 @@ extension GalleryImage {
 // MARK: - Local File URL Re-resolution
 
 extension GalleryImage {
-    /// Returns a copy with file URLs re-resolved against the current Documents directory.
-    /// On visionOS/iOS the app sandbox container UUID changes on every launch, so
-    /// persisted absolute file URLs become stale. This extracts the relative path
-    /// after "Documents/" and reconstructs it using the current container path.
-    /// Returns self unchanged for non-local images or when the file can't be found.
+    /// Returns a copy with file URLs re-resolved against the current container.
+    ///
+    /// visionOS reassigns the app container UUID on every launch, so a persisted
+    /// absolute file URL is stale by the next run. Returns self unchanged for
+    /// non-container sources, and when the file cannot be found under the
+    /// current container — the caller keeps whatever it had rather than being
+    /// handed a URL that resolves to nothing.
     func resolvingLocalFileURL() -> GalleryImage {
-        guard source.isContainerFile, fullSizeURL.isFileURL else { return self }
-
-        guard let documentsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
-            return self
-        }
-
-        // If the URL already points to a valid file, no fixup needed
-        if FileManager.default.fileExists(atPath: fullSizeURL.path) { return self }
-
-        let pathComponents = fullSizeURL.pathComponents
-        guard let docIndex = pathComponents.lastIndex(of: "Documents"),
-              docIndex + 1 < pathComponents.count else {
-            return self
-        }
-
-        let relativeParts = pathComponents[(docIndex + 1)...]
-        var resolvedURL = documentsDir
-        for part in relativeParts {
-            resolvedURL = resolvedURL.appendingPathComponent(part)
-        }
-
-        guard FileManager.default.fileExists(atPath: resolvedURL.path) else { return self }
+        guard source.isContainerFile, fullSizeURL.isFileURL,
+              let resolved = MediaIdentity.resolvingContainerURL(fullSizeURL),
+              resolved != fullSizeURL else { return self }
 
         return GalleryImage(
             id: id,
             stashId: stashId,
-            thumbnailURL: resolvedURL,
-            fullSizeURL: resolvedURL,
+            thumbnailURL: thumbnailURL.isFileURL
+                ? (MediaIdentity.resolvingContainerURL(thumbnailURL) ?? thumbnailURL)
+                : thumbnailURL,
+            fullSizeURL: resolved,
             title: title,
             rating100: rating100,
             oCounter: oCounter,
@@ -157,10 +142,16 @@ extension GalleryImage: Codable {
         rating100 = try container.decodeIfPresent(Int.self, forKey: .rating100)
         oCounter = try container.decodeIfPresent(Int.self, forKey: .oCounter)
 
-        // Default to .stash for backward compatibility with old saved window
-        // groups. An unrecognised raw value degrades to .stash rather than
-        // failing the whole decode and losing the window group.
-        source = (try container.decodeIfPresent(MediaSource.self, forKey: .source)) ?? .stash
+        // Decoded as a String and mapped, NOT via decodeIfPresent(MediaSource):
+        // that only returns nil for a missing or null key — a key present with
+        // an unrecognised raw value throws DecodingError.dataCorrupted, and the
+        // throw escapes init(from:). Saved window groups decode as an array, so
+        // one such element fails the whole array, and loadSavedWindowGroups()
+        // wraps that in `try?` — silently wiping EVERY saved group, not just the
+        // offending one. Mapping by hand makes the fallback real, so a group
+        // written by a future build with a new source case still restores.
+        let rawSource = try container.decodeIfPresent(String.self, forKey: .source)
+        source = rawSource.flatMap(MediaSource.init(rawValue:)) ?? .stash
         fileName = try container.decodeIfPresent(String.self, forKey: .fileName)
         visualFileType = try container.decodeIfPresent(String.self, forKey: .visualFileType)
         sourceWidth = try container.decodeIfPresent(Int.self, forKey: .sourceWidth)

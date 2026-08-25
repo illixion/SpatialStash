@@ -85,6 +85,56 @@ enum MediaIdentity {
         key.hasPrefix("file-relative:")
     }
 
+    /// Rebuilds a stale container file URL against the current container.
+    ///
+    /// The counterpart to `persistentKey(for:)`, and deliberately sharing its
+    /// `containerRoots`: two ad hoc copies of this logic previously looked for
+    /// `Documents` alone, so share-sheet media — which `SharedMediaCache`
+    /// stores under `Library/Caches/SharedMedia/` precisely so it survives for
+    /// window restoration — could never be repaired. A restored window opened
+    /// on a dead path instead.
+    ///
+    /// Returns `url` unchanged when it still resolves, the rebuilt URL when the
+    /// file is found under the current container, and `nil` when neither holds
+    /// (the file is genuinely gone, or lives outside the container).
+    static func resolvingContainerURL(_ url: URL) -> URL? {
+        guard url.isFileURL else { return nil }
+        if FileManager.default.fileExists(atPath: url.path) { return url }
+
+        let parts = url.pathComponents
+
+        // Try every component that names a container root, deepest first, and
+        // accept the first rebuild that actually exists. Picking one index up
+        // front cannot be done safely: a user folder legitimately named
+        // "Library" or "tmp" inside Documents makes the deepest match the wrong
+        // root, and a plain "Documents" match is wrong for share-sheet media
+        // under Library/Caches. Verifying instead of guessing settles it, and
+        // path component counts are small enough that the loop is free.
+        for rootIndex in parts.indices.reversed() where containerRoots.contains(parts[rootIndex]) {
+            guard let base = currentContainerRoot(named: parts[rootIndex]) else { continue }
+            var rebuilt = base
+            // `base` already IS the root directory, so rebuild from the
+            // component after it — unlike persistentKey, which keeps the root
+            // in the key it returns.
+            for part in parts[(rootIndex + 1)...] {
+                rebuilt = rebuilt.appendingPathComponent(part)
+            }
+            if FileManager.default.fileExists(atPath: rebuilt.path) { return rebuilt }
+        }
+        return nil
+    }
+
+    /// This launch's URL for one of the `containerRoots` directories.
+    private static func currentContainerRoot(named name: String) -> URL? {
+        let fm = FileManager.default
+        switch name {
+        case "Documents": return fm.urls(for: .documentDirectory, in: .userDomainMask).first
+        case "Library":   return fm.urls(for: .libraryDirectory, in: .userDomainMask).first
+        case "tmp":       return URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+        default:          return nil
+        }
+    }
+
     /// Whether `value` is plausibly a Stash scene or image id.
     ///
     /// Stash ids are bare decimal strings. Everything else this app mints as an

@@ -205,16 +205,17 @@ extension GalleryVideo {
     /// Identity is deliberately left alone — `stashId` is already the stable
     /// container-relative key, so it survives the round-trip untouched.
     func resolvingLocalFileURL() -> GalleryVideo {
-        guard streamURL.isFileURL else { return self }
-        if FileManager.default.fileExists(atPath: streamURL.path) { return self }
-
-        guard let resolved = Self.reresolve(streamURL) else { return self }
+        guard streamURL.isFileURL,
+              let resolved = MediaIdentity.resolvingContainerURL(streamURL),
+              resolved != streamURL else { return self }
 
         return GalleryVideo(
             id: id,
             identity: identity,
             stashId: stashId,
-            thumbnailURL: thumbnailURL.isFileURL ? (Self.reresolve(thumbnailURL) ?? thumbnailURL) : thumbnailURL,
+            thumbnailURL: thumbnailURL.isFileURL
+                ? (MediaIdentity.resolvingContainerURL(thumbnailURL) ?? thumbnailURL)
+                : thumbnailURL,
             streamURL: resolved,
             transcodeStreamURL: transcodeStreamURL,
             previewURL: previewURL,
@@ -231,19 +232,4 @@ extension GalleryVideo {
         )
     }
 
-    /// Rebuild a stale container file URL against the current container root.
-    private static func reresolve(_ url: URL) -> URL? {
-        guard let documentsDir = FileManager.default
-            .urls(for: .documentDirectory, in: .userDomainMask).first else { return nil }
-
-        let parts = url.pathComponents
-        guard let docIndex = parts.lastIndex(of: "Documents"),
-              docIndex + 1 < parts.count else { return nil }
-
-        var rebuilt = documentsDir
-        for part in parts[(docIndex + 1)...] {
-            rebuilt = rebuilt.appendingPathComponent(part)
-        }
-        return FileManager.default.fileExists(atPath: rebuilt.path) ? rebuilt : nil
-    }
 }
