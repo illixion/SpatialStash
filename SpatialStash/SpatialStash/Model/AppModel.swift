@@ -133,11 +133,6 @@ class AppModel {
 
     private(set) var imageSource: any ImageSource
 
-    /// Session-only flag: user has explicitly opted in to loading demo images
-    /// (StaticURLImageSource). Resets on app relaunch so external sample URLs
-    /// are never fetched without confirmation.
-    var demoImagesConfirmed: Bool = false
-
     /// Transient override consumed by the next gallery-mode remote viewer launch.
     /// Set by the photo-viewer slideshow button so the slideshow runs over the
     /// originating window's source/filter (e.g. local-folder source) instead of
@@ -2351,18 +2346,16 @@ class AppModel {
     }
 
 
-    /// The image source to use when no Stash server is configured.
+    /// The image source to use when no Stash server is configured: the device
+    /// photo library, which is the app's standalone identity and the only path
+    /// that needs no setup at all.
     ///
-    /// Prefers the device photo library, which is the app's standalone identity
-    /// and the only path that works with no setup at all. Falls back to the
-    /// bundled demo source when Photos has not been granted — without that a
-    /// first launch on a fresh install would show an empty grid and no
-    /// explanation.
+    /// Returned regardless of authorization. A denied or undecided library still
+    /// wants a PhotosImageSource behind it, because that is what tells the
+    /// gallery to explain the permission state instead of rendering an
+    /// unexplained empty grid.
     static func makeStandaloneImageSource() -> any ImageSource {
-        if PhotosAuthorization.isReadable {
-            return PhotosImageSource()
-        }
-        return StaticURLImageSource()
+        PhotosImageSource()
     }
 
     private func reloadAllGalleries() async {
@@ -2388,15 +2381,6 @@ class AppModel {
 
         let sourceType = String(describing: type(of: imageSource))
         AppLogger.appModel.log(level: AppLogger.effectiveDebugLevel, "loadInitialGallery called, source: \(sourceType, privacy: .public)")
-        // Demo source is gated behind an explicit user opt-in to avoid silently
-        // fetching from external sample URLs on launch.
-        if imageSource is StaticURLImageSource && !demoImagesConfirmed {
-            currentPage = 0
-            galleryImages = []
-            hasMorePages = true
-            isLoadingGallery = false
-            return
-        }
         // Ensure random sort has a seed for consistent pagination
         if currentFilter.sortField == .random && currentFilter.randomSeed == nil {
             currentFilter.shuffleRandomSort()

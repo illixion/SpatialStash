@@ -5,6 +5,7 @@
  Supports multi-select mode for bulk operations.
  */
 
+import Photos
 import SwiftUI
 import UIKit
 
@@ -20,6 +21,12 @@ struct GalleryGridView: View {
     /// gray loading state during the pop animation.
     @State private var quickLookSeedImage: UIImage?
     @State private var cellFrames: [UUID: CGRect] = [:]
+    /// Re-read on appear and whenever the app returns to the foreground: the
+    /// user may have changed the permission in the Settings app, and PhotoKit
+    /// publishes no notification for that.
+    @State private var photosStatus: PHAuthorizationStatus = PhotosAuthorization.status
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.openURL) private var openURL
     private let gallerySpace = "gallery"
 
     private let gridSpacing: CGFloat = 16
@@ -44,9 +51,30 @@ struct GalleryGridView: View {
     }
 
     var body: some View {
+        content
+            .onAppear { photosStatus = PhotosAuthorization.status }
+            .onChange(of: scenePhase) { _, phase in
+                guard phase == .active else { return }
+                let latest = PhotosAuthorization.status
+                guard latest != photosStatus else { return }
+                photosStatus = latest
+                // A grant made in the Settings app needs the source rebuilt.
+                Task { await appModel.requestPhotosAccessAndReload() }
+            }
+    }
+
+    @ViewBuilder
+    private var content: some View {
         Group {
-            if appModel.imageSource is StaticURLImageSource && !appModel.demoImagesConfirmed {
-                demoConfirmationView
+            if isShowingPhotoLibrary, photosStatus == .notDetermined {
+                photosAccessPromptView
+            } else if isShowingPhotoLibrary, photosStatus == .denied || photosStatus == .restricted {
+                photosAccessDeniedView
+            } else if isShowingPhotoLibrary, appModel.galleryImages.isEmpty, !appModel.isLoadingGallery {
+                // Covers .limited with nothing selected, which is a legitimate
+                // choice rather than an error: the user granted access to a set
+                // that happens to be empty.
+                photosEmptyView
             } else if appModel.galleryImages.isEmpty && appModel.isLoadingGallery {
                 // Loading state
                 VStack(spacing: 20) {
@@ -204,25 +232,78 @@ struct GalleryGridView: View {
         }
     }
 
-    private var demoConfirmationView: some View {
+    // MARK: - Photo Library States
+
+    /// Whether the grid is currently backed by the device photo library, and so
+    /// should explain a permission state rather than just showing nothing.
+    private var isShowingPhotoLibrary: Bool {
+        appModel.imageSource is PhotosImageSource
+    }
+
+    /// Shared shape for all three states, so they read as one family — and as
+    /// siblings of the states the other tabs show.
+    private func libraryMessageView(
+        icon: String,
+        title: String,
+        message: String,
+        action: (title: String, perform: () -> Void)? = nil
+    ) -> some View {
         VStack(spacing: 20) {
-            Image(systemName: "photo.on.rectangle.angled")
+            Image(systemName: icon)
                 .font(.system(size: 64))
                 .foregroundColor(.secondary)
-            Text("Load Sample Images?")
+            Text(title)
                 .font(.title2)
-            Text("No Stash server is configured. Tapping Load will fetch demo images from an external site.")
+            Text(message)
                 .font(.callout)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 480)
-            Button("Load Sample Images") {
-                appModel.demoImagesConfirmed = true
-                Task { await appModel.loadInitialGallery() }
+            if let action {
+                Button(action.title, action: action.perform)
+                    .buttonStyle(.borderedProminent)
             }
-            .buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var photosAccessPromptView: some View {
+        libraryMessageView(
+            icon: "photo.on.rectangle.angled",
+            title: "Show Your Photos?",
+            message: "Spatial Stash can browse the photos on this device and convert them to 3D. Your library is read on this device only — nothing is uploaded.",
+            action: ("Allow Access to Photos", {
+                Task {
+                    await appModel.requestPhotosAccessAndReload()
+                    photosStatus = PhotosAuthorization.status
+                }
+            })
+        )
+    }
+
+    private var photosAccessDeniedView: some View {
+        libraryMessageView(
+            icon: "lock.fill",
+            title: "Photo Access Denied",
+            message: "Spatial Stash can't see your photo library. Allow access in Settings to browse and convert your photos, or connect a Stash server instead.",
+            action: ("Open Settings", {
+                guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+                openURL(url)
+            })
+        )
+    }
+
+    /// No button: there is nothing for the user to fix. Either the library is
+    /// empty, or they granted access to a hand-picked set that contains no
+    /// photos — both are valid states, not failures.
+    private var photosEmptyView: some View {
+        libraryMessageView(
+            icon: "photo.on.rectangle.angled",
+            title: "No Photos to Show",
+            message: photosStatus == .limited
+                ? "Spatial Stash can only see the photos you selected, and none of them are images. Choose more in Settings › Privacy & Security › Photos."
+                : "There are no photos in this library yet."
+        )
     }
 
     @ViewBuilder
