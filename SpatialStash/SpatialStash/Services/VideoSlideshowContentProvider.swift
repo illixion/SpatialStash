@@ -48,7 +48,7 @@ class VideoSlideshowContentProvider: SlideshowContentProvider {
                 let pathExt = video.streamURL.pathExtension.lowercased()
                 let ext = pathExt.isEmpty ? "mp4" : pathExt
                 return RemotePost(
-                    _id: abs(video.stashId.hashValue),
+                    _id: abs(video.identity.hashValue),
                     file_ext: ext,
                     tags: [],
                     rating: nil, image_width: video.sourceWidth, image_height: video.sourceHeight,

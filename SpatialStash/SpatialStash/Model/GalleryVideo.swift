@@ -8,7 +8,23 @@ import Foundation
 
 struct GalleryVideo: Identifiable, Equatable, Hashable, Codable {
     let id: UUID
-    let stashId: String
+    /// Stable, source-agnostic key for everything that persists per-video
+    /// state: the pseudo-3D depth cache, the 3D-settings tracker, the disk
+    /// video cache, the open-window registry, saved window groups.
+    ///
+    /// For a Stash scene this is the scene id, unchanged, so caches written
+    /// before identity was split out of `stashId` still resolve. Local files
+    /// use `MediaIdentity.persistentKey(for:)`; direct streams use
+    /// `StreamableURLResolver.stableIdentity(for:)`.
+    let identity: String
+    /// The Stash scene id — non-nil only for videos that actually came from a
+    /// Stash server.
+    ///
+    /// Every GraphQL call site needs this one, not `identity`, and has to cope
+    /// with its absence: a local file or a Photos asset has no scene to rate,
+    /// mutate or destroy. Passing an identity here would send a container path
+    /// or an asset localIdentifier to the server as an id.
+    let stashId: String?
     let thumbnailURL: URL
     /// Primary playback URL — always the server's *original* file (direct
     /// stream). WebKit decodes WebM (VP8/VP9) on-device, so playing the original
@@ -48,7 +64,8 @@ struct GalleryVideo: Identifiable, Equatable, Hashable, Codable {
 
     init(
         id: UUID = UUID(),
-        stashId: String,
+        identity: String,
+        stashId: String? = nil,
         thumbnailURL: URL,
         streamURL: URL,
         transcodeStreamURL: URL? = nil,
@@ -65,6 +82,7 @@ struct GalleryVideo: Identifiable, Equatable, Hashable, Codable {
         fileName: String? = nil
     ) {
         self.id = id
+        self.identity = identity
         self.stashId = stashId
         self.thumbnailURL = thumbnailURL
         self.streamURL = streamURL
@@ -80,6 +98,50 @@ struct GalleryVideo: Identifiable, Equatable, Hashable, Codable {
         self.rating100 = rating100
         self.oCounter = oCounter
         self.fileName = fileName
+    }
+
+    // MARK: - Codable
+
+    /// Hand-written so archives predating the identity/stashId split still
+    /// decode. Those carry a non-optional `stashId` and no `identity`, and that
+    /// one field was serving both roles: a scene id for Stash videos, and a
+    /// container path or `stream:` hash for everything else.
+    ///
+    /// So the legacy value becomes `identity` unconditionally — which is what
+    /// keeps a restored window pointing at the same depth cache — and only
+    /// graduates to `stashId` when it actually looks like a Stash id. Without
+    /// that test a restored local video would claim a scene id of
+    /// `file:///…/holiday.mp4` and the first GraphQL call made on its behalf
+    /// would fail in a thoroughly confusing way.
+    init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+
+        self.id = try c.decode(UUID.self, forKey: .id)
+
+        let legacy = try c.decodeIfPresent(String.self, forKey: .stashId)
+        if let identity = try c.decodeIfPresent(String.self, forKey: .identity), !identity.isEmpty {
+            self.identity = identity
+            self.stashId = legacy.flatMap { MediaIdentity.isStashID($0) ? $0 : nil }
+        } else {
+            let value = legacy ?? ""
+            self.identity = value
+            self.stashId = MediaIdentity.isStashID(value) ? value : nil
+        }
+
+        self.thumbnailURL = try c.decode(URL.self, forKey: .thumbnailURL)
+        self.streamURL = try c.decode(URL.self, forKey: .streamURL)
+        self.transcodeStreamURL = try c.decodeIfPresent(URL.self, forKey: .transcodeStreamURL)
+        self.previewURL = try c.decodeIfPresent(URL.self, forKey: .previewURL)
+        self.title = try c.decodeIfPresent(String.self, forKey: .title)
+        self.duration = try c.decodeIfPresent(TimeInterval.self, forKey: .duration)
+        self.isStereoscopic = try c.decodeIfPresent(Bool.self, forKey: .isStereoscopic) ?? false
+        self.stereoscopicFormat = try c.decodeIfPresent(StereoscopicFormat.self, forKey: .stereoscopicFormat)
+        self.sourceWidth = try c.decodeIfPresent(Int.self, forKey: .sourceWidth)
+        self.sourceHeight = try c.decodeIfPresent(Int.self, forKey: .sourceHeight)
+        self.eyesReversed = try c.decodeIfPresent(Bool.self, forKey: .eyesReversed) ?? false
+        self.rating100 = try c.decodeIfPresent(Int.self, forKey: .rating100)
+        self.oCounter = try c.decodeIfPresent(Int.self, forKey: .oCounter)
+        self.fileName = try c.decodeIfPresent(String.self, forKey: .fileName)
     }
 
     /// A URL suitable for downloading the full video to disk for AVAssetReader
@@ -150,6 +212,7 @@ extension GalleryVideo {
 
         return GalleryVideo(
             id: id,
+            identity: identity,
             stashId: stashId,
             thumbnailURL: thumbnailURL.isFileURL ? (Self.reresolve(thumbnailURL) ?? thumbnailURL) : thumbnailURL,
             streamURL: resolved,

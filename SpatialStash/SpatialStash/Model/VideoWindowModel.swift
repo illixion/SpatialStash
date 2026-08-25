@@ -227,8 +227,8 @@ final class VideoWindowModel {
         // A restored window re-engages fake-3D with the default realtime mode;
         // prefer the pre-processed cache when one exists for this video.
         if pseudo3DEnabled, pseudo3DDepthMode == .realtime,
-           DepthCacheStore.entry(videoIdentity: video.stashId) != nil {
-            pseudo3DDepthMode = .cached(videoIdentity: video.stashId)
+           DepthCacheStore.entry(videoIdentity: video.identity) != nil {
+            pseudo3DDepthMode = .cached(videoIdentity: video.identity)
         }
         resolvePlaybackRenderer()
     }
@@ -416,7 +416,7 @@ final class VideoWindowModel {
         // Engage requires the *selected* pre-process model's cache (a different
         // model's cache would silently override a deliberate model switch);
         // engageEntry falls back to any cache only when no model is installed.
-        if DepthCacheStore.engageEntry(videoIdentity: video.stashId) != nil {
+        if DepthCacheStore.engageEntry(videoIdentity: video.identity) != nil {
             engageCachedPseudo3D()
             return
         }
@@ -424,7 +424,7 @@ final class VideoWindowModel {
             showDepthModelSetup = true
             return
         }
-        guard !DepthConversionManager.shared.isProcessing(videoIdentity: video.stashId) else {
+        guard !DepthConversionManager.shared.isProcessing(videoIdentity: video.identity) else {
             // Already converting (e.g. started from a previous window of this
             // video): monitor it so this window auto-engages at the safe point
             // — immediately, once a two-pass conversion's first sweep has made
@@ -453,7 +453,7 @@ final class VideoWindowModel {
         pseudo3DEngageResumeTime = currentTime
         pseudo3DEngagePaused = startPaused
         if startPaused { isPaused = true }
-        pseudo3DDepthMode = .cached(videoIdentity: video.stashId)
+        pseudo3DDepthMode = .cached(videoIdentity: video.identity)
         enablePseudo3D()
     }
 
@@ -462,7 +462,7 @@ final class VideoWindowModel {
     /// startProgressiveEngageMonitor) or on completion.
     func startDepthPreprocessing() {
         DepthConversionManager.shared.enqueue(DepthConversionManager.Request(
-            videoIdentity: video.stashId,
+            videoIdentity: video.identity,
             title: video.title ?? video.fileName,
             sourceURL: depthConversionSourceURL,
             apiKey: appModel.stashAPIKey.isEmpty ? nil : appModel.stashAPIKey
@@ -486,12 +486,12 @@ final class VideoWindowModel {
     /// conversion is cancelled or fails mid-progressive-playback.
     private func startProgressiveEngageMonitor() {
         progressiveEngageTask?.cancel()
-        let identity = video.stashId
+        let identity = video.identity
         progressiveEngageTask = Task { [weak self] in
             var engagedProgressively = false
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(2))
-                guard let self, !Task.isCancelled, self.video.stashId == identity else { return }
+                guard let self, !Task.isCancelled, self.video.identity == identity else { return }
                 let manager = DepthConversionManager.shared
 
                 // willRestart covers the gap while a conversion interrupted by
@@ -629,7 +629,7 @@ final class VideoWindowModel {
     /// open the settings sheet when none can be inferred.
     func enable3DMode() async {
         pseudo3DEnabled = false
-        if let saved = await Video3DSettingsTracker.shared.loadSettings(videoId: video.stashId) {
+        if let saved = await Video3DSettingsTracker.shared.loadSettings(videoId: video.identity) {
             video3DSettings = saved
             stereoscopicOverride = true
             return
@@ -751,8 +751,8 @@ final class VideoWindowModel {
               // WebKit-decoded sources qualify too — enablePseudo3D swaps them
               // onto the server transcode first (WebM with transcoding on).
               pseudo3DAvailable else { return }
-        if DepthCacheStore.engageEntry(videoIdentity: video.stashId) != nil {
-            pseudo3DDepthMode = .cached(videoIdentity: video.stashId)
+        if DepthCacheStore.engageEntry(videoIdentity: video.identity) != nil {
+            pseudo3DDepthMode = .cached(videoIdentity: video.identity)
         } else if CoreMLDepthProvider.hasAvailableModel(role: .realtime) {
             pseudo3DDepthMode = .realtime
         } else {
@@ -770,7 +770,7 @@ final class VideoWindowModel {
     /// entries, and completion has its own prompt.
     private func offerCached3DIfAvailable() {
         guard !pseudo3DEnabled, !shouldUse3DMode, pseudo3DAvailable,
-              DepthCacheStore.engageEntry(videoIdentity: video.stashId) != nil else { return }
+              DepthCacheStore.engageEntry(videoIdentity: video.identity) != nil else { return }
         presentDepthReadyPrompt(message: "3D version available")
     }
 

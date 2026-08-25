@@ -310,7 +310,7 @@ class AppModel {
     /// Stable identity for a video across windows and app launches. Stash
     /// scenes have an id; local files and streamed URLs fall back to the URL.
     static func videoIdentityKey(for video: GalleryVideo) -> String {
-        video.stashId.isEmpty ? video.streamURL.absoluteString : video.stashId
+        video.identity.isEmpty ? video.streamURL.absoluteString : video.identity
     }
 
     func registerVideoWindow(video: GalleryVideo, windowValue: VideoWindowValue) {
@@ -2768,7 +2768,10 @@ class AppModel {
     }
 
     func removeDeletedVideos(stashIds: Set<String>) {
-        galleryVideos.removeAll { stashIds.contains($0.stashId) }
+        galleryVideos.removeAll { video in
+            guard let sid = video.stashId else { return false }
+            return stashIds.contains(sid)
+        }
         selectedVideoIds.subtract(stashIds)
     }
 

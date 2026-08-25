@@ -57,4 +57,16 @@ enum MediaIdentity {
     static func isRelativeFileKey(_ key: String) -> Bool {
         key.hasPrefix("file-relative:")
     }
+
+    /// Whether `value` is plausibly a Stash scene or image id.
+    ///
+    /// Stash ids are bare decimal strings. Everything else this app mints as an
+    /// identity is distinguishable on sight: `file-relative:…`, `stream:…`, a
+    /// `file://` URL, or (in archives written before identity was split out) an
+    /// absolute http(s) URL. That makes this a reliable way to decide whether a
+    /// legacy archive's `stashId` was a real Stash id or just an identity
+    /// wearing the field.
+    static func isStashID(_ value: String) -> Bool {
+        !value.isEmpty && value.allSatisfy(\.isNumber)
+    }
 }

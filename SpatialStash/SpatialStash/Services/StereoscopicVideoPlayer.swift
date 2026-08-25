@@ -128,9 +128,9 @@ class StereoscopicVideoPlayer: ObservableObject {
         processingTask = Task {
             do {
                 // Check cache first
-                if let cachedURL = await videoCache.getCachedVideoURL(videoId: video.stashId, format: settingsCacheKey) {
+                if let cachedURL = await videoCache.getCachedVideoURL(videoId: video.identity, format: settingsCacheKey) {
                     // Cache hit! Use cached converted video
-                    AppLogger.stereoscopicPlayer.info("Cache hit for video: \(video.stashId, privacy: .private) with settings: \(settingsCacheKey, privacy: .public)")
+                    AppLogger.stereoscopicPlayer.info("Cache hit for video: \(video.identity, privacy: .private) with settings: \(settingsCacheKey, privacy: .public)")
 
                     await MainActor.run {
                         self.currentChunkInfo = "Loading from cache..."
@@ -149,7 +149,7 @@ class StereoscopicVideoPlayer: ObservableObject {
                 }
 
                 // Cache miss - need to download and convert
-                AppLogger.stereoscopicPlayer.info("Cache miss for video: \(video.stashId, privacy: .private) with settings: \(settingsCacheKey, privacy: .public), downloading...")
+                AppLogger.stereoscopicPlayer.info("Cache miss for video: \(video.identity, privacy: .private) with settings: \(settingsCacheKey, privacy: .public), downloading...")
 
                 await MainActor.run {
                     self.state = .downloading(progress: 0)
@@ -165,8 +165,8 @@ class StereoscopicVideoPlayer: ObservableObject {
                 // source size is the best estimate) so eviction makes room
                 // during the conversion instead of blowing past the cap.
                 let sourceSize = (try? FileManager.default.attributesOfItem(atPath: localVideoURL.path))?[.size] as? Int64 ?? 0
-                await videoCache.reserveCapacity(token: video.stashId, expectedBytes: sourceSize)
-                defer { Task { await self.videoCache.releaseReservation(token: video.stashId) } }
+                await videoCache.reserveCapacity(token: video.identity, expectedBytes: sourceSize)
+                defer { Task { await self.videoCache.releaseReservation(token: video.identity) } }
 
                 if Task.isCancelled {
                     AppLogger.stereoscopicPlayer.info("Task cancelled after download")
@@ -235,7 +235,7 @@ class StereoscopicVideoPlayer: ObservableObject {
                 let convertedURL = try await converter.convertFullVideo(
                     sourceURL: localVideoURL,
                     config: config,
-                    videoId: video.stashId,
+                    videoId: video.identity,
                     progressHandler: { progress in
                         Task { @MainActor in
                             self.state = .converting(progress: progress)
@@ -259,7 +259,7 @@ class StereoscopicVideoPlayer: ObservableObject {
                 let fileSize = (fileAttributes?[.size] as? Int64) ?? 0
 
                 let metadata = CachedVideoMetadata(
-                    videoId: video.stashId,
+                    videoId: video.identity,
                     originalURL: video.streamURL.absoluteString,
                     stereoscopicFormat: settingsCacheKey,
                     sourceWidth: video.sourceWidth ?? 0,
@@ -272,7 +272,7 @@ class StereoscopicVideoPlayer: ObservableObject {
                 // Move converted file to cache (more efficient than copy)
                 let cachedURL = try await videoCache.moveVideoToCache(
                     from: convertedURL,
-                    videoId: video.stashId,
+                    videoId: video.identity,
                     format: settingsCacheKey,
                     metadata: metadata
                 )
@@ -388,7 +388,7 @@ class StereoscopicVideoPlayer: ObservableObject {
         // Clean up any temp files from converter (not the cache)
         if let video = currentVideo {
             Task {
-                await converter.cleanup(videoId: video.stashId)
+                await converter.cleanup(videoId: video.identity)
             }
         }
 
@@ -416,7 +416,7 @@ class StereoscopicVideoPlayer: ObservableObject {
         let downloadDir = cachesDir.appendingPathComponent("StereoscopicDownloads", isDirectory: true)
         try? FileManager.default.createDirectory(at: downloadDir, withIntermediateDirectories: true)
 
-        let destinationURL = downloadDir.appendingPathComponent("\(video.stashId)_source.mp4")
+        let destinationURL = downloadDir.appendingPathComponent("\(video.identity)_source.mp4")
 
         // Remove existing file if present
         try? FileManager.default.removeItem(at: destinationURL)

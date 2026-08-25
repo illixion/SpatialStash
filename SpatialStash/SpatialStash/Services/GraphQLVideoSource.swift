@@ -106,6 +106,9 @@ final class GraphQLVideoSource: VideoSource, @unchecked Sendable {
         }
 
         return GalleryVideo(
+            // Identity stays the bare scene id so every depth cache and 3D
+            // setting written before the identity split still resolves.
+            identity: scene.id,
             stashId: scene.id,
             thumbnailURL: thumbnailURL,
             streamURL: directStreamURL,

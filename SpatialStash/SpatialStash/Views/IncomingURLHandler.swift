@@ -147,13 +147,13 @@ struct IncomingURLHandler: ViewModifier {
     @MainActor
     private func openStreamVideo(_ streamURL: URL, identitySource: URL) {
         let video = GalleryVideo(
-            stashId: StreamableURLResolver.stableIdentity(for: identitySource),
+            identity: StreamableURLResolver.stableIdentity(for: identitySource),
             thumbnailURL: streamURL,   // placeholder; no gallery grid on direct-open
             streamURL: streamURL,
             title: StreamableURLResolver.displayTitle(for: identitySource)
         )
         openWindow(id: "video-detail", value: VideoWindowValue(video: video, galleryVideos: [video]))
-        AppLogger.streamURL.info("Opened stream video window: \(video.stashId, privacy: .public)")
+        AppLogger.streamURL.info("Opened stream video window: \(video.identity, privacy: .public)")
     }
 
     /// Local file shares (file:// URLs): cache to app storage, then open images

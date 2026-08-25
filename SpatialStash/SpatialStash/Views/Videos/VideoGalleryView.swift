@@ -184,7 +184,7 @@ struct VideoGalleryView: View {
         if appModel.isSelectingVideos {
             VideoThumbnailView(video: video)
                 .overlay(alignment: .topTrailing) {
-                    let isSelected = appModel.selectedVideoIds.contains(video.stashId)
+                    let isSelected = video.stashId.map { appModel.selectedVideoIds.contains($0) } ?? false
                     Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                         .font(.title2)
                         .foregroundColor(isSelected ? .accentColor : .white)
@@ -192,10 +192,15 @@ struct VideoGalleryView: View {
                         .padding(8)
                 }
                 .onTapGesture {
-                    if appModel.selectedVideoIds.contains(video.stashId) {
-                        appModel.selectedVideoIds.remove(video.stashId)
+                    // Selection feeds the bulk `destroyScenes` call, so it is
+                    // Stash-scoped by nature: a video with no scene id has
+                    // nothing on the server to delete. Same guard the image
+                    // grid already applies.
+                    guard let sid = video.stashId else { return }
+                    if appModel.selectedVideoIds.contains(sid) {
+                        appModel.selectedVideoIds.remove(sid)
                     } else {
-                        appModel.selectedVideoIds.insert(video.stashId)
+                        appModel.selectedVideoIds.insert(sid)
                     }
                 }
         } else {
@@ -219,14 +224,14 @@ struct VideoGalleryView: View {
     private var selectionToolbar: some View {
         HStack(spacing: 20) {
             Button {
-                let allIds = Set(appModel.galleryVideos.map(\.stashId))
+                let allIds = Set(appModel.galleryVideos.compactMap(\.stashId))
                 if appModel.selectedVideoIds == allIds {
                     appModel.selectedVideoIds.removeAll()
                 } else {
                     appModel.selectedVideoIds = allIds
                 }
             } label: {
-                let allIds = Set(appModel.galleryVideos.map(\.stashId))
+                let allIds = Set(appModel.galleryVideos.compactMap(\.stashId))
                 Text(appModel.selectedVideoIds == allIds ? "Deselect All" : "Select All")
             }
 

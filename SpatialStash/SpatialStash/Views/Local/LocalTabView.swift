@@ -281,15 +281,16 @@ struct LocalMediaListView: View {
                                                 .filter { $0.type == .video }
                                                 .map { f in
                                                     GalleryVideo(
-                                                        stashId: f.url.absoluteString,
+                                                        identity: MediaIdentity.persistentKey(for: f.url),
                                                         thumbnailURL: f.url,
                                                         streamURL: f.url,
                                                         title: f.name
                                                     )
                                                 }
-                                            let video = siblings.first { $0.stashId == file.url.absoluteString }
+                                            let fileIdentity = MediaIdentity.persistentKey(for: file.url)
+                                            let video = siblings.first { $0.identity == fileIdentity }
                                                 ?? GalleryVideo(
-                                                    stashId: file.url.absoluteString,
+                                                    identity: fileIdentity,
                                                     thumbnailURL: file.url,
                                                     streamURL: file.url,
                                                     title: file.name

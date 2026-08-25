@@ -255,7 +255,7 @@ struct StereoscopicVideoView: View {
         // Priority: initialSettings > saved settings > tag-detected defaults
         if let initial = initialSettings {
             currentSettings = initial
-        } else if let saved = await Video3DSettingsTracker.shared.loadSettings(videoId: video.stashId) {
+        } else if let saved = await Video3DSettingsTracker.shared.loadSettings(videoId: video.identity) {
             currentSettings = saved
         } else if let tagSettings = Video3DSettings.from(video: video) {
             currentSettings = tagSettings
@@ -305,7 +305,7 @@ struct StereoscopicVideoView: View {
         // Save to tracker for future sessions
         Task {
             await Video3DSettingsTracker.shared.saveSettings(
-                videoId: video.stashId,
+                videoId: video.identity,
                 settings: newSettings
             )
         }
@@ -326,7 +326,7 @@ struct StereoscopicVideoView: View {
 
             // Remove cached versions (settings changed)
             AppLogger.stereoscopicPlayer.info("Removing cached versions...")
-            await DiskVideoCache.shared.removeAllCachedVersions(videoId: video.stashId)
+            await DiskVideoCache.shared.removeAllCachedVersions(videoId: video.identity)
 
             // Restart with new settings
             AppLogger.stereoscopicPlayer.info("Restarting playback with new settings...")
@@ -398,7 +398,7 @@ struct StereoscopicVideoView_Previews: PreviewProvider {
     static var previews: some View {
         let appModel = AppModel()
         let video = GalleryVideo(
-            stashId: "preview",
+            identity: "preview",
             thumbnailURL: URL(string: "https://example.com/thumb.jpg")!,
             streamURL: URL(string: "https://example.com/video.mp4")!,
             title: "Preview Video",

@@ -196,7 +196,7 @@ struct SavedWindowEntry: Codable, Identifiable, Hashable {
             return "photo:\(image?.fullSizeURL.absoluteString ?? "?")"
         case .video:
             guard let video else { return "video:?" }
-            return "video:\(video.stashId.isEmpty ? video.streamURL.absoluteString : video.stashId)"
+            return "video:\(video.identity.isEmpty ? video.streamURL.absoluteString : video.identity)"
         case .remote:
             return "remote:\(remoteConfigId?.uuidString ?? "?")"
         case .unknown:

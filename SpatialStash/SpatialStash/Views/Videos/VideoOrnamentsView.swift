@@ -97,7 +97,13 @@ struct VideoOrnamentsView: View {
             Divider()
                 .frame(height: 24)
 
-            infoButton
+            // Stash-only: the sheet fetches scene detail by id and edits it
+            // through GraphQL, so there is nothing for it to show for a local
+            // file or a stream. The photo ornament already gates its Info
+            // button the same way on `image.stashId != nil`.
+            if video.stashId != nil {
+                infoButton
+            }
 
             // Share button
             Divider()
@@ -127,7 +133,7 @@ struct VideoOrnamentsView: View {
             // re-run THIS body (which holds the Menu) — a parent that observes
             // the manager recreates the Menu ~30-60×/sec, refreshing the open
             // dropdown and dropping taps.
-            ConversionStatusRow(videoStashId: video.stashId)
+            ConversionStatusRow(videoIdentity: video.identity)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
@@ -162,17 +168,23 @@ struct VideoOrnamentsView: View {
         .help("Info")
         .sheet(isPresented: $windowModel.showMediaInfo) {
             MediaDetailSheet(
-                mediaType: .scene(stashId: video.stashId),
+                // Only reachable when `stashId` is non-nil — the Info button is
+                // hidden otherwise, since there is no scene on the server to
+                // fetch detail for.
+                mediaType: .scene(stashId: video.stashId ?? ""),
                 onDelete: {
-                    let stashId = video.stashId
-                    appModel.galleryVideos.removeAll { $0.stashId == stashId }
-                    windowModel.galleryVideos.removeAll { $0.stashId == stashId }
+                    let identity = video.identity
+                    appModel.galleryVideos.removeAll { $0.identity == identity }
+                    windowModel.galleryVideos.removeAll { $0.identity == identity }
                     dismissWindow()
                 },
                 onSaved: { newRating in
-                    let stashId = video.stashId
+                    // Locate by identity, not stashId: comparing two optionals
+                    // would match the first nil-stashId video in the snapshot
+                    // rather than this one.
+                    let identity = video.identity
                     windowModel.video.rating100 = newRating
-                    if let idx = windowModel.galleryVideos.firstIndex(where: { $0.stashId == stashId }) {
+                    if let idx = windowModel.galleryVideos.firstIndex(where: { $0.identity == identity }) {
                         windowModel.galleryVideos[idx].rating100 = newRating
                     }
                 }
@@ -357,7 +369,7 @@ struct VideoOrnamentsView: View {
             // — that recreates the whole Menu and makes the open dropdown drop
             // taps. The subview shows the phase *kind* only (no live %) so even
             // its own updates don't reflow the menu items.
-            ConversionMenuStatus(videoStashId: video.stashId)
+            ConversionMenuStatus(videoIdentity: video.identity)
 
             // (No depth-strength presets: strength is fixed at the Subtle
             // level — anything above it demands more vergence than comfortably
@@ -498,11 +510,11 @@ struct VideoOrnamentsView: View {
 /// ViewMode Menu (a parent that re-renders recreates the Menu and drops taps on
 /// the open dropdown).
 private struct ConversionStatusRow: View {
-    let videoStashId: String
+    let videoIdentity: String
     @State private var conversions = DepthConversionManager.shared
 
     var body: some View {
-        if let phase = conversions.phase(for: videoStashId) {
+        if let phase = conversions.phase(for: videoIdentity) {
             Divider()
                 .frame(height: 24)
             HStack(spacing: 6) {
@@ -514,7 +526,7 @@ private struct ConversionStatusRow: View {
                     .foregroundColor(.secondary)
                     .lineLimit(1)
             }
-        } else if conversions.isProcessing(videoIdentity: videoStashId) {
+        } else if conversions.isProcessing(videoIdentity: videoIdentity) {
             Divider()
                 .frame(height: 24)
             Text("Conversion queued")
@@ -528,18 +540,18 @@ private struct ConversionStatusRow: View {
 /// ConversionStatusRow. Shows the phase *kind* only (no live percentage) so its
 /// own updates never reflow the surrounding menu items.
 private struct ConversionMenuStatus: View {
-    let videoStashId: String
+    let videoIdentity: String
     @State private var conversions = DepthConversionManager.shared
 
     private var statusLabel: String? {
-        if let phase = conversions.phase(for: videoStashId) {
+        if let phase = conversions.phase(for: videoIdentity) {
             switch phase {
             case .downloading: return "Downloading…"
             case .converting: return "Converting to 3D…"
             case .refining: return "Refining 3D…"
             }
         }
-        if conversions.isProcessing(videoIdentity: videoStashId) {
+        if conversions.isProcessing(videoIdentity: videoIdentity) {
             return "Conversion queued"
         }
         return nil
@@ -549,7 +561,7 @@ private struct ConversionMenuStatus: View {
         if let statusLabel {
             Text(statusLabel)
             Button(role: .destructive) {
-                conversions.cancel(videoIdentity: videoStashId)
+                conversions.cancel(videoIdentity: videoIdentity)
             } label: {
                 Label("Cancel Conversion", systemImage: "xmark.circle")
             }

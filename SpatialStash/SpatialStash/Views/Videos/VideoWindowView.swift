@@ -334,7 +334,7 @@ struct VideoWindowView: View {
                 onApply: { settings in
                     Task {
                         await Video3DSettingsTracker.shared.saveSettings(
-                            videoId: video.stashId,
+                            videoId: video.identity,
                             settings: settings
                         )
                     }
@@ -364,11 +364,11 @@ struct VideoWindowView: View {
             Text("Real-time starts instantly and plays at 30fps. Pre-process analyzes the whole video in the background first (about as long as the video), then plays at up to 60fps with steadier depth — you'll be notified when it's ready.")
         }
         .onChange(of: DepthConversionManager.shared.lastCompleted) { _, completed in
-            guard let completed, completed.videoIdentity == video.stashId else { return }
+            guard let completed, completed.videoIdentity == video.identity else { return }
             windowModel.presentDepthReadyPrompt()
         }
         .onChange(of: DepthConversionManager.shared.lastError) { _, failure in
-            guard let failure, failure.videoIdentity == video.stashId else { return }
+            guard let failure, failure.videoIdentity == video.identity else { return }
             windowModel.depthConversionFailureMessage = failure.message
         }
         .alert(
