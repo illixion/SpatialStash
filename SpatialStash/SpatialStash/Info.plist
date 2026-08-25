@@ -4,6 +4,8 @@
 <dict>
 	<key>CommitHash</key>
 	<string>$(COMMIT_HASH)</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Spatial Stash shows your photos and videos, and converts them to 3D for viewing on Vision Pro. Your library is read on this device only — nothing is uploaded.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>This app can connect to a local Stash server if Local Network Area access is granted.</string>
 	<key>NSAppTransportSecurity</key>

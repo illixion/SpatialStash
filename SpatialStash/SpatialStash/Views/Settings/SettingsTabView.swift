@@ -4,6 +4,7 @@
  Settings view with server configuration and source selection.
  */
 
+import Photos
 import RAVEMedia
 import os
 import SwiftUI
@@ -187,6 +188,33 @@ struct SettingsTabView: View {
                 }
 
                 windowGroupsSection
+
+                Section("Photo Library") {
+                    switch PhotosAuthorization.status {
+                    case .authorized:
+                        Label("Full library access granted", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    case .limited:
+                        Label("Access limited to selected photos", systemImage: "checkmark.circle")
+                            .foregroundStyle(.yellow)
+                        Text("Spatial Stash can only see the photos you picked. Choose more in Settings → Privacy & Security → Photos.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    case .denied, .restricted:
+                        Label("Access denied", systemImage: "xmark.circle")
+                            .foregroundStyle(.red)
+                        Text("Grant access in Settings → Privacy & Security → Photos to browse your library here.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    default:
+                        Button("Allow Access to Photos") {
+                            Task { await appModel.requestPhotosAccessAndReload() }
+                        }
+                        Text("Browse and convert the photos already on this device. Used when no Stash server is configured.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
 
                 Section("Stash Server") {
                     TextField("Server URL", text: $appModel.stashServerURL)

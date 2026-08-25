@@ -1040,6 +1040,13 @@ class PhotoWindowModel {
         if imageURL.isFileURL {
             return imageURL
         }
+        // A Photos asset has no URL of its own, so it is addressed by a
+        // synthetic photos-asset:/// one and materialized to a container file
+        // on first use. Resolving here covers the whole texture path, which is
+        // synchronous below this point and so cannot do it itself.
+        if PhotosAssetURL.isPhotosAsset(imageURL) {
+            return await PhotosAssetStore.shared.fileURL(for: imageURL)
+        }
         return await DiskImageCache.shared.cachedFileURL(for: imageURL)
     }
 

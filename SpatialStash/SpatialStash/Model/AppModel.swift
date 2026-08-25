@@ -1445,9 +1445,9 @@ class AppModel {
             let defaultConfig = StashServerConfig.default
             client = StashAPIClient(config: defaultConfig)
             self.apiClient = client
-            self.imageSource = StaticURLImageSource()
+            self.imageSource = Self.makeStandaloneImageSource()
             self.videoSource = GraphQLVideoSource(apiClient: client)
-            AppLogger.appModel.info("Init - No Stash Server configured, using example images")
+            AppLogger.appModel.info("Init - No Stash Server configured, using standalone image source")
         }
 
         // Now all stored properties are initialized, we can use self
@@ -2341,13 +2341,28 @@ class AppModel {
                 await self.reloadAllGalleries()
             }
         } else {
-            // No server URL - use example images
-            AppLogger.appModel.info("No Stash Server URL configured, using example images")
-            self.imageSource = StaticURLImageSource()
+            // No server URL — fall back to the device photo library.
+            AppLogger.appModel.info("No Stash Server URL configured, using standalone image source")
+            self.imageSource = Self.makeStandaloneImageSource()
             Task {
                 await self.reloadAllGalleries()
             }
         }
+    }
+
+
+    /// The image source to use when no Stash server is configured.
+    ///
+    /// Prefers the device photo library, which is the app's standalone identity
+    /// and the only path that works with no setup at all. Falls back to the
+    /// bundled demo source when Photos has not been granted — without that a
+    /// first launch on a fresh install would show an empty grid and no
+    /// explanation.
+    static func makeStandaloneImageSource() -> any ImageSource {
+        if PhotosAuthorization.isReadable {
+            return PhotosImageSource()
+        }
+        return StaticURLImageSource()
     }
 
     private func reloadAllGalleries() async {
@@ -2429,6 +2444,16 @@ class AppModel {
         } catch {
             AppLogger.appModel.error("Failed to load gallery page: \(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    /// Requests Photos access and, if it is granted, adopts the library as the
+    /// image source. No-op when a Stash server is configured — that stays the
+    /// user's chosen source until they clear it.
+    func requestPhotosAccessAndReload() async {
+        await PhotosAuthorization.request()
+        guard stashServerURL.isEmpty, PhotosAuthorization.isReadable else { return }
+        imageSource = Self.makeStandaloneImageSource()
+        await reloadAllGalleries()
     }
 
     /// Apply current filter and reload gallery

@@ -62,10 +62,25 @@ actor ImageLoader {
         }
     }
 
+
+    // MARK: - Photos assets
+
+    /// Maps a `photos-asset:///` URL to the container file backing it, and
+    /// passes every other URL through untouched.
+    ///
+    /// Called at the top of each loading entry point so the machinery below —
+    /// which branches on `isFileURL` — sees an ordinary local file and needs no
+    /// knowledge of Photos.
+    private func resolvingPhotosAsset(_ url: URL) async -> URL? {
+        guard PhotosAssetURL.isPhotosAsset(url) else { return url }
+        return await PhotosAssetStore.shared.fileURL(for: url)
+    }
+
     /// Load an image from a URL, using cache if available
     /// - Parameter url: The URL to load the image from
     /// - Returns: The loaded image, or nil if loading failed
     func loadImage(from url: URL) async throws -> UIImage? {
+        guard let url = await resolvingPhotosAsset(url) else { return nil }
         // Check memory cache first
         if let cached = cache.object(forKey: url as NSURL) {
             return cached.image
@@ -135,6 +150,7 @@ actor ImageLoader {
     /// - Parameter url: The URL to load the image from
     /// - Returns: The raw image data, or nil if loading failed
     func loadImageData(from url: URL) async throws -> Data? {
+        guard let url = await resolvingPhotosAsset(url) else { return nil }
         // Check memory cache first
         if let cached = cache.object(forKey: url as NSURL) {
             return cached.data
@@ -204,6 +220,7 @@ actor ImageLoader {
     /// Avoids the expensive normalizeImage() allocation for cases where
     /// only the bytes are needed (e.g. GIF detection).
     func loadRawData(from url: URL) async throws -> Data? {
+        guard let url = await resolvingPhotosAsset(url) else { return nil }
         // Check memory cache first (if already loaded, return cached data)
         if let cached = cache.object(forKey: url as NSURL) {
             return cached.data
@@ -248,6 +265,7 @@ actor ImageLoader {
     /// - Parameter url: The URL to load the image from
     /// - Returns: A tuple of (UIImage, Data), or nil if loading failed
     func loadImageWithData(from url: URL) async throws -> (image: UIImage, data: Data)? {
+        guard let url = await resolvingPhotosAsset(url) else { return nil }
         // Check memory cache first
         if let cached = cache.object(forKey: url as NSURL) {
             return (cached.image, cached.data)
@@ -365,6 +383,9 @@ actor ImageLoader {
     ///   - maxSize: Maximum thumbnail dimension (default 400px for 2x display)
     /// - Returns: A downsampled UIImage suitable for thumbnails
     func loadThumbnail(from url: URL, maxSize: CGFloat = ThumbnailGenerator.defaultThumbnailSize) async -> UIImage? {
+        if PhotosAssetURL.isPhotosAsset(url) {
+            return await PhotosAssetStore.shared.thumbnail(for: url, maxSize: maxSize)
+        }
         // For local files, use the efficient thumbnail system
         if url.isFileURL {
             return await loadLocalThumbnail(from: url, maxSize: maxSize)
@@ -380,6 +401,14 @@ actor ImageLoader {
     ///   - maxSize: Maximum thumbnail dimension
     /// - Returns: Tuple of (thumbnail image, original data for GIF detection)
     func loadThumbnailWithData(from url: URL, maxSize: CGFloat = ThumbnailGenerator.defaultThumbnailSize) async -> (image: UIImage, data: Data, isAnimatedGIF: Bool)? {
+        // Ask Photos for a thumbnail directly rather than exporting the
+        // original: a grid asks for hundreds of these while scrolling, and the
+        // full-size bytes would be decoded and thrown away at cell size.
+        if PhotosAssetURL.isPhotosAsset(url) {
+            guard let image = await PhotosAssetStore.shared.thumbnail(for: url, maxSize: maxSize),
+                  let data = image.jpegData(compressionQuality: 0.9) else { return nil }
+            return (image, data, false)
+        }
         // For local files, use efficient thumbnail loading
         if url.isFileURL {
             // Check if it's an animated GIF first (without loading full image)
@@ -425,6 +454,11 @@ actor ImageLoader {
     ///   - crop: Optional transform to apply before caching (e.g. crop to square or 16:9)
     /// - Returns: The cached thumbnail UIImage
     func loadRemoteThumbnailCached(from url: URL, maxSize: CGFloat? = nil, crop: ((UIImage) -> UIImage)? = nil) async -> UIImage? {
+        if PhotosAssetURL.isPhotosAsset(url) {
+            let target = maxSize ?? ThumbnailGenerator.defaultThumbnailSize
+            guard let image = await PhotosAssetStore.shared.thumbnail(for: url, maxSize: target) else { return nil }
+            return crop.map { $0(image) } ?? image
+        }
         // Check ThumbnailCache first (fast memory cache, then HEIC disk)
         if let cached = await ThumbnailCache.shared.loadThumbnail(for: url) {
             return cached
