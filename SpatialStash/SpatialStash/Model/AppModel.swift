@@ -978,78 +978,6 @@ class AppModel {
         }
     }
 
-    /// When true, web-page URLs handed to the app (via the `spatialstash://play`
-    /// scheme) are resolved through a self-hosted web-yt-dlp proxy so the
-    /// pseudo-3D pipeline can play e.g. YouTube. Direct stream URLs play without
-    /// this. See WebYTDLPClient / StreamableURLResolver.
-    var webYTDLPEnabled: Bool {
-        didSet {
-            if webYTDLPEnabled != oldValue {
-                UserDefaults.standard.set(webYTDLPEnabled, forKey: "webYTDLPEnabled")
-            }
-        }
-    }
-
-    /// Base URL of the web-yt-dlp instance (e.g. https://yt.bjorkbox.com).
-    var webYTDLPEndpoint: String {
-        didSet {
-            if webYTDLPEndpoint != oldValue {
-                UserDefaults.standard.set(webYTDLPEndpoint, forKey: "webYTDLPEndpoint")
-            }
-        }
-    }
-
-    /// Auth token for the web-yt-dlp instance (sent as a `?token=` query param).
-    var webYTDLPToken: String {
-        didSet {
-            let trimmed = webYTDLPToken.trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed != webYTDLPToken { webYTDLPToken = trimmed }
-            if webYTDLPToken != oldValue {
-                UserDefaults.standard.set(webYTDLPToken, forKey: "webYTDLPToken")
-            }
-        }
-    }
-
-    /// Encoding preset requested from web-yt-dlp (`h265` or `h264`). HEVC is
-    /// the default — smaller files at higher quality, and AVPlayer decodes the
-    /// `hvc1`-tagged output natively. H.264 is the compatibility fallback for
-    /// sources or servers that stumble on HEVC.
-    var webYTDLPPreset: String {
-        didSet {
-            if webYTDLPPreset != oldValue {
-                UserDefaults.standard.set(webYTDLPPreset, forKey: "webYTDLPPreset")
-            }
-        }
-    }
-
-    /// Max video height requested from web-yt-dlp (1080 or 2160). Vision Pro's
-    /// displays are high-resolution, so 4K (2160) is the default; 1080p reduces
-    /// bandwidth and server transcode cost.
-    var webYTDLPHeight: Int {
-        didSet {
-            if webYTDLPHeight != oldValue {
-                UserDefaults.standard.set(webYTDLPHeight, forKey: "webYTDLPHeight")
-            }
-        }
-    }
-
-    /// Available web-yt-dlp codec presets.
-    static let webYTDLPPresetOptions: [(label: String, value: String)] = [
-        ("HEVC (H.265)", "h265"),
-        ("H.264", "h264"),
-    ]
-
-    /// Available web-yt-dlp max-height options.
-    static let webYTDLPHeightOptions: [(label: String, value: Int)] = [
-        ("1080p", 1080),
-        ("2160p (4K)", 2160),
-    ]
-
-    /// Convenience client built from the persisted web-yt-dlp settings.
-    var webYTDLPClient: WebYTDLPClient {
-        WebYTDLPClient(endpoint: webYTDLPEndpoint, token: webYTDLPToken)
-    }
-
     /// Last incoming URL + time, for de-duplication. Both SwiftUI's `.onOpenURL`
     /// and the `SceneDelegate` notification fire for a custom-scheme open (the
     /// notification path exists for file-share cold launches that `.onOpenURL`
@@ -1434,15 +1362,6 @@ class AppModel {
         // Load debug console visibility (default: false)
         let loadedShowDebugConsole = UserDefaults.standard.bool(forKey: "showDebugConsole")
 
-        // Load web-yt-dlp settings (default: disabled, empty endpoint/token)
-        let loadedWebYTDLPEnabled = UserDefaults.standard.bool(forKey: "webYTDLPEnabled")
-        let loadedWebYTDLPEndpoint = UserDefaults.standard.string(forKey: "webYTDLPEndpoint") ?? ""
-        let loadedWebYTDLPToken = UserDefaults.standard.string(forKey: "webYTDLPToken") ?? ""
-        let loadedWebYTDLPPreset = UserDefaults.standard.string(forKey: "webYTDLPPreset") ?? WebYTDLPClient.defaultPreset
-        let loadedWebYTDLPHeight = UserDefaults.standard.object(forKey: "webYTDLPHeight") != nil
-            ? UserDefaults.standard.integer(forKey: "webYTDLPHeight")
-            : WebYTDLPClient.defaultHeight
-
         // Load respect memory alerts (default: true)
         let loadedRespectMemoryAlerts = UserDefaults.standard.object(forKey: "respectMemoryAlerts") != nil
             ? UserDefaults.standard.bool(forKey: "respectMemoryAlerts")
@@ -1503,11 +1422,6 @@ class AppModel {
         self.defaultImageViewingMode = loadedDefaultImageViewingMode
         self.enableRemoteViewer = loadedEnableRemoteViewer
         self.showDebugConsole = loadedShowDebugConsole
-        self.webYTDLPEnabled = loadedWebYTDLPEnabled
-        self.webYTDLPEndpoint = loadedWebYTDLPEndpoint
-        self.webYTDLPToken = loadedWebYTDLPToken
-        self.webYTDLPPreset = loadedWebYTDLPPreset
-        self.webYTDLPHeight = loadedWebYTDLPHeight
         self.respectMemoryAlerts = loadedRespectMemoryAlerts
         self.useLossyTextureCompression = loadedUseLossyTextureCompression
         self.globalVisualAdjustments = loadedGlobalVisualAdjustments
@@ -2240,11 +2154,6 @@ class AppModel {
             showDebugConsole: showDebugConsole,
             respectMemoryAlerts: respectMemoryAlerts,
             enableRemoteViewer: enableRemoteViewer,
-            webYTDLPEnabled: webYTDLPEnabled,
-            webYTDLPEndpoint: webYTDLPEndpoint,
-            webYTDLPToken: webYTDLPToken,
-            webYTDLPPreset: webYTDLPPreset,
-            webYTDLPHeight: webYTDLPHeight,
             savedViews: savedViews,
             savedVideoViews: savedVideoViews,
             savedWindowGroups: savedWindowGroups,
@@ -2311,11 +2220,6 @@ class AppModel {
         if let v = backup.showDebugConsole { showDebugConsole = v }
         if let v = backup.respectMemoryAlerts { respectMemoryAlerts = v }
         if let v = backup.enableRemoteViewer { enableRemoteViewer = v }
-        if let v = backup.webYTDLPEnabled { webYTDLPEnabled = v }
-        if let v = backup.webYTDLPEndpoint { webYTDLPEndpoint = v }
-        if let v = backup.webYTDLPToken { webYTDLPToken = v }
-        if let v = backup.webYTDLPPreset { webYTDLPPreset = v }
-        if let v = backup.webYTDLPHeight { webYTDLPHeight = v }
         if let raw = backup.thumbnailStyle, let style = ThumbnailStyle(rawValue: raw) { thumbnailStyle = style }
         if let v = backup.reduceMotion { reduceMotion = v }
         if let raw = backup.defaultImageViewingMode, let mode = DefaultImageViewingMode(rawValue: raw) { defaultImageViewingMode = mode }

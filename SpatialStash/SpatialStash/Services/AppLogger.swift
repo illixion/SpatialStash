@@ -105,7 +105,7 @@ enum AppLogger {
     /// Remote API viewer (slideshow, WebSocket, API)
     static let remoteViewer = Logger(subsystem: subsystem, category: "RemoteViewer")
 
-    /// Streamable-URL handoff (custom scheme, URL classification, web-yt-dlp proxy)
+    /// Streamable-URL handoff (custom scheme, URL classification)
     static let streamURL = Logger(subsystem: subsystem, category: "StreamURL")
 
     // The fake-3D signposter moved to RAVEMedia (`RAVEMediaLog.signposter`)

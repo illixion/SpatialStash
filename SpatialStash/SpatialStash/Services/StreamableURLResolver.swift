@@ -2,15 +2,17 @@
  Spatial Stash - Streamable URL Resolver
 
  Classifies an incoming URL (from the `spatialstash://play` custom scheme or a
- shared link) into: a directly-playable video stream, a web page (candidate for
- the web-yt-dlp proxy), or "not playable" (fall through to the existing
- image/file share path). For extensionless http(s) URLs it probes the server's
- Content-Type via a HEAD request (with a ranged-GET fallback for servers that
- reject HEAD).
+ shared link) into a directly-playable video stream or "not playable" (fall
+ through to the existing image/file share path). For extensionless http(s) URLs
+ it probes the server's Content-Type via a HEAD request (with a ranged-GET
+ fallback for servers that reject HEAD).
+
+ Only *direct* streams are routed here. Extracting a playable stream out of an
+ arbitrary web page is deliberately out of scope — that lives in a separate app.
+ A page URL classifies as `.notPlayable`.
 
  Also mints a stable identity string for a stream URL so per-video state (e.g.
- the pseudo-3D depth cache) persists across reopenings — the YouTube video ID
- when recognizable, otherwise a hash of the URL.
+ the pseudo-3D depth cache) persists across reopenings.
  */
 
 import Foundation
@@ -20,9 +22,8 @@ enum StreamableURLResolver {
     enum Classification {
         /// A directly playable video/stream URL (file or remote).
         case directVideo(URL)
-        /// An http(s) page URL — hand to web-yt-dlp when enabled.
-        case webPage(URL)
-        /// Not a video — let the existing image/file share path handle it.
+        /// Not a directly playable video — let the existing image/file share
+        /// path handle it. Web pages land here too.
         case notPlayable
     }
 
@@ -54,16 +55,13 @@ enum StreamableURLResolver {
 
         // Unknown / absent extension (e.g. a Discord CDN link or a bare stream
         // path) — ask the server what it is.
-        if let contentType = await probeContentType(url) {
-            if isPlayableVideoContentType(contentType) { return .directVideo(url) }
-            if contentType.hasPrefix("image/") { return .notPlayable }
-            if contentType.hasPrefix("text/") || contentType.contains("html") {
-                return .webPage(url)
-            }
+        if let contentType = await probeContentType(url),
+           isPlayableVideoContentType(contentType) {
+            return .directVideo(url)
         }
-        // Inconclusive probe → treat as a web page so web-yt-dlp can attempt it,
-        // rather than misrouting to the image viewer (the old default).
-        return .webPage(url)
+        // Anything else — a page, an image, or an inconclusive probe — is not a
+        // direct stream. Better to fall through than to misroute.
+        return .notPlayable
     }
 
     // MARK: - Content-Type probing
@@ -99,33 +97,12 @@ enum StreamableURLResolver {
 
     // MARK: - Identity & display
 
-    /// Stable per-video identity for `GalleryVideo.stashId`, so depth caches and
-    /// enhancement tracking persist across reopenings of the same source.
+    /// Stable per-video identity for a streamed source, so depth caches and
+    /// enhancement tracking persist across reopenings of the same URL.
     static func stableIdentity(for url: URL) -> String {
-        if let ytID = youTubeID(from: url) { return "webyt:\(ytID)" }
         let digest = SHA256.hash(data: Data(url.absoluteString.utf8))
         let hex = digest.map { String(format: "%02x", $0) }.joined()
         return "stream:\(hex.prefix(16))"
-    }
-
-    /// Extract a YouTube video ID from a watch / youtu.be / shorts / embed URL.
-    static func youTubeID(from url: URL) -> String? {
-        guard let host = url.host?.lowercased() else { return nil }
-        if host.contains("youtu.be") {
-            let id = url.lastPathComponent
-            return id.isEmpty || id == "/" ? nil : id
-        }
-        guard host.contains("youtube.com") else { return nil }
-        if let comps = URLComponents(url: url, resolvingAgainstBaseURL: false),
-           let v = comps.queryItems?.first(where: { $0.name == "v" })?.value, !v.isEmpty {
-            return v
-        }
-        let parts = url.pathComponents
-        if let idx = parts.firstIndex(where: { $0 == "shorts" || $0 == "embed" }),
-           idx + 1 < parts.count {
-            return parts[idx + 1]
-        }
-        return nil
     }
 
     /// Best-effort human title for the window when no metadata is available.

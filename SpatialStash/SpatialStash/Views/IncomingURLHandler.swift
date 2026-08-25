@@ -125,8 +125,8 @@ struct IncomingURLHandler: ViewModifier {
     }
 
     /// Route an incoming URL. Remote http(s) URLs try the rich video pipeline
-    /// (direct stream) or web-yt-dlp (web page); everything else (local files)
-    /// uses the shared-media cache path.
+    /// when they resolve to a direct stream; everything else (local files, and
+    /// pages) uses the shared-media cache path.
     @MainActor
     private func route(_ url: URL) async {
         let scheme = url.scheme?.lowercased()
@@ -134,22 +134,6 @@ struct IncomingURLHandler: ViewModifier {
             switch await StreamableURLResolver.classify(url) {
             case .directVideo(let videoURL):
                 openStreamVideo(videoURL, identitySource: url)
-            case .webPage(let pageURL):
-                guard appModel.webYTDLPEnabled else {
-                    AppLogger.streamURL.info("Web page received but web-yt-dlp disabled; ignoring: \(pageURL.absoluteString, privacy: .public)")
-                    return
-                }
-                guard let stream = appModel.webYTDLPClient.streamURL(
-                    forPage: pageURL,
-                    preset: appModel.webYTDLPPreset,
-                    height: appModel.webYTDLPHeight
-                ) else {
-                    AppLogger.streamURL.error("web-yt-dlp endpoint not configured; cannot play: \(pageURL.absoluteString, privacy: .public)")
-                    return
-                }
-                // Identity keys off the original page URL (stable per video, so
-                // depth caches persist), but playback uses the proxied stream.
-                openStreamVideo(stream, identitySource: pageURL)
             case .notPlayable:
                 AppLogger.streamURL.info("Remote URL not playable as video; ignoring: \(url.absoluteString, privacy: .public)")
             }
