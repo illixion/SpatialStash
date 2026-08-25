@@ -8,13 +8,18 @@
 	<string>This app can connect to a local Stash server if Local Network Area access is granted.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
-		<!-- Spatial Stash talks to user-owned RoboFrame instances over the
-		     local network or Tailscale. Tailscale already terminates traffic
-		     in WireGuard; an extra TLS layer adds setup friction (mkcert,
-		     trust store) without a real privacy gain on a private mesh. The
-		     app is not intended for App Store submission, so the simpler
-		     "allow HTTP everywhere" rule is fine. -->
-		<key>NSAllowsArbitraryLoads</key>
+		<!-- The app talks to user-owned Stash and RoboFrame instances over the
+		     local network or Tailscale, which commonly serve plain HTTP: an
+		     extra TLS layer adds setup friction (mkcert, trust store) without
+		     a real privacy gain on a private mesh, and Tailscale already
+		     terminates traffic in WireGuard.
+
+		     NSAllowsLocalNetworking permits exactly that — cleartext to local
+		     hostnames and private address ranges — without the blanket
+		     NSAllowsArbitraryLoads exception, which App Review questions and
+		     which would also have relaxed ATS for the public internet. Servers
+		     reached over a public hostname still need HTTPS. -->
+		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
 	<key>NSWorldSensingUsageDescription</key>
