@@ -266,7 +266,7 @@ struct LocalMediaListView: View {
                                                 id: file.id,
                                                 url: file.url,
                                                 title: file.name,
-                                                source: "local"
+                                                source: .local
                                             )
                                             if appModel.openMediaInNewWindows {
                                                 appModel.enqueuePhotoWindowOpen(image)

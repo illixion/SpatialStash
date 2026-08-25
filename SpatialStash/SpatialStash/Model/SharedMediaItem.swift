@@ -63,6 +63,6 @@ struct SharedMediaItem: Identifiable, Codable, Hashable {
 
     /// Convert to GalleryImage for reusing PhotoWindowModel
     func asGalleryImage() -> GalleryImage {
-        GalleryImage(url: cachedFileURL, title: originalFileName)
+        GalleryImage(url: cachedFileURL, title: originalFileName, source: .shared)
     }
 }

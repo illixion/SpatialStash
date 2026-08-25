@@ -14,8 +14,8 @@ struct GalleryImage: Identifiable, Equatable, Hashable {
     let title: String?
     var rating100: Int?
     var oCounter: Int?
-    /// Source of the image: "stash" or "local"
-    let source: String
+    /// Where this image came from.
+    let source: MediaSource
     /// Original filename from server (e.g. from visual_files path), used for sharing
     let fileName: String?
     /// Stash visual file GraphQL typename (e.g. ImageFile, VideoFile)
@@ -27,7 +27,7 @@ struct GalleryImage: Identifiable, Equatable, Hashable {
     let sourceWidth: Int?
     let sourceHeight: Int?
 
-    init(id: UUID = UUID(), stashId: String? = nil, thumbnailURL: URL, fullSizeURL: URL, title: String? = nil, rating100: Int? = nil, oCounter: Int? = nil, source: String = "stash", fileName: String? = nil, visualFileType: String? = nil, sourceWidth: Int? = nil, sourceHeight: Int? = nil) {
+    init(id: UUID = UUID(), stashId: String? = nil, thumbnailURL: URL, fullSizeURL: URL, title: String? = nil, rating100: Int? = nil, oCounter: Int? = nil, source: MediaSource = .stash, fileName: String? = nil, visualFileType: String? = nil, sourceWidth: Int? = nil, sourceHeight: Int? = nil) {
         self.id = id
         self.stashId = stashId
         self.thumbnailURL = thumbnailURL
@@ -43,7 +43,7 @@ struct GalleryImage: Identifiable, Equatable, Hashable {
     }
 
     /// Convenience initializer when thumbnail and full-size are the same URL
-    init(id: UUID = UUID(), stashId: String? = nil, url: URL, title: String? = nil, rating100: Int? = nil, oCounter: Int? = nil, source: String = "stash", fileName: String? = nil, visualFileType: String? = nil, sourceWidth: Int? = nil, sourceHeight: Int? = nil) {
+    init(id: UUID = UUID(), stashId: String? = nil, url: URL, title: String? = nil, rating100: Int? = nil, oCounter: Int? = nil, source: MediaSource = .stash, fileName: String? = nil, visualFileType: String? = nil, sourceWidth: Int? = nil, sourceHeight: Int? = nil) {
         self.id = id
         self.stashId = stashId
         self.thumbnailURL = url
@@ -59,6 +59,26 @@ struct GalleryImage: Identifiable, Equatable, Hashable {
     }
 }
 
+// MARK: - Identity
+
+extension GalleryImage {
+    /// Stable, source-agnostic key for this image.
+    ///
+    /// Computed rather than stored, unlike `GalleryVideo.identity`: an image
+    /// already carries everything needed to derive one, so there is no legacy
+    /// field to migrate and nothing for a producer to get wrong. A Stash image
+    /// keys on its scene id; a container file keys on its container-relative
+    /// path, which survives the per-launch container UUID change.
+    ///
+    /// Note that `ImageEnhancementTracker` does *not* use this yet — it keys on
+    /// the image URL, which is correct for every source that has a stable one.
+    /// A `PHAsset` has no such URL, so adopting this is part of the Photos work.
+    var identity: String {
+        if let stashId, !stashId.isEmpty { return stashId }
+        return MediaIdentity.persistentKey(for: fullSizeURL)
+    }
+}
+
 // MARK: - Local File URL Re-resolution
 
 extension GalleryImage {
@@ -68,7 +88,7 @@ extension GalleryImage {
     /// after "Documents/" and reconstructs it using the current container path.
     /// Returns self unchanged for non-local images or when the file can't be found.
     func resolvingLocalFileURL() -> GalleryImage {
-        guard source == "local", fullSizeURL.isFileURL else { return self }
+        guard source.isContainerFile, fullSizeURL.isFileURL else { return self }
 
         guard let documentsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
             return self
@@ -137,8 +157,10 @@ extension GalleryImage: Codable {
         rating100 = try container.decodeIfPresent(Int.self, forKey: .rating100)
         oCounter = try container.decodeIfPresent(Int.self, forKey: .oCounter)
 
-        // Default to "stash" for backward compatibility with old saved window groups
-        source = try container.decodeIfPresent(String.self, forKey: .source) ?? "stash"
+        // Default to .stash for backward compatibility with old saved window
+        // groups. An unrecognised raw value degrades to .stash rather than
+        // failing the whole decode and losing the window group.
+        source = (try container.decodeIfPresent(MediaSource.self, forKey: .source)) ?? .stash
         fileName = try container.decodeIfPresent(String.self, forKey: .fileName)
         visualFileType = try container.decodeIfPresent(String.self, forKey: .visualFileType)
         sourceWidth = try container.decodeIfPresent(Int.self, forKey: .sourceWidth)

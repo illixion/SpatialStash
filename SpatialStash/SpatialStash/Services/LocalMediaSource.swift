@@ -263,7 +263,7 @@ final class LocalImageSource: ImageSource, @unchecked Sendable {
                 thumbnailURL: file.url,
                 fullSizeURL: file.url,
                 title: file.name,
-                source: "local"
+                source: .local
             )
         }
 

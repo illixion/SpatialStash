@@ -20,6 +20,33 @@
 
 import Foundation
 
+/// Where a piece of media came from.
+///
+/// Replaces the stringly-typed `GalleryImage.source`, whose only two values
+/// were compared by literal at each call site. The raw values match the old
+/// strings so archives written before this type existed still decode.
+enum MediaSource: String, Codable, Sendable {
+    /// A Stash server scene or image.
+    case stash
+    /// A file browsed from the app's Documents folder.
+    case local
+    /// A `PHAsset` from the device photo library.
+    case photos
+    /// A file handed in through the share sheet and copied to the share cache.
+    case shared
+
+    /// Whether this source's URLs point inside the app container, and so go
+    /// stale whenever visionOS reassigns the container UUID at launch.
+    ///
+    /// Share-sheet media counts. It previously defaulted to `.stash` and was
+    /// therefore skipped by URL re-resolution despite living in the container —
+    /// while deliberately *not* counting as `.local`, which would have handed it
+    /// LocalImageSource folder navigation it has no business having.
+    var isContainerFile: Bool {
+        self == .local || self == .shared
+    }
+}
+
 enum MediaIdentity {
 
     /// Directory names inside the app container whose subpath is stable across

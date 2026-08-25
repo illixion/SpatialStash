@@ -584,7 +584,7 @@ class PhotoWindowModel {
         // Capture pagination state for lazy loading. Local images navigate
         // over LocalImageSource's flat scan of the Documents folder, not the
         // Stash gallery the app happens to have loaded.
-        if image.source == "local" {
+        if image.source == .local {
             // Scope navigation/slideshow to the folder this image lives in
             // (recursively), rather than the whole Documents directory.
             let folderRoot = image.fullSizeURL.isFileURL ? image.fullSizeURL.deletingLastPathComponent() : nil
@@ -630,7 +630,7 @@ class PhotoWindowModel {
         // first page of LocalImageSource and relocate the current image's
         // index so prev/next navigate within local files instead of falling
         // back to position 0 of the Stash gallery.
-        if image.source == "local" {
+        if image.source == .local {
             Task { await self.loadInitialLocalGallery() }
         }
 
