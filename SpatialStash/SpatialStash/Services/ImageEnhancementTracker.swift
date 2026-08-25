@@ -3,6 +3,13 @@
 
  Tracks per-image viewing enhancements (spatial 3D conversion, background
  removal) so they can be automatically restored when the image is viewed again.
+
+ Every map here is keyed by `MediaIdentity.persistentKey(for:)`, never by
+ `url.absoluteString`. Remote URLs are unaffected (the key is the URL), but a
+ local file's absolute URL contains the app container UUID, which visionOS
+ changes on every launch — keying on it wrote state that could never be read
+ back, so local media silently lost its remembered viewing mode, flip,
+ resolution override, window size and adjustments at each launch.
  */
 
 import Foundation
@@ -85,19 +92,19 @@ actor ImageEnhancementTracker {
 
     /// Mark an image as having been converted to spatial 3D
     func markAsConverted(url: URL) {
-        let urlString = url.absoluteString
+        let urlString = MediaIdentity.persistentKey(for: url)
         convertedImageURLs.insert(urlString)
         save()
     }
 
     /// Check if an image has been previously converted
     func wasConverted(url: URL) -> Bool {
-        return convertedImageURLs.contains(url.absoluteString)
+        return convertedImageURLs.contains(MediaIdentity.persistentKey(for: url))
     }
 
     /// Remove conversion status for an image
     func removeConversionStatus(url: URL) {
-        convertedImageURLs.remove(url.absoluteString)
+        convertedImageURLs.remove(MediaIdentity.persistentKey(for: url))
         save()
     }
 
@@ -160,19 +167,19 @@ actor ImageEnhancementTracker {
     // MARK: - Last Viewing Mode Tracking
 
     func setLastViewingMode(url: URL, mode: ViewingModePreference) {
-        lastViewingModeByURL[url.absoluteString] = mode.rawValue
+        lastViewingModeByURL[MediaIdentity.persistentKey(for: url)] = mode.rawValue
         save()
     }
 
     func lastViewingMode(url: URL) -> ViewingModePreference? {
-        guard let raw = lastViewingModeByURL[url.absoluteString] else { return nil }
+        guard let raw = lastViewingModeByURL[MediaIdentity.persistentKey(for: url)] else { return nil }
         return ViewingModePreference(rawValue: raw)
     }
 
     // MARK: - Flip State Tracking
 
     func setFlipped(url: URL, isFlipped: Bool) {
-        let urlString = url.absoluteString
+        let urlString = MediaIdentity.persistentKey(for: url)
         if isFlipped {
             flippedByURL.insert(urlString)
         } else {
@@ -182,13 +189,13 @@ actor ImageEnhancementTracker {
     }
 
     func isFlipped(url: URL) -> Bool {
-        flippedByURL.contains(url.absoluteString)
+        flippedByURL.contains(MediaIdentity.persistentKey(for: url))
     }
 
     // MARK: - Resolution Override Tracking
 
     func setResolutionOverride(url: URL, resolution: Int?) {
-        let urlString = url.absoluteString
+        let urlString = MediaIdentity.persistentKey(for: url)
         if let resolution {
             resolutionOverrideByURL[urlString] = resolution
         } else {
@@ -198,13 +205,13 @@ actor ImageEnhancementTracker {
     }
 
     func resolutionOverride(url: URL) -> Int? {
-        resolutionOverrideByURL[url.absoluteString]
+        resolutionOverrideByURL[MediaIdentity.persistentKey(for: url)]
     }
 
     // MARK: - Spatial 3D Resolution Override Tracking
 
     func setSpatial3DResolutionOverride(url: URL, resolution: Int?) {
-        let urlString = url.absoluteString
+        let urlString = MediaIdentity.persistentKey(for: url)
         if let resolution {
             spatial3DResolutionOverrideByURL[urlString] = resolution
         } else {
@@ -214,32 +221,32 @@ actor ImageEnhancementTracker {
     }
 
     func spatial3DResolutionOverride(url: URL) -> Int? {
-        spatial3DResolutionOverrideByURL[url.absoluteString]
+        spatial3DResolutionOverrideByURL[MediaIdentity.persistentKey(for: url)]
     }
 
     // MARK: - Window Size Tracking
 
     func setWindowSize(url: URL, size: CGSize) {
-        let urlString = url.absoluteString
+        let urlString = MediaIdentity.persistentKey(for: url)
         windowSizeByURL[urlString] = [size.width, size.height]
         save()
     }
 
     func windowSize(url: URL) -> CGSize? {
-        guard let pair = windowSizeByURL[url.absoluteString],
+        guard let pair = windowSizeByURL[MediaIdentity.persistentKey(for: url)],
               pair.count == 2 else { return nil }
         return CGSize(width: pair[0], height: pair[1])
     }
 
     func removeWindowSize(url: URL) {
-        windowSizeByURL.removeValue(forKey: url.absoluteString)
+        windowSizeByURL.removeValue(forKey: MediaIdentity.persistentKey(for: url))
         save()
     }
 
     // MARK: - Visual Adjustments Tracking
 
     func setAdjustments(url: URL, adjustments: VisualAdjustments?) {
-        let urlString = url.absoluteString
+        let urlString = MediaIdentity.persistentKey(for: url)
         if let adjustments, adjustments.isModified {
             adjustmentsByURL[urlString] = try? JSONEncoder().encode(adjustments)
         } else {
@@ -249,7 +256,7 @@ actor ImageEnhancementTracker {
     }
 
     func adjustments(url: URL) -> VisualAdjustments? {
-        guard let data = adjustmentsByURL[url.absoluteString] else { return nil }
+        guard let data = adjustmentsByURL[MediaIdentity.persistentKey(for: url)] else { return nil }
         return try? JSONDecoder().decode(VisualAdjustments.self, from: data)
     }
 }

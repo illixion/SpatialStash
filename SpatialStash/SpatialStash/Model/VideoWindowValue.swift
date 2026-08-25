@@ -71,3 +71,21 @@ struct VideoWindowValue: Identifiable, Codable, Hashable {
 
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }
+
+// MARK: - Local File URL Re-resolution
+
+extension VideoWindowValue {
+    /// Re-resolves local file URLs in this value against the current container.
+    ///
+    /// Applied at window construction, the same place `PhotoWindowView` does it
+    /// for images: a visionOS scene restoration replays a value archived under a
+    /// previous launch's container UUID, so every `file://` URL inside it is
+    /// stale. The navigation snapshot needs it too, not just the current video —
+    /// otherwise prev/next lands on dead paths.
+    func resolvingLocalFileURLs() -> VideoWindowValue {
+        var copy = self
+        copy.video = video.resolvingLocalFileURL()
+        copy.galleryVideos = galleryVideos?.map { $0.resolvingLocalFileURL() }
+        return copy
+    }
+}

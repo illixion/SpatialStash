@@ -268,10 +268,20 @@ struct SavedWindowEntry: Codable, Identifiable, Hashable {
     }
 
     /// Re-resolves any local file URLs against the current sandbox container.
+    /// Covers video entries as well as photo ones — a restored local video
+    /// window was previously left holding a path from a dead container.
     func resolvingLocalFileURLs() -> SavedWindowEntry {
-        guard kind == .photo, let image else { return self }
         var copy = self
-        copy.image = image.resolvingLocalFileURL()
+        switch kind {
+        case .photo:
+            guard let image else { return self }
+            copy.image = image.resolvingLocalFileURL()
+        case .video:
+            guard let video else { return self }
+            copy.video = video.resolvingLocalFileURL()
+        default:
+            return self
+        }
         return copy
     }
 }

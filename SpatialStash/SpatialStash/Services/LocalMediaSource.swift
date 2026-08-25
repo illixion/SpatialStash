@@ -309,7 +309,10 @@ final class LocalVideoSource: VideoSource, @unchecked Sendable {
 
         let galleryVideos = pageVideos.map { file in
             GalleryVideo(
-                stashId: file.url.absoluteString,
+                // Container-relative, not the absolute URL: the container UUID
+                // changes every launch, so an absolute key orphaned this
+                // video's depth cache and 3D settings on every relaunch.
+                stashId: MediaIdentity.persistentKey(for: file.url),
                 thumbnailURL: file.url, // Will use video frame as thumbnail
                 streamURL: file.url,
                 title: file.name,

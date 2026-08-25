@@ -71,8 +71,11 @@ struct VideoWindowView: View {
     private let pseudo3DChromeBottomLift: CGFloat = 50
 
     init(windowValue: VideoWindowValue, appModel: AppModel) {
-        self.windowValue = windowValue
-        _windowModel = State(initialValue: VideoWindowModel(windowValue: windowValue, appModel: appModel))
+        // Re-resolve local file URLs in case this is a visionOS scene restoration
+        // where the sandbox container UUID has changed since the window was saved.
+        let resolved = windowValue.resolvingLocalFileURLs()
+        self.windowValue = resolved
+        _windowModel = State(initialValue: VideoWindowModel(windowValue: resolved, appModel: appModel))
     }
 
     private var video: GalleryVideo { windowModel.video }
