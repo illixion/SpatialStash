@@ -263,7 +263,6 @@ struct LocalMediaListView: View {
                                     LocalMediaThumbnailView(file: file) {
                                         if folderPath.first == "Photos" {
                                             let image = GalleryImage(
-                                                id: file.id,
                                                 url: file.url,
                                                 title: file.name,
                                                 source: .local

@@ -99,6 +99,12 @@ final class PhotosLibraryIndexer {
     private var observer: LibraryObserver?
     private var runTask: Task<Void, Never>?
     private var namingTask: Task<Void, Never>?
+    private var coalesceTask: Task<Void, Never>?
+    /// The library changed while a sync was already running.
+    private var resyncPending = false
+
+    /// How long to wait for a burst of library notifications to settle.
+    private static let coalesceInterval: Double = 2
 
     /// Assets per store transaction during the cheap pass. Large enough that the
     /// per-transaction cost disappears, small enough that progress moves.
@@ -119,10 +125,15 @@ final class PhotosLibraryIndexer {
     /// Safe to call on every launch and whenever authorization changes; the work
     /// is coalesced so overlapping calls do not double-index.
     func start() {
-        guard runTask == nil else { return }
+        guard runTask == nil else {
+            // A change arriving mid-run would otherwise be dropped: this run
+            // already read its token before that change existed.
+            resyncPending = true
+            return
+        }
         runTask = Task { [weak self] in
             await self?.run(forceRebuild: false)
-            self?.runTask = nil
+            self?.finishRun()
         }
     }
 
@@ -133,8 +144,15 @@ final class PhotosLibraryIndexer {
         namingTask?.cancel()
         runTask = Task { [weak self] in
             await self?.run(forceRebuild: true)
-            self?.runTask = nil
+            self?.finishRun()
         }
+    }
+
+    private func finishRun() {
+        runTask = nil
+        guard resyncPending else { return }
+        resyncPending = false
+        start()
     }
 
     /// Called when photo authorization is revoked. Keeping a mirror of a library
@@ -175,8 +193,15 @@ final class PhotosLibraryIndexer {
                 needsFullBuild = true
             }
 
+            var contentChanged = needsFullBuild
             if !needsFullBuild {
-                needsFullBuild = try await !applyIncrementalChanges()
+                switch try await applyIncrementalChanges() {
+                case .rebuildNeeded:
+                    needsFullBuild = true
+                    contentChanged = true
+                case .applied(let changed):
+                    contentChanged = changed
+                }
             }
 
             if needsFullBuild {
@@ -185,7 +210,14 @@ final class PhotosLibraryIndexer {
 
             registerObserver()
             phase = .ready
-            bumpGeneration()
+            // Only when something actually moved. PhotoKit posts change
+            // notifications constantly on an iCloud library — thumbnail
+            // generation, metadata sync, memories being recomputed — and
+            // bumping unconditionally turned every one of them into a gallery
+            // reload, which is what the periodic flicker was.
+            if contentChanged {
+                bumpGeneration()
+            }
             startNamingPass()
         } catch is CancellationError {
             // A rebuild superseded this run; the new one owns the phase.
@@ -296,16 +328,21 @@ final class PhotosLibraryIndexer {
 
     // MARK: - Incremental sync
 
+    enum SyncOutcome {
+        /// The index cannot be brought up to date incrementally — no token, an
+        /// unreadable one, or one older than the change history Photos holds.
+        case rebuildNeeded
+        /// Applied. `contentChanged` is whether the *set* of assets moved, which
+        /// is a different question from whether anything changed at all.
+        case applied(contentChanged: Bool)
+    }
+
     /// Applies everything that changed since the stored token.
-    ///
-    /// Returns false when the index cannot be brought up to date incrementally
-    /// and the caller should rebuild — no token, an unreadable one, or a token
-    /// older than the change history Photos still holds.
-    private nonisolated func applyIncrementalChanges() async throws -> Bool {
+    private nonisolated func applyIncrementalChanges() async throws -> SyncOutcome {
         guard let tokenData = try await store.metaData(PhotosIndexSchema.MetaKey.changeToken),
               let token = try? NSKeyedUnarchiver.unarchivedObject(ofClass: PHPersistentChangeToken.self,
                                                                   from: tokenData) else {
-            return false
+            return .rebuildNeeded
         }
 
         let library = PHPhotoLibrary.shared()
@@ -316,7 +353,7 @@ final class PhotosLibraryIndexer {
             if error.domain == PHPhotosErrorDomain,
                error.code == PHPhotosError.persistentChangeTokenExpired.rawValue {
                 AppLogger.photosIndex.info("Change token expired, rebuilding")
-                return false
+                return .rebuildNeeded
             }
             throw error
         }
@@ -386,7 +423,14 @@ final class PhotosLibraryIndexer {
                 "Synced +\(inserted.count, privacy: .public) ~\(updated.count, privacy: .public) -\(deleted.count, privacy: .public)"
             )
         }
-        return true
+
+        // Inserts and deletes change which assets exist and so what the grid
+        // should show. A pure update does not: the row is already rewritten, and
+        // any of the metadata it touched (favourite, modification date) will be
+        // picked up by the next reload the user's own actions cause. Treating
+        // updates as content changes meant iCloud's steady trickle of metadata
+        // writes reloaded the grid under the user's hands.
+        return .applied(contentChanged: !inserted.isEmpty || !deleted.isEmpty)
     }
 
     // MARK: - Filename backfill
@@ -484,8 +528,18 @@ final class PhotosLibraryIndexer {
 
     /// A photo taken or edited while the app is open. Re-enters the same
     /// token-driven sync the launch path uses.
+    ///
+    /// Coalesced, because PhotoKit does not post one notification per user
+    /// action — a single import or an iCloud catch-up arrives as a burst. Each
+    /// one is a full token fetch, so answering them individually is wasted work
+    /// even now that a no-op sync no longer reloads anything.
     private func libraryDidChange() {
-        guard runTask == nil else { return }
-        start()
+        coalesceTask?.cancel()
+        coalesceTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(Self.coalesceInterval))
+            guard !Task.isCancelled else { return }
+            self?.coalesceTask = nil
+            self?.start()
+        }
     }
 }

@@ -18,6 +18,7 @@
  existed still resolve.
  */
 
+import CryptoKit
 import Foundation
 
 /// Where a piece of media came from.
@@ -143,6 +144,31 @@ enum MediaIdentity {
     /// absolute http(s) URL. That makes this a reliable way to decide whether a
     /// legacy archive's `stashId` was a real Stash id or just an identity
     /// wearing the field.
+    /// A UUID derived deterministically from an identity string.
+    ///
+    /// Gallery items used to mint a fresh `UUID()` per instance, which made
+    /// `Identifiable` conformance meaningless across reloads: re-fetching the
+    /// same page produced all-new ids, so SwiftUI tore down and rebuilt every
+    /// cell and every thumbnail reloaded. A visible flicker, on every filter
+    /// change and every gallery refresh.
+    ///
+    /// Deriving it from the identity means the same asset is the same view
+    /// across reloads, so cells are reused and the reload is invisible. It also
+    /// makes a restored window's item id match the live gallery's.
+    ///
+    /// The first 16 bytes of SHA-256 — a hash, not RFC 4122 — because nothing
+    /// here parses the UUID, it only compares them.
+    static func stableID(for identity: String) -> UUID {
+        var bytes = Array(SHA256.hash(data: Data(identity.utf8)).prefix(16))
+        // Stamp version 4 / variant bits so the value is a well-formed UUID.
+        bytes[6] = (bytes[6] & 0x0F) | 0x40
+        bytes[8] = (bytes[8] & 0x3F) | 0x80
+        return UUID(uuid: (bytes[0], bytes[1], bytes[2], bytes[3],
+                           bytes[4], bytes[5], bytes[6], bytes[7],
+                           bytes[8], bytes[9], bytes[10], bytes[11],
+                           bytes[12], bytes[13], bytes[14], bytes[15]))
+    }
+
     static func isStashID(_ value: String) -> Bool {
         !value.isEmpty && value.allSatisfy(\.isNumber)
     }

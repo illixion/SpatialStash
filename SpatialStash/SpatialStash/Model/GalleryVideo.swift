@@ -7,7 +7,11 @@
 import Foundation
 
 struct GalleryVideo: Identifiable, Equatable, Hashable, Codable {
-    let id: UUID
+    /// Derived from `identity`, not minted per instance — see
+    /// `MediaIdentity.stableID(for:)`. Dropping the stored property also drops
+    /// it from the synthesized CodingKeys, so archives that still carry an `id`
+    /// simply ignore it.
+    var id: UUID { MediaIdentity.stableID(for: identity) }
     /// Stable, source-agnostic key for everything that persists per-video
     /// state: the pseudo-3D depth cache, the 3D-settings tracker, the disk
     /// video cache, the open-window registry, saved window groups.
@@ -63,7 +67,6 @@ struct GalleryVideo: Identifiable, Equatable, Hashable, Codable {
     let fileName: String?
 
     init(
-        id: UUID = UUID(),
         identity: String,
         stashId: String? = nil,
         thumbnailURL: URL,
@@ -81,7 +84,6 @@ struct GalleryVideo: Identifiable, Equatable, Hashable, Codable {
         oCounter: Int? = nil,
         fileName: String? = nil
     ) {
-        self.id = id
         self.identity = identity
         self.stashId = stashId
         self.thumbnailURL = thumbnailURL
@@ -115,8 +117,6 @@ struct GalleryVideo: Identifiable, Equatable, Hashable, Codable {
     /// would fail in a thoroughly confusing way.
     init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-
-        self.id = try c.decode(UUID.self, forKey: .id)
 
         let legacy = try c.decodeIfPresent(String.self, forKey: .stashId)
         if let identity = try c.decodeIfPresent(String.self, forKey: .identity), !identity.isEmpty {
@@ -210,7 +210,6 @@ extension GalleryVideo {
               resolved != streamURL else { return self }
 
         return GalleryVideo(
-            id: id,
             identity: identity,
             stashId: stashId,
             thumbnailURL: thumbnailURL.isFileURL
