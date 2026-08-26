@@ -29,11 +29,18 @@ final class PhotosVideoSource: VideoSource, @unchecked Sendable {
 
     func fetchVideos(page: Int, pageSize: Int, filter: SceneFilterCriteria?) async throws -> VideoFetchResult {
         let criteria = filter?.photosCriteria ?? PhotosFilterCriteria()
+        // Nil leaves the filter off entirely; an empty array means it is on and
+        // nothing qualifies, which the query renders as "match nothing" rather
+        // than as an unconstrained search.
+        let converted = filter?.showsOnlyConverted == true
+            ? await ConvertedMediaRegistry.photosAssetIdentifiers(isVideo: true)
+            : nil
+
         let result = try await PhotosIndexStore.shared.page(criteria: criteria,
                                                            mediaType: .video,
                                                            page: page,
                                                            pageSize: pageSize,
-                                                           convertedIdentifiers: nil)
+                                                           convertedIdentifiers: converted)
 
         var videos: [GalleryVideo] = []
         videos.reserveCapacity(result.assets.count)

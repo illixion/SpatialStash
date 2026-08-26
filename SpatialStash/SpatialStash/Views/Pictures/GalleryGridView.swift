@@ -70,9 +70,9 @@ struct GalleryGridView: View {
                 PhotoLibraryStateView(
                     kind: .photos,
                     status: photosStatus,
-                    filterActive: appModel.currentFilter.photosCriteria.hasActiveFilters,
+                    filterActive: appModel.currentFilter.hasActivePhotoLibraryFilters,
                     onClearFilters: {
-                        appModel.currentFilter.photosCriteria.clearFilters()
+                        appModel.currentFilter.clearPhotoLibraryFilters()
                         Task { await appModel.loadInitialGallery() }
                     },
                     indexingMessage: PhotosLibraryIndexer.shared.blockingMessage

@@ -211,6 +211,25 @@ struct ImageFilterCriteria: Codable, Equatable {
     var selectedPerformers: [AutocompleteItem] = []
     var performerModifier: CriterionModifier = .includesAll
 
+    /// Only items this app has already produced 3D output for.
+    ///
+    /// Lives here rather than in the photo-library criteria because it is the one
+    /// dimension that means exactly the same thing in both libraries, and it is
+    /// answered the same way in both: `ConvertedMediaRegistry` resolves the
+    /// identities, and each source applies them however it can.
+    ///
+    /// Optional, not a defaulted Bool: the synthesized decoder calls `decode`
+    /// for a non-optional even when it has a default, so adding one would have
+    /// thrown on every saved view written before this — and the whole array
+    /// decodes under one `try?`.
+    var onlyConverted: Bool?
+
+    /// `onlyConverted` as a plain Bool, so a Toggle can bind to it.
+    var showsOnlyConverted: Bool {
+        get { onlyConverted ?? false }
+        set { onlyConverted = newValue }
+    }
+
     // Photo-library criteria. Read only when the library in force is Photos —
     // the Stash fields above and these describe two different data models, and
     // the Filters tab shows whichever set belongs to the library being browsed.
@@ -250,6 +269,24 @@ struct ImageFilterCriteria: Codable, Equatable {
         selectedPerformers.map { $0.id }
     }
 
+    /// Whether anything is filtering the *photo library* view specifically.
+    ///
+    /// Not `hasActiveFilters`, which counts the Stash dimensions that a photo
+    /// library ignores, and not `photos.hasActiveFilters`, which misses the
+    /// shared converted flag. The gallery's "no matches, here is the way out"
+    /// state needs exactly this set, and assembling it at the call sites is how
+    /// the two would drift.
+    var hasActivePhotoLibraryFilters: Bool {
+        photosCriteria.hasActiveFilters || showsOnlyConverted
+    }
+
+    /// Clears exactly what `hasActivePhotoLibraryFilters` reports, leaving the
+    /// Stash criteria alone so switching back does not find them wiped.
+    mutating func clearPhotoLibraryFilters() {
+        photosCriteria.clearFilters()
+        onlyConverted = nil
+    }
+
     /// Whether any filter is active
     var hasActiveFilters: Bool {
         !searchTerm.isEmpty ||
@@ -258,7 +295,8 @@ struct ImageFilterCriteria: Codable, Equatable {
         ratingEnabled ||
         !selectedTags.isEmpty ||
         !selectedStudios.isEmpty ||
-        !selectedPerformers.isEmpty
+        !selectedPerformers.isEmpty ||
+        showsOnlyConverted
     }
 
     /// Clear all filters but keep sort settings
@@ -280,6 +318,7 @@ struct ImageFilterCriteria: Codable, Equatable {
         studioModifier = .includesAll
         selectedPerformers = []
         performerModifier = .includesAll
+        onlyConverted = nil
         photos?.clearFilters()
     }
 
@@ -336,6 +375,25 @@ struct SceneFilterCriteria: Codable, Equatable {
     var selectedPerformers: [AutocompleteItem] = []
     var performerModifier: CriterionModifier = .includesAll
 
+    /// Only items this app has already produced 3D output for.
+    ///
+    /// Lives here rather than in the photo-library criteria because it is the one
+    /// dimension that means exactly the same thing in both libraries, and it is
+    /// answered the same way in both: `ConvertedMediaRegistry` resolves the
+    /// identities, and each source applies them however it can.
+    ///
+    /// Optional, not a defaulted Bool: the synthesized decoder calls `decode`
+    /// for a non-optional even when it has a default, so adding one would have
+    /// thrown on every saved view written before this — and the whole array
+    /// decodes under one `try?`.
+    var onlyConverted: Bool?
+
+    /// `onlyConverted` as a plain Bool, so a Toggle can bind to it.
+    var showsOnlyConverted: Bool {
+        get { onlyConverted ?? false }
+        set { onlyConverted = newValue }
+    }
+
     // Photo-library criteria. Read only when the library in force is Photos —
     // the Stash fields above and these describe two different data models, and
     // the Filters tab shows whichever set belongs to the library being browsed.
@@ -375,6 +433,24 @@ struct SceneFilterCriteria: Codable, Equatable {
         selectedPerformers.map { $0.id }
     }
 
+    /// Whether anything is filtering the *photo library* view specifically.
+    ///
+    /// Not `hasActiveFilters`, which counts the Stash dimensions that a photo
+    /// library ignores, and not `photos.hasActiveFilters`, which misses the
+    /// shared converted flag. The gallery's "no matches, here is the way out"
+    /// state needs exactly this set, and assembling it at the call sites is how
+    /// the two would drift.
+    var hasActivePhotoLibraryFilters: Bool {
+        photosCriteria.hasActiveFilters || showsOnlyConverted
+    }
+
+    /// Clears exactly what `hasActivePhotoLibraryFilters` reports, leaving the
+    /// Stash criteria alone so switching back does not find them wiped.
+    mutating func clearPhotoLibraryFilters() {
+        photosCriteria.clearFilters()
+        onlyConverted = nil
+    }
+
     /// Whether any filter is active
     var hasActiveFilters: Bool {
         !searchTerm.isEmpty ||
@@ -383,7 +459,8 @@ struct SceneFilterCriteria: Codable, Equatable {
         ratingEnabled ||
         !selectedTags.isEmpty ||
         !selectedStudios.isEmpty ||
-        !selectedPerformers.isEmpty
+        !selectedPerformers.isEmpty ||
+        showsOnlyConverted
     }
 
     /// Clear all filters but keep sort settings
@@ -405,6 +482,7 @@ struct SceneFilterCriteria: Codable, Equatable {
         studioModifier = .includesAll
         selectedPerformers = []
         performerModifier = .includesAll
+        onlyConverted = nil
         photos?.clearFilters()
     }
 

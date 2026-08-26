@@ -24,7 +24,21 @@ final class GraphQLImageSource: ImageSource, @unchecked Sendable {
         let stashPage = page + 1
         AppLogger.graphQLImage.log(level: AppLogger.effectiveDebugLevel, "Fetching images page \(stashPage, privacy: .public), pageSize \(pageSize, privacy: .public), hasFilter: \(filter != nil, privacy: .public)")
 
-        let result = try await apiClient.findImages(page: stashPage, perPage: pageSize, filter: filter)
+        // Converted to 3D is a local fact with no ImageFilterType expression, so
+        // it is applied by asking the server for exactly those ids. An empty set
+        // means nothing qualifies — returning early rather than sending `ids: []`,
+        // which the server would read as "no id restriction" and answer with the
+        // whole library.
+        var convertedIds: [String]?
+        if filter?.showsOnlyConverted == true {
+            let ids = await ConvertedMediaRegistry.stashIds(isVideo: false)
+            guard !ids.isEmpty else {
+                return ImageFetchResult(images: [], hasMore: false, totalCount: 0)
+            }
+            convertedIds = ids
+        }
+
+        let result = try await apiClient.findImages(page: stashPage, perPage: pageSize, filter: filter, ids: convertedIds)
         AppLogger.graphQLImage.log(level: AppLogger.effectiveDebugLevel, "Got \(result.images.count, privacy: .public) images, total: \(result.count, privacy: .public)")
 
         let images = result.images.compactMap(Self.makeGalleryImage(from:))

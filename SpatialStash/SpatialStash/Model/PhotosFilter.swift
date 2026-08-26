@@ -160,10 +160,6 @@ struct PhotosFilterCriteria: Codable, Equatable, Sendable {
     var favoritesOnly: Bool = false
     var kind: PhotosMediaKind = .any
 
-    /// Only items the app has already produced 3D output for. Resolved at query
-    /// time from the depth cache and the enhancement tracker rather than stored.
-    var onlyConverted: Bool = false
-
     var dateRangeEnabled: Bool = false
     var startDate: Date?
     var endDate: Date?
@@ -183,7 +179,6 @@ struct PhotosFilterCriteria: Codable, Equatable, Sendable {
         !selectedPeople.isEmpty ||
         favoritesOnly ||
         kind != .any ||
-        onlyConverted ||
         dateRangeEnabled
     }
 
@@ -195,7 +190,6 @@ struct PhotosFilterCriteria: Codable, Equatable, Sendable {
         personModifier = .includesAll
         favoritesOnly = false
         kind = .any
-        onlyConverted = false
         dateRangeEnabled = false
         startDate = nil
         endDate = nil
@@ -222,7 +216,7 @@ struct PhotosFilterCriteria: Codable, Equatable, Sendable {
 extension PhotosFilterCriteria {
     private enum CodingKeys: String, CodingKey {
         case searchTerm, selectedAlbums, albumModifier, selectedPeople, personModifier
-        case favoritesOnly, kind, onlyConverted, dateRangeEnabled
+        case favoritesOnly, kind, dateRangeEnabled
         case startDate, endDate, sortField, sortDirection, randomSeed
         // Retired single-select album, read for migration only.
         case albumId, albumName
@@ -234,7 +228,6 @@ extension PhotosFilterCriteria {
 
         searchTerm = try container.decodeIfPresent(String.self, forKey: .searchTerm) ?? ""
         favoritesOnly = try container.decodeIfPresent(Bool.self, forKey: .favoritesOnly) ?? false
-        onlyConverted = try container.decodeIfPresent(Bool.self, forKey: .onlyConverted) ?? false
         dateRangeEnabled = try container.decodeIfPresent(Bool.self, forKey: .dateRangeEnabled) ?? false
         startDate = try container.decodeIfPresent(Date.self, forKey: .startDate)
         endDate = try container.decodeIfPresent(Date.self, forKey: .endDate)
@@ -270,7 +263,6 @@ extension PhotosFilterCriteria {
         try container.encode(personModifier, forKey: .personModifier)
         try container.encode(favoritesOnly, forKey: .favoritesOnly)
         try container.encode(kind, forKey: .kind)
-        try container.encode(onlyConverted, forKey: .onlyConverted)
         try container.encode(dateRangeEnabled, forKey: .dateRangeEnabled)
         try container.encodeIfPresent(startDate, forKey: .startDate)
         try container.encodeIfPresent(endDate, forKey: .endDate)

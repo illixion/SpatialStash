@@ -170,10 +170,15 @@ actor StashAPIClient {
         try await findImages(page: page, perPage: perPage, filter: nil, query: query)
     }
 
-    func findImages(page: Int, perPage: Int, filter: ImageFilterCriteria?, query: String? = nil) async throws -> FindImagesResult {
+    /// - Parameter ids: When non-nil, restricts the query to these image ids.
+    ///   The server still applies `filter` for paging and sort, so this composes
+    ///   with everything else rather than replacing it. Used by the Converted to
+    ///   3D filter, whose set is known locally and cannot be expressed as an
+    ///   `ImageFilterType` at all.
+    func findImages(page: Int, perPage: Int, filter: ImageFilterCriteria?, query: String? = nil, ids: [String]? = nil) async throws -> FindImagesResult {
         let graphQLQuery = """
-        query FindImages($filter: FindFilterType, $image_filter: ImageFilterType) {
-            findImages(filter: $filter, image_filter: $image_filter) {
+        query FindImages($filter: FindFilterType, $image_filter: ImageFilterType, $ids: [ID!]) {
+            findImages(filter: $filter, image_filter: $image_filter, ids: $ids) {
                 count
                 images {
                     id
@@ -233,6 +238,9 @@ actor StashAPIClient {
         }
 
         var variables: [String: Any] = ["filter": filterVariables]
+        if let ids {
+            variables["ids"] = ids
+        }
 
         // Build ImageFilterType if we have filter criteria
         if let filter = filter, filter.hasActiveFilters {
@@ -598,10 +606,12 @@ actor StashAPIClient {
         try await findScenes(page: page, perPage: perPage, filter: nil, query: query)
     }
 
-    func findScenes(page: Int, perPage: Int, filter: SceneFilterCriteria?, query: String? = nil) async throws -> FindScenesResult {
+    /// - Parameter ids: When non-nil, restricts the query to these scene ids.
+    ///   See `findImages(page:perPage:filter:query:ids:)`.
+    func findScenes(page: Int, perPage: Int, filter: SceneFilterCriteria?, query: String? = nil, ids: [String]? = nil) async throws -> FindScenesResult {
         let graphQLQuery = """
-        query FindScenes($filter: FindFilterType, $scene_filter: SceneFilterType) {
-            findScenes(filter: $filter, scene_filter: $scene_filter) {
+        query FindScenes($filter: FindFilterType, $scene_filter: SceneFilterType, $ids: [ID!]) {
+            findScenes(filter: $filter, scene_filter: $scene_filter, ids: $ids) {
                 count
                 scenes {
                     id
@@ -666,6 +676,9 @@ actor StashAPIClient {
         }
 
         var variables: [String: Any] = ["filter": filterVariables]
+        if let ids {
+            variables["ids"] = ids
+        }
 
         // Build SceneFilterType if we have filter criteria
         if let filter = filter, filter.hasActiveFilters {

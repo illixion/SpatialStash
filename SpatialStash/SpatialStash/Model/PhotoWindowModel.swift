@@ -790,7 +790,10 @@ class PhotoWindowModel {
 
     func trackImageConverted() async {
         guard appModel.rememberImageEnhancements else { return }
-        await ImageEnhancementTracker.shared.markAsConverted(url: imageURL)
+        // The identity goes in alongside the URL: this is the one place that
+        // knows both, and the converted-to-3D filter needs the identity because
+        // a Stash image's URL is a server path, not an id.
+        await ImageEnhancementTracker.shared.markAsConverted(url: imageURL, identity: image.identity)
     }
 
     /// Auto-restore the last enhancement (3D or background removal) if applicable.

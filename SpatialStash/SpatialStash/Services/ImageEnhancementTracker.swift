@@ -30,13 +30,23 @@ actor ImageEnhancementTracker {
 
     // UserDefaults keys unchanged for backward compatibility
     private let userDefaultsKey = "spatial3DConvertedImages"
+    private let convertedIdentityKey = "spatial3DConvertedIdentities"
     private let lastModeKey = "spatial3DLastViewingMode"
     private let flippedKey = "imageFlippedState"
     private let resolutionOverrideKey = "imageResolutionOverride"
     private let spatial3DResolutionOverrideKey = "imageSpatial3DResolutionOverride"
     private let windowSizeKey = "imageWindowSize"
     private let adjustmentsKey = "imageVisualAdjustments"
-    private var convertedImageURLs: Set<String>
+    /// Converted images, keyed by URL with the item's *identity* as the value.
+    ///
+    /// One record, two readings. `wasConverted(url:)` asks the key — the URL is
+    /// what a photo window has in hand. The "converted to 3D" filter asks the
+    /// values, because a query needs the identity: a Stash image's URL is a
+    /// server path with the id buried in it, and recovering the id by parsing
+    /// `/image/{id}/` back out would break the first time Stash changed its
+    /// paths. Recording it at the one write site that already knows it costs
+    /// nothing and cannot go stale.
+    private var convertedIdentityByURL: [String: String]
     private var lastViewingModeByURL: [String: String]
     private var flippedByURL: Set<String>
     private var resolutionOverrideByURL: [String: Int]
@@ -45,13 +55,22 @@ actor ImageEnhancementTracker {
     private var adjustmentsByURL: [String: Data]
 
     private init() {
-        if let saved = UserDefaults.standard.array(forKey: userDefaultsKey) as? [String] {
-            convertedImageURLs = Set(saved)
-            let count = convertedImageURLs.count
-            AppLogger.enhancementTracker.info("Loaded \(count, privacy: .public) previously converted images")
+        if let dict = UserDefaults.standard.dictionary(forKey: convertedIdentityKey) as? [String: String] {
+            convertedIdentityByURL = dict
+        } else if let legacy = UserDefaults.standard.array(forKey: userDefaultsKey) as? [String] {
+            // Migrated from the URL-only set. The identity is unknown for these,
+            // so the URL key stands in: correct for Photos and local files,
+            // where identity *is* the persistent key, and simply absent from the
+            // converted filter for older Stash images until they are viewed in
+            // 3D again.
+            convertedIdentityByURL = Dictionary(uniqueKeysWithValues: legacy.map { ($0, $0) })
         } else {
-            convertedImageURLs = []
+            convertedIdentityByURL = [:]
         }
+        let loadedCount = convertedIdentityByURL.count
+        AppLogger.enhancementTracker.info(
+            "Loaded \(loadedCount, privacy: .public) previously converted images"
+        )
 
         if let dict = UserDefaults.standard.dictionary(forKey: lastModeKey) as? [String: String] {
             lastViewingModeByURL = dict
@@ -90,27 +109,36 @@ actor ImageEnhancementTracker {
         }
     }
 
-    /// Mark an image as having been converted to spatial 3D
-    func markAsConverted(url: URL) {
+    /// Mark an image as having been converted to spatial 3D.
+    ///
+    /// `identity` is the gallery item's identity — a Stash id, or the persistent
+    /// key for anything local. Passing it is what makes the converted set
+    /// queryable; without it the URL stands in.
+    func markAsConverted(url: URL, identity: String? = nil) {
         let urlString = MediaIdentity.persistentKey(for: url)
-        convertedImageURLs.insert(urlString)
+        convertedIdentityByURL[urlString] = identity ?? urlString
         save()
     }
 
     /// Check if an image has been previously converted
     func wasConverted(url: URL) -> Bool {
-        return convertedImageURLs.contains(MediaIdentity.persistentKey(for: url))
+        convertedIdentityByURL[MediaIdentity.persistentKey(for: url)] != nil
     }
 
     /// Remove conversion status for an image
     func removeConversionStatus(url: URL) {
-        convertedImageURLs.remove(MediaIdentity.persistentKey(for: url))
+        convertedIdentityByURL.removeValue(forKey: MediaIdentity.persistentKey(for: url))
         save()
+    }
+
+    /// Identities of every image converted to 3D, for the converted filter.
+    func convertedIdentities() -> Set<String> {
+        Set(convertedIdentityByURL.values)
     }
 
     /// Clear all conversion tracking data
     func clearAll() {
-        convertedImageURLs.removeAll()
+        convertedIdentityByURL.removeAll()
         lastViewingModeByURL.removeAll()
         flippedByURL.removeAll()
         resolutionOverrideByURL.removeAll()
@@ -122,11 +150,11 @@ actor ImageEnhancementTracker {
 
     /// Get the count of tracked conversions
     var convertedCount: Int {
-        convertedImageURLs.count
+        convertedIdentityByURL.count
     }
 
     private func save() {
-        UserDefaults.standard.set(Array(convertedImageURLs), forKey: userDefaultsKey)
+        UserDefaults.standard.set(convertedIdentityByURL, forKey: convertedIdentityKey)
         UserDefaults.standard.set(lastViewingModeByURL, forKey: lastModeKey)
         UserDefaults.standard.set(Array(flippedByURL), forKey: flippedKey)
         UserDefaults.standard.set(resolutionOverrideByURL, forKey: resolutionOverrideKey)
@@ -139,12 +167,15 @@ actor ImageEnhancementTracker {
 
     /// Export all tracking data for backup
     func exportData() -> (convertedURLs: [String], lastViewingModes: [String: String], flippedURLs: [String], resolutionOverrides: [String: Int], spatial3DResolutionOverrides: [String: Int], windowSizes: [String: [Double]], adjustments: [String: Data]) {
-        return (Array(convertedImageURLs), lastViewingModeByURL, Array(flippedByURL), resolutionOverrideByURL, spatial3DResolutionOverrideByURL, windowSizeByURL, adjustmentsByURL)
+        // Exported as bare URLs so a backup stays readable by versions that
+        // predate identities. A restore then behaves like the migration above:
+        // identity falls back to the URL.
+        return (Array(convertedIdentityByURL.keys), lastViewingModeByURL, Array(flippedByURL), resolutionOverrideByURL, spatial3DResolutionOverrideByURL, windowSizeByURL, adjustmentsByURL)
     }
 
     /// Import tracking data from backup, replacing current data
     func importData(convertedURLs: [String], lastViewingModes: [String: String], flippedURLs: [String]? = nil, resolutionOverrides: [String: Int]? = nil, spatial3DResolutionOverrides: [String: Int]? = nil, windowSizes: [String: [Double]]? = nil, adjustments: [String: Data]? = nil) {
-        convertedImageURLs = Set(convertedURLs)
+        convertedIdentityByURL = Dictionary(uniqueKeysWithValues: convertedURLs.map { ($0, $0) })
         lastViewingModeByURL = lastViewingModes
         if let flippedURLs {
             flippedByURL = Set(flippedURLs)

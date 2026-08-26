@@ -24,7 +24,18 @@ final class GraphQLVideoSource: VideoSource, @unchecked Sendable {
         let stashPage = page + 1
         AppLogger.graphQLVideo.log(level: AppLogger.effectiveDebugLevel, "Fetching videos page \(stashPage, privacy: .public), pageSize \(pageSize, privacy: .public), hasFilter: \(filter != nil, privacy: .public)")
 
-        let result = try await apiClient.findScenes(page: stashPage, perPage: pageSize, filter: filter)
+        // See GraphQLImageSource for why this is an id list and why an empty one
+        // returns early instead of being sent.
+        var convertedIds: [String]?
+        if filter?.showsOnlyConverted == true {
+            let ids = await ConvertedMediaRegistry.stashIds(isVideo: true)
+            guard !ids.isEmpty else {
+                return VideoFetchResult(videos: [], hasMore: false, totalCount: 0)
+            }
+            convertedIds = ids
+        }
+
+        let result = try await apiClient.findScenes(page: stashPage, perPage: pageSize, filter: filter, ids: convertedIds)
         AppLogger.graphQLVideo.log(level: AppLogger.effectiveDebugLevel, "Got \(result.scenes.count, privacy: .public) scenes, total: \(result.count, privacy: .public)")
 
         // Read live (default on) so toggling the setting takes effect on next fetch.

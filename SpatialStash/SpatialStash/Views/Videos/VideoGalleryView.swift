@@ -76,9 +76,9 @@ struct VideoGalleryView: View {
                 PhotoLibraryStateView(
                     kind: .videos,
                     status: photosStatus,
-                    filterActive: appModel.currentVideoFilter.photosCriteria.hasActiveFilters,
+                    filterActive: appModel.currentVideoFilter.hasActivePhotoLibraryFilters,
                     onClearFilters: {
-                        appModel.currentVideoFilter.photosCriteria.clearFilters()
+                        appModel.currentVideoFilter.clearPhotoLibraryFilters()
                         Task { await appModel.loadInitialVideos() }
                     },
                     indexingMessage: PhotosLibraryIndexer.shared.blockingMessage

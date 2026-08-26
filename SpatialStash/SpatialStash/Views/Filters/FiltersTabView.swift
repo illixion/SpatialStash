@@ -112,6 +112,31 @@ struct FiltersTabView: View {
                     }
                 }
 
+                // Above the library-specific sections because it is the one
+                // dimension both libraries share: "what have I converted", which
+                // the app itself knows either way.
+                Section {
+                    Toggle("Converted to 3D Only",
+                           isOn: isVideoFilter
+                               ? $appModel.currentVideoFilter.showsOnlyConverted
+                               : $appModel.currentFilter.showsOnlyConverted)
+                } footer: {
+                    Text(isVideoFilter
+                         ? "Videos with a pre-processed depth track, ready to play in 3D immediately."
+                         : "Photos you have previously converted to spatial 3D.")
+                }
+
+                // At tab level rather than inside the library sections, because
+                // the converted flag above is shared and a Clear that left one
+                // filter standing would be lying.
+                if clearableFilters {
+                    Section {
+                        Button("Clear Filters", role: .destructive) {
+                            clearFilters(appModel: appModel)
+                        }
+                    }
+                }
+
                 if isPhotosLibrary {
                     PhotosFilterSections(
                         criteria: isVideoFilter
@@ -157,6 +182,26 @@ struct FiltersTabView: View {
             } message: {
                 Text("Enter a name for the current \(isVideoFilter ? "video" : "picture") filter configuration.")
             }
+        }
+    }
+
+    private var clearableFilters: Bool {
+        if isPhotosLibrary {
+            return isVideoFilter
+                ? appModel.currentVideoFilter.hasActivePhotoLibraryFilters
+                : appModel.currentFilter.hasActivePhotoLibraryFilters
+        }
+        return isVideoFilter
+            ? appModel.currentVideoFilter.hasActiveFilters
+            : appModel.currentFilter.hasActiveFilters
+    }
+
+    private func clearFilters(appModel: AppModel) {
+        switch (isPhotosLibrary, isVideoFilter) {
+        case (true, true):   appModel.currentVideoFilter.clearPhotoLibraryFilters()
+        case (true, false):  appModel.currentFilter.clearPhotoLibraryFilters()
+        case (false, true):  appModel.currentVideoFilter.clearFilters()
+        case (false, false): appModel.currentFilter.clearFilters()
         }
     }
 
@@ -422,11 +467,6 @@ struct PhotosFilterSections: View {
         }
 
         Section {
-            if criteria.hasActiveFilters {
-                Button("Clear Filters", role: .destructive) {
-                    criteria.clearFilters()
-                }
-            }
             Button("Rebuild Library Index") {
                 indexer.rebuild()
             }
