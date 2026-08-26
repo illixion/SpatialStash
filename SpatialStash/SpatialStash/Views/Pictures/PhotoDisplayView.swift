@@ -1005,12 +1005,10 @@ struct PhotoDisplayView: View {
     /// nudge looks symmetric over time and doesn't drift in one direction.
     private func nudgeWindowSizeForCalibration() {
         guard let windowScene = resolvedWindowScene else { return }
-        let base = viewerWindowSize ?? currentBounds
-        guard base.width > 2, base.height > 2 else { return }
         let delta: CGFloat = nudgeAlternator ? 1 : -1
         nudgeAlternator.toggle()
         Task { @MainActor in
-            await WindowSizeNudge.perform(on: windowScene, base: base, delta: delta)
+            await WindowSizeNudge.perform(on: windowScene, delta: delta)
         }
     }
 

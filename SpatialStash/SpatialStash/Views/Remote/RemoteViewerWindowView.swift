@@ -843,12 +843,10 @@ struct RemoteViewerWindowView: View {
 
     private func nudgeSceneForRenderRecovery() async {
         guard let scene = resolvedWindowScene else { return }
-        let base = scene.effectiveGeometry.coordinateSpace.bounds.size
-        guard Self.isPlausibleWindowSize(base) else { return }
         AppLogger.windowState.warning(
             "[Remote \(windowValue.id.uuidString, privacy: .public)] nudging scene for render recovery"
         )
-        await WindowSizeNudge.perform(on: scene, base: base, delta: 1)
+        await WindowSizeNudge.perform(on: scene, delta: 1)
     }
 
     private func setupModel() {
@@ -1022,17 +1020,10 @@ struct RemoteViewerWindowView: View {
 
     private func nudgeWindowSizeForCalibration() {
         guard let windowScene = resolvedWindowScene else { return }
-        // Nudge from the *scene's* own geometry, not the GeometryReader's
-        // content size. Feeding a content size back in as a scene size shrinks
-        // the window by the chrome insets on every crossfade — a ratchet that
-        // walks a 3D slideshow window down to nothing over a long session, and
-        // whose end state the size write-back then persists.
-        let base = windowScene.coordinateSpace.bounds.size
-        guard Self.isPlausibleWindowSize(base) else { return }
         let delta: CGFloat = nudgeAlternator ? 1 : -1
         nudgeAlternator.toggle()
         Task { @MainActor in
-            await WindowSizeNudge.perform(on: windowScene, base: base, delta: delta)
+            await WindowSizeNudge.perform(on: windowScene, delta: delta)
         }
     }
 

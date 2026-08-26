@@ -254,12 +254,10 @@ struct PhotoWindowView: View {
 
     private func nudgeSceneForRenderRecovery() async {
         guard let scene = sceneDelegate?.windowScene else { return }
-        let base = scene.effectiveGeometry.coordinateSpace.bounds.size
-        guard base.width > 2, base.height > 2 else { return }
         AppLogger.windowState.warning(
             "[Photo \(self.popOutWindowID?.uuidString ?? "pushed", privacy: .public)] nudging scene for render recovery"
         )
-        await WindowSizeNudge.perform(on: scene, base: base, delta: 1)
+        await WindowSizeNudge.perform(on: scene, delta: 1)
     }
 
 }
