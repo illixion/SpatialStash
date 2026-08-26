@@ -270,6 +270,10 @@ final class MetalImageRenderer: Sendable {
                 return nil
             }
 
+            // See createTexture(from url:) — only the thumbnail branch applies
+            // EXIF orientation for itself.
+            var orientationAlreadyApplied = false
+
             let cgImage: CGImage?
             if maxDimension <= 0 {
                 let fullOptions: [CFString: Any] = [
@@ -299,11 +303,15 @@ final class MetalImageRenderer: Sendable {
                         kCGImageSourceShouldCacheImmediately: true
                     ]
                     cgImage = CGImageSourceCreateThumbnailAtIndex(imageSource, 0, thumbOptions as CFDictionary)
+                    orientationAlreadyApplied = true
                 }
             }
 
             guard let cgImage else { return nil }
-            return UIImage(cgImage: cgImage)
+            let oriented = orientationAlreadyApplied
+                ? cgImage
+                : applyingOrientation(to: cgImage, from: imageSource)
+            return UIImage(cgImage: oriented)
         }
     }
 
@@ -323,6 +331,9 @@ final class MetalImageRenderer: Sendable {
             guard let imageSource = CGImageSourceCreateWithData(data as CFData, nil) else {
                 return nil
             }
+
+            // Set by the decode branch that applies the orientation itself.
+            var orientationAlreadyApplied = false
 
             let cgImage: CGImage?
             // Set when the memory-safety guard fires (oversized source, Dynamic
@@ -381,12 +392,52 @@ final class MetalImageRenderer: Sendable {
                         kCGImageSourceShouldCacheImmediately: true
                     ]
                     cgImage = CGImageSourceCreateThumbnailAtIndex(imageSource, 0, thumbOptions as CFDictionary)
+                    orientationAlreadyApplied = true
                 }
             }
 
             guard let cgImage else { return nil }
 
-            return createTexture(from: cgImage, useLossyCompression: useLossyCompression, autoCropTransparentEdges: autoCropTransparentEdges, forceStandardColorDepth: reduceDepth)
+            // Only the thumbnail branch applies EXIF orientation, via
+            // kCGImageSourceCreateThumbnailWithTransform. Both full-decode
+            // branches use CGImageSourceCreateImageAtIndex, which returns the
+            // stored pixels untransformed — so a rotated HEIC decoded sideways,
+            // and *changed* rotation whenever a resize crossed the downsample
+            // threshold, because that switches which branch runs.
+            let oriented = orientationAlreadyApplied
+                ? cgImage
+                : Self.applyingOrientation(to: cgImage, from: imageSource)
+
+            return createTexture(from: oriented, useLossyCompression: useLossyCompression, autoCropTransparentEdges: autoCropTransparentEdges, forceStandardColorDepth: reduceDepth)
         }
+    }
+
+    // MARK: - EXIF orientation
+
+    /// Applies the source's stored EXIF orientation to an untransformed decode.
+    ///
+    /// `CGImageSourceCreateImageAtIndex` hands back pixels exactly as stored and
+    /// ignores `kCGImagePropertyOrientation`. Cameras record a rotation flag
+    /// rather than rotating pixels, so anything shot in portrait decodes
+    /// sideways. Returns the image unchanged when there is nothing to do, which
+    /// is the common case.
+    static func applyingOrientation(to cgImage: CGImage, from source: CGImageSource) -> CGImage {
+        guard let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let raw = (properties[kCGImagePropertyOrientation] as? NSNumber)?.uint32Value,
+              let orientation = CGImagePropertyOrientation(rawValue: raw),
+              orientation != .up else {
+            return cgImage
+        }
+
+        // Routed through CIImage.oriented so the rotate/flip matrix is not
+        // hand-rolled per case. A context local to this call, because the shared
+        // CIContext serves the render path and is not free for a synchronous
+        // decode here.
+        let ci = CIImage(cgImage: cgImage).oriented(orientation)
+        let context = CIContext(options: [.useSoftwareRenderer: false])
+        guard let rendered = context.createCGImage(ci, from: ci.extent) else {
+            return cgImage
+        }
+        return rendered
     }
 }

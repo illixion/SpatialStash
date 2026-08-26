@@ -26,12 +26,17 @@ extension PhotoWindowModel {
     func fullResolutionImageForBackgroundRemoval() -> UIImage? {
         guard let imageData = currentImageData else { return nil }
         if let source = CGImageSourceCreateWithData(imageData as CFData, nil) {
+            // kCGImageSourceCreateThumbnailWithTransform is deliberately absent:
+            // it only affects the thumbnail API, so passing it to
+            // CGImageSourceCreateImageAtIndex did nothing and left the decode
+            // unrotated — while the UIImage(data:) fallback below DOES apply
+            // orientation, so this returned differently oriented images
+            // depending on which branch happened to succeed.
             let options: [CFString: Any] = [
                 kCGImageSourceShouldCacheImmediately: true,
-                kCGImageSourceCreateThumbnailWithTransform: true,
             ]
             if let cgImage = CGImageSourceCreateImageAtIndex(source, 0, options as CFDictionary) {
-                return UIImage(cgImage: cgImage)
+                return UIImage(cgImage: MetalImageRenderer.applyingOrientation(to: cgImage, from: source))
             }
         }
         return UIImage(data: imageData)
