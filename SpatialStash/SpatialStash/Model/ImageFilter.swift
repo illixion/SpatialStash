@@ -211,6 +211,20 @@ struct ImageFilterCriteria: Codable, Equatable {
     var selectedPerformers: [AutocompleteItem] = []
     var performerModifier: CriterionModifier = .includesAll
 
+    // Photo-library criteria. Read only when the library in force is Photos —
+    // the Stash fields above and these describe two different data models, and
+    // the Filters tab shows whichever set belongs to the library being browsed.
+    // Optional, not defaulted: see PhotosFilterCriteria for why that matters to
+    // saved views written before it existed.
+    var photos: PhotosFilterCriteria?
+
+    /// The photo-library half as a non-optional, so SwiftUI can bind straight
+    /// into its fields.
+    var photosCriteria: PhotosFilterCriteria {
+        get { photos ?? PhotosFilterCriteria() }
+        set { photos = newValue }
+    }
+
     // Sort options
     var sortField: ImageSortField = .createdAt
     var sortDirection: SortDirection = .descending
@@ -266,6 +280,7 @@ struct ImageFilterCriteria: Codable, Equatable {
         studioModifier = .includesAll
         selectedPerformers = []
         performerModifier = .includesAll
+        photos?.clearFilters()
     }
 
     /// Generate a new random seed for random sort
@@ -320,6 +335,20 @@ struct SceneFilterCriteria: Codable, Equatable {
     // Performers filter
     var selectedPerformers: [AutocompleteItem] = []
     var performerModifier: CriterionModifier = .includesAll
+
+    // Photo-library criteria. Read only when the library in force is Photos —
+    // the Stash fields above and these describe two different data models, and
+    // the Filters tab shows whichever set belongs to the library being browsed.
+    // Optional, not defaulted: see PhotosFilterCriteria for why that matters to
+    // saved views written before it existed.
+    var photos: PhotosFilterCriteria?
+
+    /// The photo-library half as a non-optional, so SwiftUI can bind straight
+    /// into its fields.
+    var photosCriteria: PhotosFilterCriteria {
+        get { photos ?? PhotosFilterCriteria() }
+        set { photos = newValue }
+    }
 
     // Sort options (scene-specific)
     var sortField: SceneSortField = .createdAt
@@ -376,6 +405,7 @@ struct SceneFilterCriteria: Codable, Equatable {
         studioModifier = .includesAll
         selectedPerformers = []
         performerModifier = .includesAll
+        photos?.clearFilters()
     }
 
     /// Generate a new random seed for random sort

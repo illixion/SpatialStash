@@ -5,6 +5,7 @@
  Includes navigation state, gallery management, and spatial image handling.
  */
 
+import Photos
 import RAVEMedia
 import os
 import RAVEUI
@@ -120,6 +121,10 @@ class AppModel {
     var availableTags: [AutocompleteItem] = []
     var availableStudios: [AutocompleteItem] = []
     var availablePerformers: [AutocompleteItem] = []
+    /// Albums offered by the Photos filter. Counted for the media type last
+    /// asked for, so switching between the Pictures and Videos filters reloads.
+    var availablePhotoAlbums: [PhotoAlbum] = []
+    var isLoadingPhotoAlbums: Bool = false
     var isLoadingGalleries: Bool = false
     var isLoadingTags: Bool = false
     var isLoadingStudios: Bool = false
@@ -1449,27 +1454,23 @@ class AppModel {
             )
             client = StashAPIClient(config: config)
             self.apiClient = client
-            if loadedLibrarySource == .photos {
-                self.imageSource = PhotosImageSource()
-                self.videoSource = PhotosVideoSource()
-            } else {
-                self.imageSource = GraphQLImageSource(apiClient: client)
-                self.videoSource = GraphQLVideoSource(apiClient: client)
-            }
             AppLogger.appModel.info("Init - Stash Server: \(loadedServerURL, privacy: .private), browsing \(loadedLibrarySource.rawValue, privacy: .public)")
         } else {
             // Fallback to example images if no server configured
             let defaultConfig = StashServerConfig.default
             client = StashAPIClient(config: defaultConfig)
             self.apiClient = client
-            // Regardless of authorization: an undecided or denied library still
-            // wants these sources behind it, because that is what tells the
-            // gallery which permission state to explain rather than rendering an
-            // unexplained empty grid.
-            self.imageSource = PhotosImageSource()
-            self.videoSource = PhotosVideoSource()
             AppLogger.appModel.info("Init - No Stash Server configured, using standalone sources")
         }
+
+        // `effectiveLibrarySource` cannot be read yet — self is not fully
+        // initialized — so the "no server means Photos" rule is restated here
+        // and nowhere else. The mapping from a choice to a pair of sources is
+        // `makeSources`, shared with `applyLibrarySource`.
+        let initialSource: LibrarySource = loadedServerURL.isEmpty ? .photos : loadedLibrarySource
+        let initialSources = AppModel.makeSources(for: initialSource, apiClient: client)
+        self.imageSource = initialSources.image
+        self.videoSource = initialSources.video
 
         // Now all stored properties are initialized, we can use self
         AppLogger.appModel.info("Init - Has API Key: \(!self.stashAPIKey.isEmpty, privacy: .public)")
@@ -2393,16 +2394,28 @@ class AppModel {
         hasStashServer ? librarySource : .photos
     }
 
+    /// The sources a library choice implies. The single place that mapping
+    /// lives, so init and a later switch cannot disagree about it.
+    ///
+    /// Photos sources are returned regardless of authorization: an undecided or
+    /// denied library still wants one behind it, because that is what tells the
+    /// gallery which permission state to explain rather than leaving an
+    /// unexplained empty grid.
+    static func makeSources(for source: LibrarySource,
+                            apiClient: StashAPIClient) -> (image: any ImageSource, video: any VideoSource) {
+        switch source {
+        case .photos:
+            return (PhotosImageSource(), PhotosVideoSource())
+        case .stash:
+            return (GraphQLImageSource(apiClient: apiClient), GraphQLVideoSource(apiClient: apiClient))
+        }
+    }
+
     /// Rebuild both sources for the current library choice and reload.
     func applyLibrarySource() {
-        switch effectiveLibrarySource {
-        case .photos:
-            imageSource = PhotosImageSource()
-            videoSource = PhotosVideoSource()
-        case .stash:
-            imageSource = GraphQLImageSource(apiClient: apiClient)
-            videoSource = GraphQLVideoSource(apiClient: apiClient)
-        }
+        let sources = AppModel.makeSources(for: effectiveLibrarySource, apiClient: apiClient)
+        imageSource = sources.image
+        videoSource = sources.video
         AppLogger.appModel.info("Library source → \(self.effectiveLibrarySource.rawValue, privacy: .public)")
         Task { await reloadAllGalleries() }
     }
@@ -2720,12 +2733,43 @@ class AppModel {
         }
     }
 
-    /// Load initial autocomplete data
-    func loadAutocompleteData() async {
-        await searchGalleries(query: "")
-        await searchTags(query: "")
-        await searchStudios(query: "")
-        await searchPerformers(query: "")
+    /// Load whatever the Filters tab needs to populate its pickers.
+    ///
+    /// Routed by library, because the two have nothing in common: Stash needs
+    /// tags, performers, studios and galleries fetched over GraphQL, and Photos
+    /// needs its album list read from PhotoKit. Calling the Stash searches while
+    /// browsing Photos was the original bug here — with no server configured
+    /// they each failed and logged, and the tab offered filter dimensions that
+    /// could not apply to what was on screen.
+    func loadAutocompleteData(isVideo: Bool) async {
+        switch effectiveLibrarySource {
+        case .photos:
+            await loadPhotoAlbums(isVideo: isVideo)
+        case .stash:
+            await searchGalleries(query: "")
+            await searchTags(query: "")
+            await searchStudios(query: "")
+            await searchPerformers(query: "")
+        }
+    }
+
+    /// Read the album list for one media type off the main actor.
+    ///
+    /// The catalog counts assets per album, so this is a fetch per album and
+    /// belongs on a background priority even though PhotoKit is fast about it.
+    func loadPhotoAlbums(isVideo: Bool) async {
+        guard PhotosAuthorization.isReadable else {
+            availablePhotoAlbums = []
+            return
+        }
+        isLoadingPhotoAlbums = true
+        let albums = await Task.detached(priority: .userInitiated) {
+            PhotosAlbumCatalog.albums(for: isVideo ? .video : .image)
+        }.value
+        availablePhotoAlbums = albums
+        isLoadingPhotoAlbums = false
+        AppLogger.appModel.log(level: AppLogger.effectiveDebugLevel,
+                               "Loaded \(albums.count, privacy: .public) photo albums")
     }
 
     // MARK: - Video Gallery Methods

@@ -44,8 +44,7 @@ struct VideoGalleryView: View {
     /// a limited grant containing videos must still render the grid.
     private var shouldShowLibraryState: Bool {
         guard isShowingPhotoLibrary else { return false }
-        let readable = photosStatus == .authorized || photosStatus == .limited
-        guard readable else { return true }
+        guard PhotosAuthorization.isReadable(photosStatus) else { return true }
         return appModel.galleryVideos.isEmpty && !appModel.isLoadingVideos
     }
 
@@ -74,7 +73,15 @@ struct VideoGalleryView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if shouldShowLibraryState {
-                PhotoLibraryStateView(kind: .videos, status: photosStatus) {
+                PhotoLibraryStateView(
+                    kind: .videos,
+                    status: photosStatus,
+                    filterActive: appModel.currentVideoFilter.photosCriteria.hasActiveFilters,
+                    onClearFilters: {
+                        appModel.currentVideoFilter.photosCriteria.clearFilters()
+                        Task { await appModel.loadInitialVideos() }
+                    }
+                ) {
                     Task {
                         await appModel.requestPhotosAccessAndReload()
                         photosStatus = PhotosAuthorization.status

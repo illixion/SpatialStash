@@ -67,7 +67,15 @@ struct GalleryGridView: View {
     private var content: some View {
         Group {
             if shouldShowLibraryState {
-                PhotoLibraryStateView(kind: .photos, status: photosStatus) {
+                PhotoLibraryStateView(
+                    kind: .photos,
+                    status: photosStatus,
+                    filterActive: appModel.currentFilter.photosCriteria.hasActiveFilters,
+                    onClearFilters: {
+                        appModel.currentFilter.photosCriteria.clearFilters()
+                        Task { await appModel.loadInitialGallery() }
+                    }
+                ) {
                     Task {
                         await appModel.requestPhotosAccessAndReload()
                         photosStatus = PhotosAuthorization.status
@@ -243,8 +251,7 @@ struct GalleryGridView: View {
     /// a perfectly good library behind a "no photos" message.
     private var shouldShowLibraryState: Bool {
         guard isShowingPhotoLibrary else { return false }
-        let readable = photosStatus == .authorized || photosStatus == .limited
-        guard readable else { return true }
+        guard PhotosAuthorization.isReadable(photosStatus) else { return true }
         return appModel.galleryImages.isEmpty && !appModel.isLoadingGallery
     }
 

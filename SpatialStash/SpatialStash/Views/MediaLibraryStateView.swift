@@ -12,6 +12,12 @@
    * Readable but empty — NO action, because there is nothing to fix. A
      `.limited` grant with nothing selected is a legitimate choice, not a
      failure, and offering a button there implies the user did something wrong.
+
+ A fourth state is not about permission at all: readable, non-empty, but the
+ active filter matches nothing. That one *does* carry an action, because the
+ cause is something the user set and can unset — and without it a filtered-out
+ library is indistinguishable from an empty one, which reads as the app having
+ lost the photos.
  */
 
 import Photos
@@ -60,6 +66,9 @@ struct PhotoLibraryStateView: View {
 
     let kind: MediaKind
     let status: PHAuthorizationStatus
+    /// Whether a photo-library filter is narrowing the results.
+    var filterActive: Bool = false
+    var onClearFilters: (() -> Void)?
     let onRequestAccess: () -> Void
 
     @Environment(\.openURL) private var openURL
@@ -85,7 +94,7 @@ struct PhotoLibraryStateView: View {
                     openURL(url)
                 }
             )
-        case .limited:
+        case .limited where !filterActive:
             // No action: the user chose a set, and it contains none of this
             // media kind. That is a valid outcome, so the message says where to
             // widen the selection without framing it as an error.
@@ -95,11 +104,21 @@ struct PhotoLibraryStateView: View {
                 message: "Spatial Stash can only see the items you selected, and none of them are \(kind.noun). Choose more in Settings › Privacy & Security › Photos."
             )
         default:
-            MediaLibraryMessageView(
-                icon: kind.emptyIcon,
-                title: "No \(kind == .photos ? "Photos" : "Videos") to Show",
-                message: "There are no \(kind.noun) in this library yet."
-            )
+            if filterActive {
+                MediaLibraryMessageView(
+                    icon: "line.3.horizontal.decrease.circle",
+                    title: "No Matches",
+                    message: "No \(kind.noun) in this library match the current filter.",
+                    actionTitle: onClearFilters == nil ? nil : "Clear Filters",
+                    action: onClearFilters
+                )
+            } else {
+                MediaLibraryMessageView(
+                    icon: kind.emptyIcon,
+                    title: "No \(kind == .photos ? "Photos" : "Videos") to Show",
+                    message: "There are no \(kind.noun) in this library yet."
+                )
+            }
         }
     }
 }

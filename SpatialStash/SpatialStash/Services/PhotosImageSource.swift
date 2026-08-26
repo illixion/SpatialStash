@@ -1,16 +1,17 @@
 /*
  Spatial Stash - Photos Image Source
 
- `ImageSource` over the device photo library, optionally scoped to one album.
+ `ImageSource` over the device photo library.
 
- Pagination reads out of a `PHFetchResult`, which is lazy — it holds indices,
- not assets — so a page is a slice, never a full-library materialization.
+ Only the mapping from `PHAsset` to `GalleryImage` lives here. Paging, the fetch
+ snapshot, the authorization guard and the seeded shuffle are `PhotosAssetPager`,
+ shared with `PhotosVideoSource`.
 
- The fetch result is snapshotted once per source instance rather than re-fetched
- per page. Paging over a live result would let an import or deletion shift every
- index mid-scroll, so the user would see duplicated or skipped photos with no
- way to tell why. A snapshot can go stale instead, which is the better failure:
- a deleted asset simply stops resolving and drops out at load time.
+ The `filter` argument arrives as Stash-shaped criteria, of which exactly one
+ part applies: `photosCriteria`. Album scoping rides in there rather than being
+ fixed at construction, so a filter change needs no new source — which is what
+ keeps the Filters tab's "apply on leave" working for Photos the same way it
+ works for Stash.
  */
 
 import Foundation
@@ -18,42 +19,18 @@ import Photos
 
 final class PhotosImageSource: ImageSource, @unchecked Sendable {
 
-    /// Album to read, or nil for the whole library.
-    private let collection: PHAssetCollection?
-    private let lock = NSLock()
-    private var cachedFetch: PHFetchResult<PHAsset>?
-
-    init(collection: PHAssetCollection? = nil) {
-        self.collection = collection
-    }
+    private let pager = PhotosAssetPager(mediaType: .image)
 
     func fetchImages(page: Int, pageSize: Int) async throws -> ImageFetchResult {
         try await fetchImages(page: page, pageSize: pageSize, filter: nil)
     }
 
     func fetchImages(page: Int, pageSize: Int, filter: ImageFilterCriteria?) async throws -> ImageFetchResult {
-        // Stash-shaped filters (tags, performers, ratings) have no analogue in
-        // the photo library, so they are ignored rather than half-applied.
-        // Returns empty rather than throwing, matching PhotosVideoSource. Not
-        // having been asked for permission yet is not an error, and the gallery
-        // explains the authorization state itself — surfacing it as a thrown
-        // "no images available" would log a fault for an ordinary state.
-        guard PhotosAuthorization.isReadable else {
-            return ImageFetchResult(images: [], hasMore: false, totalCount: 0)
-        }
-
-        let assets = fetchResult()
-        let total = assets.count
-        let start = page * pageSize
-        guard start < total else {
-            return ImageFetchResult(images: [], hasMore: false, totalCount: total)
-        }
-        let end = min(start + pageSize, total)
+        let result = pager.page(page, pageSize: pageSize, criteria: filter?.photosCriteria ?? PhotosFilterCriteria())
 
         var images: [GalleryImage] = []
-        images.reserveCapacity(end - start)
-        for index in start..<end {
-            let asset = assets.object(at: index)
+        images.reserveCapacity(result.assets.count)
+        for asset in result.assets {
             guard let url = PhotosAssetURL.url(forLocalIdentifier: asset.localIdentifier) else { continue }
             images.append(
                 GalleryImage(
@@ -67,28 +44,7 @@ final class PhotosImageSource: ImageSource, @unchecked Sendable {
             )
         }
 
-        return ImageFetchResult(images: images, hasMore: end < total, totalCount: total)
-    }
-
-    // MARK: - Fetch
-
-    private func fetchResult() -> PHFetchResult<PHAsset> {
-        lock.lock()
-        defer { lock.unlock() }
-        if let cachedFetch { return cachedFetch }
-
-        let options = PHFetchOptions()
-        options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
-        options.predicate = NSPredicate(format: "mediaType == %d", PHAssetMediaType.image.rawValue)
-
-        let result: PHFetchResult<PHAsset>
-        if let collection {
-            result = PHAsset.fetchAssets(in: collection, options: options)
-        } else {
-            result = PHAsset.fetchAssets(with: options)
-        }
-        cachedFetch = result
-        return result
+        return ImageFetchResult(images: images, hasMore: result.hasMore, totalCount: result.total)
     }
 }
 

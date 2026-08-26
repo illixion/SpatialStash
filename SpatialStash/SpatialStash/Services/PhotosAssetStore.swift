@@ -68,10 +68,16 @@ enum PhotosAuthorization {
 
     /// Whether the library can be read at all. `.limited` counts: the user
     /// picked a subset and the app must work with exactly that subset rather
-    /// than treating it as a denial.
+    /// than treating it as a denial. Getting that wrong hides a perfectly good
+    /// limited library behind a permission screen, so the test lives here once
+    /// and the views that hold a cached status call the overload.
+    static func isReadable(_ status: PHAuthorizationStatus) -> Bool {
+        status == .authorized || status == .limited
+    }
+
+    /// Whether the library can be read at all, asked of the live status.
     static var isReadable: Bool {
-        let status = self.status
-        return status == .authorized || status == .limited
+        isReadable(status)
     }
 
     /// Requests read access, prompting only if the user has not decided yet.

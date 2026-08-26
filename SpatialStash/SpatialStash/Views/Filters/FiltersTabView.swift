@@ -1,10 +1,23 @@
 /*
  Spatial Stash - Filters Tab View
 
- Filter and sort configuration with saved views management.
- Supports both image and video (scene) filtering based on the last viewed content tab.
+ Filter and sort configuration with saved views management, for images and
+ videos (scenes) alike, keyed off the last viewed content tab.
+
+ The sections shown depend on which library is in force, because the two
+ libraries answer entirely different questions. Stash knows about tags,
+ performers, studios, ratings and galleries; PhotoKit knows about albums,
+ favourites, media subtypes and dates, and about none of the former. Showing the
+ Stash sections while browsing Photos — which is what this tab used to do
+ unconditionally — offered filters that could not affect what was on screen, and
+ populated their pickers by querying a server that might not even be configured.
+
+ Saved views are shared by both: a view persists the whole criteria value, of
+ which the applicable half is read. So a view saved while browsing Photos still
+ carries any Stash criteria it was created alongside, and vice versa.
  */
 
+import Photos
 import SwiftUI
 
 struct FiltersTabView: View {
@@ -16,6 +29,12 @@ struct FiltersTabView: View {
     /// Whether we're filtering videos (scenes) or images
     private var isVideoFilter: Bool {
         windowModel.lastContentTab == .videos
+    }
+
+    /// Whether the photo library is what's being browsed, and so which set of
+    /// filter dimensions applies.
+    private var isPhotosLibrary: Bool {
+        appModel.effectiveLibrarySource == .photos
     }
 
     var body: some View {
@@ -30,6 +49,12 @@ struct FiltersTabView: View {
                             .foregroundColor(.accentColor)
                         Text("Filtering \(isVideoFilter ? "Videos" : "Pictures")")
                             .font(.headline)
+                        Spacer()
+                        Label(appModel.effectiveLibrarySource.displayName,
+                              systemImage: appModel.effectiveLibrarySource.symbolName)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .labelStyle(.titleAndIcon)
                     }
                 }
 
@@ -87,120 +112,20 @@ struct FiltersTabView: View {
                     }
                 }
 
-                // Sort Section - different fields for images vs videos
-                Section("Sort") {
-                    if isVideoFilter {
-                        Picker("Sort By", selection: $appModel.currentVideoFilter.sortField) {
-                            ForEach(SceneSortField.allCases) { field in
-                                Text(field.displayName).tag(field)
-                            }
-                        }
-                        .onChange(of: appModel.currentVideoFilter.sortField) { _, newValue in
-                            // Set random seed when Random is first selected to ensure consistent results
-                            // until user explicitly presses Shuffle
-                            if newValue == .random && appModel.currentVideoFilter.randomSeed == nil {
-                                appModel.currentVideoFilter.shuffleRandomSort()
-                            }
-                        }
-
-                        Picker("Direction", selection: $appModel.currentVideoFilter.sortDirection) {
-                            ForEach(SortDirection.allCases) { direction in
-                                Label(direction.displayName, systemImage: direction.icon)
-                                    .tag(direction)
-                            }
-                        }
-
-                        // Shuffle button for random sort
-                        if appModel.currentVideoFilter.sortField == .random {
-                            Button {
-                                appModel.currentVideoFilter.shuffleRandomSort()
-                            } label: {
-                                HStack {
-                                    Image(systemName: "shuffle")
-                                    Text("Shuffle")
-                                }
-                            }
-                        }
-                    } else {
-                        Picker("Sort By", selection: $appModel.currentFilter.sortField) {
-                            ForEach(ImageSortField.allCases) { field in
-                                Text(field.displayName).tag(field)
-                            }
-                        }
-                        .onChange(of: appModel.currentFilter.sortField) { _, newValue in
-                            // Set random seed when Random is first selected to ensure consistent results
-                            // until user explicitly presses Shuffle
-                            if newValue == .random && appModel.currentFilter.randomSeed == nil {
-                                appModel.currentFilter.shuffleRandomSort()
-                            }
-                        }
-
-                        Picker("Direction", selection: $appModel.currentFilter.sortDirection) {
-                            ForEach(SortDirection.allCases) { direction in
-                                Label(direction.displayName, systemImage: direction.icon)
-                                    .tag(direction)
-                            }
-                        }
-
-                        // Shuffle button for random sort
-                        if appModel.currentFilter.sortField == .random {
-                            Button {
-                                appModel.currentFilter.shuffleRandomSort()
-                            } label: {
-                                HStack {
-                                    Image(systemName: "shuffle")
-                                    Text("Shuffle")
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Search Section
-                Section("Search") {
-                    if isVideoFilter {
-                        TextField("Search titles...", text: $appModel.currentVideoFilter.searchTerm)
-                            .textFieldStyle(.plain)
-                            .autocorrectionDisabled()
-                    } else {
-                        TextField("Search titles...", text: $appModel.currentFilter.searchTerm)
-                            .textFieldStyle(.plain)
-                            .autocorrectionDisabled()
-                    }
-                }
-
-                // Galleries Filter
-                Section("Galleries") {
-                    GalleryFilterView(isVideoFilter: isVideoFilter)
-                }
-
-                // Tags Filter
-                Section("Tags") {
-                    TagFilterView(isVideoFilter: isVideoFilter)
-                }
-
-                // Studios Filter
-                Section("Studios") {
-                    StudioFilterView(isVideoFilter: isVideoFilter)
-                }
-
-                // Performers Filter
-                Section("Performers") {
-                    PerformerFilterView(isVideoFilter: isVideoFilter)
-                }
-
-                // O Count Filter
-                Section("O Count") {
-                    OCountFilterView(isVideoFilter: isVideoFilter)
-                }
-                // Rating Filter
-                Section("Rating") {
-                    RatingFilterView(isVideoFilter: isVideoFilter)
+                if isPhotosLibrary {
+                    PhotosFilterSections(
+                        criteria: isVideoFilter
+                            ? $appModel.currentVideoFilter.photosCriteria
+                            : $appModel.currentFilter.photosCriteria,
+                        isVideoFilter: isVideoFilter
+                    )
+                } else {
+                    stashSections(appModel: appModel)
                 }
             }
             .navigationTitle(isVideoFilter ? "Video Filters" : "Picture Filters")
             .task {
-                await appModel.loadAutocompleteData()
+                await appModel.loadAutocompleteData(isVideo: isVideoFilter)
             }
             .onDisappear {
                 // Always apply the current filter when leaving the filter tab
@@ -233,6 +158,277 @@ struct FiltersTabView: View {
                 Text("Enter a name for the current \(isVideoFilter ? "video" : "picture") filter configuration.")
             }
         }
+    }
+
+    // MARK: - Stash sections
+
+    @ViewBuilder
+    private func stashSections(appModel: AppModel) -> some View {
+        @Bindable var appModel = appModel
+
+        // Sort Section - different fields for images vs videos
+        Section("Sort") {
+            if isVideoFilter {
+                Picker("Sort By", selection: $appModel.currentVideoFilter.sortField) {
+                    ForEach(SceneSortField.allCases) { field in
+                        Text(field.displayName).tag(field)
+                    }
+                }
+                .onChange(of: appModel.currentVideoFilter.sortField) { _, newValue in
+                    // Set random seed when Random is first selected to ensure consistent results
+                    // until user explicitly presses Shuffle
+                    if newValue == .random && appModel.currentVideoFilter.randomSeed == nil {
+                        appModel.currentVideoFilter.shuffleRandomSort()
+                    }
+                }
+
+                Picker("Direction", selection: $appModel.currentVideoFilter.sortDirection) {
+                    ForEach(SortDirection.allCases) { direction in
+                        Label(direction.displayName, systemImage: direction.icon)
+                            .tag(direction)
+                    }
+                }
+
+                // Shuffle button for random sort
+                if appModel.currentVideoFilter.sortField == .random {
+                    Button {
+                        appModel.currentVideoFilter.shuffleRandomSort()
+                    } label: {
+                        HStack {
+                            Image(systemName: "shuffle")
+                            Text("Shuffle")
+                        }
+                    }
+                }
+            } else {
+                Picker("Sort By", selection: $appModel.currentFilter.sortField) {
+                    ForEach(ImageSortField.allCases) { field in
+                        Text(field.displayName).tag(field)
+                    }
+                }
+                .onChange(of: appModel.currentFilter.sortField) { _, newValue in
+                    // Set random seed when Random is first selected to ensure consistent results
+                    // until user explicitly presses Shuffle
+                    if newValue == .random && appModel.currentFilter.randomSeed == nil {
+                        appModel.currentFilter.shuffleRandomSort()
+                    }
+                }
+
+                Picker("Direction", selection: $appModel.currentFilter.sortDirection) {
+                    ForEach(SortDirection.allCases) { direction in
+                        Label(direction.displayName, systemImage: direction.icon)
+                            .tag(direction)
+                    }
+                }
+
+                // Shuffle button for random sort
+                if appModel.currentFilter.sortField == .random {
+                    Button {
+                        appModel.currentFilter.shuffleRandomSort()
+                    } label: {
+                        HStack {
+                            Image(systemName: "shuffle")
+                            Text("Shuffle")
+                        }
+                    }
+                }
+            }
+        }
+
+        // Search Section
+        Section("Search") {
+            if isVideoFilter {
+                TextField("Search titles...", text: $appModel.currentVideoFilter.searchTerm)
+                    .textFieldStyle(.plain)
+                    .autocorrectionDisabled()
+            } else {
+                TextField("Search titles...", text: $appModel.currentFilter.searchTerm)
+                    .textFieldStyle(.plain)
+                    .autocorrectionDisabled()
+            }
+        }
+
+        Section("Galleries") {
+            GalleryFilterView(isVideoFilter: isVideoFilter)
+        }
+
+        Section("Tags") {
+            TagFilterView(isVideoFilter: isVideoFilter)
+        }
+
+        Section("Studios") {
+            StudioFilterView(isVideoFilter: isVideoFilter)
+        }
+
+        Section("Performers") {
+            PerformerFilterView(isVideoFilter: isVideoFilter)
+        }
+
+        Section("O Count") {
+            OCountFilterView(isVideoFilter: isVideoFilter)
+        }
+
+        Section("Rating") {
+            RatingFilterView(isVideoFilter: isVideoFilter)
+        }
+    }
+}
+
+// MARK: - Photos Filter Sections
+
+/// The filter dimensions PhotoKit can actually answer.
+///
+/// Notably missing is a search field: `PHFetchOptions.predicate` accepts a fixed
+/// set of keys and filename is not one of them, so matching a name would mean
+/// asking `PHAssetResource` for every asset's filename across the whole library.
+/// See `PhotosFilterCriteria`.
+struct PhotosFilterSections: View {
+    @Environment(AppModel.self) private var appModel
+    @Binding var criteria: PhotosFilterCriteria
+    let isVideoFilter: Bool
+
+    private var mediaType: PHAssetMediaType { isVideoFilter ? .video : .image }
+    private var allLabel: String { isVideoFilter ? "All Videos" : "All Photos" }
+
+    var body: some View {
+        Section("Sort") {
+            Picker("Sort By", selection: $criteria.sortField) {
+                ForEach(PhotosSortField.allCases) { field in
+                    Text(field.displayName).tag(field)
+                }
+            }
+            .onChange(of: criteria.sortField) { _, newValue in
+                // Seed the shuffle on first selection so pagination agrees with
+                // itself until the user explicitly reshuffles.
+                if newValue == .random && criteria.randomSeed == nil {
+                    criteria.shuffleRandomSort()
+                }
+            }
+
+            if criteria.sortField.isDirectional {
+                Picker("Direction", selection: $criteria.sortDirection) {
+                    ForEach(SortDirection.allCases) { direction in
+                        Label(direction.displayName, systemImage: direction.icon)
+                            .tag(direction)
+                    }
+                }
+            }
+
+            if criteria.sortField == .random {
+                Button {
+                    criteria.shuffleRandomSort()
+                } label: {
+                    Label("Shuffle", systemImage: "shuffle")
+                }
+            }
+
+            if criteria.sortField == .albumOrder && criteria.albumId == nil {
+                Text("Album Order follows the library's own order until an album is selected.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+
+        Section {
+            Picker("Album", selection: $criteria.albumId) {
+                Text(allLabel).tag(String?.none)
+
+                // A saved view can name an album that has since been deleted or
+                // dropped from a `.limited` selection. Without a row for it the
+                // picker would render blank and silently reset on the next edit.
+                if let id = criteria.albumId,
+                   !appModel.availablePhotoAlbums.contains(where: { $0.id == id }) {
+                    Text(criteria.albumName ?? "Unavailable Album").tag(String?.some(id))
+                }
+
+                ForEach(appModel.availablePhotoAlbums) { album in
+                    Text("\(album.name) (\(album.count))").tag(String?.some(album.id))
+                }
+            }
+            .onChange(of: criteria.albumId) { _, id in
+                criteria.albumName = appModel.availablePhotoAlbums.first { $0.id == id }?.name
+            }
+
+            if appModel.isLoadingPhotoAlbums {
+                HStack(spacing: 12) {
+                    ProgressView()
+                    Text("Loading albums...")
+                        .foregroundStyle(.secondary)
+                }
+            } else if appModel.availablePhotoAlbums.isEmpty {
+                Text("No albums contain \(isVideoFilter ? "videos" : "photos").")
+                    .foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("Album")
+        } footer: {
+            Text("Your own albums first, then the system's smart albums. Counts are for \(isVideoFilter ? "videos" : "photos") only.")
+        }
+
+        Section("Kind") {
+            Picker("Kind", selection: $criteria.kind) {
+                ForEach(PhotosMediaKind.options(for: mediaType)) { kind in
+                    Text(kind.displayName).tag(kind)
+                }
+            }
+        }
+
+        Section("Favorites") {
+            Toggle("Favorites Only", isOn: $criteria.favoritesOnly)
+        }
+
+        Section("Date") {
+            Toggle("Filter by Date", isOn: $criteria.dateRangeEnabled)
+                .onChange(of: criteria.dateRangeEnabled) { _, enabled in
+                    // Seed a usable range on first enable, so the pickers do not
+                    // open on a range that matches everything or nothing.
+                    guard enabled else { return }
+                    if criteria.startDate == nil {
+                        criteria.startDate = Calendar.current.date(byAdding: .year, value: -1, to: Date())
+                    }
+                    if criteria.endDate == nil {
+                        criteria.endDate = Self.endOfDay(for: Date())
+                    }
+                }
+
+            if criteria.dateRangeEnabled {
+                DatePicker("From", selection: startBinding, displayedComponents: .date)
+                DatePicker("To", selection: endBinding, displayedComponents: .date)
+            }
+        }
+
+        if criteria.hasActiveFilters {
+            Section {
+                Button("Clear Filters", role: .destructive) {
+                    criteria.clearFilters()
+                }
+            }
+        }
+    }
+
+    // MARK: - Date bindings
+
+    private var startBinding: Binding<Date> {
+        Binding(
+            get: { criteria.startDate ?? Calendar.current.date(byAdding: .year, value: -1, to: Date()) ?? Date() },
+            set: { criteria.startDate = Calendar.current.startOfDay(for: $0) }
+        )
+    }
+
+    /// Writes the *end* of the chosen day. A date picker yields midnight, and
+    /// comparing `creationDate <= midnight` would exclude everything shot on the
+    /// day the user just asked to include.
+    private var endBinding: Binding<Date> {
+        Binding(
+            get: { criteria.endDate ?? Self.endOfDay(for: Date()) },
+            set: { criteria.endDate = Self.endOfDay(for: $0) }
+        )
+    }
+
+    private static func endOfDay(for date: Date) -> Date {
+        let calendar = Calendar.current
+        let start = calendar.startOfDay(for: date)
+        return calendar.date(byAdding: DateComponents(day: 1, second: -1), to: start) ?? date
     }
 }
 
