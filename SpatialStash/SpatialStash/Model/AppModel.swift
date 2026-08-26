@@ -1681,7 +1681,7 @@ class AppModel {
     }
 
     func createSavedView(name: String) {
-        let view = SavedView(name: name, filter: currentFilter)
+        let view = SavedView(name: name, filter: currentFilter, library: effectiveLibrarySource)
         savedViews.append(view)
         saveSavedViews()
     }
@@ -1718,9 +1718,25 @@ class AppModel {
         }
     }
 
+    /// Saved views describing the library currently being browsed.
+    ///
+    /// A Stash view and a Photos view have nothing to say to each other — the
+    /// criteria they carry describe different data models — so each library
+    /// lists only its own, and each gets its own default.
+    var visibleSavedViews: [SavedView] {
+        let library = effectiveLibrarySource
+        return savedViews.filter { $0.library == library }
+    }
+
+    var visibleSavedVideoViews: [SavedVideoView] {
+        let library = effectiveLibrarySource
+        return savedVideoViews.filter { $0.library == library }
+    }
+
     func setDefaultView(_ view: SavedView) {
-        // Clear any existing default
-        for index in savedViews.indices {
+        // Scoped to this view's own library, so the other library keeps its
+        // default rather than silently losing it.
+        for index in savedViews.indices where savedViews[index].library == view.library {
             savedViews[index].isDefault = false
         }
         // Set the new default
@@ -1731,7 +1747,8 @@ class AppModel {
     }
 
     func clearDefaultView() {
-        for index in savedViews.indices {
+        let library = effectiveLibrarySource
+        for index in savedViews.indices where savedViews[index].library == library {
             savedViews[index].isDefault = false
         }
         saveSavedViews()
@@ -1758,7 +1775,7 @@ class AppModel {
     }
 
     func createSavedVideoView(name: String) {
-        let view = SavedVideoView(name: name, filter: currentVideoFilter)
+        let view = SavedVideoView(name: name, filter: currentVideoFilter, library: effectiveLibrarySource)
         savedVideoViews.append(view)
         saveSavedVideoViews()
     }
@@ -1796,8 +1813,7 @@ class AppModel {
     }
 
     func setDefaultVideoView(_ view: SavedVideoView) {
-        // Clear any existing default
-        for index in savedVideoViews.indices {
+        for index in savedVideoViews.indices where savedVideoViews[index].library == view.library {
             savedVideoViews[index].isDefault = false
         }
         // Set the new default
@@ -1808,7 +1824,8 @@ class AppModel {
     }
 
     func clearDefaultVideoView() {
-        for index in savedVideoViews.indices {
+        let library = effectiveLibrarySource
+        for index in savedVideoViews.indices where savedVideoViews[index].library == library {
             savedVideoViews[index].isDefault = false
         }
         saveSavedVideoViews()
@@ -2112,7 +2129,7 @@ class AppModel {
 
     private func applyDefaultViewsOnStartup() {
         // Apply default image view if one exists
-        if let defaultImageView = savedViews.first(where: { $0.isDefault }) {
+        if let defaultImageView = visibleSavedViews.first(where: { $0.isDefault }) {
             currentFilter = defaultImageView.filter
             normalizeEmptyMultiSelectModifiers(&currentFilter)
             selectedSavedView = defaultImageView
@@ -2120,7 +2137,7 @@ class AppModel {
         }
 
         // Apply default video view if one exists
-        if let defaultVideoView = savedVideoViews.first(where: { $0.isDefault }) {
+        if let defaultVideoView = visibleSavedVideoViews.first(where: { $0.isDefault }) {
             currentVideoFilter = defaultVideoView.filter
             normalizeEmptyMultiSelectModifiers(&currentVideoFilter)
             selectedSavedVideoView = defaultVideoView
@@ -2430,6 +2447,16 @@ class AppModel {
 
     /// Rebuild both sources for the current library choice and reload.
     func applyLibrarySource() {
+        // A view selected under the other library is not describing what is on
+        // screen any more, so the chip must stop claiming it is active. The
+        // criteria are left alone: only the applicable half is ever read.
+        if let selected = selectedSavedView, selected.library != effectiveLibrarySource {
+            selectedSavedView = nil
+        }
+        if let selected = selectedSavedVideoView, selected.library != effectiveLibrarySource {
+            selectedSavedVideoView = nil
+        }
+
         if effectiveLibrarySource == .photos {
             // Idempotent, and cheap when the index is already current: one
             // token-driven sync that usually finds nothing.
@@ -2506,7 +2533,12 @@ class AppModel {
                 return
             }
             AppLogger.appModel.log(level: AppLogger.effectiveDebugLevel, "loadNextPage got \(result.images.count, privacy: .public) images, hasMore: \(result.hasMore, privacy: .public)")
-            galleryImages.append(contentsOf: result.images)
+            // De-duplicated on append. Item ids are derived from identity now,
+            // so a repeat is a genuine duplicate id in the ForEach rather than
+            // two harmless instances of the same asset — and a page can repeat
+            // one if the library shifts between two page fetches.
+            let seen = Set(galleryImages.map(\.identity))
+            galleryImages.append(contentsOf: result.images.filter { !seen.contains($0.identity) })
             hasMorePages = result.hasMore
             currentPage += 1
         } catch {
@@ -2853,7 +2885,9 @@ class AppModel {
                 return
             }
             AppLogger.appModel.log(level: AppLogger.effectiveDebugLevel, "loadNextVideoPage got \(result.videos.count, privacy: .public) videos, hasMore: \(result.hasMore, privacy: .public)")
-            galleryVideos.append(contentsOf: result.videos)
+            // See loadNextPage: derived ids make a repeated asset a duplicate id.
+            let seen = Set(galleryVideos.map(\.identity))
+            galleryVideos.append(contentsOf: result.videos.filter { !seen.contains($0.identity) })
             hasMoreVideoPages = result.hasMore
             currentVideoPage += 1
         } catch {

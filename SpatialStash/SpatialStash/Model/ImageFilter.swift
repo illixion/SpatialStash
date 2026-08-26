@@ -435,10 +435,27 @@ struct SavedView: Identifiable, Codable, Equatable {
     var updatedAt: Date
     var isDefault: Bool
 
-    init(id: UUID = UUID(), name: String, filter: ImageFilterCriteria = ImageFilterCriteria(), isDefault: Bool = false) {
+    /// Which library this view describes, as a raw string.
+    ///
+    /// Stored raw and read through `library` so a value written by a future
+    /// version decodes to the default instead of throwing — `decodeIfPresent`
+    /// on a `RawRepresentable` throws for a present-but-unknown case, and
+    /// `loadSavedViews` decodes the whole array under one `try?`, so one bad
+    /// element would wipe every saved view.
+    ///
+    /// Absent means Stash: every view that predates this was written when Stash
+    /// was the only library there was.
+    var libraryRawValue: String?
+
+    var library: LibrarySource {
+        libraryRawValue.flatMap(LibrarySource.init(rawValue:)) ?? .stash
+    }
+
+    init(id: UUID = UUID(), name: String, filter: ImageFilterCriteria = ImageFilterCriteria(), isDefault: Bool = false, library: LibrarySource = .stash) {
         self.id = id
         self.name = name
         self.filter = filter
+        self.libraryRawValue = library.rawValue
         self.createdAt = Date()
         self.updatedAt = Date()
         self.isDefault = isDefault
@@ -461,10 +478,27 @@ struct SavedVideoView: Identifiable, Codable, Equatable {
     var updatedAt: Date
     var isDefault: Bool
 
-    init(id: UUID = UUID(), name: String, filter: SceneFilterCriteria = SceneFilterCriteria(), isDefault: Bool = false) {
+    /// Which library this view describes, as a raw string.
+    ///
+    /// Stored raw and read through `library` so a value written by a future
+    /// version decodes to the default instead of throwing — `decodeIfPresent`
+    /// on a `RawRepresentable` throws for a present-but-unknown case, and
+    /// `loadSavedViews` decodes the whole array under one `try?`, so one bad
+    /// element would wipe every saved view.
+    ///
+    /// Absent means Stash: every view that predates this was written when Stash
+    /// was the only library there was.
+    var libraryRawValue: String?
+
+    var library: LibrarySource {
+        libraryRawValue.flatMap(LibrarySource.init(rawValue:)) ?? .stash
+    }
+
+    init(id: UUID = UUID(), name: String, filter: SceneFilterCriteria = SceneFilterCriteria(), isDefault: Bool = false, library: LibrarySource = .stash) {
         self.id = id
         self.name = name
         self.filter = filter
+        self.libraryRawValue = library.rawValue
         self.createdAt = Date()
         self.updatedAt = Date()
         self.isDefault = isDefault

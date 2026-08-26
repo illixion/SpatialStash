@@ -66,11 +66,11 @@ struct FiltersTabView: View {
                     }
 
                     if isVideoFilter {
-                        if appModel.savedVideoViews.isEmpty {
+                        if appModel.visibleSavedVideoViews.isEmpty {
                             Text("No saved views")
                                 .foregroundColor(.secondary)
                         } else {
-                            ForEach(appModel.savedVideoViews) { view in
+                            ForEach(appModel.visibleSavedVideoViews) { view in
                                 SavedVideoViewRow(
                                     view: view,
                                     isSelected: appModel.selectedSavedVideoView?.id == view.id,
@@ -83,16 +83,16 @@ struct FiltersTabView: View {
                             }
                             .onDelete { indexSet in
                                 for index in indexSet {
-                                    appModel.deleteSavedVideoView(appModel.savedVideoViews[index])
+                                    appModel.deleteSavedVideoView(appModel.visibleSavedVideoViews[index])
                                 }
                             }
                         }
                     } else {
-                        if appModel.savedViews.isEmpty {
+                        if appModel.visibleSavedViews.isEmpty {
                             Text("No saved views")
                                 .foregroundColor(.secondary)
                         } else {
-                            ForEach(appModel.savedViews) { view in
+                            ForEach(appModel.visibleSavedViews) { view in
                                 SavedViewRow(
                                     view: view,
                                     isSelected: appModel.selectedSavedView?.id == view.id,
@@ -105,7 +105,7 @@ struct FiltersTabView: View {
                             }
                             .onDelete { indexSet in
                                 for index in indexSet {
-                                    appModel.deleteSavedView(appModel.savedViews[index])
+                                    appModel.deleteSavedView(appModel.visibleSavedViews[index])
                                 }
                             }
                         }
