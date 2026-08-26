@@ -45,6 +45,7 @@ struct SettingsBackup: Codable {
     var showDebugConsole: Bool?
     var respectMemoryAlerts: Bool?
     var enableRemoteViewer: Bool?
+    var librarySource: String?
 
     // Complex Codable settings
     var savedViews: [SavedView]?

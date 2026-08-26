@@ -965,6 +965,18 @@ class AppModel {
     }
 
     /// When true, the Remote tab appears in the tab bar ornament
+    /// Which library the Pictures and Videos tabs browse.
+    ///
+    /// Only consulted when a Stash server is configured — with no server there
+    /// is nothing to choose between, and the photo library is the only source.
+    var librarySource: LibrarySource {
+        didSet {
+            guard librarySource != oldValue else { return }
+            UserDefaults.standard.set(librarySource.rawValue, forKey: "librarySource")
+            applyLibrarySource()
+        }
+    }
+
     var enableRemoteViewer: Bool {
         didSet {
             if enableRemoteViewer != oldValue {
@@ -1352,6 +1364,10 @@ class AppModel {
             : true
 
         // Load remote viewer (default: false)
+        // Defaults to .stash so an existing install with a server keeps showing
+        // exactly what it showed before this setting existed.
+        let loadedLibrarySource = UserDefaults.standard.string(forKey: "librarySource")
+            .flatMap(LibrarySource.init(rawValue:)) ?? .stash
         let loadedEnableRemoteViewer = UserDefaults.standard.bool(forKey: "enableRemoteViewer")
 
         // Load debug console visibility (default: false)
@@ -1415,6 +1431,7 @@ class AppModel {
         self.autoRestoreSpatial3D = loadedAutoRestoreSpatial3D
         self.fullyImmersive3DMode = loadedFullyImmersive3DMode
         self.defaultImageViewingMode = loadedDefaultImageViewingMode
+        self.librarySource = loadedLibrarySource
         self.enableRemoteViewer = loadedEnableRemoteViewer
         self.showDebugConsole = loadedShowDebugConsole
         self.respectMemoryAlerts = loadedRespectMemoryAlerts
@@ -1432,9 +1449,14 @@ class AppModel {
             )
             client = StashAPIClient(config: config)
             self.apiClient = client
-            self.imageSource = GraphQLImageSource(apiClient: client)
-            self.videoSource = GraphQLVideoSource(apiClient: client)
-            AppLogger.appModel.info("Init - Using Stash Server: \(loadedServerURL, privacy: .private)")
+            if loadedLibrarySource == .photos {
+                self.imageSource = PhotosImageSource()
+                self.videoSource = PhotosVideoSource()
+            } else {
+                self.imageSource = GraphQLImageSource(apiClient: client)
+                self.videoSource = GraphQLVideoSource(apiClient: client)
+            }
+            AppLogger.appModel.info("Init - Stash Server: \(loadedServerURL, privacy: .private), browsing \(loadedLibrarySource.rawValue, privacy: .public)")
         } else {
             // Fallback to example images if no server configured
             let defaultConfig = StashServerConfig.default
@@ -2149,6 +2171,7 @@ class AppModel {
             showDebugConsole: showDebugConsole,
             respectMemoryAlerts: respectMemoryAlerts,
             enableRemoteViewer: enableRemoteViewer,
+            librarySource: librarySource.rawValue,
             savedViews: savedViews,
             savedVideoViews: savedVideoViews,
             savedWindowGroups: savedWindowGroups,
@@ -2215,6 +2238,7 @@ class AppModel {
         if let v = backup.showDebugConsole { showDebugConsole = v }
         if let v = backup.respectMemoryAlerts { respectMemoryAlerts = v }
         if let v = backup.enableRemoteViewer { enableRemoteViewer = v }
+        if let v = backup.librarySource.flatMap(LibrarySource.init(rawValue:)) { librarySource = v }
         if let raw = backup.thumbnailStyle, let style = ThumbnailStyle(rawValue: raw) { thumbnailStyle = style }
         if let v = backup.reduceMotion { reduceMotion = v }
         if let raw = backup.defaultImageViewingMode, let mode = DefaultImageViewingMode(rawValue: raw) { defaultImageViewingMode = mode }
@@ -2331,20 +2355,16 @@ class AppModel {
             AppLogger.appModel.info("Updating API client with URL: \(url, privacy: .private), hasAPIKey: \(hasKey, privacy: .public)")
             Task {
                 await apiClient.updateConfig(config)
-                self.imageSource = GraphQLImageSource(apiClient: self.apiClient)
-                // The video source was previously left alone here, so clearing
-                // a server URL kept serving videos from the old GraphQL source.
-                self.videoSource = GraphQLVideoSource(apiClient: self.apiClient)
-                await self.reloadAllGalleries()
+                // Routed through applyLibrarySource so a server edit respects
+                // the current library choice. The video source was also
+                // previously left alone here, so clearing a server URL kept
+                // serving videos from the old GraphQL source.
+                self.applyLibrarySource()
             }
         } else {
             // No server URL — fall back to the device photo library.
-            AppLogger.appModel.info("No Stash Server URL configured, using standalone sources")
-            self.imageSource = Self.makeStandaloneImageSource()
-            self.videoSource = Self.makeStandaloneVideoSource()
-            Task {
-                await self.reloadAllGalleries()
-            }
+            AppLogger.appModel.info("No Stash Server URL configured, using the photo library")
+            applyLibrarySource()
         }
     }
 
@@ -2357,6 +2377,32 @@ class AppModel {
     /// wants a PhotosImageSource behind it, because that is what tells the
     /// gallery to explain the permission state instead of rendering an
     /// unexplained empty grid.
+    /// Whether a Stash server is configured, and so whether there is a choice
+    /// of library to make at all.
+    var hasStashServer: Bool {
+        !stashServerURL.isEmpty
+    }
+
+    /// The library actually in force: the stored choice when a server exists,
+    /// and always Photos when one does not.
+    var effectiveLibrarySource: LibrarySource {
+        hasStashServer ? librarySource : .photos
+    }
+
+    /// Rebuild both sources for the current library choice and reload.
+    func applyLibrarySource() {
+        switch effectiveLibrarySource {
+        case .photos:
+            imageSource = PhotosImageSource()
+            videoSource = PhotosVideoSource()
+        case .stash:
+            imageSource = GraphQLImageSource(apiClient: apiClient)
+            videoSource = GraphQLVideoSource(apiClient: apiClient)
+        }
+        AppLogger.appModel.info("Library source → \(self.effectiveLibrarySource.rawValue, privacy: .public)")
+        Task { await reloadAllGalleries() }
+    }
+
     static func makeStandaloneImageSource() -> any ImageSource {
         PhotosImageSource()
     }

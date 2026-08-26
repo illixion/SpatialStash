@@ -35,11 +35,23 @@ struct TabBarOrnament: View {
             // plain selection binding cannot see.
             onSelect: select
         ) {
-            // Slideshow of what's on screen. Separated from the tabs because it
-            // acts on the current tab rather than navigating, and only present
-            // on the tabs that show media.
-            if let launch = slideshowLaunch {
+            // Actions, not navigation: both act on the current tab rather than
+            // moving between tabs, so they sit past a divider.
+            if showsLibraryToggle || slideshowLaunch != nil {
                 RAVETabBarDivider()
+            }
+            // Left of the slideshow button: which library the media tabs show.
+            // Only meaningful with a server configured — without one there is
+            // nothing to switch between.
+            if showsLibraryToggle {
+                let current = appModel.effectiveLibrarySource
+                RAVETabBarActionButton(
+                    systemImage: current.symbolName,
+                    help: "Showing \(current.displayName) — switch to \(current.toggled.displayName)",
+                    action: { appModel.librarySource = current.toggled }
+                )
+            }
+            if let launch = slideshowLaunch {
                 RAVETabBarActionButton(
                     systemImage: "play.fill",
                     help: launch.help,
@@ -48,6 +60,17 @@ struct TabBarOrnament: View {
             }
         }
         .animation(.smooth(duration: 0.22), value: slideshowLaunch?.help)
+        .animation(.smooth(duration: 0.22), value: appModel.effectiveLibrarySource)
+    }
+
+    /// Whether to offer the library switch: only with a server configured (so
+    /// there are two libraries), and only on the tabs that show one.
+    private var showsLibraryToggle: Bool {
+        guard appModel.hasStashServer else { return false }
+        switch windowModel.selectedTab {
+        case .pictures, .videos: return true
+        default: return false
+        }
     }
 
     /// What the play button would start, or nil when the current tab isn't
