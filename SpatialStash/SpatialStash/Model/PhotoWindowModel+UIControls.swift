@@ -21,14 +21,15 @@ extension PhotoWindowModel {
         // Prefer server filename (has correct extension), fall back to title
         let shareName = image.fileName ?? image.title
 
-        if url.isFileURL {
-            presentShareSheet(url: ShareSheetHelper.prepareShareFile(from: url, title: shareName, originalURL: url))
-            return
-        }
-
-        // Remote URL — check disk cache first, otherwise download
-        if let cachedURL = await DiskImageCache.shared.cachedFileURL(for: url) {
-            presentShareSheet(url: ShareSheetHelper.prepareShareFile(from: cachedURL, title: shareName, originalURL: url))
+        // Anything already backed by a local file — a local file, a Photos
+        // asset, or a cached remote image — shares straight from it.
+        //
+        // A Photos asset needs this explicitly: loadRawData below resolves the
+        // asset internally but returns its bytes without populating
+        // DiskImageCache, so the lookup after it would find nothing and the
+        // share would silently do nothing at all.
+        if let localURL = await Self.localFileURL(for: url) {
+            presentShareSheet(url: ShareSheetHelper.prepareShareFile(from: localURL, title: shareName, originalURL: url))
             return
         }
 

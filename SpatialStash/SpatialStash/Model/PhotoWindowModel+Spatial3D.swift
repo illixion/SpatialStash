@@ -217,13 +217,10 @@ extension PhotoWindowModel {
         }
 
         do {
-            // Prefer cached file URL to avoid network when reopening
-            let sourceURL: URL
-            if !imageURL.isFileURL, let cached = await DiskImageCache.shared.cachedFileURL(for: imageURL) {
-                sourceURL = cached
-            } else {
-                sourceURL = imageURL
-            }
+            // Prefer a local file to avoid network when reopening, and because
+            // ImagePresentationComponent and CGImageSource can only open one.
+            // Falling back to imageURL preserves the remote-URL path.
+            let sourceURL = await Self.localFileURL(for: imageURL) ?? imageURL
 
             // The spatial 3D source resolution is independent of the 2D display
             // resolution: the 2D cap governs the on-screen MTLTexture, while

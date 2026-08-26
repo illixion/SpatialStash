@@ -182,13 +182,8 @@ struct Spatial3DImmersiveView: View {
 
     @MainActor
     private func buildFallbackEntity() async -> Entity? {
-        let sourceURL: URL
-        if value.imageURL.isFileURL {
-            sourceURL = value.imageURL
-        } else if let cached = await DiskImageCache.shared.cachedFileURL(for: value.imageURL) {
-            sourceURL = cached
-        } else {
-            AppLogger.photoWindow.warning("Spatial3DImmersiveView: no cached file for \(value.imageURL.absoluteString, privacy: .public)")
+        guard let sourceURL = await PhotoWindowModel.localFileURL(for: value.imageURL) else {
+            AppLogger.photoWindow.warning("Spatial3DImmersiveView: no local file for \(value.imageURL.absoluteString, privacy: .public)")
             return nil
         }
 

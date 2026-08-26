@@ -1037,17 +1037,28 @@ class PhotoWindowModel {
 
     /// Resolve the file URL for the current image (disk cache or original file URL)
     func resolveSourceFileURL() async -> URL? {
-        if imageURL.isFileURL {
-            return imageURL
+        await Self.localFileURL(for: imageURL)
+    }
+
+    /// The local file backing `url`, whatever kind of URL it is.
+    ///
+    /// The single answer to "give me something CGImageSource, AVFoundation or
+    /// ImagePresentationComponent can open". Three call sites previously each
+    /// had their own version handling only file URLs and the disk cache, which
+    /// is exactly why a `photos-asset:///` URL reached CGImageSource and failed
+    /// with "The file 001 couldn't be opened" — the schemes those copies did not
+    /// know about fell through to being used verbatim.
+    ///
+    /// Returns nil when no local file can be produced; callers decide whether
+    /// that is fatal or worth a download attempt.
+    static func localFileURL(for url: URL) async -> URL? {
+        if url.isFileURL { return url }
+        // A Photos asset has no URL of its own — it is addressed by a synthetic
+        // one and materialized on first use.
+        if PhotosAssetURL.isPhotosAsset(url) {
+            return await PhotosAssetStore.shared.fileURL(for: url)
         }
-        // A Photos asset has no URL of its own, so it is addressed by a
-        // synthetic photos-asset:/// one and materialized to a container file
-        // on first use. Resolving here covers the whole texture path, which is
-        // synchronous below this point and so cannot do it itself.
-        if PhotosAssetURL.isPhotosAsset(imageURL) {
-            return await PhotosAssetStore.shared.fileURL(for: imageURL)
-        }
-        return await DiskImageCache.shared.cachedFileURL(for: imageURL)
+        return await DiskImageCache.shared.cachedFileURL(for: url)
     }
 
     // MARK: - Interaction Tracking

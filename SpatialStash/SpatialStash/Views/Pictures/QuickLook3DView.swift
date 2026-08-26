@@ -419,10 +419,8 @@ struct QuickLook3DView: View {
         // Stage 2: full source file.
         let sourceURL = image.fullSizeURL
         let resolved: URL
-        if sourceURL.isFileURL {
-            resolved = sourceURL
-        } else if let cached = await DiskImageCache.shared.cachedFileURL(for: sourceURL) {
-            resolved = cached
+        if let local = await PhotoWindowModel.localFileURL(for: sourceURL) {
+            resolved = local
         } else {
             do {
                 guard let data = try await ImageLoader.shared.loadRawData(from: sourceURL) else {
