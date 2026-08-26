@@ -25,8 +25,9 @@ struct FilterOption: Identifiable, Hashable {
     let name: String
     /// Trailing detail, typically a count.
     let detail: String?
-    /// A Photos local identifier to draw a thumbnail from, when there is one.
-    let thumbnailAssetId: String?
+    /// A cover to draw, when the dimension has one. Any URL
+    /// `ImageLoader.loadThumbnail(from:)` resolves.
+    let thumbnailURL: URL?
     /// Sorted after the primary group and separated from it — user albums come
     /// before the system's smart albums.
     let isSecondary: Bool
@@ -34,12 +35,12 @@ struct FilterOption: Identifiable, Hashable {
     init(id: String,
          name: String,
          detail: String? = nil,
-         thumbnailAssetId: String? = nil,
+         thumbnailURL: URL? = nil,
          isSecondary: Bool = false) {
         self.id = id
         self.name = name
         self.detail = detail
-        self.thumbnailAssetId = thumbnailAssetId
+        self.thumbnailURL = thumbnailURL
         self.isSecondary = isSecondary
     }
 }
@@ -64,9 +65,9 @@ struct MediaMultiSelectSection: View {
         return options.filter { $0.name.localizedCaseInsensitiveContains(trimmed) }
     }
 
-    private var thumbnailsById: [String: String] {
+    private var coversById: [String: URL] {
         Dictionary(options.compactMap { option in
-            option.thumbnailAssetId.map { (option.id, $0) }
+            option.thumbnailURL.map { (option.id, $0) }
         }, uniquingKeysWith: { first, _ in first })
     }
 
@@ -76,7 +77,7 @@ struct MediaMultiSelectSection: View {
                 FlowLayout(spacing: 8) {
                     ForEach(selection) { item in
                         MediaFilterChip(name: item.name,
-                                        thumbnailAssetId: thumbnailsById[item.id]) {
+                                        coverURL: coversById[item.id]) {
                             selection.removeAll { $0.id == item.id }
                         }
                     }
@@ -140,7 +141,7 @@ struct MediaMultiSelectSection: View {
             }
         } label: {
             HStack(spacing: 12) {
-                MediaFilterThumbnail(assetId: option.thumbnailAssetId, side: 32)
+                MediaThumbnail(url: option.thumbnailURL, side: 32)
                 Text(option.name)
                     .foregroundStyle(option.isSecondary ? .secondary : .primary)
                 Spacer()
@@ -173,12 +174,12 @@ struct MediaMultiSelectSection: View {
 
 struct MediaFilterChip: View {
     let name: String
-    var thumbnailAssetId: String?
+    var coverURL: URL?
     let onRemove: () -> Void
 
     var body: some View {
         HStack(spacing: 8) {
-            MediaFilterThumbnail(assetId: thumbnailAssetId, side: 28)
+            MediaThumbnail(url: coverURL, side: 28)
             Text(name)
                 .font(.body)
             Button(action: onRemove) {
@@ -191,48 +192,5 @@ struct MediaFilterChip: View {
         .padding(.vertical, 8)
         .background(Color.accentColor.opacity(0.2))
         .cornerRadius(12)
-    }
-}
-
-// MARK: - Thumbnail
-
-/// A small square thumbnail for a Photos asset, or nothing at all.
-///
-/// Renders as a zero-size view when there is no asset to show, so a dimension
-/// with no thumbnails lays out exactly as it would without them.
-struct MediaFilterThumbnail: View {
-    let assetId: String?
-    let side: CGFloat
-
-    @State private var image: UIImage?
-
-    var body: some View {
-        Group {
-            if let assetId {
-                thumbnail
-                    .task(id: assetId) { await load(assetId) }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var thumbnail: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 6)
-                .fill(Color.secondary.opacity(0.2))
-            if let image {
-                Image(uiImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-            }
-        }
-        .frame(width: side, height: side)
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-    }
-
-    private func load(_ assetId: String) async {
-        guard image == nil,
-              let url = PhotosAssetURL.url(forLocalIdentifier: assetId) else { return }
-        image = await PhotosAssetStore.shared.thumbnail(for: url, maxSize: side * 3)
     }
 }

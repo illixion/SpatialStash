@@ -341,7 +341,7 @@ struct PhotosFilterSections: View {
             FilterOption(id: album.id,
                          name: album.name,
                          detail: "\(album.count)",
-                         thumbnailAssetId: album.keyAssetId,
+                         thumbnailURL: album.keyAssetId.flatMap(PhotosAssetURL.url(forLocalIdentifier:)),
                          isSecondary: album.isSmart)
         }
     }
@@ -351,7 +351,7 @@ struct PhotosFilterSections: View {
             FilterOption(id: person.id,
                          name: person.name,
                          detail: "\(person.count)",
-                         thumbnailAssetId: person.keyAssetId)
+                         thumbnailURL: person.keyAssetId.flatMap(PhotosAssetURL.url(forLocalIdentifier:)))
         }
     }
 

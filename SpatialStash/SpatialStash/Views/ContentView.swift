@@ -21,6 +21,8 @@ struct ContentView: View {
                     PicturesTabView()
                 case .videos:
                     VideosTabView()
+                case .albums:
+                    AlbumsTabView()
                 case .local:
                     LocalTabView()
                 case .filters:

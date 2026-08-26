@@ -370,6 +370,40 @@ actor StashAPIClient {
         let title: String?
         let folder: StashGalleryFolder?
         let files: [StashGalleryFile]?
+        /// Optional despite being non-null in the schema, so an older server
+        /// that omits it decodes rather than failing the whole query.
+        let image_count: Int?
+        let cover: StashGalleryCover?
+
+        /// The name to show for a gallery.
+        ///
+        /// Stash galleries frequently have no title — a folder-based gallery
+        /// carries its identity in the path — so the name is derived, in
+        /// descending order of how much the user would recognise it: the title,
+        /// the folder's own name, the directory containing the first file, and
+        /// finally the id, which at least identifies it uniquely.
+        ///
+        /// Lives on the model because both the filter autocomplete and the
+        /// Albums browser need it and had no business each deriving it.
+        var displayName: String {
+            if let title, !title.isEmpty {
+                return title
+            }
+            if let lastComponent = folder?.path.components(separatedBy: "/").last,
+               !lastComponent.isEmpty {
+                return lastComponent
+            }
+            if let firstFile = files?.first {
+                let components = firstFile.path.components(separatedBy: "/")
+                if components.count >= 2 {
+                    return components[components.count - 2]
+                }
+                if let fileName = components.last, !fileName.isEmpty {
+                    return fileName
+                }
+            }
+            return "Gallery \(id)"
+        }
     }
 
     struct StashGalleryFolder: Decodable {
@@ -378,6 +412,14 @@ actor StashAPIClient {
 
     struct StashGalleryFile: Decodable {
         let path: String
+    }
+
+    struct StashGalleryCover: Decodable {
+        let paths: StashGalleryCoverPaths?
+    }
+
+    struct StashGalleryCoverPaths: Decodable {
+        let thumbnail: String?
     }
 
     func findGalleries(query: String? = nil, page: Int = 1, perPage: Int? = nil) async throws -> FindGalleriesResult {
@@ -393,6 +435,12 @@ actor StashAPIClient {
                     }
                     files {
                         path
+                    }
+                    image_count
+                    cover {
+                        paths {
+                            thumbnail
+                        }
                     }
                 }
             }

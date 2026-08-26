@@ -13,13 +13,16 @@ struct PicturesTabView: View {
     @Environment(\.pushWindow) private var pushWindow
     
     var body: some View {
-        GalleryGridView(onImageSelected: { image in
-            if appModel.openMediaInNewWindows {
-                appModel.enqueuePhotoWindowOpen(image)
-            } else {
-                pushWindow(id: "photo-detail", value: PhotoWindowValue(image: image, wasPushed: true))
-            }
-        })
+        VStack(spacing: 0) {
+            AppliedContainerBanner(isVideo: false)
+            GalleryGridView(onImageSelected: { image in
+                if appModel.openMediaInNewWindows {
+                    appModel.enqueuePhotoWindowOpen(image)
+                } else {
+                    pushWindow(id: "photo-detail", value: PhotoWindowValue(image: image, wasPushed: true))
+                }
+            })
+        }
         .environment(appModel)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

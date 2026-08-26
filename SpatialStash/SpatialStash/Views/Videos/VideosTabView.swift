@@ -12,8 +12,11 @@ struct VideosTabView: View {
     @Environment(AppModel.self) private var appModel
 
     var body: some View {
-        VideoGalleryView()
-            .environment(appModel)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        VStack(spacing: 0) {
+            AppliedContainerBanner(isVideo: true)
+            VideoGalleryView()
+        }
+        .environment(appModel)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

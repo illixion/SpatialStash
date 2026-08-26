@@ -121,6 +121,11 @@ class AppModel {
     var availableTags: [AutocompleteItem] = []
     var availableStudios: [AutocompleteItem] = []
     var availablePerformers: [AutocompleteItem] = []
+    /// Containers for the Albums browser, for the library and media kind last
+    /// asked for.
+    var mediaContainers: [MediaContainer] = []
+    var isLoadingMediaContainers: Bool = false
+
     /// Albums offered by the Photos filter. Counted for the media type last
     /// asked for, so switching between the Pictures and Videos filters reloads.
     var availablePhotoAlbums: [PhotoAlbum] = []
@@ -2594,29 +2599,8 @@ class AppModel {
         do {
             let result = try await apiClient.findGalleries(query: query.isEmpty ? nil : query)
             let lowercasedQuery = query.lowercased()
-            availableGalleries = result.galleries.map { gallery in
-                // Try title first, then folder path, then first file path, then fallback to ID
-                let name: String
-                if let title = gallery.title, !title.isEmpty {
-                    name = title
-                } else if let folderPath = gallery.folder?.path,
-                          let lastComponent = folderPath.components(separatedBy: "/").last,
-                          !lastComponent.isEmpty {
-                    name = lastComponent
-                } else if let firstFile = gallery.files?.first,
-                          let fileName = firstFile.path.components(separatedBy: "/").last,
-                          !fileName.isEmpty {
-                    // Use parent directory name from file path
-                    let pathComponents = firstFile.path.components(separatedBy: "/")
-                    if pathComponents.count >= 2 {
-                        name = pathComponents[pathComponents.count - 2]
-                    } else {
-                        name = fileName
-                    }
-                } else {
-                    name = "Gallery \(gallery.id)"
-                }
-                return AutocompleteItem(id: gallery.id, name: name)
+            availableGalleries = result.galleries.map {
+                AutocompleteItem(id: $0.id, name: $0.displayName)
             }.sorted {
                 let name1 = $0.name.lowercased()
                 let name2 = $1.name.lowercased()
@@ -2794,6 +2778,130 @@ class AppModel {
                 }
         } catch {
             AppLogger.appModel.error("Failed to search performers: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    // MARK: - Media Containers
+
+    /// Load the browsable containers for the library in force.
+    ///
+    /// Routed by library for the same reason `loadAutocompleteData` is: a Photos
+    /// album and a Stash gallery are reached completely differently, and only
+    /// the resulting shape is shared.
+    func loadMediaContainers(isVideo: Bool) async {
+        isLoadingMediaContainers = true
+        defer { isLoadingMediaContainers = false }
+
+        switch effectiveLibrarySource {
+        case .photos:
+            guard PhotosAuthorization.isReadable else {
+                mediaContainers = []
+                return
+            }
+            let mediaType: PHAssetMediaType = isVideo ? .video : .image
+            let albums = (try? await PhotosIndexStore.shared.albums(mediaType: mediaType)) ?? []
+            mediaContainers = albums.map { album in
+                MediaContainer(
+                    id: album.id,
+                    name: album.name,
+                    count: album.count,
+                    kind: album.isSmart ? .smartAlbum : .album,
+                    // The album's first asset of this media type, addressed the
+                    // same way any other asset is.
+                    coverURL: album.keyAssetId.flatMap(PhotosAssetURL.url(forLocalIdentifier:))
+                )
+            }
+
+        case .stash:
+            // Galleries hold images, not scenes, so there is nothing to browse
+            // on the Videos side. Saying so is the honest answer; inventing a
+            // scene container would be a different feature.
+            guard !isVideo else {
+                mediaContainers = []
+                return
+            }
+            do {
+                // Bounded rather than Stash's "all" sentinel: a predictable cap
+                // beats relying on a magic per-page value, and a library with
+                // more galleries than this wants search, not a longer grid.
+                let result = try await apiClient.findGalleries(page: 1, perPage: Self.containerFetchLimit)
+                mediaContainers = result.galleries
+                    .map { gallery in
+                        MediaContainer(
+                            id: gallery.id,
+                            name: gallery.displayName,
+                            count: gallery.image_count ?? 0,
+                            kind: .gallery,
+                            coverURL: gallery.cover?.paths?.thumbnail.flatMap(URL.init(string:))
+                        )
+                    }
+                    .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            } catch {
+                AppLogger.appModel.error("Failed to load galleries: \(error.localizedDescription, privacy: .public)")
+                mediaContainers = []
+            }
+        }
+        AppLogger.appModel.log(level: AppLogger.effectiveDebugLevel,
+                               "Loaded \(self.mediaContainers.count, privacy: .public) containers")
+    }
+
+    /// Most containers any one browse will show.
+    private static let containerFetchLimit = 500
+
+    /// Whether `container` is the one currently filtering the given media kind.
+    func isContainerApplied(_ container: MediaContainer, isVideo: Bool) -> Bool {
+        switch container.kind {
+        case .album, .smartAlbum:
+            let criteria = isVideo ? currentVideoFilter.photosCriteria : currentFilter.photosCriteria
+            return criteria.albumIds == [container.id]
+        case .gallery:
+            return currentFilter.galleryIds == [container.id]
+        }
+    }
+
+    /// Applies a container as the filter for one media kind and reloads.
+    ///
+    /// Replaces any container selection rather than adding to it — opening an
+    /// album from a browser reads as "show me this one" — but leaves every other
+    /// filter dimension alone.
+    func applyContainer(_ container: MediaContainer, isVideo: Bool) {
+        switch container.kind {
+        case .album, .smartAlbum:
+            if isVideo {
+                currentVideoFilter.photosCriteria.selectedAlbums = [container.filterItem]
+                currentVideoFilter.photosCriteria.albumModifier = .includes
+            } else {
+                currentFilter.photosCriteria.selectedAlbums = [container.filterItem]
+                currentFilter.photosCriteria.albumModifier = .includes
+            }
+        case .gallery:
+            currentFilter.selectedGalleries = [container.filterItem]
+            currentFilter.galleryModifier = .includesAll
+        }
+
+        Task {
+            if isVideo {
+                await loadInitialVideos()
+            } else {
+                await loadInitialGallery()
+            }
+        }
+    }
+
+    /// Clears whatever container is filtering the given media kind.
+    func clearAppliedContainer(isVideo: Bool) {
+        if isVideo {
+            currentVideoFilter.photosCriteria.selectedAlbums = []
+        } else {
+            currentFilter.photosCriteria.selectedAlbums = []
+            currentFilter.selectedGalleries = []
+        }
+        Task {
+            if isVideo {
+                await loadInitialVideos()
+            } else {
+                await loadInitialGallery()
+            }
         }
     }
 

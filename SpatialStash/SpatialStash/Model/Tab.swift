@@ -10,6 +10,7 @@ import RAVEUI
 enum Tab: String, CaseIterable, RAVETabItem {
     case pictures = "Pictures"
     case videos = "Videos"
+    case albums = "Albums"
     case local = "Local"
     case filters = "Filters"
     case windows = "Windows"
@@ -22,6 +23,7 @@ enum Tab: String, CaseIterable, RAVETabItem {
         switch self {
         case .pictures: return "photo.stack"
         case .videos: return "video"
+        case .albums: return "rectangle.stack"
         case .local: return "folder"
         case .filters: return "line.3.horizontal.decrease.circle"
         case .windows: return "macwindow.on.rectangle"
