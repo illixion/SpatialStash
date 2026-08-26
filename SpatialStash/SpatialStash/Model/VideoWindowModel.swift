@@ -176,6 +176,13 @@ final class VideoWindowModel {
     }
 
     @ObservationIgnored private var didStart = false
+    /// Playable file URL for a Photos-backed video, resolved once per video.
+    ///
+    /// Not persisted and never used as identity: it points into the Photos
+    /// library (or a one-off export) and is valid for this launch only. The
+    /// `photos-asset:///` URL in `video.streamURL` remains the stable key.
+    @ObservationIgnored private var resolvedPhotosStreamURL: URL?
+    @ObservationIgnored private var photosResolveTask: Task<Void, Never>?
     @ObservationIgnored private var playbackRendererTask: Task<Void, Never>?
 
     // MARK: - Initialization (side-effect-free)
@@ -244,6 +251,8 @@ final class VideoWindowModel {
         progressiveEngageTask = nil
         playbackRendererTask?.cancel()
         playbackRendererTask = nil
+        photosResolveTask?.cancel()
+        photosResolveTask = nil
         loopController.reset()
         playCommand = nil
         pauseCommand = nil
@@ -306,6 +315,7 @@ final class VideoWindowModel {
         // Every video starts on its own original file, whatever the previous
         // one ended up playing.
         usingTranscodedStream = false
+        resolvedPhotosStreamURL = nil
         isFlipped = false
         currentAdjustments = VisualAdjustments()
         loopController.reset()
@@ -657,6 +667,13 @@ final class VideoWindowModel {
     /// The URL this window is currently playing: the original file, or the
     /// server transcode once `usingTranscodedStream` is set.
     var activeStreamURL: URL {
+        // A photos-asset URL is an identity, not something AVPlayer can open;
+        // until it resolves this returns it unchanged so callers stay honest
+        // about not being ready. `resolvePlaybackRenderer` waits for the
+        // resolution rather than probing the unopenable form.
+        if PhotosAssetURL.isPhotosAsset(video.streamURL) {
+            return resolvedPhotosStreamURL ?? video.streamURL
+        }
         guard usingTranscodedStream, let transcode = video.transcodeStreamURL else {
             return video.streamURL
         }
@@ -712,7 +729,33 @@ final class VideoWindowModel {
 
     private func resolvePlaybackRenderer() {
         playbackRendererTask?.cancel()
+        photosResolveTask?.cancel()
         playbackRenderer = .resolving
+
+        // Photos assets must become a real file URL first — probing the
+        // synthetic one would find it unplayable and fall through to WebKit,
+        // which cannot open it either.
+        if PhotosAssetURL.isPhotosAsset(video.streamURL), resolvedPhotosStreamURL == nil {
+            let assetURL = video.streamURL
+            photosResolveTask = Task { [weak self] in
+                let playable = await PhotosAssetStore.shared.playableURL(for: assetURL)
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    guard let self, self.video.streamURL == assetURL else { return }
+                    guard let playable else {
+                        // The asset is gone, or access to it was revoked.
+                        AppLogger.videoWindow.error(
+                            "[\(self.videoDisplayName, privacy: .public)] Photos video could not be resolved"
+                        )
+                        self.playbackRenderer = .nativeMetal
+                        return
+                    }
+                    self.resolvedPhotosStreamURL = playable
+                    self.resolvePlaybackRenderer()
+                }
+            }
+            return
+        }
 
         let url = authenticatedStreamURL
         playbackRendererTask = Task { [weak self] in

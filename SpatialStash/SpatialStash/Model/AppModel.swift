@@ -1441,8 +1441,8 @@ class AppModel {
             client = StashAPIClient(config: defaultConfig)
             self.apiClient = client
             self.imageSource = Self.makeStandaloneImageSource()
-            self.videoSource = GraphQLVideoSource(apiClient: client)
-            AppLogger.appModel.info("Init - No Stash Server configured, using standalone image source")
+            self.videoSource = Self.makeStandaloneVideoSource()
+            AppLogger.appModel.info("Init - No Stash Server configured, using standalone sources")
         }
 
         // Now all stored properties are initialized, we can use self
@@ -2331,14 +2331,17 @@ class AppModel {
             AppLogger.appModel.info("Updating API client with URL: \(url, privacy: .private), hasAPIKey: \(hasKey, privacy: .public)")
             Task {
                 await apiClient.updateConfig(config)
-                // Update image source to use Stash
                 self.imageSource = GraphQLImageSource(apiClient: self.apiClient)
+                // The video source was previously left alone here, so clearing
+                // a server URL kept serving videos from the old GraphQL source.
+                self.videoSource = GraphQLVideoSource(apiClient: self.apiClient)
                 await self.reloadAllGalleries()
             }
         } else {
             // No server URL — fall back to the device photo library.
-            AppLogger.appModel.info("No Stash Server URL configured, using standalone image source")
+            AppLogger.appModel.info("No Stash Server URL configured, using standalone sources")
             self.imageSource = Self.makeStandaloneImageSource()
+            self.videoSource = Self.makeStandaloneVideoSource()
             Task {
                 await self.reloadAllGalleries()
             }
@@ -2356,6 +2359,13 @@ class AppModel {
     /// unexplained empty grid.
     static func makeStandaloneImageSource() -> any ImageSource {
         PhotosImageSource()
+    }
+
+    /// The video source to use when no Stash server is configured. Same
+    /// reasoning as `makeStandaloneImageSource()`, including returning it
+    /// regardless of authorization.
+    static func makeStandaloneVideoSource() -> any VideoSource {
+        PhotosVideoSource()
     }
 
     private func reloadAllGalleries() async {
@@ -2437,6 +2447,7 @@ class AppModel {
         await PhotosAuthorization.request()
         guard stashServerURL.isEmpty, PhotosAuthorization.isReadable else { return }
         imageSource = Self.makeStandaloneImageSource()
+        videoSource = Self.makeStandaloneVideoSource()
         await reloadAllGalleries()
     }
 

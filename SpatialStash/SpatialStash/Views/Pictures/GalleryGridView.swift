@@ -66,15 +66,13 @@ struct GalleryGridView: View {
     @ViewBuilder
     private var content: some View {
         Group {
-            if isShowingPhotoLibrary, photosStatus == .notDetermined {
-                photosAccessPromptView
-            } else if isShowingPhotoLibrary, photosStatus == .denied || photosStatus == .restricted {
-                photosAccessDeniedView
-            } else if isShowingPhotoLibrary, appModel.galleryImages.isEmpty, !appModel.isLoadingGallery {
-                // Covers .limited with nothing selected, which is a legitimate
-                // choice rather than an error: the user granted access to a set
-                // that happens to be empty.
-                photosEmptyView
+            if shouldShowLibraryState {
+                PhotoLibraryStateView(kind: .photos, status: photosStatus) {
+                    Task {
+                        await appModel.requestPhotosAccessAndReload()
+                        photosStatus = PhotosAuthorization.status
+                    }
+                }
             } else if appModel.galleryImages.isEmpty && appModel.isLoadingGallery {
                 // Loading state
                 VStack(spacing: 20) {
@@ -232,78 +230,22 @@ struct GalleryGridView: View {
         }
     }
 
-    // MARK: - Photo Library States
-
     /// Whether the grid is currently backed by the device photo library, and so
     /// should explain a permission state rather than just showing nothing.
     private var isShowingPhotoLibrary: Bool {
         appModel.imageSource is PhotosImageSource
     }
 
-    /// Shared shape for all three states, so they read as one family — and as
-    /// siblings of the states the other tabs show.
-    private func libraryMessageView(
-        icon: String,
-        title: String,
-        message: String,
-        action: (title: String, perform: () -> Void)? = nil
-    ) -> some View {
-        VStack(spacing: 20) {
-            Image(systemName: icon)
-                .font(.system(size: 64))
-                .foregroundColor(.secondary)
-            Text(title)
-                .font(.title2)
-            Text(message)
-                .font(.callout)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 480)
-            if let action {
-                Button(action.title, action: action.perform)
-                    .buttonStyle(.borderedProminent)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private var photosAccessPromptView: some View {
-        libraryMessageView(
-            icon: "photo.on.rectangle.angled",
-            title: "Show Your Photos?",
-            message: "Spatial Stash can browse the photos on this device and convert them to 3D. Your library is read on this device only — nothing is uploaded.",
-            action: ("Allow Access to Photos", {
-                Task {
-                    await appModel.requestPhotosAccessAndReload()
-                    photosStatus = PhotosAuthorization.status
-                }
-            })
-        )
-    }
-
-    private var photosAccessDeniedView: some View {
-        libraryMessageView(
-            icon: "lock.fill",
-            title: "Photo Access Denied",
-            message: "Spatial Stash can't see your photo library. Allow access in Settings to browse and convert your photos, or connect a Stash server instead.",
-            action: ("Open Settings", {
-                guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
-                openURL(url)
-            })
-        )
-    }
-
-    /// No button: there is nothing for the user to fix. Either the library is
-    /// empty, or they granted access to a hand-picked set that contains no
-    /// photos — both are valid states, not failures.
-    private var photosEmptyView: some View {
-        libraryMessageView(
-            icon: "photo.on.rectangle.angled",
-            title: "No Photos to Show",
-            message: photosStatus == .limited
-                ? "Spatial Stash can only see the photos you selected, and none of them are images. Choose more in Settings › Privacy & Security › Photos."
-                : "There are no photos in this library yet."
-        )
+    /// Show an explanation only when there is genuinely nothing to draw.
+    ///
+    /// `.limited` is readable, so a limited grant with photos in it must still
+    /// render the grid — testing `status != .authorized` here would have hidden
+    /// a perfectly good library behind a "no photos" message.
+    private var shouldShowLibraryState: Bool {
+        guard isShowingPhotoLibrary else { return false }
+        let readable = photosStatus == .authorized || photosStatus == .limited
+        guard readable else { return true }
+        return appModel.galleryImages.isEmpty && !appModel.isLoadingGallery
     }
 
     @ViewBuilder

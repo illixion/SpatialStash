@@ -5,6 +5,7 @@
  Supports multi-select mode for bulk operations.
  */
 
+import Photos
 import SwiftUI
 
 struct VideoGalleryView: View {
@@ -28,7 +29,40 @@ struct VideoGalleryView: View {
     /// Keep at least this many columns; narrower windows shrink the cells.
     private let minColumns = 3
 
+    /// Re-read on appear and on foreground: a permission changed in the
+    /// Settings app produces no PhotoKit notification.
+    @State private var photosStatus: PHAuthorizationStatus = PhotosAuthorization.status
+    @Environment(\.scenePhase) private var scenePhase
+
+    /// Whether the grid is backed by the device photo library, and so should
+    /// explain a permission state rather than pointing at Stash settings.
+    private var isShowingPhotoLibrary: Bool {
+        appModel.videoSource is PhotosVideoSource
+    }
+
+    /// See `GalleryGridView.shouldShowLibraryState` — `.limited` is readable, so
+    /// a limited grant containing videos must still render the grid.
+    private var shouldShowLibraryState: Bool {
+        guard isShowingPhotoLibrary else { return false }
+        let readable = photosStatus == .authorized || photosStatus == .limited
+        guard readable else { return true }
+        return appModel.galleryVideos.isEmpty && !appModel.isLoadingVideos
+    }
+
     var body: some View {
+        content
+            .onAppear { photosStatus = PhotosAuthorization.status }
+            .onChange(of: scenePhase) { _, phase in
+                guard phase == .active else { return }
+                let latest = PhotosAuthorization.status
+                guard latest != photosStatus else { return }
+                photosStatus = latest
+                Task { await appModel.requestPhotosAccessAndReload() }
+            }
+    }
+
+    @ViewBuilder
+    private var content: some View {
         Group {
             if appModel.galleryVideos.isEmpty && appModel.isLoadingVideos {
                 VStack(spacing: 20) {
@@ -39,19 +73,19 @@ struct VideoGalleryView: View {
                         .foregroundColor(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if appModel.galleryVideos.isEmpty {
-                VStack(spacing: 20) {
-                    Image(systemName: "video.slash")
-                        .font(.system(size: 64))
-                        .foregroundColor(.secondary)
-                    Text("No videos available")
-                        .font(.title2)
-                    Text("Configure your Stash server in Settings to browse videos.")
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 40)
+            } else if shouldShowLibraryState {
+                PhotoLibraryStateView(kind: .videos, status: photosStatus) {
+                    Task {
+                        await appModel.requestPhotosAccessAndReload()
+                        photosStatus = PhotosAuthorization.status
+                    }
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if appModel.galleryVideos.isEmpty {
+                MediaLibraryMessageView(
+                    icon: "video.slash",
+                    title: "No videos available",
+                    message: "Configure your Stash server in Settings to browse videos."
+                )
             } else {
                 GeometryReader { geo in
                     let layout = GridColumnLayout.resolve(width: geo.size.width,

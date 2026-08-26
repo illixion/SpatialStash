@@ -24,6 +24,7 @@
  it across host and path.
  */
 
+import AVFoundation
 import Foundation
 import Photos
 import UIKit
@@ -176,6 +177,73 @@ actor PhotosAssetStore {
         }
     }
 
+    /// A URL AVFoundation can play for a Photos video asset.
+    ///
+    /// Most videos come back as an `AVURLAsset` pointing into the Photos
+    /// library, which is readable while access is granted — that URL is handed
+    /// back directly, so nothing is copied. Slow-motion and edited videos
+    /// instead come back as an `AVComposition`, which has no URL at all; those
+    /// are exported once into Caches.
+    ///
+    /// The returned URL is valid for this launch only. It is never used as an
+    /// identity: `photos-asset:///<localIdentifier>` remains the stable key,
+    /// and this is resolved fresh each time a window opens.
+    func playableURL(for assetURL: URL) async -> URL? {
+        guard let identifier = PhotosAssetURL.localIdentifier(from: assetURL),
+              let asset = Self.asset(for: identifier) else { return nil }
+
+        if let existing = cachedFileURL(for: identifier) { return existing }
+
+        let options = PHVideoRequestOptions()
+        options.isNetworkAccessAllowed = true   // iCloud Photos originals
+        options.deliveryMode = .highQualityFormat
+        options.version = .current
+
+        let gate = ResumeGate()
+        // AVAsset is not Sendable, so it rides across the continuation in a box
+        // — the same shape as SendableTexture elsewhere in the app. Only one
+        // task ever touches it, so the unchecked conformance is honest.
+        let boxed: SendableAVAsset? = await withCheckedContinuation { continuation in
+            imageManager.requestAVAsset(forVideo: asset, options: options) { avAsset, _, _ in
+                guard gate.claim() else { return }
+                continuation.resume(returning: avAsset.map(SendableAVAsset.init(asset:)))
+            }
+        }
+
+        guard let boxed else {
+            AppLogger.localMedia.error("Photos video unavailable: \(identifier, privacy: .public)")
+            return nil
+        }
+        if let urlAsset = boxed.asset as? AVURLAsset {
+            return urlAsset.url
+        }
+        return await exportComposition(boxed, identifier: identifier)
+    }
+
+    /// Writes a non-URL asset (slow-motion, edited) out to a playable file.
+    private func exportComposition(_ boxed: SendableAVAsset, identifier: String) async -> URL? {
+        let destination = cacheDirectory.appendingPathComponent(
+            cacheFileName(for: identifier, extension: "mov")
+        )
+        try? FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+        try? FileManager.default.removeItem(at: destination)
+
+        guard let session = AVAssetExportSession(
+            asset: boxed.asset,
+            presetName: AVAssetExportPresetHighestQuality
+        ) else { return nil }
+
+        do {
+            try await session.export(to: destination, as: .mov)
+            return destination
+        } catch {
+            AppLogger.localMedia.error(
+                "Photos video export failed for \(identifier, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
+            return nil
+        }
+    }
+
     /// Dimensions without decoding anything.
     nonisolated func pixelSize(for assetURL: URL) -> CGSize? {
         guard let identifier = PhotosAssetURL.localIdentifier(from: assetURL),
@@ -285,6 +353,12 @@ actor PhotosAssetStore {
         default:                           return "jpg"
         }
     }
+}
+
+/// Carries a non-Sendable `AVAsset` across a continuation boundary. Only one
+/// task ever holds it, so the unchecked conformance states a real invariant.
+private struct SendableAVAsset: @unchecked Sendable {
+    let asset: AVAsset
 }
 
 /// One-shot guard for a continuation resumed from a multi-callback API.
