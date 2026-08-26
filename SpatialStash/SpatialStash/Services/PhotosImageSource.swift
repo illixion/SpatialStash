@@ -34,8 +34,12 @@ final class PhotosImageSource: ImageSource, @unchecked Sendable {
     func fetchImages(page: Int, pageSize: Int, filter: ImageFilterCriteria?) async throws -> ImageFetchResult {
         // Stash-shaped filters (tags, performers, ratings) have no analogue in
         // the photo library, so they are ignored rather than half-applied.
+        // Returns empty rather than throwing, matching PhotosVideoSource. Not
+        // having been asked for permission yet is not an error, and the gallery
+        // explains the authorization state itself — surfacing it as a thrown
+        // "no images available" would log a fault for an ordinary state.
         guard PhotosAuthorization.isReadable else {
-            throw ImageSourceError.noImagesAvailable
+            return ImageFetchResult(images: [], hasMore: false, totalCount: 0)
         }
 
         let assets = fetchResult()

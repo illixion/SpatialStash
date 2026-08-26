@@ -1462,8 +1462,12 @@ class AppModel {
             let defaultConfig = StashServerConfig.default
             client = StashAPIClient(config: defaultConfig)
             self.apiClient = client
-            self.imageSource = Self.makeStandaloneImageSource()
-            self.videoSource = Self.makeStandaloneVideoSource()
+            // Regardless of authorization: an undecided or denied library still
+            // wants these sources behind it, because that is what tells the
+            // gallery which permission state to explain rather than rendering an
+            // unexplained empty grid.
+            self.imageSource = PhotosImageSource()
+            self.videoSource = PhotosVideoSource()
             AppLogger.appModel.info("Init - No Stash Server configured, using standalone sources")
         }
 
@@ -2403,17 +2407,6 @@ class AppModel {
         Task { await reloadAllGalleries() }
     }
 
-    static func makeStandaloneImageSource() -> any ImageSource {
-        PhotosImageSource()
-    }
-
-    /// The video source to use when no Stash server is configured. Same
-    /// reasoning as `makeStandaloneImageSource()`, including returning it
-    /// regardless of authorization.
-    static func makeStandaloneVideoSource() -> any VideoSource {
-        PhotosVideoSource()
-    }
-
     private func reloadAllGalleries() async {
         // Reload images if on pictures tab
         galleryLoadGeneration += 1
@@ -2491,10 +2484,13 @@ class AppModel {
     /// user's chosen source until they clear it.
     func requestPhotosAccessAndReload() async {
         await PhotosAuthorization.request()
-        guard stashServerURL.isEmpty, PhotosAuthorization.isReadable else { return }
-        imageSource = Self.makeStandaloneImageSource()
-        videoSource = Self.makeStandaloneVideoSource()
-        await reloadAllGalleries()
+        // Gated on the library actually in force, NOT on the absence of a
+        // server. The earlier `stashServerURL.isEmpty` guard predated
+        // LibrarySource and meant that granting access while a server was
+        // configured returned here without rebuilding anything: the user
+        // allowed access and still landed on "No Photos to Show".
+        guard effectiveLibrarySource == .photos, PhotosAuthorization.isReadable else { return }
+        applyLibrarySource()
     }
 
     /// Apply current filter and reload gallery
