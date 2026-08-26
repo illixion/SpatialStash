@@ -1,17 +1,22 @@
 /*
  Spatial Stash - Photos Image Source
 
- `ImageSource` over the device photo library.
+ `ImageSource` over the device photo library, answered from `PhotosIndexStore`
+ rather than from `PHFetchOptions`.
 
- Only the mapping from `PHAsset` to `GalleryImage` lives here. Paging, the fetch
- snapshot, the authorization guard and the seeded shuffle are `PhotosAssetPager`,
- shared with `PhotosVideoSource`.
+ That indirection is what makes the filter dimensions possible at all: filename
+ is not a PhotoKit predicate key, `fetchAssets(in:)` takes a single collection,
+ and there is no random sort descriptor. See `PhotosIndexQuery`.
 
- The `filter` argument arrives as Stash-shaped criteria, of which exactly one
- part applies: `photosCriteria`. Album scoping rides in there rather than being
- fixed at construction, so a filter change needs no new source — which is what
- keeps the Filters tab's "apply on leave" working for Photos the same way it
- works for Stash.
+ It also means a page costs one SQL query and materializes no `PHAsset` objects —
+ the grid gets identifiers plus the dimensions it needs to lay out cells, and the
+ synthetic `photos-asset:///` URL carries the identifier onward to whatever
+ actually needs pixels.
+
+ No authorization guard and no readiness guard. An unreadable or not-yet-indexed
+ library is simply an empty table, and the gallery's state view reads the
+ indexer's phase directly to say which of those it is — a guard here would only
+ duplicate that decision.
  */
 
 import Foundation
@@ -19,42 +24,60 @@ import Photos
 
 final class PhotosImageSource: ImageSource, @unchecked Sendable {
 
-    private let pager = PhotosAssetPager(mediaType: .image)
-
     func fetchImages(page: Int, pageSize: Int) async throws -> ImageFetchResult {
         try await fetchImages(page: page, pageSize: pageSize, filter: nil)
     }
 
     func fetchImages(page: Int, pageSize: Int, filter: ImageFilterCriteria?) async throws -> ImageFetchResult {
-        let result = pager.page(page, pageSize: pageSize, criteria: filter?.photosCriteria ?? PhotosFilterCriteria())
+        let criteria = filter?.photosCriteria ?? PhotosFilterCriteria()
+        let result = try await PhotosIndexStore.shared.page(criteria: criteria,
+                                                           mediaType: .image,
+                                                           page: page,
+                                                           pageSize: pageSize,
+                                                           convertedIdentifiers: nil)
 
         var images: [GalleryImage] = []
         images.reserveCapacity(result.assets.count)
         for asset in result.assets {
-            guard let url = PhotosAssetURL.url(forLocalIdentifier: asset.localIdentifier) else { continue }
+            guard let url = PhotosAssetURL.url(forLocalIdentifier: asset.id) else { continue }
+            let name = asset.displayFilename
             images.append(
                 GalleryImage(
                     url: url,
-                    title: asset.originalFilename,
+                    title: name,
                     source: .photos,
-                    fileName: asset.originalFilename,
-                    sourceWidth: asset.pixelWidth,
-                    sourceHeight: asset.pixelHeight
+                    fileName: name,
+                    sourceWidth: asset.width,
+                    sourceHeight: asset.height
                 )
             )
         }
 
-        return ImageFetchResult(images: images, hasMore: result.hasMore, totalCount: result.total)
+        let shown = (page * pageSize) + result.assets.count
+        return ImageFetchResult(images: images, hasMore: shown < result.total, totalCount: result.total)
     }
 }
 
 // MARK: - Filename
 
+extension PhotosIndexedAsset {
+    /// The filename for display, or nil.
+    ///
+    /// The index stores an empty string to mean "asked, and Photos gave nothing"
+    /// — a distinct state from NULL, which means the name pass has not reached
+    /// this asset yet. Neither is a title worth showing.
+    var displayFilename: String? {
+        guard let filename, !filename.isEmpty else { return nil }
+        return filename
+    }
+}
+
 extension PHAsset {
     /// The asset's original filename, when Photos will surrender it.
     ///
-    /// `PHAssetResource` is the only public route to this; the value backs both
-    /// the window title and the share sheet's suggested name.
+    /// `PHAssetResource` is the only public route to this, and it is an XPC round
+    /// trip per asset — which is the entire reason the index exists and why
+    /// filenames are backfilled rather than gathered up front.
     var originalFilename: String? {
         PHAssetResource.assetResources(for: self)
             .first { $0.type == .photo || $0.type == .video }?

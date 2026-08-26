@@ -74,7 +74,8 @@ struct GalleryGridView: View {
                     onClearFilters: {
                         appModel.currentFilter.photosCriteria.clearFilters()
                         Task { await appModel.loadInitialGallery() }
-                    }
+                    },
+                    indexingMessage: PhotosLibraryIndexer.shared.blockingMessage
                 ) {
                     Task {
                         await appModel.requestPhotosAccessAndReload()

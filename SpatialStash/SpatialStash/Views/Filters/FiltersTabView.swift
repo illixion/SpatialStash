@@ -276,21 +276,58 @@ struct FiltersTabView: View {
 
 // MARK: - Photos Filter Sections
 
-/// The filter dimensions PhotoKit can actually answer.
+/// The filter dimensions the photo index can answer.
 ///
-/// Notably missing is a search field: `PHFetchOptions.predicate` accepts a fixed
-/// set of keys and filename is not one of them, so matching a name would mean
-/// asking `PHAssetResource` for every asset's filename across the whole library.
-/// See `PhotosFilterCriteria`.
+/// Half of these have no expression in PhotoKit at any cost — filename is not a
+/// `PHFetchOptions` predicate key, `fetchAssets(in:)` takes one collection, and
+/// there is no random sort descriptor. They exist because the library is
+/// mirrored locally; see `PhotosIndexQuery`.
 struct PhotosFilterSections: View {
     @Environment(AppModel.self) private var appModel
     @Binding var criteria: PhotosFilterCriteria
     let isVideoFilter: Bool
 
+    private var indexer: PhotosLibraryIndexer { PhotosLibraryIndexer.shared }
     private var mediaType: PHAssetMediaType { isVideoFilter ? .video : .image }
-    private var allLabel: String { isVideoFilter ? "All Videos" : "All Photos" }
+    private var noun: String { isVideoFilter ? "videos" : "photos" }
+
+    private var albumOptions: [FilterOption] {
+        appModel.availablePhotoAlbums.map { album in
+            FilterOption(id: album.id,
+                         name: album.name,
+                         detail: "\(album.count)",
+                         thumbnailAssetId: album.keyAssetId,
+                         isSecondary: album.isSmart)
+        }
+    }
+
+    private var peopleOptions: [FilterOption] {
+        appModel.availablePhotoPeople.map { person in
+            FilterOption(id: person.id,
+                         name: person.name,
+                         detail: "\(person.count)",
+                         thumbnailAssetId: person.keyAssetId)
+        }
+    }
 
     var body: some View {
+        Section {
+            TextField("Search file names...", text: $criteria.searchTerm)
+                .textFieldStyle(.plain)
+                .autocorrectionDisabled()
+        } header: {
+            Text("Search")
+        } footer: {
+            // While the name pass is still running, search genuinely covers only
+            // part of the library. Saying so beats letting it look like the
+            // search is broken.
+            if case .naming(let done, let total) = indexer.phase {
+                Text("Reading file names from your library — \(done) of \(total) so far. Search covers the names read to this point.")
+            } else {
+                Text("Matches anywhere in the file name.")
+            }
+        }
+
         Section("Sort") {
             Picker("Sort By", selection: $criteria.sortField) {
                 ForEach(PhotosSortField.allCases) { field in
@@ -322,47 +359,34 @@ struct PhotosFilterSections: View {
                 }
             }
 
-            if criteria.sortField == .albumOrder && criteria.albumId == nil {
-                Text("Album Order follows the library's own order until an album is selected.")
+            if criteria.sortField == .albumOrder && criteria.selectedAlbums.count != 1 {
+                Text("An album's manual order only exists relative to one album. With none or several selected this follows the library's order instead.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
 
-        Section {
-            Picker("Album", selection: $criteria.albumId) {
-                Text(allLabel).tag(String?.none)
+        MediaMultiSelectSection(
+            title: "Albums",
+            footer: "Your own albums first, then the system's smart albums. Counts are for \(noun) only.",
+            emptyMessage: "No albums contain \(noun).",
+            options: albumOptions,
+            isLoading: appModel.isLoadingPhotoAlbums,
+            selection: $criteria.selectedAlbums,
+            modifier: $criteria.albumModifier
+        )
 
-                // A saved view can name an album that has since been deleted or
-                // dropped from a `.limited` selection. Without a row for it the
-                // picker would render blank and silently reset on the next edit.
-                if let id = criteria.albumId,
-                   !appModel.availablePhotoAlbums.contains(where: { $0.id == id }) {
-                    Text(criteria.albumName ?? "Unavailable Album").tag(String?.some(id))
-                }
-
-                ForEach(appModel.availablePhotoAlbums) { album in
-                    Text("\(album.name) (\(album.count))").tag(String?.some(album.id))
-                }
-            }
-            .onChange(of: criteria.albumId) { _, id in
-                criteria.albumName = appModel.availablePhotoAlbums.first { $0.id == id }?.name
-            }
-
-            if appModel.isLoadingPhotoAlbums {
-                HStack(spacing: 12) {
-                    ProgressView()
-                    Text("Loading albums...")
-                        .foregroundStyle(.secondary)
-                }
-            } else if appModel.availablePhotoAlbums.isEmpty {
-                Text("No albums contain \(isVideoFilter ? "videos" : "photos").")
-                    .foregroundStyle(.secondary)
-            }
-        } header: {
-            Text("Album")
-        } footer: {
-            Text("Your own albums first, then the system's smart albums. Counts are for \(isVideoFilter ? "videos" : "photos") only.")
+        // Hidden entirely rather than shown empty: PhotoKit exposes no people at
+        // all, so until a face source exists this dimension has nothing to offer
+        // and an empty section would read as a bug.
+        if !peopleOptions.isEmpty {
+            MediaMultiSelectSection(
+                title: "People",
+                footer: "Defaults to \"All of\", so picking two people finds \(noun) with both in them.",
+                options: peopleOptions,
+                selection: $criteria.selectedPeople,
+                modifier: $criteria.personModifier
+            )
         }
 
         Section("Kind") {
@@ -397,12 +421,18 @@ struct PhotosFilterSections: View {
             }
         }
 
-        if criteria.hasActiveFilters {
-            Section {
+        Section {
+            if criteria.hasActiveFilters {
                 Button("Clear Filters", role: .destructive) {
                     criteria.clearFilters()
                 }
             }
+            Button("Rebuild Library Index") {
+                indexer.rebuild()
+            }
+        } footer: {
+            Text(indexer.progressDescription
+                 ?? "Rebuild if your library and what's shown here have drifted apart.")
         }
     }
 

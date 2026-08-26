@@ -69,11 +69,30 @@ struct PhotoLibraryStateView: View {
     /// Whether a photo-library filter is narrowing the results.
     var filterActive: Bool = false
     var onClearFilters: (() -> Void)?
+    /// Progress text while the library is being indexed, or nil.
+    ///
+    /// Takes precedence over both empty states: a library mid-scan genuinely has
+    /// nothing to show yet, and saying "no photos" about it is wrong in the way
+    /// that makes people re-grant permissions that were never the problem.
+    var indexingMessage: String?
     let onRequestAccess: () -> Void
 
     @Environment(\.openURL) private var openURL
 
     var body: some View {
+        if let indexingMessage, PhotosAuthorization.isReadable(status) {
+            MediaLibraryMessageView(
+                icon: "hourglass",
+                title: "Indexing Your Library",
+                message: indexingMessage
+            )
+        } else {
+            authorizationState
+        }
+    }
+
+    @ViewBuilder
+    private var authorizationState: some View {
         switch status {
         case .notDetermined:
             MediaLibraryMessageView(

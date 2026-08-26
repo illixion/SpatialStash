@@ -80,7 +80,8 @@ struct VideoGalleryView: View {
                     onClearFilters: {
                         appModel.currentVideoFilter.photosCriteria.clearFilters()
                         Task { await appModel.loadInitialVideos() }
-                    }
+                    },
+                    indexingMessage: PhotosLibraryIndexer.shared.blockingMessage
                 ) {
                     Task {
                         await appModel.requestPhotosAccessAndReload()

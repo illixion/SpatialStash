@@ -124,6 +124,9 @@ class AppModel {
     /// Albums offered by the Photos filter. Counted for the media type last
     /// asked for, so switching between the Pictures and Videos filters reloads.
     var availablePhotoAlbums: [PhotoAlbum] = []
+    /// People the index knows about. Empty until a face source exists — see
+    /// `PhotosIndexSchema`; the dimension is built, the data is not yet.
+    var availablePhotoPeople: [IndexedPerson] = []
     var isLoadingPhotoAlbums: Bool = false
     var isLoadingGalleries: Bool = false
     var isLoadingTags: Bool = false
@@ -1479,6 +1482,20 @@ class AppModel {
         // Mixable audio session so videos never interrupt other apps' audio.
         AudioSessionConfig.configureMixedPlayback()
 
+        // The galleries have no other way to learn that the first index scan
+        // finished: they loaded against an empty table.
+        PhotosLibraryIndexer.shared.onIndexUpdated = { [weak self] in
+            guard let self, self.effectiveLibrarySource == .photos else { return }
+            Task { await self.reloadAllGalleries() }
+        }
+
+        // Launch is the one path that does not go through applyLibrarySource —
+        // init builds the sources directly — so the index has to be kicked here
+        // too. Without it a cold launch queries an index nothing ever built.
+        if initialSource == .photos {
+            PhotosLibraryIndexer.shared.start()
+        }
+
         // Drain any depth model dropped into Documents (devicectl push / Files)
         // into the managed store so it's switchable/deletable like a download.
         DepthModelManager.shared.importInboxIfNeeded()
@@ -2413,6 +2430,11 @@ class AppModel {
 
     /// Rebuild both sources for the current library choice and reload.
     func applyLibrarySource() {
+        if effectiveLibrarySource == .photos {
+            // Idempotent, and cheap when the index is already current: one
+            // token-driven sync that usually finds nothing.
+            PhotosLibraryIndexer.shared.start()
+        }
         let sources = AppModel.makeSources(for: effectiveLibrarySource, apiClient: apiClient)
         imageSource = sources.image
         videoSource = sources.video
@@ -2420,7 +2442,7 @@ class AppModel {
         Task { await reloadAllGalleries() }
     }
 
-    private func reloadAllGalleries() async {
+    func reloadAllGalleries() async {
         // Reload images if on pictures tab
         galleryLoadGeneration += 1
         currentPage = 0
@@ -2497,6 +2519,16 @@ class AppModel {
     /// user's chosen source until they clear it.
     func requestPhotosAccessAndReload() async {
         await PhotosAuthorization.request()
+
+        // Revoked from the Settings app while we were away. Keeping a mirror of
+        // a library we may no longer read is not defensible, so it goes.
+        guard PhotosAuthorization.isReadable else {
+            PhotosLibraryIndexer.shared.handleAccessRevoked()
+            availablePhotoAlbums = []
+            availablePhotoPeople = []
+            await reloadAllGalleries()
+            return
+        }
         // Gated on the library actually in force, NOT on the absence of a
         // server. The earlier `stashServerURL.isEmpty` guard predated
         // LibrarySource and meant that granting access while a server was
@@ -2753,23 +2785,24 @@ class AppModel {
         }
     }
 
-    /// Read the album list for one media type off the main actor.
+    /// Read the album and people lists for one media type.
     ///
-    /// The catalog counts assets per album, so this is a fetch per album and
-    /// belongs on a background priority even though PhotoKit is fast about it.
+    /// Both are grouped queries against the index now. They used to be a
+    /// `PHAsset` fetch per album per media type, run every time the Filters tab
+    /// appeared, purely to get counts.
     func loadPhotoAlbums(isVideo: Bool) async {
         guard PhotosAuthorization.isReadable else {
             availablePhotoAlbums = []
+            availablePhotoPeople = []
             return
         }
         isLoadingPhotoAlbums = true
-        let albums = await Task.detached(priority: .userInitiated) {
-            PhotosAlbumCatalog.albums(for: isVideo ? .video : .image)
-        }.value
-        availablePhotoAlbums = albums
+        let mediaType: PHAssetMediaType = isVideo ? .video : .image
+        availablePhotoAlbums = (try? await PhotosIndexStore.shared.albums(mediaType: mediaType)) ?? []
+        availablePhotoPeople = (try? await PhotosIndexStore.shared.people(mediaType: mediaType)) ?? []
         isLoadingPhotoAlbums = false
         AppLogger.appModel.log(level: AppLogger.effectiveDebugLevel,
-                               "Loaded \(albums.count, privacy: .public) photo albums")
+                               "Loaded \(self.availablePhotoAlbums.count, privacy: .public) albums, \(self.availablePhotoPeople.count, privacy: .public) people")
     }
 
     // MARK: - Video Gallery Methods

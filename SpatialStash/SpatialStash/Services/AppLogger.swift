@@ -51,6 +51,9 @@ enum AppLogger {
     /// Image enhancement tracking (3D conversion, background removal)
     static let enhancementTracker = Logger(subsystem: subsystem, category: "EnhancementTracker")
 
+    /// Photo-library index: build, incremental sync, filename backfill.
+    static let photosIndex = Logger(subsystem: subsystem, category: "PhotosIndex")
+
     /// Photo window model (per-window image state)
     static let photoWindow = Logger(subsystem: subsystem, category: "PhotoWindow")
 
