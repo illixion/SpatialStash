@@ -33,6 +33,14 @@ struct AlbumsTabView: View {
         appModel.effectiveLibrarySource == .photos
     }
 
+    /// What this library calls the thing being browsed.
+    private var containerKind: MediaContainer.Kind {
+        .inLibrary(appModel.effectiveLibrarySource, isVideo: isVideo)
+    }
+
+    private var containerTitle: String { containerKind.pluralTitle }
+    private var containerNoun: String { containerTitle.lowercased() }
+
     private var filteredContainers: [MediaContainer] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return appModel.mediaContainers }
@@ -67,14 +75,12 @@ struct AlbumsTabView: View {
                   systemImage: appModel.effectiveLibrarySource.symbolName)
                 .font(.headline)
 
-            if isPhotosLibrary {
-                Picker("Showing", selection: $isVideo) {
-                    Text("Photos").tag(false)
-                    Text("Videos").tag(true)
-                }
-                .pickerStyle(.segmented)
-                .frame(maxWidth: 240)
+            Picker("Showing", selection: $isVideo) {
+                Text(isPhotosLibrary ? "Photos" : "Images").tag(false)
+                Text("Videos").tag(true)
             }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 240)
 
             Spacer()
 
@@ -95,14 +101,14 @@ struct AlbumsTabView: View {
     private var content: some View {
         if appModel.isLoadingMediaContainers && appModel.mediaContainers.isEmpty {
             MediaLibraryMessageView(icon: "rectangle.stack",
-                                    title: "Loading Albums",
-                                    message: "Reading your \(isPhotosLibrary ? "albums" : "galleries").")
+                                    title: "Loading \(containerTitle)",
+                                    message: "Reading your \(containerNoun).")
         } else if appModel.mediaContainers.isEmpty {
             emptyState
         } else if filteredContainers.isEmpty {
             MediaLibraryMessageView(icon: "magnifyingglass",
                                     title: "No Matches",
-                                    message: "No albums match \"\(query)\".")
+                                    message: "No \(containerNoun) match \"\(query)\".")
         } else {
             grid
         }
@@ -110,25 +116,17 @@ struct AlbumsTabView: View {
 
     @ViewBuilder
     private var emptyState: some View {
-        if !isPhotosLibrary && isVideo {
-            // Not a failure: Stash galleries group images, and scenes are not in
-            // them. Explaining that beats an empty grid.
-            MediaLibraryMessageView(
-                icon: "video.slash",
-                title: "No Video Galleries",
-                message: "Stash galleries hold images. Use the Filters tab to narrow videos by tag, performer or studio."
-            )
-        } else if isPhotosLibrary, let indexing = PhotosLibraryIndexer.shared.blockingMessage {
+        if isPhotosLibrary, let indexing = PhotosLibraryIndexer.shared.blockingMessage {
             MediaLibraryMessageView(icon: "hourglass",
                                     title: "Indexing Your Library",
                                     message: indexing)
         } else {
             MediaLibraryMessageView(
                 icon: "rectangle.stack",
-                title: isPhotosLibrary ? "No Albums" : "No Galleries",
+                title: "No \(containerTitle)",
                 message: isPhotosLibrary
                     ? "No albums contain \(isVideo ? "videos" : "photos") yet."
-                    : "This server has no galleries."
+                    : "This server has no \(containerNoun)."
             )
         }
     }

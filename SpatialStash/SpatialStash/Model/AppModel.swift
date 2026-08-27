@@ -121,6 +121,8 @@ class AppModel {
     var availableTags: [AutocompleteItem] = []
     var availableStudios: [AutocompleteItem] = []
     var availablePerformers: [AutocompleteItem] = []
+    /// Stash groups, for the Videos filter's Groups section.
+    var availableGroups: [MediaContainer] = []
     /// Containers for the Albums browser, for the library and media kind last
     /// asked for.
     var mediaContainers: [MediaContainer] = []
@@ -2781,6 +2783,18 @@ class AppModel {
         }
     }
 
+    /// Groups for the Videos filter. Only images have galleries and only scenes
+    /// have groups, so this is loaded only when filtering videos.
+    func loadGroups() async {
+        do {
+            let result = try await apiClient.findGroups(perPage: Self.containerFetchLimit)
+            availableGroups = result.groups.map(MediaContainer.init(group:))
+        } catch {
+            AppLogger.appModel.error("Failed to load groups: \(error.localizedDescription, privacy: .public)")
+            availableGroups = []
+        }
+    }
+
     // MARK: - Media Containers
 
     /// Load the browsable containers for the library in force.
@@ -2800,41 +2814,27 @@ class AppModel {
             }
             let mediaType: PHAssetMediaType = isVideo ? .video : .image
             let albums = (try? await PhotosIndexStore.shared.albums(mediaType: mediaType)) ?? []
-            mediaContainers = albums.map { album in
-                MediaContainer(
-                    id: album.id,
-                    name: album.name,
-                    count: album.count,
-                    kind: album.isSmart ? .smartAlbum : .album,
-                    // The album's first asset of this media type, addressed the
-                    // same way any other asset is.
-                    coverURL: album.keyAssetId.flatMap(PhotosAssetURL.url(forLocalIdentifier:))
-                )
+            mediaContainers = albums.map(MediaContainer.init(album:))
+
+        case .stash where isVideo:
+            // Groups are Stash's containers for scenes, the counterpart to
+            // galleries for images.
+            do {
+                let result = try await apiClient.findGroups(perPage: Self.containerFetchLimit)
+                mediaContainers = result.groups.map(MediaContainer.init(group:))
+            } catch {
+                AppLogger.appModel.error("Failed to load groups: \(error.localizedDescription, privacy: .public)")
+                mediaContainers = []
             }
 
         case .stash:
-            // Galleries hold images, not scenes, so there is nothing to browse
-            // on the Videos side. Saying so is the honest answer; inventing a
-            // scene container would be a different feature.
-            guard !isVideo else {
-                mediaContainers = []
-                return
-            }
             do {
                 // Bounded rather than Stash's "all" sentinel: a predictable cap
                 // beats relying on a magic per-page value, and a library with
                 // more galleries than this wants search, not a longer grid.
                 let result = try await apiClient.findGalleries(page: 1, perPage: Self.containerFetchLimit)
                 mediaContainers = result.galleries
-                    .map { gallery in
-                        MediaContainer(
-                            id: gallery.id,
-                            name: gallery.displayName,
-                            count: gallery.image_count ?? 0,
-                            kind: .gallery,
-                            coverURL: gallery.cover?.paths?.thumbnail.flatMap(URL.init(string:))
-                        )
-                    }
+                    .map(MediaContainer.init(gallery:))
                     .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
             } catch {
                 AppLogger.appModel.error("Failed to load galleries: \(error.localizedDescription, privacy: .public)")
@@ -2856,6 +2856,8 @@ class AppModel {
             return criteria.albumIds == [container.id]
         case .gallery:
             return currentFilter.galleryIds == [container.id]
+        case .group:
+            return currentVideoFilter.groupIds == [container.id]
         }
     }
 
@@ -2877,6 +2879,9 @@ class AppModel {
         case .gallery:
             currentFilter.selectedGalleries = [container.filterItem]
             currentFilter.galleryModifier = .includesAll
+        case .group:
+            currentVideoFilter.selectedGroups = [container.filterItem]
+            currentVideoFilter.groupModifier = .includesAll
         }
 
         Task {
@@ -2892,6 +2897,7 @@ class AppModel {
     func clearAppliedContainer(isVideo: Bool) {
         if isVideo {
             currentVideoFilter.photosCriteria.selectedAlbums = []
+            currentVideoFilter.selectedGroups = []
         } else {
             currentFilter.photosCriteria.selectedAlbums = []
             currentFilter.selectedGalleries = []
@@ -2922,6 +2928,9 @@ class AppModel {
             await searchTags(query: "")
             await searchStudios(query: "")
             await searchPerformers(query: "")
+            if isVideo {
+                await loadGroups()
+            }
         }
     }
 

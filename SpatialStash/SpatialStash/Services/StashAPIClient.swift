@@ -464,6 +464,57 @@ actor StashAPIClient {
         return response.findGalleries
     }
 
+    // MARK: - Group Queries
+
+    struct FindGroupsResponse: Decodable {
+        let findGroups: FindGroupsResult
+    }
+
+    struct FindGroupsResult: Decodable {
+        let count: Int
+        let groups: [StashGroup]
+    }
+
+    struct StashGroup: Decodable {
+        let id: String
+        let name: String
+        /// Optional despite being non-null in the schema, so an older server that
+        /// omits it decodes rather than failing the whole query.
+        let scene_count: Int?
+        let front_image_path: String?
+    }
+
+    /// Groups are Stash's containers for *scenes* — what galleries are for
+    /// images. The Albums browser needs them for the Videos side to exist at all.
+    func findGroups(query: String? = nil, page: Int = 1, perPage: Int = 100) async throws -> FindGroupsResult {
+        let graphQLQuery = """
+        query FindGroups($filter: FindFilterType) {
+            findGroups(filter: $filter) {
+                count
+                groups {
+                    id
+                    name
+                    scene_count
+                    front_image_path
+                }
+            }
+        }
+        """
+
+        var filterVariables: [String: Any] = [
+            "page": page,
+            "per_page": perPage,
+            "sort": "name",
+            "direction": "ASC"
+        ]
+        if let query, !query.isEmpty {
+            filterVariables["q"] = query
+        }
+
+        let response: FindGroupsResponse = try await self.query(graphQLQuery, variables: ["filter": filterVariables])
+        return response.findGroups
+    }
+
     // MARK: - Tag Queries (for autocomplete)
 
     struct FindTagsResponse: Decodable {
@@ -773,6 +824,16 @@ actor StashAPIClient {
                 sceneFilter["tags"] = [
                     "value": filter.tagIds,
                     "modifier": filter.tagModifier.rawValue
+                ]
+            }
+
+            // Groups filter. HierarchicalMultiCriterionInput also accepts a
+            // `depth`, left unset so sub-groups are not pulled in implicitly —
+            // opening a group should show that group.
+            if !filter.groupIds.isEmpty {
+                sceneFilter["groups"] = [
+                    "value": filter.groupIds,
+                    "modifier": filter.groupModifier.rawValue
                 ]
             }
 

@@ -293,8 +293,22 @@ struct FiltersTabView: View {
             }
         }
 
-        Section("Galleries") {
-            GalleryFilterView(isVideoFilter: isVideoFilter)
+        // Galleries hold images and groups hold scenes, so each tab gets the
+        // one that applies rather than both showing a dimension that cannot
+        // match anything.
+        if isVideoFilter {
+            MediaMultiSelectSection(
+                title: "Groups",
+                footer: "Stash groups collect scenes, the way galleries collect images.",
+                emptyMessage: "This server has no groups.",
+                options: appModel.availableGroups.map(\.filterOption),
+                selection: $appModel.currentVideoFilter.selectedGroups,
+                modifier: $appModel.currentVideoFilter.groupModifier
+            )
+        } else {
+            Section("Galleries") {
+                GalleryFilterView(isVideoFilter: isVideoFilter)
+            }
         }
 
         Section("Tags") {

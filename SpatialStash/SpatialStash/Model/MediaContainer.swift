@@ -31,14 +31,17 @@ struct MediaContainer: Identifiable, Hashable, Sendable {
         case album
         /// A system smart album — Favourites, Spatial, Recently Added.
         case smartAlbum
-        /// A Stash gallery.
+        /// A Stash gallery, which holds images.
         case gallery
+        /// A Stash group, which holds scenes — the counterpart to a gallery.
+        case group
 
         var symbolName: String {
             switch self {
             case .album: return "rectangle.stack"
             case .smartAlbum: return "wand.and.stars"
             case .gallery: return "photo.on.rectangle.angled"
+            case .group: return "film.stack"
             }
         }
 
@@ -46,6 +49,27 @@ struct MediaContainer: Identifiable, Hashable, Sendable {
         /// Smart albums are the system's, not the user's.
         var isSecondary: Bool {
             self == .smartAlbum
+        }
+
+        /// What to call a collection of these, in the user's words.
+        var pluralTitle: String {
+            switch self {
+            case .album, .smartAlbum: return "Albums"
+            case .gallery: return "Galleries"
+            case .group: return "Groups"
+            }
+        }
+
+        /// The kind a library uses to hold one media kind.
+        ///
+        /// Both the browser and the grid's banner need to name the thing being
+        /// browsed, and each deriving it was two places to forget that Stash
+        /// calls the video one a group.
+        static func inLibrary(_ source: LibrarySource, isVideo: Bool) -> Kind {
+            switch source {
+            case .photos: return .album
+            case .stash:  return isVideo ? .group : .gallery
+            }
         }
     }
 
@@ -61,5 +85,50 @@ struct MediaContainer: Identifiable, Hashable, Sendable {
     /// As a filter value.
     var filterItem: AutocompleteItem {
         AutocompleteItem(id: id, name: name)
+    }
+}
+
+// MARK: - Mapping
+
+/*
+ One conversion per library type, because there are two callers for each — the
+ Albums browser and the Filters tab's option list — and having them each map the
+ fields is precisely how two views end up disagreeing about what an empty count
+ or a missing cover means.
+ */
+extension MediaContainer {
+    init(album: PhotoAlbum) {
+        self.init(id: album.id,
+                  name: album.name,
+                  count: album.count,
+                  kind: album.isSmart ? .smartAlbum : .album,
+                  // The album's first asset of the filtered media type,
+                  // addressed the same way any other asset is.
+                  coverURL: album.keyAssetId.flatMap(PhotosAssetURL.url(forLocalIdentifier:)))
+    }
+
+    init(gallery: StashAPIClient.StashGallery) {
+        self.init(id: gallery.id,
+                  name: gallery.displayName,
+                  count: gallery.image_count ?? 0,
+                  kind: .gallery,
+                  coverURL: gallery.cover?.paths?.thumbnail.flatMap(URL.init(string:)))
+    }
+
+    init(group: StashAPIClient.StashGroup) {
+        self.init(id: group.id,
+                  name: group.name,
+                  count: group.scene_count ?? 0,
+                  kind: .group,
+                  coverURL: group.front_image_path.flatMap(URL.init(string:)))
+    }
+
+    /// As a filter-list option.
+    var filterOption: FilterOption {
+        FilterOption(id: id,
+                     name: name,
+                     detail: "\(count)",
+                     thumbnailURL: coverURL,
+                     isSecondary: kind.isSecondary)
     }
 }

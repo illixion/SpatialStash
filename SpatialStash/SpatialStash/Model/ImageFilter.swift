@@ -375,6 +375,28 @@ struct SceneFilterCriteria: Codable, Equatable {
     var selectedPerformers: [AutocompleteItem] = []
     var performerModifier: CriterionModifier = .includesAll
 
+    // Groups filter — Stash's container for scenes, the counterpart to
+    // galleries for images.
+    //
+    // Optional storage with non-optional accessors, and the modifier held as a
+    // raw string: the synthesized decoder calls `decode` for a non-optional even
+    // when it has a default, so a plain array would have thrown on every saved
+    // view written before this — and the whole array decodes under one `try?`.
+    var groups: [AutocompleteItem]?
+    var groupModifierRawValue: String?
+
+    var selectedGroups: [AutocompleteItem] {
+        get { groups ?? [] }
+        set { groups = newValue }
+    }
+
+    var groupModifier: CriterionModifier {
+        get { groupModifierRawValue.flatMap(CriterionModifier.init(rawValue:)) ?? .includesAll }
+        set { groupModifierRawValue = newValue.rawValue }
+    }
+
+    var groupIds: [String] { selectedGroups.map(\.id) }
+
     /// Only items this app has already produced 3D output for.
     ///
     /// Lives here rather than in the photo-library criteria because it is the one
@@ -460,6 +482,7 @@ struct SceneFilterCriteria: Codable, Equatable {
         !selectedTags.isEmpty ||
         !selectedStudios.isEmpty ||
         !selectedPerformers.isEmpty ||
+        !selectedGroups.isEmpty ||
         showsOnlyConverted
     }
 
@@ -482,6 +505,8 @@ struct SceneFilterCriteria: Codable, Equatable {
         studioModifier = .includesAll
         selectedPerformers = []
         performerModifier = .includesAll
+        groups = nil
+        groupModifierRawValue = nil
         onlyConverted = nil
         photos?.clearFilters()
     }
