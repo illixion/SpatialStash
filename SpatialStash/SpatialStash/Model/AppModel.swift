@@ -2537,15 +2537,6 @@ class AppModel {
         availableLibrarySources.contains(librarySource) ? librarySource : .photos
     }
 
-    /// The next selectable source after the current one, wrapping around —
-    /// what the tab bar's library-switch button cycles to, for however many
-    /// of the two or three sources are actually available right now.
-    func nextLibrarySource() -> LibrarySource {
-        let sources = availableLibrarySources
-        guard let index = sources.firstIndex(of: effectiveLibrarySource) else { return .photos }
-        return sources[(index + 1) % sources.count]
-    }
-
     /// The sources a library choice implies. The single place that mapping
     /// lives, so init and a later switch cannot disagree about it.
     ///

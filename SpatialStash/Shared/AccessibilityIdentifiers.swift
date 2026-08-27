@@ -23,11 +23,19 @@ import Foundation
 
 enum A11y {
 
-    /// The tab bar's library-switch action button (Photos/Stash/Local).
+    /// The tab bar's library-switch dropdown (Photos/Stash/Local).
     /// Explicit rather than the default `RAVEA11y.tabAction(systemImage)`
     /// derivation, because the icon — and so the derived identifier — changes
     /// with whichever library is current.
     static let librarySwitch = "librarySwitch"
+
+    /// One row inside the library-switch dropdown, keyed by the source's
+    /// `LibrarySource.rawValue` — this file is a member of both targets, but
+    /// `LibrarySource` itself lives only in the app target, so the parameter
+    /// is the raw string rather than the type.
+    static func librarySwitchOption(_ sourceRawValue: String) -> String {
+        "librarySwitch.\(sourceRawValue)"
+    }
 
     /// Albums tab.
     enum Albums {

@@ -48,16 +48,12 @@ struct TabBarOrnament: View {
             }
             // Left of the slideshow button: which library the media tabs show.
             // Only meaningful with more than one source available — with
-            // just Photos there is nothing to switch between.
+            // just Photos there is nothing to switch between. A dropdown
+            // rather than a cycling button because a third source made
+            // "tap to switch to the other one" ambiguous about where a tap
+            // would land.
             if showsLibraryToggle {
-                let current = appModel.effectiveLibrarySource
-                let next = appModel.nextLibrarySource()
-                RAVETabBarActionButton(
-                    systemImage: current.symbolName,
-                    help: "Showing \(current.displayName) — switch to \(next.displayName)",
-                    identifier: A11y.librarySwitch,
-                    action: { appModel.librarySource = next }
-                )
+                libraryMenu
             }
             if let launch = slideshowLaunch {
                 RAVETabBarActionButton(
@@ -79,6 +75,50 @@ struct TabBarOrnament: View {
         case .pictures, .videos: return true
         default: return false
         }
+    }
+
+    /// The library switch, styled to match the other icon buttons in this
+    /// bar (`RAVETabBarButtonStyle` is exposed by RAVEUI for exactly that).
+    /// `availableLibrarySources` is the only thing that decides what's
+    /// offered here — never how much either source currently has to show,
+    /// so an empty-but-enabled Local library stays reachable to pull-to-
+    /// refresh rather than disappearing until it has content.
+    private var libraryMenu: some View {
+        let current = appModel.effectiveLibrarySource
+        return Menu {
+            ForEach(appModel.availableLibrarySources, id: \.self) { source in
+                libraryMenuItem(source, current: current)
+            }
+        } label: {
+            Image(systemName: current.symbolName)
+                .font(.title3)
+                .frame(minWidth: 44, minHeight: 32)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .contentShape(Capsule())
+        }
+        .buttonStyle(RAVETabBarButtonStyle(isSelected: false))
+        .hoverEffect(.highlight)
+        .help("Library — showing \(current.displayName)")
+        .accessibilityLabel("Library — showing \(current.displayName)")
+        .accessibilityIdentifier(A11y.librarySwitch)
+    }
+
+    /// Radio-style library item: checkmark on the active source only,
+    /// mirroring `VideoOrnamentsView.modeButton`.
+    private func libraryMenuItem(_ source: LibrarySource, current: LibrarySource) -> some View {
+        Button {
+            guard current != source else { return }
+            appModel.librarySource = source
+        } label: {
+            HStack {
+                Label(source.displayName, systemImage: source.symbolName)
+                if current == source {
+                    Image(systemName: "checkmark")
+                }
+            }
+        }
+        .accessibilityIdentifier(A11y.librarySwitchOption(source.rawValue))
     }
 
     /// What the play button would start, or nil when the current tab isn't
