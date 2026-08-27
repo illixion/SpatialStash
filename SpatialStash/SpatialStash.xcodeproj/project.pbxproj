@@ -12,7 +12,18 @@
 		AA06000000000000000000C3 /* RAVEUI in Frameworks */ = {isa = PBXBuildFile; productRef = AA06000000000000000000C2 /* RAVEUI */; };
 		AA06000000000000000000C5 /* RAVEConsole in Frameworks */ = {isa = PBXBuildFile; productRef = AA06000000000000000000C4 /* RAVEConsole */; };
 		AA07000000000000000000D3 /* RAVEMedia in Frameworks */ = {isa = PBXBuildFile; productRef = AA07000000000000000000D2 /* RAVEMedia */; };
+		AA08000000000000000000ED /* RAVEUI in Frameworks */ = {isa = PBXBuildFile; productRef = AA08000000000000000000EC /* RAVEUI */; };
+		AA08000000000000000000F0 /* AccessibilityIdentifiers.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA08000000000000000000EF /* AccessibilityIdentifiers.swift */; };
+		AA08000000000000000000F1 /* AccessibilityIdentifiers.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA08000000000000000000EF /* AccessibilityIdentifiers.swift */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXTargetDependency section */
+		AA08000000000000000000EA /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 077865192D811C5500BCF113 /* SpatialStash */;
+			targetProxy = AA08000000000000000000EB /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin PBXFileReference section */
 		0778651A2D811C5500BCF113 /* SpatialStash.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SpatialStash.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -20,6 +31,8 @@
 		8E9DA7BDAEB07F2CBEB7EEF5 /* SpatialStash.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = SpatialStash.xcconfig; path = ../Configuration/SpatialStash.xcconfig; sourceTree = "<group>"; };
 		A652FA6EBF76B35751285132 /* LICENSE.txt */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = LICENSE.txt; sourceTree = "<group>"; };
 		FB302A1BC44797EC0074C931 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = README.md; path = ../README.md; sourceTree = "<group>"; };
+		AA08000000000000000000E2 /* SpatialStashUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SpatialStashUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		AA08000000000000000000EF /* AccessibilityIdentifiers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccessibilityIdentifiers.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -34,7 +47,18 @@
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		0778651C2D811C5500BCF113 /* SpatialStash */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (077865282D811C5600BCF113 /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = SpatialStash; sourceTree = "<group>"; };
+		AA08000000000000000000E3 /* SpatialStashUITests */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = SpatialStashUITests; sourceTree = "<group>"; };
 /* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXContainerItemProxy section */
+		AA08000000000000000000EB /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 077865122D811C5500BCF113 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 077865192D811C5500BCF113;
+			remoteInfo = SpatialStash;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		077865172D811C5500BCF113 /* Frameworks */ = {
@@ -49,6 +73,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		AA08000000000000000000E5 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AA08000000000000000000ED /* RAVEUI in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -57,6 +89,8 @@
 			children = (
 				FB302A1BC44797EC0074C931 /* README.md */,
 				0778651C2D811C5500BCF113 /* SpatialStash */,
+				AA08000000000000000000E3 /* SpatialStashUITests */,
+				AA08000000000000000000EE /* Shared */,
 				0778651B2D811C5500BCF113 /* Products */,
 				F9B36AF4F35D9FBDDB3435EE /* Configuration */,
 				E52E8BFAE3BD5A722B806008 /* LICENSE */,
@@ -67,6 +101,7 @@
 			isa = PBXGroup;
 			children = (
 				0778651A2D811C5500BCF113 /* SpatialStash.app */,
+				AA08000000000000000000E2 /* SpatialStashUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -78,6 +113,14 @@
 			);
 			name = LICENSE;
 			path = ..;
+			sourceTree = "<group>";
+		};
+		AA08000000000000000000EE /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				AA08000000000000000000EF /* AccessibilityIdentifiers.swift */,
+			);
+			path = Shared;
 			sourceTree = "<group>";
 		};
 		F9B36AF4F35D9FBDDB3435EE /* Configuration */ = {
@@ -119,6 +162,30 @@
 			productReference = 0778651A2D811C5500BCF113 /* SpatialStash.app */;
 			productType = "com.apple.product-type.application";
 		};
+		AA08000000000000000000E1 /* SpatialStashUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AA08000000000000000000E7 /* Build configuration list for PBXNativeTarget "SpatialStashUITests" */;
+			buildPhases = (
+				AA08000000000000000000E4 /* Sources */,
+				AA08000000000000000000E5 /* Frameworks */,
+				AA08000000000000000000E6 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				AA08000000000000000000EA /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				AA08000000000000000000E3 /* SpatialStashUITests */,
+			);
+			name = SpatialStashUITests;
+			packageProductDependencies = (
+				AA08000000000000000000EC /* RAVEUI */,
+			);
+			productName = SpatialStashUITests;
+			productReference = AA08000000000000000000E2 /* SpatialStashUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -132,6 +199,9 @@
 				TargetAttributes = {
 					077865192D811C5500BCF113 = {
 						CreatedOnToolsVersion = 16.3;
+					};
+					AA08000000000000000000E1 = {
+						TestTargetID = 077865192D811C5500BCF113;
 					};
 				};
 			};
@@ -153,12 +223,20 @@
 			projectRoot = "";
 			targets = (
 				077865192D811C5500BCF113 /* SpatialStash */,
+				AA08000000000000000000E1 /* SpatialStashUITests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		077865182D811C5500BCF113 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AA08000000000000000000E6 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -172,6 +250,15 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AA08000000000000000000F0 /* AccessibilityIdentifiers.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AA08000000000000000000E4 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AA08000000000000000000F1 /* AccessibilityIdentifiers.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -363,6 +450,52 @@
 			};
 			name = Release;
 		};
+		AA08000000000000000000E8 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 8E9DA7BDAEB07F2CBEB7EEF5 /* SpatialStash.xcconfig */;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.illixion.spatialstash.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = xros;
+				SUPPORTED_PLATFORMS = "xros xrsimulator";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 7;
+				TEST_TARGET_NAME = SpatialStash;
+				XROS_DEPLOYMENT_TARGET = 26.0;
+			};
+			name = Debug;
+		};
+		AA08000000000000000000E9 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 8E9DA7BDAEB07F2CBEB7EEF5 /* SpatialStash.xcconfig */;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.illixion.spatialstash.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = xros;
+				SUPPORTED_PLATFORMS = "xros xrsimulator";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 7;
+				TEST_TARGET_NAME = SpatialStash;
+				XROS_DEPLOYMENT_TARGET = 26.0;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -380,6 +513,15 @@
 			buildConfigurations = (
 				0778652A2D811C5600BCF113 /* Debug */,
 				0778652B2D811C5600BCF113 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AA08000000000000000000E7 /* Build configuration list for PBXNativeTarget "SpatialStashUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AA08000000000000000000E8 /* Debug */,
+				AA08000000000000000000E9 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -417,6 +559,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = AA01000000000000000000A1 /* XCLocalSwiftPackageReference "../../RAVESDK" */;
 			productName = RAVEMedia;
+		};
+		AA08000000000000000000EC /* RAVEUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AA01000000000000000000A1 /* XCLocalSwiftPackageReference "../../RAVESDK" */;
+			productName = RAVEUI;
 		};
 		AA01000000000000000000A2 /* RAVENet */ = {
 			isa = XCSwiftPackageProductDependency;

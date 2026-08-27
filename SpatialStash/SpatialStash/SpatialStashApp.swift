@@ -10,8 +10,19 @@ import SwiftUI
 
 @main
 struct SpatialStashApp: App {
-    @State private var appModel = AppModel()
+    @State private var appModel: AppModel
     @UIApplicationDelegateAdaptor private var appDelegate: AppDelegate
+
+    /// Written out rather than left to a property initializer so the UI-testing
+    /// overrides land *before* `AppModel.init` reads UserDefaults. A default
+    /// value expression is evaluated ahead of the initializer body, so
+    /// `appModel = AppModel()` as a default would win the race.
+    init() {
+        #if DEBUG
+        UITestingConfiguration.applyIfNeeded()
+        #endif
+        _appModel = State(initialValue: AppModel())
+    }
 
     var body: some Scene {
         // Main gallery window — WindowGroup allows multiple instances.

@@ -224,6 +224,7 @@ struct WelcomeSampleControls: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
+                .accessibilityIdentifier(A11y.Welcome.sampleConvert)
 
             case .converting:
                 HStack(spacing: 12) {
@@ -232,6 +233,8 @@ struct WelcomeSampleControls: View {
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier(A11y.Welcome.sampleProgress)
 
             case .ready:
                 Picker("Viewing mode", selection: Binding(
@@ -244,6 +247,7 @@ struct WelcomeSampleControls: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .frame(maxWidth: 280)
+                .accessibilityIdentifier(A11y.Welcome.sampleModePicker)
 
                 Text("Lean in — the depth is real, not a parallax trick.")
                     .font(.caption)

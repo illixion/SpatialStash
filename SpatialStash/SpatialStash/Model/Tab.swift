@@ -19,6 +19,13 @@ enum Tab: String, CaseIterable, RAVETabItem {
     case console = "Console"
 
 
+    /// The case name, not the title: the titles are display copy and this app
+    /// is mid-rename, so a UI test matching on "Pictures" would break on a
+    /// wording change that has nothing to do with it.
+    var accessibilityIdentifier: String {
+        RAVEA11y.tab(String(describing: self))
+    }
+
     var systemImage: String {
         switch self {
         case .pictures: return "photo.stack"

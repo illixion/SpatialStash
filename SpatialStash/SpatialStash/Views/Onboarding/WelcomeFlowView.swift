@@ -67,6 +67,12 @@ struct WelcomeFlowView: View {
             panel
                 .frame(maxWidth: 1120, maxHeight: 660)
                 .padding(24)
+                // `.contain` rather than a bare identifier: SwiftUI only puts a
+                // group in the accessibility tree when asked to, so without it
+                // the identifier has nothing to attach to and a UI test cannot
+                // see the panel at all.
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier(A11y.Welcome.panel)
         }
     }
 
@@ -164,6 +170,7 @@ struct WelcomeFlowView: View {
             Button("Skip") { finish() }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
+                .accessibilityIdentifier(A11y.Welcome.skip)
         case .sources:
             Button {
                 flow.retreat()
@@ -172,6 +179,7 @@ struct WelcomeFlowView: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
+            .accessibilityIdentifier(A11y.Welcome.back)
         }
     }
 
@@ -197,6 +205,7 @@ struct WelcomeFlowView: View {
                     .padding(.horizontal, 12)
             }
             .buttonStyle(.borderedProminent)
+            .accessibilityIdentifier(A11y.Welcome.advance)
         case .sources:
             // Two button styles rather than a conditional style: `.bordered`
             // and `.borderedProminent` are different types and cannot share a
@@ -206,11 +215,13 @@ struct WelcomeFlowView: View {
                     Text("Start Browsing").padding(.horizontal, 12)
                 }
                 .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier(A11y.Welcome.finish)
             } else {
                 Button { finish() } label: {
                     Text("Not Now").padding(.horizontal, 12)
                 }
                 .buttonStyle(.bordered)
+                .accessibilityIdentifier(A11y.Welcome.finish)
             }
         }
     }

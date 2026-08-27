@@ -59,9 +59,19 @@ struct WelcomeSourcesPage: View {
 
             ScrollView {
                 VStack(spacing: 16) {
+                    // Identified on the containers, not the buttons inside
+                    // them: a card whose source is already set up shows a
+                    // status line and no button at all, and "all three options
+                    // are offered as peers" is the claim this screen makes.
                     photosCard
+                        .accessibilityElement(children: .contain)
+                        .accessibilityIdentifier(A11y.Welcome.photosCard)
                     serverCard
+                        .accessibilityElement(children: .contain)
+                        .accessibilityIdentifier(A11y.Welcome.serverCard)
                     backupCard
+                        .accessibilityElement(children: .contain)
+                        .accessibilityIdentifier(A11y.Welcome.backupCard)
                 }
                 .frame(maxWidth: 720)
                 .padding(.vertical, 4)
@@ -111,6 +121,7 @@ struct WelcomeSourcesPage: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(isRequestingPhotos)
+                .accessibilityIdentifier(A11y.Welcome.photosAllow)
             }
         }
     }
@@ -156,6 +167,7 @@ struct WelcomeSourcesPage: View {
     private var serverForm: some View {
         VStack(alignment: .leading, spacing: 12) {
             TextField("http://stash.local:9999", text: $draftServerURL)
+                .accessibilityIdentifier(A11y.Welcome.serverURLField)
                 .textFieldStyle(.roundedBorder)
                 .textContentType(.URL)
                 .autocorrectionDisabled()
@@ -164,6 +176,7 @@ struct WelcomeSourcesPage: View {
                 .onSubmit { Task { await connectServer() } }
 
             SecureField("API key (optional)", text: $draftAPIKey)
+                .accessibilityIdentifier(A11y.Welcome.serverKeyField)
                 .textFieldStyle(.roundedBorder)
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
@@ -180,6 +193,7 @@ struct WelcomeSourcesPage: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier(A11y.Welcome.serverConnect)
                 .disabled(serverState == .connecting
                           || draftServerURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
@@ -222,6 +236,7 @@ struct WelcomeSourcesPage: View {
             } else {
                 Button("Choose Backup File…") { backupImporter.pickFile() }
                     .buttonStyle(.bordered)
+                    .accessibilityIdentifier(A11y.Welcome.backupChoose)
             }
         }
     }
