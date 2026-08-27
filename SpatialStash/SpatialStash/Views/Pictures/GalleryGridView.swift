@@ -140,7 +140,7 @@ struct GalleryGridView: View {
                                        value: layout.columns.count)
                         }
                         .refreshable {
-                            await appModel.loadInitialGallery()
+                            await appModel.refreshGallery()
                         }
                         .onAppear {
                             if let lastId = appModel.lastViewedImageId {

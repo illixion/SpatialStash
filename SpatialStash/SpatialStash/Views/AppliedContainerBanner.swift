@@ -10,10 +10,13 @@
  whole library. This is that missing half: without it, "open an album" is a trip
  with no return.
 
- It is a *back* control, so it returns to the Albums tab as well as dropping the
- filter. An earlier version only dropped the filter and stayed on the grid, which
- read as broken: the one control on an album's grid, pressed to leave the album,
- left you exactly where you were with different contents.
+ It is a *back* control and nothing more: it returns to the Albums tab and leaves
+ the container applied, so the browser can show which one you were in. Two
+ earlier versions got this wrong in opposite directions — one cleared the filter
+ and stayed put, which read as broken; the next cleared it *and* navigated, which
+ collapsed this banner and reloaded the grid while the tab was still crossfading,
+ so the contents shifted and repainted on a view being faded out. Leaving a
+ container is the browser's "All" card.
  */
 
 import SwiftUI
@@ -57,17 +60,20 @@ struct AppliedContainerBanner: View {
                     .font(.headline)
                     .lineLimit(1)
                 Spacer()
-                // Back, not just "clear". The first version dropped the filter
-                // and stayed put, which is not what pressing the one control on
-                // an album's grid means — you came from the browser and expect
-                // to land back in it. So it does both: drops the container and
-                // returns to Albums, where nothing is applied and every album is
-                // there to pick from.
+                // Purely navigational: it goes back to the browser and leaves
+                // the container applied.
+                //
+                // It used to also clear the filter, which looked worse than it
+                // sounds. Clearing collapses this banner and reloads the grid
+                // while the tab is still crossfading, so the contents shifted up
+                // and repainted on a view the user was watching disappear. And
+                // it is not needed: the browser's own "All" card is how you leave
+                // a container, and leaving this one applied is what lets the
+                // browser show you where you were.
                 Button {
-                    appModel.clearAppliedContainer(isVideo: isVideo)
                     windowModel.selectedTab = .albums
                 } label: {
-                    Label("All \(containerKind.pluralTitle)", systemImage: "chevron.left")
+                    Label(containerKind.pluralTitle, systemImage: "chevron.left")
                 }
                 .buttonStyle(.borderless)
             }

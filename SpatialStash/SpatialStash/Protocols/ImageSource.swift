@@ -66,3 +66,25 @@ extension ImageSource {
         return try await fetchImages(page: page, pageSize: pageSize)
     }
 }
+
+// MARK: - Cancellation
+
+extension Error {
+    /// Whether this error is a cancellation rather than a failure.
+    ///
+    /// The distinction matters wherever an error decides what to do with content
+    /// already on screen: a *failed* load means what is showing no longer matches
+    /// what was asked for, while a *cancelled* one means nobody is waiting for an
+    /// answer any more and the old contents are still the best available.
+    ///
+    /// `URLSession.data(for:)` surfaces task cancellation as `URLError.cancelled`
+    /// rather than `CancellationError`, so both spellings have to be caught, and
+    /// `NSError`'s `underlyingErrors` is checked because wrappers are common.
+    var isCancellation: Bool {
+        if self is CancellationError { return true }
+        if let urlError = self as? URLError, urlError.code == .cancelled { return true }
+        let nsError = self as NSError
+        if nsError.domain == NSURLErrorDomain, nsError.code == NSURLErrorCancelled { return true }
+        return nsError.underlyingErrors.contains { $0.isCancellation }
+    }
+}

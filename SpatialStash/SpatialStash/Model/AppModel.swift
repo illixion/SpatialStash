@@ -128,6 +128,11 @@ class AppModel {
     var mediaContainers: [MediaContainer] = []
     var isLoadingMediaContainers: Bool = false
 
+    /// In-flight pull-to-refresh, so overlapping refreshes coalesce. See
+    /// `refreshGallery`.
+    private var galleryRefreshTask: Task<Void, Never>?
+    private var videoRefreshTask: Task<Void, Never>?
+
     /// Albums offered by the Photos filter. Counted for the media type last
     /// asked for, so switching between the Pictures and Videos filters reloads.
     var availablePhotoAlbums: [PhotoAlbum] = []
@@ -2510,6 +2515,41 @@ class AppModel {
         await loadNextPage()
     }
 
+    /// Pull-to-refresh, owned here rather than by the view that asks for it.
+    ///
+    /// `.refreshable`'s task belongs to the scroll view hosting it, and SwiftUI
+    /// cancels that task when the refresh interaction ends or the scroll view is
+    /// replaced. Awaiting the load directly inside it means the cancellation
+    /// travels straight into `URLSession.data(for:)`, which fails the request
+    /// with `URLError.cancelled` — a refresh that reliably kills its own fetch.
+    ///
+    /// An unstructured `Task` does not inherit cancellation from the task that
+    /// created it, so the load runs to completion regardless of what happens to
+    /// the gesture. Overlapping refreshes await the one in flight rather than
+    /// starting a second.
+    func refreshGallery() async {
+        if let existing = galleryRefreshTask {
+            await existing.value
+            return
+        }
+        let task = Task { await self.loadInitialGallery() }
+        galleryRefreshTask = task
+        await task.value
+        galleryRefreshTask = nil
+    }
+
+    /// See `refreshGallery`.
+    func refreshVideos() async {
+        if let existing = videoRefreshTask {
+            await existing.value
+            return
+        }
+        let task = Task { await self.loadInitialVideos() }
+        videoRefreshTask = task
+        await task.value
+        videoRefreshTask = nil
+    }
+
     /// Load the next page of gallery images
     func loadNextPage() async {
         guard !isLoadingGallery && hasMorePages else {
@@ -2557,12 +2597,19 @@ class AppModel {
             hasMorePages = result.hasMore
             currentPage += 1
         } catch {
-            AppLogger.appModel.error("Failed to load gallery page: \(error.localizedDescription, privacy: .public)")
             // A failed *first* page has to clear: whatever is on screen no longer
             // matches the filter that was just applied, and leaving it there
-            // would claim otherwise.
-            if page == 0 {
-                galleryImages = []
+            // would claim otherwise. A *cancelled* one must not — nobody is
+            // waiting for the answer, and emptying the grid because a refresh
+            // gesture was torn down is how a pull-to-refresh ends up looking
+            // like it deleted the library.
+            if error.isCancellation {
+                AppLogger.appModel.log(level: AppLogger.effectiveDebugLevel, "Gallery page load cancelled")
+            } else {
+                AppLogger.appModel.error("Failed to load gallery page: \(error.localizedDescription, privacy: .public)")
+                if page == 0 {
+                    galleryImages = []
+                }
             }
         }
     }
@@ -3027,9 +3074,14 @@ class AppModel {
             hasMoreVideoPages = result.hasMore
             currentVideoPage += 1
         } catch {
-            AppLogger.appModel.error("Failed to load video page: \(error.localizedDescription, privacy: .public)")
-            if videoPage == 0 {
-                galleryVideos = []
+            // See loadNextPage: cancellation leaves the list alone.
+            if error.isCancellation {
+                AppLogger.appModel.log(level: AppLogger.effectiveDebugLevel, "Video page load cancelled")
+            } else {
+                AppLogger.appModel.error("Failed to load video page: \(error.localizedDescription, privacy: .public)")
+                if videoPage == 0 {
+                    galleryVideos = []
+                }
             }
         }
     }

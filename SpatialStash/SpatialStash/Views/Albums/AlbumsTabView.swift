@@ -147,6 +147,21 @@ struct AlbumsTabView: View {
                                                  spacing: gridSpacing)
             ScrollView {
                 LazyVGrid(columns: layout.columns, spacing: gridSpacing) {
+                    // First, and only when nothing is being searched for: the
+                    // way *out* of a container. Every photo app has this card,
+                    // and it beats making the back button do double duty or
+                    // hoping the user discovers that re-tapping an applied
+                    // album deselects it.
+                    if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        AllMediaCard(
+                            title: allTitle,
+                            symbol: isVideo ? "film.stack" : "photo.stack",
+                            side: layout.columnWidth,
+                            isApplied: !hasAppliedContainer
+                        ) {
+                            showAll()
+                        }
+                    }
                     ForEach(filteredContainers) { container in
                         MediaContainerCard(
                             container: container,
@@ -163,8 +178,27 @@ struct AlbumsTabView: View {
         }
     }
 
+    private var allTitle: String {
+        if isVideo { return "All Videos" }
+        return isPhotosLibrary ? "All Photos" : "All Images"
+    }
+
+    /// Whether any container is currently narrowing this media kind.
+    private var hasAppliedContainer: Bool {
+        appModel.mediaContainers.contains { appModel.isContainerApplied($0, isVideo: isVideo) }
+    }
+
+    private func showAll() {
+        appModel.clearAppliedContainer(isVideo: isVideo)
+        navigate()
+    }
+
     private func open(_ container: MediaContainer) {
         appModel.applyContainer(container, isVideo: isVideo)
+        navigate()
+    }
+
+    private func navigate() {
         let destination: Tab = isVideo ? .videos : .pictures
         windowModel.lastContentTab = destination
         windowModel.selectedTab = destination
@@ -214,5 +248,45 @@ struct MediaContainerCard: View {
             RoundedRectangle(cornerRadius: 12)
                 .strokeBorder(isApplied ? Color.accentColor : .clear, lineWidth: 3)
         }
+    }
+}
+
+// MARK: - All card
+
+/// The "no container" entry: everything of this media kind.
+struct AllMediaCard: View {
+    let title: String
+    let symbol: String
+    let side: CGFloat
+    let isApplied: Bool
+    let onOpen: () -> Void
+
+    var body: some View {
+        Button(action: onOpen) {
+            VStack(alignment: .leading, spacing: 8) {
+                ZStack(alignment: .topTrailing) {
+                    MediaThumbnail(url: nil, side: side, placeholderSymbol: symbol)
+                    if isApplied {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.title2)
+                            .foregroundStyle(Color.accentColor)
+                            .background(Circle().fill(.white))
+                            .padding(8)
+                    }
+                }
+                .overlay {
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(isApplied ? Color.accentColor : .clear, lineWidth: 3)
+                }
+                Text(title)
+                    .font(.headline)
+                    .lineLimit(1)
+                Text("Everything")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .buttonStyle(.plain)
+        .hoverEffect(.lift)
     }
 }

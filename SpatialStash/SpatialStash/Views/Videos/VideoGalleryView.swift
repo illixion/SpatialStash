@@ -129,7 +129,7 @@ struct VideoGalleryView: View {
                                    value: layout.columns.count)
                     }
                     .refreshable {
-                        await appModel.loadInitialVideos()
+                        await appModel.refreshVideos()
                     }
                     .onAppear {
                         if let lastViewedId = appModel.lastViewedVideoId {
