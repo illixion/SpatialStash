@@ -2478,16 +2478,16 @@ class AppModel {
 
     func reloadAllGalleries() async {
         // Reload images if on pictures tab
+        // Neither list is emptied first: loadInitial* replaces its contents when
+        // the new page arrives, so the grid never shows a placeholder for a
+        // reload it is about to satisfy.
         galleryLoadGeneration += 1
         currentPage = 0
         hasMorePages = true
-        galleryImages.removeAll()
         await loadInitialGallery()
-        // Reload videos
         videoLoadGeneration += 1
         currentVideoPage = 0
         hasMoreVideoPages = true
-        galleryVideos.removeAll()
         await loadInitialVideos()
     }
     // MARK: - Image Gallery Methods
@@ -2504,7 +2504,6 @@ class AppModel {
             currentFilter.shuffleRandomSort()
         }
         currentPage = 0
-        galleryImages = []
         hasMorePages = true
         // Force-reset loading flags so the new load can proceed even if a prior load is in-flight
         isLoadingGallery = false
@@ -2540,16 +2539,31 @@ class AppModel {
                 return
             }
             AppLogger.appModel.log(level: AppLogger.effectiveDebugLevel, "loadNextPage got \(result.images.count, privacy: .public) images, hasMore: \(result.hasMore, privacy: .public)")
-            // De-duplicated on append. Item ids are derived from identity now,
-            // so a repeat is a genuine duplicate id in the ForEach rather than
-            // two harmless instances of the same asset — and a page can repeat
-            // one if the library shifts between two page fetches.
-            let seen = Set(galleryImages.map(\.identity))
-            galleryImages.append(contentsOf: result.images.filter { !seen.contains($0.identity) })
+            if page == 0 {
+                // Replace, rather than having loadInitialGallery empty the array
+                // up front. Clearing first meant every reload — a filter change,
+                // an index update, leaving an album — painted the empty-or-
+                // loading placeholder until the first page arrived. Brief, but a
+                // bright placeholder mid-transition reads as a flash.
+                galleryImages = result.images
+            } else {
+                // De-duplicated on append. Item ids are derived from identity
+                // now, so a repeat is a genuine duplicate id in the ForEach
+                // rather than two harmless instances of the same asset — and a
+                // page can repeat one if the library shifts between fetches.
+                let seen = Set(galleryImages.map(\.identity))
+                galleryImages.append(contentsOf: result.images.filter { !seen.contains($0.identity) })
+            }
             hasMorePages = result.hasMore
             currentPage += 1
         } catch {
             AppLogger.appModel.error("Failed to load gallery page: \(error.localizedDescription, privacy: .public)")
+            // A failed *first* page has to clear: whatever is on screen no longer
+            // matches the filter that was just applied, and leaving it there
+            // would claim otherwise.
+            if page == 0 {
+                galleryImages = []
+            }
         }
     }
 
@@ -2967,7 +2981,6 @@ class AppModel {
             currentVideoFilter.shuffleRandomSort()
         }
         currentVideoPage = 0
-        galleryVideos = []
         hasMoreVideoPages = true
         // Force-reset loading flags so the new load can proceed even if a prior load is in-flight
         isLoadingVideos = false
@@ -3002,13 +3015,22 @@ class AppModel {
                 return
             }
             AppLogger.appModel.log(level: AppLogger.effectiveDebugLevel, "loadNextVideoPage got \(result.videos.count, privacy: .public) videos, hasMore: \(result.hasMore, privacy: .public)")
-            // See loadNextPage: derived ids make a repeated asset a duplicate id.
-            let seen = Set(galleryVideos.map(\.identity))
-            galleryVideos.append(contentsOf: result.videos.filter { !seen.contains($0.identity) })
+            // See loadNextPage for both halves of this: page 0 replaces so a
+            // reload never paints an empty grid, and later pages de-duplicate
+            // because derived ids make a repeated asset a duplicate id.
+            if videoPage == 0 {
+                galleryVideos = result.videos
+            } else {
+                let seen = Set(galleryVideos.map(\.identity))
+                galleryVideos.append(contentsOf: result.videos.filter { !seen.contains($0.identity) })
+            }
             hasMoreVideoPages = result.hasMore
             currentVideoPage += 1
         } catch {
             AppLogger.appModel.error("Failed to load video page: \(error.localizedDescription, privacy: .public)")
+            if videoPage == 0 {
+                galleryVideos = []
+            }
         }
     }
 

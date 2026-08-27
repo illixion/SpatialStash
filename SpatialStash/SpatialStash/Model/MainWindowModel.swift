@@ -29,4 +29,12 @@ class MainWindowModel {
     /// `selectedTab`, so view-local state wouldn't survive a trip to another
     /// tab and back.
     var localFolderPath: [String] = []
+
+    /// Whether the Albums tab is browsing video containers rather than image
+    /// ones. Here for the same reason `localFolderPath` is: ContentView keys tab
+    /// content on `selectedTab`, so the browser is destroyed on every tab switch
+    /// and view-local state would reset. That mattered as soon as Stash groups
+    /// existed — open a group, press back, and the browser returned showing
+    /// galleries instead of the groups you came from.
+    var albumsShowingVideos: Bool = false
 }

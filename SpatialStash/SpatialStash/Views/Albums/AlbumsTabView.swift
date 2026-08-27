@@ -19,10 +19,11 @@ struct AlbumsTabView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(MainWindowModel.self) private var windowModel
 
-    /// Which media kind the browser is showing. Its own state rather than
-    /// `lastContentTab`: a browser should say what it is listing, and inheriting
-    /// it invisibly from wherever the user last was is a poor way to be told.
-    @State private var isVideo = false
+    /// Which media kind the browser is showing. Deliberately not
+    /// `lastContentTab` — a browser should say what it is listing rather than
+    /// inheriting it invisibly from wherever the user last was — but it does
+    /// have to outlive the view, so it lives on the window model.
+    private var isVideo: Bool { windowModel.albumsShowingVideos }
     @State private var query = ""
 
     private let gridSpacing: CGFloat = 20
@@ -31,6 +32,13 @@ struct AlbumsTabView: View {
 
     private var isPhotosLibrary: Bool {
         appModel.effectiveLibrarySource == .photos
+    }
+
+    private var kindSelection: Binding<Bool> {
+        Binding(
+            get: { windowModel.albumsShowingVideos },
+            set: { windowModel.albumsShowingVideos = $0 }
+        )
     }
 
     /// What this library calls the thing being browsed.
@@ -75,7 +83,7 @@ struct AlbumsTabView: View {
                   systemImage: appModel.effectiveLibrarySource.symbolName)
                 .font(.headline)
 
-            Picker("Showing", selection: $isVideo) {
+            Picker("Showing", selection: kindSelection) {
                 Text(isPhotosLibrary ? "Photos" : "Images").tag(false)
                 Text("Videos").tag(true)
             }
