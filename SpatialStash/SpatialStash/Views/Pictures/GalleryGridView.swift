@@ -93,16 +93,13 @@ struct GalleryGridView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if appModel.galleryImages.isEmpty {
-                // Empty state
-                VStack(spacing: 20) {
-                    Image(systemName: "photo.on.rectangle.angled")
-                        .font(.system(size: 64))
-                        .foregroundColor(.secondary)
-                    Text("No images available")
-                        .font(.title2)
-                        .foregroundColor(.secondary)
+                MediaLibraryMessageView(
+                    icon: "photo.on.rectangle.angled",
+                    title: "No Images Available",
+                    message: "This library has nothing to show right now."
+                ) {
+                    LibrarySafetyNetView()
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 // Gallery grid
                 GeometryReader { geo in

@@ -91,9 +91,11 @@ struct VideoGalleryView: View {
             } else if appModel.galleryVideos.isEmpty {
                 MediaLibraryMessageView(
                     icon: "video.slash",
-                    title: "No videos available",
-                    message: "Configure your Stash server in Settings to browse videos."
-                )
+                    title: "No Videos Available",
+                    message: "This library has nothing to show right now."
+                ) {
+                    LibrarySafetyNetView()
+                }
             } else {
                 GeometryReader { geo in
                     let layout = GridColumnLayout.resolve(width: geo.size.width,
