@@ -49,15 +49,31 @@ actor LocalMediaSource {
     ]
 
     /// Get the Documents folder URL where users can add files
-    var documentsDirectory: URL {
+    var documentsDirectory: URL { Self.documentsDirectory }
+
+    /// Static counterparts of the same three URLs, for callers that need them
+    /// synchronously without an actor hop — `AppModel.makeSources` in
+    /// particular, which is itself a plain `static func`.
+    static var documentsDirectory: URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+    }
+
+    /// The Local library's image root. Kept separate from `videosDirectory`
+    /// so Pictures and Videos browse independent trees, mirroring how Photos
+    /// and Stash never mix media kinds either.
+    static var photosDirectory: URL {
+        documentsDirectory.appendingPathComponent("Photos", isDirectory: true)
+    }
+
+    static var videosDirectory: URL {
+        documentsDirectory.appendingPathComponent("Videos", isDirectory: true)
     }
 
     /// Create subdirectories for organizing imports and placeholder file
     func ensureDirectoriesExist() {
         let fileManager = FileManager.default
-        let photosDir = documentsDirectory.appendingPathComponent("Photos", isDirectory: true)
-        let videosDir = documentsDirectory.appendingPathComponent("Videos", isDirectory: true)
+        let photosDir = Self.photosDirectory
+        let videosDir = Self.videosDirectory
 
         try? fileManager.createDirectory(at: photosDir, withIntermediateDirectories: true)
         try? fileManager.createDirectory(at: videosDir, withIntermediateDirectories: true)

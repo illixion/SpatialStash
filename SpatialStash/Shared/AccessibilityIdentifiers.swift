@@ -23,6 +23,25 @@ import Foundation
 
 enum A11y {
 
+    /// The tab bar's library-switch action button (Photos/Stash/Local).
+    /// Explicit rather than the default `RAVEA11y.tabAction(systemImage)`
+    /// derivation, because the icon — and so the derived identifier — changes
+    /// with whichever library is current.
+    static let librarySwitch = "librarySwitch"
+
+    /// Albums tab.
+    enum Albums {
+        /// The Local library's folder browser, as opposed to the Photos/Stash
+        /// container grid — the thing a test checks for to know which one is
+        /// on screen.
+        static let localBrowser = "albums.localBrowser"
+    }
+
+    /// Settings tab.
+    enum Settings {
+        static let enableLocalLibrary = "settings.enableLocalLibrary"
+    }
+
     /// First-run flow.
     enum Welcome {
         static let panel = "welcome.panel"

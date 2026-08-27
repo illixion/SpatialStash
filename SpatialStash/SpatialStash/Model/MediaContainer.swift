@@ -17,9 +17,12 @@
  by source would have added a branch to describe a difference that does not
  survive contact with the loader.
 
- Local folders are deliberately not here yet. They are the third case the plan
- calls for, but nothing produces one until the Local tab is folded in, and a case
- no code path can construct is a liability rather than a head start.
+ Local folders are deliberately not a `Kind` here. A folder tree nests
+ arbitrarily and a container in this model does not — it is one filter value,
+ applied once — so the Local library gets its own browser (`AlbumsTabView`'s
+ `LocalFolderBrowserView`) with real up/down navigation instead of being bent
+ into this shape. `Kind.inLibrary(.local, ...)` still has to return something
+ for the switch to stay exhaustive; see the comment there.
  */
 
 import Foundation
@@ -69,6 +72,11 @@ struct MediaContainer: Identifiable, Hashable, Sendable {
             switch source {
             case .photos: return .album
             case .stash:  return isVideo ? .group : .gallery
+            // Unreachable in practice — Local bypasses this browser entirely
+            // (see the header comment) — but the switch has to stay
+            // exhaustive, and inventing a Kind nothing constructs would be
+            // the opposite of the point.
+            case .local:  return .album
             }
         }
     }

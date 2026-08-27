@@ -18,16 +18,16 @@ enum LibrarySource: String, Codable, CaseIterable, Sendable {
     case photos
     /// A Stash server.
     case stash
-
-    /// The other one. With exactly two cases a toggle is the whole interaction.
-    var toggled: LibrarySource {
-        self == .photos ? .stash : .photos
-    }
+    /// Files placed in the app's own Documents folder.
+    case local
 
     var symbolName: String {
         switch self {
         case .photos: return "photo.artframe"
         case .stash:  return "archivebox"
+        // Matches the Files app's icon for "On My Apple Vision Pro" — the
+        // same on-device-storage idea this source is.
+        case .local:  return "vision.pro"
         }
     }
 
@@ -35,6 +35,7 @@ enum LibrarySource: String, Codable, CaseIterable, Sendable {
         switch self {
         case .photos: return "Photos"
         case .stash:  return "Stash"
+        case .local:  return "Local Files"
         }
     }
 }

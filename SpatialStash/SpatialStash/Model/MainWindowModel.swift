@@ -16,18 +16,20 @@ class MainWindowModel {
     /// Tracks the last content tab (pictures or videos) for filter context
     var lastContentTab: Tab = .pictures
 
-    /// Incremented when Local tab is tapped while already on Local tab
-    var localTabReselected: Int = 0
+    /// Incremented when the Albums tab is tapped while already on Albums —
+    /// its local-folder browser (`LocalFolderBrowserView`) treats that as
+    /// "pop back to the root of whichever tree I'm in" the way a Files app
+    /// would.
+    var albumsReselected: Int = 0
 
-    /// Folder the Local tab is currently showing, as path components under
-    /// Documents (`["Photos", "Wallpapers"]`). Empty means the root folder
-    /// picker.
+    /// Folder `LocalFolderBrowserView` is currently showing, as path
+    /// components *relative to* Documents/Photos or Documents/Videos
+    /// (whichever `isVideo` selects) — e.g. `["Wallpapers"]`. Empty means
+    /// that root itself.
     ///
-    /// Lives here rather than in `LocalTabView`'s own state because the tab bar
-    /// ornament's slideshow button has to know what's on screen to start a
-    /// slideshow of it — and because ContentView keys the tab content on
-    /// `selectedTab`, so view-local state wouldn't survive a trip to another
-    /// tab and back.
+    /// Lives here rather than in the browser's own state because ContentView
+    /// keys tab content on `selectedTab`, so view-local state would reset on
+    /// every trip to another tab and back.
     var localFolderPath: [String] = []
 
     /// Whether the Albums tab is browsing video containers rather than image

@@ -214,7 +214,15 @@ struct SettingsTabView: View {
                     }
                 }
 
-                Section("Stash Server") {
+                Section("Local Files") {
+                    Toggle("Enable Local Files", isOn: $appModel.enableLocalLibrary)
+                        .accessibilityIdentifier(A11y.Settings.enableLocalLibrary)
+                    Text("Browse and convert files you place in this app's Documents folder — in the Files app, under \"On My Apple Vision Pro\" → Spatial Stash. Off by default; turning it on adds Local Files as a library alongside Photos and any media server.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                Section {
                     TextField("Server URL", text: $appModel.stashServerURL)
                         .textFieldStyle(.plain)
                         .textContentType(.URL)
@@ -251,6 +259,10 @@ struct SettingsTabView: View {
                     Text("Keep the Stash server's HLS transcode in reserve. Scenes always play their original file first (WebM decodes on-device in WebKit); the transcode is used only if that file can't be played, or when a feature needs AVFoundation — Convert to 3D, immersive 3D, depth pre-processing. Turn off to never transcode, which leaves those unavailable for WebM. Applies to newly loaded scenes.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                } header: {
+                    Text("Media Server")
+                } footer: {
+                    Text("Connects to a self-hosted Stash server to browse and convert its library.")
                 }
 
                 Section("Gallery Statistics") {

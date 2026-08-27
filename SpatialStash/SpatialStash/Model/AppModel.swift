@@ -779,6 +779,20 @@ class AppModel {
         }
     }
 
+    /// Whether the Local library (files under Documents/Photos and
+    /// Documents/Videos) is offered as a source alongside Photos and Stash.
+    /// Off by default — it is an opt-in capability, not something a fresh
+    /// install should surface unasked. Routed through `applyLibrarySource()`
+    /// so turning it off while it is the active source falls back cleanly,
+    /// the same way losing the Stash server already does.
+    var enableLocalLibrary: Bool {
+        didSet {
+            guard enableLocalLibrary != oldValue else { return }
+            UserDefaults.standard.set(enableLocalLibrary, forKey: "enableLocalLibrary")
+            applyLibrarySource()
+        }
+    }
+
     /// Preferred depth model for REAL-TIME fake-3D (base filename, e.g.
     /// "DepthAnythingV2SmallF16"), or "" for automatic (first installed).
     /// Read live by CoreMLDepthProvider.findModelURL(role: .realtime); a
@@ -1367,6 +1381,7 @@ class AppModel {
             : true
 
         let loadedEnableStashTranscoding = loadBool("enableStashTranscoding", default: true)
+        let loadedEnableLocalLibrary = loadBool("enableLocalLibrary", default: false)
         // Depth model preferences, split by role. Migrate the legacy single
         // "preferredDepthModelName" into both roles on first launch after the
         // split (the legacy key is also still read as a fallback by
@@ -1464,6 +1479,7 @@ class AppModel {
         self.roundedCorners = loadedRoundedCorners
         self.openMediaInNewWindows = loadedOpenMediaInNewWindows
         self.enableStashTranscoding = loadedEnableStashTranscoding
+        self.enableLocalLibrary = loadedEnableLocalLibrary
         self.realtimeDepthModelName = loadedRealtimeDepthModelName
         self.preprocessDepthModelName = loadedPreprocessDepthModelName
         self.defaultRealtimePseudo3D = loadedDefaultRealtimePseudo3D
@@ -2269,6 +2285,7 @@ class AppModel {
             reduceMotion: reduceMotion,
             defaultImageViewingMode: defaultImageViewingMode.rawValue,
             enableStashTranscoding: enableStashTranscoding,
+            enableLocalLibrary: enableLocalLibrary,
             realtimeDepthModelName: realtimeDepthModelName,
             preprocessDepthModelName: preprocessDepthModelName,
             defaultRealtimePseudo3D: defaultRealtimePseudo3D,
@@ -2316,6 +2333,7 @@ class AppModel {
         if let v = backup.reduceMotion { reduceMotion = v }
         if let raw = backup.defaultImageViewingMode, let mode = DefaultImageViewingMode(rawValue: raw) { defaultImageViewingMode = mode }
         if let v = backup.enableStashTranscoding { enableStashTranscoding = v }
+        if let v = backup.enableLocalLibrary { enableLocalLibrary = v }
         if let v = backup.realtimeDepthModelName { realtimeDepthModelName = v }
         if let v = backup.preprocessDepthModelName { preprocessDepthModelName = v }
         if let v = backup.defaultRealtimePseudo3D { defaultRealtimePseudo3D = v }
@@ -2501,10 +2519,31 @@ class AppModel {
         !stashServerURL.isEmpty
     }
 
-    /// The library actually in force: the stored choice when a server exists,
-    /// and always Photos when one does not.
+    /// The library sources currently selectable. Photos is always one of
+    /// them; Stash needs a configured server and Local needs its Settings
+    /// toggle on — either, both, or neither can be true at once.
+    var availableLibrarySources: [LibrarySource] {
+        var sources: [LibrarySource] = [.photos]
+        if hasStashServer { sources.append(.stash) }
+        if enableLocalLibrary { sources.append(.local) }
+        return sources
+    }
+
+    /// The library actually in force: the stored choice when it is currently
+    /// available, and Photos otherwise — the one source that always is. This
+    /// is what makes disabling Stash or Local fall back cleanly instead of
+    /// leaving `librarySource` pointing at something no longer offered.
     var effectiveLibrarySource: LibrarySource {
-        hasStashServer ? librarySource : .photos
+        availableLibrarySources.contains(librarySource) ? librarySource : .photos
+    }
+
+    /// The next selectable source after the current one, wrapping around —
+    /// what the tab bar's library-switch button cycles to, for however many
+    /// of the two or three sources are actually available right now.
+    func nextLibrarySource() -> LibrarySource {
+        let sources = availableLibrarySources
+        guard let index = sources.firstIndex(of: effectiveLibrarySource) else { return .photos }
+        return sources[(index + 1) % sources.count]
     }
 
     /// The sources a library choice implies. The single place that mapping
@@ -2521,6 +2560,11 @@ class AppModel {
             return (PhotosImageSource(), PhotosVideoSource())
         case .stash:
             return (GraphQLImageSource(apiClient: apiClient), GraphQLVideoSource(apiClient: apiClient))
+        case .local:
+            // Independent trees, like Photos and Stash never mixing image and
+            // video results either — see `LocalMediaSource.photosDirectory`.
+            return (LocalImageSource(rootURL: LocalMediaSource.photosDirectory),
+                    LocalVideoSource(rootURL: LocalMediaSource.videosDirectory))
         }
     }
 
@@ -2968,6 +3012,12 @@ class AppModel {
                 AppLogger.appModel.error("Failed to load galleries: \(error.localizedDescription, privacy: .public)")
                 mediaContainers = []
             }
+
+        case .local:
+            // Never actually called: AlbumsTabView renders its own
+            // LocalFolderBrowserView for this source instead of the
+            // container grid. Kept exhaustive, not reachable.
+            mediaContainers = []
         }
         AppLogger.appModel.log(level: AppLogger.effectiveDebugLevel,
                                "Loaded \(self.mediaContainers.count, privacy: .public) containers")
@@ -3059,6 +3109,11 @@ class AppModel {
             if isVideo {
                 await loadGroups()
             }
+        case .local:
+            // The Filters tab hides itself for this source (nothing here
+            // has tags, albums or galleries to filter by) and redirects away
+            // if it was already open — see ContentView. Not reachable.
+            break
         }
     }
 

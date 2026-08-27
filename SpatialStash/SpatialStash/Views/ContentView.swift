@@ -26,8 +26,6 @@ struct ContentView: View {
                     VideosTabView()
                 case .albums:
                     AlbumsTabView()
-                case .local:
-                    LocalTabView()
                 case .filters:
                     FiltersTabView()
                 case .windows:
@@ -56,6 +54,17 @@ struct ContentView: View {
         }
         .animation(.smooth(duration: 0.25), value: windowModel.selectedTab)
         .animation(.smooth(duration: 0.35), value: showWelcome)
+        // The Filters tab has nothing to filter by while browsing the Local
+        // library (no tags, albums or galleries), so it hides itself in the
+        // tab bar — but if it was already open when the library changed to
+        // Local, hiding the button alone would strand this window on a
+        // screen with no way back to it. Redirected here, in one place,
+        // regardless of which of several controls changed the library.
+        .onChange(of: appModel.effectiveLibrarySource) { _, newSource in
+            if newSource == .local && windowModel.selectedTab == .filters {
+                windowModel.selectedTab = windowModel.lastContentTab
+            }
+        }
         .environment(appModel)
         .environment(windowModel)
         .ornament(

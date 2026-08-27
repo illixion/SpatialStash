@@ -78,6 +78,7 @@ struct SettingsBackup: Codable {
     var reduceMotion: Bool?
     var defaultImageViewingMode: String?
     var enableStashTranscoding: Bool?
+    var enableLocalLibrary: Bool?
     var realtimeDepthModelName: String?
     var preprocessDepthModelName: String?
     var defaultRealtimePseudo3D: Bool?

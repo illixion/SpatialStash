@@ -2,14 +2,15 @@
  Spatial Stash - Albums Tab
 
  Browses the containers of whichever library is in force: Photos albums and smart
- albums, or Stash galleries.
+ albums, Stash galleries, or — a different shape entirely — the Local library's
+ folder tree.
 
- Opening one applies it as a filter and moves to the Pictures or Videos grid, so
- there is no second content pipeline here — the whole existing path does the work,
- including paging, sort and the rest of the filter. See `MediaContainer`.
-
- The media-kind picker only appears for Photos, because a Stash gallery holds
- images and there is nothing to browse on the Videos side.
+ Opening a Photos or Stash container applies it as a filter and moves to the
+ Pictures or Videos grid, so there is no second content pipeline for those —
+ the whole existing path does the work, including paging, sort and the rest of
+ the filter. See `MediaContainer`. Local doesn't fit that shape (a folder nests
+ and a filter value doesn't), so it gets its own browser, `LocalFolderBrowserView`,
+ in place of the container grid below.
  */
 
 import SwiftUI
@@ -32,6 +33,12 @@ struct AlbumsTabView: View {
 
     private var isPhotosLibrary: Bool {
         appModel.effectiveLibrarySource == .photos
+    }
+
+    /// Whether to render `LocalFolderBrowserView` instead of the container
+    /// grid below — see the header comment for why Local doesn't share it.
+    private var isLocalLibrary: Bool {
+        appModel.effectiveLibrarySource == .local
     }
 
     private var kindSelection: Binding<Bool> {
@@ -59,9 +66,14 @@ struct AlbumsTabView: View {
         VStack(spacing: 0) {
             header
             Divider()
-            content
+            if isLocalLibrary {
+                LocalFolderBrowserView(isVideo: isVideo)
+            } else {
+                content
+            }
         }
         .task(id: taskKey) {
+            guard !isLocalLibrary else { return }
             await appModel.loadMediaContainers(isVideo: isVideo)
         }
     }
@@ -84,7 +96,10 @@ struct AlbumsTabView: View {
                 .font(.headline)
 
             Picker("Showing", selection: kindSelection) {
-                Text(isPhotosLibrary ? "Photos" : "Images").tag(false)
+                // Stash calls its image collections "galleries", so the
+                // false side reads "Images" there; both Photos and Local
+                // keep their literal folder/album name.
+                Text(appModel.effectiveLibrarySource == .stash ? "Images" : "Photos").tag(false)
                 Text("Videos").tag(true)
             }
             .pickerStyle(.segmented)
@@ -92,7 +107,9 @@ struct AlbumsTabView: View {
 
             Spacer()
 
-            if appModel.mediaContainers.count > 8 {
+            // Local's browser has no search of its own — a folder tree is
+            // searched by looking inside it, not by name.
+            if !isLocalLibrary && appModel.mediaContainers.count > 8 {
                 TextField("Search", text: $query)
                     .textFieldStyle(.roundedBorder)
                     .autocorrectionDisabled()

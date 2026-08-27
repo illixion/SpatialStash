@@ -12,13 +12,18 @@ struct TabBarOrnament: View {
     @Environment(MainWindowModel.self) private var windowModel
 
     private var visibleTabs: [Tab] {
-        let orderedTabs: [Tab] = [.pictures, .videos, .albums, .local, .remote, .filters, .windows, .console, .settings]
+        let orderedTabs: [Tab] = [.pictures, .videos, .albums, .remote, .filters, .windows, .console, .settings]
         return orderedTabs.filter { tab in
             switch tab {
             case .remote:
                 return appModel.enableRemoteViewer
             case .console:
                 return appModel.showDebugConsole
+            case .filters:
+                // Nothing to filter by while browsing Local — no tags,
+                // albums or galleries. See ContentView for the redirect if
+                // this tab was already open when the library changed.
+                return appModel.effectiveLibrarySource != .local
             default:
                 return true
             }
@@ -31,8 +36,9 @@ struct TabBarOrnament: View {
             tabs: visibleTabs,
             selection: $windowModel.selectedTab,
             // Routed through `select` rather than straight to the binding:
-            // re-tapping Local is a "pop to the folder root" gesture, which a
-            // plain selection binding cannot see.
+            // re-tapping Albums while already there is a "pop to the folder
+            // root" gesture for its local-folder browser, which a plain
+            // selection binding cannot see.
             onSelect: select
         ) {
             // Actions, not navigation: both act on the current tab rather than
@@ -41,14 +47,16 @@ struct TabBarOrnament: View {
                 RAVETabBarDivider()
             }
             // Left of the slideshow button: which library the media tabs show.
-            // Only meaningful with a server configured — without one there is
-            // nothing to switch between.
+            // Only meaningful with more than one source available — with
+            // just Photos there is nothing to switch between.
             if showsLibraryToggle {
                 let current = appModel.effectiveLibrarySource
+                let next = appModel.nextLibrarySource()
                 RAVETabBarActionButton(
                     systemImage: current.symbolName,
-                    help: "Showing \(current.displayName) — switch to \(current.toggled.displayName)",
-                    action: { appModel.librarySource = current.toggled }
+                    help: "Showing \(current.displayName) — switch to \(next.displayName)",
+                    identifier: A11y.librarySwitch,
+                    action: { appModel.librarySource = next }
                 )
             }
             if let launch = slideshowLaunch {
@@ -63,10 +71,10 @@ struct TabBarOrnament: View {
         .animation(.smooth(duration: 0.22), value: appModel.effectiveLibrarySource)
     }
 
-    /// Whether to offer the library switch: only with a server configured (so
-    /// there are two libraries), and only on the tabs that show one.
+    /// Whether to offer the library switch: only with more than one source
+    /// available, and only on the tabs that show one.
     private var showsLibraryToggle: Bool {
-        guard appModel.hasStashServer else { return false }
+        guard appModel.availableLibrarySources.count > 1 else { return false }
         switch windowModel.selectedTab {
         case .pictures, .videos: return true
         default: return false
@@ -94,15 +102,11 @@ struct TabBarOrnament: View {
                     filter: appModel.currentVideoFilter
                 )
             })
-        case .local:
-            // The root level is a folder picker — there's no "this folder" yet.
-            guard let folder = LocalFolderSlideshowTarget(path: windowModel.localFolderPath) else {
-                return nil
-            }
-            return (folder.help, { folder.start(appModel: appModel) })
         // Albums is a browser: what a slideshow would run over is whatever
         // opening a container leaves on the Pictures or Videos tab, so the
-        // button belongs there rather than here.
+        // button belongs there rather than here. That includes the Local
+        // library's folder browser, which offers its own per-folder
+        // "Play Slideshow" control in context instead.
         case .albums, .filters, .windows, .settings, .remote, .console:
             return nil
         }
@@ -112,42 +116,10 @@ struct TabBarOrnament: View {
         if tab == .pictures || tab == .videos {
             windowModel.lastContentTab = tab
         }
-        if tab == .local && windowModel.selectedTab == .local {
-            windowModel.localTabReselected += 1
+        if tab == .albums && windowModel.selectedTab == .albums {
+            windowModel.albumsReselected += 1
         } else {
             windowModel.selectedTab = tab
-        }
-    }
-}
-
-/// Which local folder the Local tab is on, and what a slideshow of it means.
-/// The Photos and Videos trees need different sources, and a folder-scoped
-/// source in both cases so the slideshow matches the folder on screen.
-@MainActor
-private struct LocalFolderSlideshowTarget {
-    let path: [String]
-    let isVideos: Bool
-
-    init?(path: [String]) {
-        guard let root = path.first else { return nil }
-        self.path = path
-        self.isVideos = root == LocalTabView.LocalMediaFolder.videos.rawValue
-    }
-
-    var help: String {
-        "Slideshow of \(path.last ?? "this folder")"
-    }
-
-    private var folderURL: URL {
-        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        return path.reduce(documents) { $0.appendingPathComponent($1, isDirectory: true) }
-    }
-
-    func start(appModel: AppModel) {
-        if isVideos {
-            appModel.startVideoSlideshow(videoSource: LocalVideoSource(rootURL: folderURL), filter: nil)
-        } else {
-            appModel.startGallerySlideshow(imageSource: LocalImageSource(rootURL: folderURL), filter: nil)
         }
     }
 }

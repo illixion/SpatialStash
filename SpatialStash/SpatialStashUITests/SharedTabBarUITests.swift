@@ -25,7 +25,7 @@ final class SharedTabBarUITests: XCTestCase {
     }
 
     /// Tabs whose visibility is not conditional on a developer setting.
-    private let alwaysVisibleTabs = ["pictures", "videos", "albums", "local", "filters", "windows", "settings"]
+    private let alwaysVisibleTabs = ["pictures", "videos", "albums", "filters", "windows", "settings"]
 
     func testEveryUnconditionalTabIsOffered() {
         let app = AppLauncher.launch(welcome: .dismissed)
