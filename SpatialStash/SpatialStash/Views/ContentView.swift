@@ -13,6 +13,9 @@ struct ContentView: View {
     @Environment(\.dismissWindow) private var dismissWindow
     @State private var windowModel = MainWindowModel()
 
+    /// Whether this window is showing the first-run flow.
+    private var showWelcome: Bool { !appModel.hasCompletedWelcome }
+
     var body: some View {
         ZStack {
             Group {
@@ -39,12 +42,26 @@ struct ContentView: View {
             }
             .id(windowModel.selectedTab)
             .transition(.opacity)
+
+            // First run, over the top of everything. Not a sheet: the intro
+            // screen is a photo meant to be leaned into, and a sheet on
+            // visionOS is a small panel in front of the window.
+            if showWelcome {
+                WelcomeFlowView {
+                    windowModel.selectedTab = windowModel.lastContentTab
+                }
+                .environment(appModel)
+                .transition(.opacity)
+            }
         }
         .animation(.smooth(duration: 0.25), value: windowModel.selectedTab)
+        .animation(.smooth(duration: 0.35), value: showWelcome)
         .environment(appModel)
         .environment(windowModel)
         .ornament(
-            visibility: .visible,
+            // Nothing behind the welcome flow is useful yet, and a visible tab
+            // bar under it invites an escape into an empty gallery.
+            visibility: showWelcome ? .hidden : .visible,
             attachmentAnchor: .scene(.bottomFront),
             contentAlignment: .top,
             ornament: {

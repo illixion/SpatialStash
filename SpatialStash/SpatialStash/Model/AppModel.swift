@@ -1005,6 +1005,22 @@ class AppModel {
         }
     }
 
+    /// Whether the welcome flow has been seen. False shows it over the main
+    /// window on launch.
+    ///
+    /// Its *default* carries the upgrade rule: an install that already has a
+    /// server, or has already answered the photo-library prompt, has plainly
+    /// been set up and must not be walked through setup again. That is derived
+    /// rather than migrated, so there is no flag-writing pass to get wrong.
+    var hasCompletedWelcome: Bool {
+        didSet {
+            if hasCompletedWelcome != oldValue {
+                UserDefaults.standard.set(hasCompletedWelcome, forKey: "hasCompletedWelcome")
+            }
+        }
+    }
+
+
     /// Last incoming URL + time, for de-duplication. Both SwiftUI's `.onOpenURL`
     /// and the `SceneDelegate` notification fire for a custom-scheme open (the
     /// notification path exists for file-share cold launches that `.onOpenURL`
@@ -1390,6 +1406,11 @@ class AppModel {
             .flatMap(LibrarySource.init(rawValue:)) ?? .stash
         let loadedEnableRemoteViewer = UserDefaults.standard.bool(forKey: "enableRemoteViewer")
 
+        // Unset means "never decided", which for an install that already has a
+        // server or a settled photo-library prompt means "already set up".
+        let loadedHasCompletedWelcome = UserDefaults.standard.object(forKey: "hasCompletedWelcome") as? Bool
+            ?? (!loadedServerURL.isEmpty || PhotosAuthorization.status != .notDetermined)
+
         // Load debug console visibility (default: false)
         let loadedShowDebugConsole = UserDefaults.standard.bool(forKey: "showDebugConsole")
 
@@ -1452,6 +1473,7 @@ class AppModel {
         self.fullyImmersive3DMode = loadedFullyImmersive3DMode
         self.defaultImageViewingMode = loadedDefaultImageViewingMode
         self.librarySource = loadedLibrarySource
+        self.hasCompletedWelcome = loadedHasCompletedWelcome
         self.enableRemoteViewer = loadedEnableRemoteViewer
         self.showDebugConsole = loadedShowDebugConsole
         self.respectMemoryAlerts = loadedRespectMemoryAlerts
@@ -2393,6 +2415,51 @@ class AppModel {
         }
         pendingGalleryFilter = PendingGalleryFilter(isVideo: isVideo)
         openWindow(id: "main", value: UUID())
+    }
+
+    /// Confirms a server answers, returning how many images it reports.
+    ///
+    /// Takes the credentials as parameters and does **not** store them, because
+    /// the two callers want opposite orderings: Settings edits a server already
+    /// in use, while the welcome flow is choosing one and must not switch the
+    /// app onto a URL that turns out to be wrong. Committing is
+    /// `commitStashServer(url:apiKey:)`, called only once this has succeeded.
+    ///
+    /// Queries through a GraphQL source built here rather than `imageSource`:
+    /// the live source is whatever the current library says, so on Photos a
+    /// "test the server" button was testing the photo library.
+    func verifyStashServer(url urlString: String, apiKey: String) async throws -> Int {
+        let trimmedURL = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedURL.isEmpty, let url = URL(string: trimmedURL) else {
+            throw ImageSourceError.invalidURL(urlString)
+        }
+        let config = StashServerConfig(
+            serverURL: url,
+            apiKey: apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? nil
+                : apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+        await apiClient.updateConfig(config)
+        let result = try await GraphQLImageSource(apiClient: apiClient).fetchImages(page: 0, pageSize: 1)
+        return result.totalCount ?? result.images.count
+    }
+
+    /// Stores verified server credentials and starts browsing them.
+    ///
+    /// `stashServerURL` is assigned last on purpose: its observer is the one
+    /// that rebuilds the sources, so letting it run after the key and the
+    /// library choice are in place means the rebuild sees the finished state.
+    func commitStashServer(url: String, apiKey: String) {
+        stashAPIKey = apiKey
+        librarySource = .stash
+        let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed == stashServerURL {
+            // Same URL as before: no observer will fire, so nothing would pick
+            // up the new key or library choice without asking directly.
+            applyLibrarySource()
+        } else {
+            stashServerURL = trimmed
+        }
     }
 
     func updateAPIClient() {

@@ -24,15 +24,13 @@ struct SettingsTabView: View {
     @State private var depthModels = DepthModelManager.shared
     @State private var showDepthModelManager = false
     @State private var showExporter = false
-    @State private var showImporter = false
     @State private var exportDocument: SettingsBackupDocument?
     @State private var isExporting = false
-    @State private var showImportConfirmation = false
-    @State private var pendingImportData: Data?
-    @State private var showImportSuccess = false
-    @State private var showImportError = false
-    @State private var importErrorMessage = ""
+    /// Picker + confirmation + alerts, shared with the welcome flow.
+    @State private var backupImporter = SettingsBackupImporter()
     @State private var showEnhancementsClearConfirmation = false
+    /// Outcome of the last "Apply & Test Connection", shown in place.
+    @State private var connectionTestResult: String?
 
     var body: some View {
         @Bindable var appModel = appModel
@@ -237,9 +235,16 @@ struct SettingsTabView: View {
 
                     Button("Apply & Test Connection") {
                         appModel.updateAPIClient()
+                        connectionTestResult = nil
                         Task {
                             await testConnection()
                         }
+                    }
+
+                    if let connectionTestResult {
+                        Text(connectionTestResult)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
 
                     Toggle("Server-Side Transcoding", isOn: $appModel.enableStashTranscoding)
@@ -293,13 +298,13 @@ struct SettingsTabView: View {
                     .disabled(isExporting)
 
                     Button {
-                        showImporter = true
+                        backupImporter.pickFile()
                     } label: {
                         Label("Import Settings", systemImage: "square.and.arrow.down")
                     }
 
                     Button {
-                        importFromDocuments()
+                        backupImporter.loadNewestFromDocuments()
                     } label: {
                         Label("Import from Documents Folder", systemImage: "folder")
                     }
@@ -389,6 +394,9 @@ struct SettingsTabView: View {
                         Text(appVersionString)
                             .foregroundColor(.secondary)
                     }
+                    Button("Show Welcome Screen Again") {
+                        appModel.hasCompletedWelcome = false
+                    }
                 }
             }
             .navigationTitle("Settings")
@@ -438,63 +446,7 @@ struct SettingsTabView: View {
             ) { _ in
                 exportDocument = nil
             }
-            .fileImporter(
-                isPresented: $showImporter,
-                allowedContentTypes: [.json]
-            ) { result in
-                switch result {
-                case .success(let url):
-                    // startAccessing legitimately returns false for URLs that
-                    // aren't security-scoped (e.g. files already in our own
-                    // container) — read regardless, only balance a successful
-                    // start with a stop.
-                    let didAccess = url.startAccessingSecurityScopedResource()
-                    defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
-                    do {
-                        pendingImportData = try Data(contentsOf: url)
-                        presentAfterPickerDismissal { showImportConfirmation = true }
-                    } catch {
-                        importErrorMessage = error.localizedDescription
-                        presentAfterPickerDismissal { showImportError = true }
-                    }
-                case .failure(let error):
-                    importErrorMessage = error.localizedDescription
-                    presentAfterPickerDismissal { showImportError = true }
-                }
-            }
-            .alert("Import Settings?", isPresented: $showImportConfirmation) {
-                Button("Import", role: .destructive) {
-                    guard let data = pendingImportData else { return }
-                    Task {
-                        do {
-                            let decoder = JSONDecoder()
-                            decoder.dateDecodingStrategy = .iso8601
-                            let backup = try decoder.decode(SettingsBackup.self, from: data)
-                            await appModel.importSettingsBackup(backup)
-                            showImportSuccess = true
-                        } catch {
-                            importErrorMessage = error.localizedDescription
-                            showImportError = true
-                        }
-                        pendingImportData = nil
-                    }
-                }
-                Button("Cancel", role: .cancel) {
-                    pendingImportData = nil
-                }
-            } message: {
-                Text("This will replace your current settings with the imported backup. This cannot be undone.")
-            }
-            .alert("Import Successful", isPresented: $showImportSuccess) {
-                Button("OK") {}
-            } message: {
-                Text("Settings have been restored from backup.")
-            }
-            .alert("Import Failed", isPresented: $showImportError) {
-                Button("OK") {}
-            } message: {
-                Text(importErrorMessage)
-            }
+            .settingsBackupImport(backupImporter)
             .alert("Clear Saved Enhancements?", isPresented: $showEnhancementsClearConfirmation) {
                 Button("Disable & Clear Data", role: .destructive) {
                     appModel.rememberImageEnhancements = false
@@ -593,57 +545,17 @@ struct SettingsTabView: View {
         }
     }
 
-    /// Presenting an alert directly from the fileImporter completion handler
-    /// races the picker's dismissal animation and the alert silently never
-    /// appears (the tap seems to "do nothing"). Defer the presentation until
-    /// the picker is gone.
-    private func presentAfterPickerDismissal(_ present: @escaping () -> Void) {
-        Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(600))
-            present()
-        }
-    }
-
-    private func importFromDocuments() {
-        let documentsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-        let fileManager = FileManager.default
-
-        do {
-            let contents = try fileManager.contentsOfDirectory(
-                at: documentsDir,
-                includingPropertiesForKeys: [.contentModificationDateKey],
-                options: [.skipsHiddenFiles]
-            )
-            let jsonFiles = contents
-                .filter { $0.pathExtension.lowercased() == "json" }
-                .sorted { a, b in
-                    let dateA = (try? a.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
-                    let dateB = (try? b.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
-                    return dateA > dateB
-                }
-
-            guard let firstJSON = jsonFiles.first else {
-                importErrorMessage = "No JSON files found in Documents folder. Place a settings backup file there and try again."
-                showImportError = true
-                return
-            }
-
-            let data = try Data(contentsOf: firstJSON)
-            pendingImportData = data
-            showImportConfirmation = true
-            AppLogger.settings.info("Found settings backup in Documents: \(firstJSON.lastPathComponent, privacy: .public)")
-        } catch {
-            importErrorMessage = error.localizedDescription
-            showImportError = true
-        }
-    }
-
+    /// Verifies the server fields as typed. Goes through the model's shared
+    /// check rather than `imageSource`, which on a Photos library would have
+    /// been testing the photo library and reporting success either way.
     private func testConnection() async {
-        // Simple connection test - try to fetch first page
         do {
-            _ = try await appModel.imageSource.fetchImages(page: 0, pageSize: 1)
-            AppLogger.settings.info("Connection successful!")
+            let count = try await appModel.verifyStashServer(url: appModel.stashServerURL,
+                                                            apiKey: appModel.stashAPIKey)
+            connectionTestResult = "Connected — \(count) image\(count == 1 ? "" : "s")"
+            AppLogger.settings.info("Connection successful, \(count, privacy: .public) images")
         } catch {
+            connectionTestResult = error.localizedDescription
             AppLogger.settings.error("Connection failed: \(error.localizedDescription, privacy: .public)")
         }
     }
