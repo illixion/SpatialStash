@@ -47,10 +47,10 @@ struct WelcomeSourcesPage: View {
     }
 
     var body: some View {
-        VStack(spacing: 24) {
+        VStack(spacing: 20) {
             VStack(spacing: 8) {
                 Text("Where should we look?")
-                    .font(.system(size: 36, weight: .semibold))
+                    .font(.system(size: 30, weight: .semibold))
                 Text("Set up as many as you like — you can change any of this later in Settings.")
                     .font(.title3)
                     .foregroundStyle(.secondary)

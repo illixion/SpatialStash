@@ -1,124 +1,139 @@
 /*
- Spatial Stash - Welcome Sample Stage
+ Spatial Stash - Welcome Sample
 
- The first screen's centrepiece: the bundled sample photo, with a control that
- converts it to spatial 3D and then toggles between flat and 3D.
+ The bundled sample photo, and the control that converts it to spatial 3D.
 
- This runs the **real** conversion — the same `Spatial3DImage.generate()` the
- photo viewer runs — rather than crossfading two pre-baked images. A canned
- before/after would be easier and would also be the one thing a first-run
- screen must not do: claim a result the app then has to reproduce. Watching the
- depth actually build, on this device, at this speed, is the honest version of
- the pitch, and it doubles as a check that the pipeline works before the user
- has pointed the app at anything of their own.
+ Two views over one model, because the welcome panel puts the picture down the
+ left side and the words and controls down the right — so the image and its
+ switch are laid out separately and cannot be one view.
 
- Toggling back to flat afterwards costs nothing (`desiredViewingMode` on the
- already-generated component), so the control becomes a two-way switch rather
- than a one-shot button — the point being that 3D is a way of looking at a
- photo, not a conversion that consumes it.
+ **Flat is a plain SwiftUI image; only 3D mounts RealityKit.** That mirrors what
+ the photo viewer does, and it is also the fix for two things the first version
+ got wrong on device: a `RealityView` floats its contents about 15cm proud of
+ the window plane (a zero-depth slab still gets placed in the middle of the
+ window's depth region), and a `RealityView` draws nothing behind its content,
+ so the photo appeared to hover with the tab underneath showing through. A flat
+ `Image` has neither problem, and nothing about RealityKit is touched until the
+ user actually asks for 3D.
+
+ The conversion is the real pipeline — the same `Spatial3DImage.generate()` the
+ viewer runs — rather than a crossfade between two baked images. A canned
+ before/after is the one thing a first-run screen must not do, since the app has
+ to reproduce the result on the user's own photos; watching depth build at this
+ device's actual speed is the honest version of the pitch.
  */
 
 import os
 import RealityKit
 import SwiftUI
+import UIKit
 
 @MainActor
 @Observable
 final class WelcomeSampleModel {
 
     enum Stage: Equatable {
-        /// Nothing attempted yet.
-        case idle
-        /// Decoding the sample into a `Spatial3DImage`.
-        case preparing
-        /// Flat, ready to convert.
+        /// Decoding the flat preview.
+        case loading
+        /// Showing the flat photo, ready to convert.
         case flat
-        /// `generate()` in flight.
+        /// `generate()` in flight; RealityKit is mounted.
         case converting
-        /// Generated; the control is now a 2D/3D switch.
+        /// Generated; the control is a flat/3D switch.
         case ready
-        /// No sample bundled, or it could not be decoded.
+        /// No sample bundled, or it could not be read.
         case unavailable
     }
 
-    private(set) var stage: Stage = .idle
+    private(set) var stage: Stage = .loading
     /// Which way the switch is thrown once `stage == .ready`.
     var showing3D = true
-    private(set) var aspectRatio: CGFloat = 3.0 / 2.0
+    /// Set while a generated component exists, so the flat side of the switch
+    /// can unmount RealityKit without discarding the work.
+    private(set) var hasGenerated = false
+    private(set) var flatImage: UIImage?
+    private(set) var aspectRatio: CGFloat = 3.0 / 4.0
+
+    /// True when RealityKit should be on screen rather than the flat image.
+    var isShowingRealityKit: Bool {
+        stage == .converting || (stage == .ready && showing3D)
+    }
 
     let entity = Entity()
     private var spatial3DImage: ImagePresentationComponent.Spatial3DImage?
 
-    var isBusy: Bool { stage == .preparing || stage == .converting }
-
-    /// Decodes the sample and attaches a flat presentation component.
-    func prepare() async {
-        guard stage == .idle else { return }
+    /// Decodes the flat preview. Cheap, and touches nothing 3D.
+    func loadFlatImage() async {
+        guard stage == .loading else { return }
         guard let url = WelcomeSample.url() else {
             stage = .unavailable
             return
         }
-        stage = .preparing
-        do {
-            let image = try await ImagePresentationComponent.Spatial3DImage(contentsOf: url)
-            var component = ImagePresentationComponent(spatial3DImage: image)
-            component.desiredViewingMode = .mono
-            entity.components.set(component)
-            if let ratio = component.aspectRatio(for: .mono) {
-                aspectRatio = CGFloat(ratio)
-            }
-            spatial3DImage = image
-            stage = .flat
-        } catch {
-            AppLogger.settings.error("Welcome sample could not be decoded: \(error.localizedDescription, privacy: .public)")
-            stage = .unavailable
+        // Same downsampling path the grids use, so the sample costs about what
+        // one thumbnail costs rather than decoding 2800px for a 500pt slot.
+        flatImage = await ImageLoader.shared.loadThumbnail(from: url, maxSize: 1600)
+        if let flatImage, flatImage.size.height > 0 {
+            aspectRatio = flatImage.size.width / flatImage.size.height
         }
+        stage = flatImage == nil ? .unavailable : .flat
     }
 
-    /// Generates the depth scene, then leaves the switch on 3D.
+    /// Builds the presentation component and generates the depth scene.
     ///
-    /// `desiredViewingMode` is set *before* generating, which is what gives the
-    /// build-in animation something to animate into — the same ordering the
-    /// photo viewer uses.
-    func convert() async {
-        guard stage == .flat, let spatial3DImage else { return }
-        guard var component = entity.components[ImagePresentationComponent.self] else { return }
-
-        component.desiredViewingMode = .spatial3D
-        entity.components.set(component)
-        stage = .converting
+    /// Called from inside the `RealityView` make closure: `generate()` needs its
+    /// target attached to a scene, and the component has to exist before
+    /// anything tries to scale it.
+    func prepareAndGenerate() async {
+        guard stage == .converting else { return }
+        guard let url = WelcomeSample.url() else {
+            stage = .unavailable
+            return
+        }
 
         do {
-            try await spatial3DImage.generate()
-            if let ratio = component.aspectRatio(for: .spatial3D) {
-                aspectRatio = CGFloat(ratio)
+            if spatial3DImage == nil {
+                let image = try await ImagePresentationComponent.Spatial3DImage(contentsOf: url)
+                var component = ImagePresentationComponent(spatial3DImage: image)
+                // Set before generating so the build-in has something to
+                // animate into — the ordering the photo viewer relies on.
+                component.desiredViewingMode = .spatial3D
+                entity.components.set(component)
+                spatial3DImage = image
             }
+            guard let spatial3DImage else { return }
+            try await spatial3DImage.generate()
+            hasGenerated = true
             showing3D = true
             stage = .ready
         } catch {
             AppLogger.settings.error("Welcome sample conversion failed: \(error.localizedDescription, privacy: .public)")
-            // Back to flat rather than to an error state: the sample is a demo,
-            // and a failed demo should still show the photo.
-            component.desiredViewingMode = .mono
-            entity.components.set(component)
+            // Back to flat rather than to an error state: a failed demo should
+            // still show the photograph.
             stage = .flat
         }
     }
 
+    func beginConversion() {
+        guard stage == .flat else { return }
+        stage = .converting
+    }
+
     /// Applies the switch position to the live component.
     func applyViewingMode() {
-        guard stage == .ready else { return }
+        guard stage == .ready, hasGenerated else { return }
         guard var component = entity.components[ImagePresentationComponent.self] else { return }
         let mode: ImagePresentationComponent.ViewingMode = showing3D ? .spatial3D : .mono
         guard component.viewingMode != mode else { return }
         component.desiredViewingMode = mode
         entity.components.set(component)
-        if let ratio = component.aspectRatio(for: mode) {
-            aspectRatio = CGFloat(ratio)
-        }
     }
 
-    /// Scales the presentation to fill the space the view gave it, in meters.
+    /// Scales the presentation to fit the space the view gave it, in meters.
+    ///
+    /// `min` on both axes, so spatial 3D — whose presentation is wider than the
+    /// flat image's — letterboxes inside the slot instead of overflowing it. The
+    /// first version also drove the container's `.aspectRatio` from the 3D
+    /// ratio, which widened the box and pushed content out of frame.
     func fit(in boundsInMeters: BoundingBox) {
         guard let component = entity.components[ImagePresentationComponent.self] else { return }
         let screen = component.presentationScreenSize
@@ -129,31 +144,47 @@ final class WelcomeSampleModel {
     }
 }
 
-struct WelcomeSampleStage: View {
-    @State private var model = WelcomeSampleModel()
+// MARK: - Picture
+
+/// The sample photograph, flat or in spatial 3D, filling whatever it is given.
+struct WelcomeSampleImage: View {
+    let model: WelcomeSampleModel
+
+    /// How far back the RealityKit slab is pushed to sit on the panel's plane.
+    ///
+    /// Same problem and same shape as `Pseudo3DVideoPlayerView`'s
+    /// `videoPlaneZRecess`: a front-aligned zero-depth slab measures several
+    /// centimetres proud of the chrome on device. Tunable in one place.
+    private let planeZRecess: CGFloat = 90
 
     var body: some View {
-        VStack(spacing: 22) {
-            // Availability is decided from the bundle, synchronously, rather
-            // than from `stage`: the RealityView has to exist before `prepare()`
-            // can run inside it, so a stage-driven branch would never mount it.
-            if WelcomeSample.isAvailable {
-                stage
-            } else {
+        ZStack {
+            // A dark mat, so letterboxing on either side of a portrait photo
+            // reads as framing rather than as a gap.
+            Color.black.opacity(0.35)
+
+            switch model.stage {
+            case .loading:
+                ProgressView()
+            case .unavailable:
                 MissingSampleCard()
+            default:
+                if model.isShowingRealityKit {
+                    spatialImage
+                } else if let image = model.flatImage {
+                    Image(uiImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                }
             }
-            control
-                .animation(.smooth(duration: 0.25), value: model.stage)
         }
+        .task { await model.loadFlatImage() }
     }
 
-    private var stage: some View {
+    private var spatialImage: some View {
         GeometryReader3D { geometry in
             RealityView { content in
-                // In the make closure rather than a `.task`, matching the photo
-                // viewer: the entity must carry its component before anything
-                // tries to scale it, and a task runs a frame too late.
-                await model.prepare()
+                await model.prepareAndGenerate()
                 if model.entity.parent == nil {
                     content.add(model.entity)
                 }
@@ -161,48 +192,48 @@ struct WelcomeSampleStage: View {
             } update: { content in
                 model.fit(in: content.convert(geometry.frame(in: .local), from: .local, to: .scene))
             }
-            .overlay {
-                switch model.stage {
-                case .idle, .preparing:
-                    ProgressView()
-                case .unavailable:
-                    MissingSampleCard()
-                default:
-                    EmptyView()
-                }
+        }
+        .frame(depth: 0, alignment: .front)
+        .offset(z: -planeZRecess)
+        .overlay {
+            if model.stage == .converting {
+                ProgressView()
             }
         }
-        .aspectRatio(model.aspectRatio, contentMode: .fit)
     }
+}
 
-    @ViewBuilder
-    private var control: some View {
-        switch model.stage {
-        case .idle, .preparing:
-            Text("Preparing sample…")
-                .font(.callout)
-                .foregroundStyle(.secondary)
+// MARK: - Control
 
-        case .flat:
-            Button {
-                Task { await model.convert() }
-            } label: {
-                Label("Convert to 3D", systemImage: "cube.transparent")
-                    .padding(.horizontal, 8)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
+/// The convert button, and afterwards the flat/3D switch.
+struct WelcomeSampleControls: View {
+    let model: WelcomeSampleModel
 
-        case .converting:
-            HStack(spacing: 12) {
-                ProgressView()
-                Text("Building depth…")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            switch model.stage {
+            case .loading:
+                EmptyView()
 
-        case .ready:
-            VStack(spacing: 10) {
+            case .flat:
+                Button {
+                    model.beginConversion()
+                } label: {
+                    Label("Convert to 3D", systemImage: "cube.transparent")
+                        .padding(.horizontal, 8)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+
+            case .converting:
+                HStack(spacing: 12) {
+                    ProgressView()
+                    Text("Building depth…")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+
+            case .ready:
                 Picker("Viewing mode", selection: Binding(
                     get: { model.showing3D },
                     set: { model.showing3D = $0; model.applyViewingMode() }
@@ -211,38 +242,33 @@ struct WelcomeSampleStage: View {
                     Text("Spatial 3D").tag(true)
                 }
                 .pickerStyle(.segmented)
-                .frame(maxWidth: 300)
                 .labelsHidden()
+                .frame(maxWidth: 280)
 
                 Text("Lean in — the depth is real, not a parallax trick.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            }
 
-        case .unavailable:
-            EmptyView()
+            case .unavailable:
+                EmptyView()
+            }
         }
+        .animation(.smooth(duration: 0.25), value: model.stage)
     }
 }
 
-/// Shown in place of the photo when no sample is bundled, so the flow still
+/// Shown in place of the photo when no sample is bundled, so a missing asset
 /// reads as intentional rather than broken.
-private struct MissingSampleCard: View {
+struct MissingSampleCard: View {
     var body: some View {
         VStack(spacing: 14) {
             Image(systemName: "cube.transparent")
-                .font(.system(size: 52))
+                .font(.system(size: 44))
                 .foregroundStyle(.tertiary)
             Text("Any flat photo becomes a window you can look into.")
                 .font(.title3)
                 .multilineTextAlignment(.center)
-            Text("Point the app at your library on the next screen and try it on one of your own.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
         }
-        .padding(40)
-        .frame(maxWidth: 520)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 28))
+        .padding(32)
     }
 }
