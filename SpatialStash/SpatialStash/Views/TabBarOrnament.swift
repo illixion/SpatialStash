@@ -125,14 +125,17 @@ struct TabBarOrnament: View {
 
     /// The popover's contents: one row per available source, radio-style
     /// (checkmark on the active one), mirroring `VideoOrnamentsView.modeButton`.
+    /// Sized generously rather than like a compact desktop menu — this is a
+    /// gaze/pinch target in open space, not a mouse-hover list, so each row
+    /// gets a full 60pt-plus tall tap area and roomy horizontal padding.
     private func libraryPickerList(current: LibrarySource) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 8) {
             ForEach(appModel.availableLibrarySources, id: \.self) { source in
                 libraryMenuItem(source, current: current)
             }
         }
-        .padding(8)
-        .frame(minWidth: 200, alignment: .leading)
+        .padding(12)
+        .frame(minWidth: 280, alignment: .leading)
     }
 
     private func libraryMenuItem(_ source: LibrarySource, current: LibrarySource) -> some View {
@@ -141,19 +144,26 @@ struct TabBarOrnament: View {
             guard current != source else { return }
             appModel.librarySource = source
         } label: {
-            HStack {
-                Label(source.displayName, systemImage: source.symbolName)
+            HStack(spacing: 16) {
+                Image(systemName: source.symbolName)
+                    .font(.title2)
+                    .frame(width: 28)
+                Text(source.displayName)
+                    .font(.title3)
                 Spacer()
                 if current == source {
                     Image(systemName: "checkmark")
+                        .font(.title3)
+                        .foregroundStyle(.tint)
                 }
             }
-            .padding(.vertical, 6)
-            .padding(.horizontal, 4)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
+            .padding(.vertical, 16)
+            .padding(.horizontal, 12)
+            .frame(maxWidth: .infinity, minHeight: 60, alignment: .leading)
+            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
         .buttonStyle(.plain)
+        .hoverEffect(.highlight)
         .accessibilityIdentifier(A11y.librarySwitchOption(source.rawValue))
     }
 
