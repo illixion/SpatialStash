@@ -11,6 +11,12 @@ struct TabBarOrnament: View {
     @Environment(AppModel.self) private var appModel
     @Environment(MainWindowModel.self) private var windowModel
 
+    /// Drives the library switch's popover. A plain `@State` rather than
+    /// something on `windowModel`: nothing outside this control cares, and
+    /// scoping it locally is what lets the button be a genuine `Button`
+    /// (see `libraryMenu` below) instead of routing through `Menu`.
+    @State private var showLibraryPicker = false
+
     private var visibleTabs: [Tab] {
         let orderedTabs: [Tab] = [.pictures, .videos, .albums, .remote, .filters, .windows, .console, .settings]
         return orderedTabs.filter { tab in
@@ -83,12 +89,22 @@ struct TabBarOrnament: View {
     /// offered here — never how much either source currently has to show,
     /// so an empty-but-enabled Local library stays reachable to pull-to-
     /// refresh rather than disappearing until it has content.
+    ///
+    /// **A genuine `Button` behind a custom `.popover`, not a `Menu`.** A
+    /// `Menu`'s trigger keeps a rectangular gaze-hover highlight on-device
+    /// no matter what `.contentShape` it's given — confirmed after
+    /// `.contentShape(.hoverEffect, Capsule())` alone still rendered
+    /// rectangular in real headset testing, not just the simulator. Every
+    /// other capsule in this bar is a plain `Button` with
+    /// `RAVETabBarButtonStyle` + `.hoverEffect(.highlight)`
+    /// (`RAVETabBarButtonStyle`/`RAVETabBarActionButton` in RAVEUI), and
+    /// that combination is what actually produces the round highlight —
+    /// so the trigger here is built the identical way, and the dropdown
+    /// itself is a plain popover of rows instead of `Menu`'s built-in list.
     private var libraryMenu: some View {
         let current = appModel.effectiveLibrarySource
-        return Menu {
-            ForEach(appModel.availableLibrarySources, id: \.self) { source in
-                libraryMenuItem(source, current: current)
-            }
+        return Button {
+            showLibraryPicker = true
         } label: {
             Image(systemName: current.symbolName)
                 .font(.title3)
@@ -102,22 +118,42 @@ struct TabBarOrnament: View {
         .help("Library — showing \(current.displayName)")
         .accessibilityLabel("Library — showing \(current.displayName)")
         .accessibilityIdentifier(A11y.librarySwitch)
+        .popover(isPresented: $showLibraryPicker) {
+            libraryPickerList(current: current)
+        }
     }
 
-    /// Radio-style library item: checkmark on the active source only,
-    /// mirroring `VideoOrnamentsView.modeButton`.
+    /// The popover's contents: one row per available source, radio-style
+    /// (checkmark on the active one), mirroring `VideoOrnamentsView.modeButton`.
+    private func libraryPickerList(current: LibrarySource) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(appModel.availableLibrarySources, id: \.self) { source in
+                libraryMenuItem(source, current: current)
+            }
+        }
+        .padding(8)
+        .frame(minWidth: 200, alignment: .leading)
+    }
+
     private func libraryMenuItem(_ source: LibrarySource, current: LibrarySource) -> some View {
         Button {
+            showLibraryPicker = false
             guard current != source else { return }
             appModel.librarySource = source
         } label: {
             HStack {
                 Label(source.displayName, systemImage: source.symbolName)
+                Spacer()
                 if current == source {
                     Image(systemName: "checkmark")
                 }
             }
+            .padding(.vertical, 6)
+            .padding(.horizontal, 4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
         .accessibilityIdentifier(A11y.librarySwitchOption(source.rawValue))
     }
 
