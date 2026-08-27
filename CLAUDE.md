@@ -97,11 +97,11 @@ Main windows are managed too, so a second Gallery window parked in another room 
 
 ### Data Flow
 Three library sources, chosen via `AppModel.librarySource` (`LibrarySource`: `.photos`/`.stash`/`.local`) and resolved to the pair actually in force by `AppModel.effectiveLibrarySource`/`makeSources(for:apiClient:)`:
-1. **PhotosImageSource/PhotosVideoSource** - The device photo library, via `PhotosIndexStore`. The default with no server configured, and the one source that's always available.
+1. **PhotosImageSource/PhotosVideoSource** - The device photo library, via `PhotosIndexStore`. The default with no server configured, and always available — no setup needed.
 2. **GraphQLImageSource/GraphQLVideoSource** - Fetches from a Stash server via `StashAPIClient`. Selectable once `stashServerURL` is set.
-3. **LocalImageSource/LocalVideoSource** - Scans `Documents/Photos`/`Documents/Videos` for local files. Selectable once `AppModel.enableLocalLibrary` is on (Settings → Local Files) — an opt-in capability, not something offered unasked.
+3. **LocalImageSource/LocalVideoSource** - Scans `Documents/Photos`/`Documents/Videos` for local files. Always available too, like Photos — needs no permission and no setup, so unlike Stash there's nothing to gate it behind. Settings → Local Files is informational only (where to put the files), not a toggle.
 
-`AppModel.availableLibrarySources` is which of the three currently apply; `effectiveLibrarySource` falls back to Photos when the stored choice isn't one of them (server removed, Local toggled off). The tab bar's library-switch button (`TabBarOrnament`, only shown on Pictures/Videos with more than one source available) cycles through whichever are.
+`AppModel.availableLibrarySources` is which of the three currently apply — Photos and Local unconditionally, Stash once a server is configured; `effectiveLibrarySource` falls back to Photos when the stored choice isn't one of them (server removed). The tab bar's library-switch button (`TabBarOrnament`, only shown on Pictures/Videos with more than one source available — which, with Local always in the list, means Pictures/Videos always) is a dropdown menu rather than a cycling button, since a third source made "tap to switch to the other one" ambiguous about where a tap would land.
 
 Source protocols:
 - `ImageSource` - Protocol for paginated image fetching with optional filter support

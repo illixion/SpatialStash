@@ -215,9 +215,10 @@ struct SettingsTabView: View {
                 }
 
                 Section("Local Files") {
-                    Toggle("Enable Local Files", isOn: $appModel.enableLocalLibrary)
-                        .accessibilityIdentifier(A11y.Settings.enableLocalLibrary)
-                    Text("Browse and convert files you place in this app's Documents folder — in the Files app, under \"On My Apple Vision Pro\" → Spatial Stash. Off by default; turning it on adds Local Files as a library alongside Photos and any media server.")
+                    // No toggle — needs no permission and no setup, so unlike
+                    // Photos or a media server there is nothing to gate. This
+                    // is purely where "where do I put files" gets explained.
+                    Text("Browse and convert files you place in this app's Documents folder — in the Files app, under \"On My Apple Vision Pro\" → Spatial Stash. Always available as a library alongside Photos and any media server.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }

@@ -45,11 +45,6 @@ enum A11y {
         static let localBrowser = "albums.localBrowser"
     }
 
-    /// Settings tab.
-    enum Settings {
-        static let enableLocalLibrary = "settings.enableLocalLibrary"
-    }
-
     /// First-run flow.
     enum Welcome {
         static let panel = "welcome.panel"

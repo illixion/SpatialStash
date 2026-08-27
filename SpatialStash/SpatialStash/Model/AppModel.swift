@@ -779,20 +779,6 @@ class AppModel {
         }
     }
 
-    /// Whether the Local library (files under Documents/Photos and
-    /// Documents/Videos) is offered as a source alongside Photos and Stash.
-    /// Off by default — it is an opt-in capability, not something a fresh
-    /// install should surface unasked. Routed through `applyLibrarySource()`
-    /// so turning it off while it is the active source falls back cleanly,
-    /// the same way losing the Stash server already does.
-    var enableLocalLibrary: Bool {
-        didSet {
-            guard enableLocalLibrary != oldValue else { return }
-            UserDefaults.standard.set(enableLocalLibrary, forKey: "enableLocalLibrary")
-            applyLibrarySource()
-        }
-    }
-
     /// Preferred depth model for REAL-TIME fake-3D (base filename, e.g.
     /// "DepthAnythingV2SmallF16"), or "" for automatic (first installed).
     /// Read live by CoreMLDepthProvider.findModelURL(role: .realtime); a
@@ -1381,7 +1367,6 @@ class AppModel {
             : true
 
         let loadedEnableStashTranscoding = loadBool("enableStashTranscoding", default: true)
-        let loadedEnableLocalLibrary = loadBool("enableLocalLibrary", default: false)
         // Depth model preferences, split by role. Migrate the legacy single
         // "preferredDepthModelName" into both roles on first launch after the
         // split (the legacy key is also still read as a fallback by
@@ -1479,7 +1464,6 @@ class AppModel {
         self.roundedCorners = loadedRoundedCorners
         self.openMediaInNewWindows = loadedOpenMediaInNewWindows
         self.enableStashTranscoding = loadedEnableStashTranscoding
-        self.enableLocalLibrary = loadedEnableLocalLibrary
         self.realtimeDepthModelName = loadedRealtimeDepthModelName
         self.preprocessDepthModelName = loadedPreprocessDepthModelName
         self.defaultRealtimePseudo3D = loadedDefaultRealtimePseudo3D
@@ -2285,7 +2269,6 @@ class AppModel {
             reduceMotion: reduceMotion,
             defaultImageViewingMode: defaultImageViewingMode.rawValue,
             enableStashTranscoding: enableStashTranscoding,
-            enableLocalLibrary: enableLocalLibrary,
             realtimeDepthModelName: realtimeDepthModelName,
             preprocessDepthModelName: preprocessDepthModelName,
             defaultRealtimePseudo3D: defaultRealtimePseudo3D,
@@ -2333,7 +2316,6 @@ class AppModel {
         if let v = backup.reduceMotion { reduceMotion = v }
         if let raw = backup.defaultImageViewingMode, let mode = DefaultImageViewingMode(rawValue: raw) { defaultImageViewingMode = mode }
         if let v = backup.enableStashTranscoding { enableStashTranscoding = v }
-        if let v = backup.enableLocalLibrary { enableLocalLibrary = v }
         if let v = backup.realtimeDepthModelName { realtimeDepthModelName = v }
         if let v = backup.preprocessDepthModelName { preprocessDepthModelName = v }
         if let v = backup.defaultRealtimePseudo3D { defaultRealtimePseudo3D = v }
@@ -2519,19 +2501,18 @@ class AppModel {
         !stashServerURL.isEmpty
     }
 
-    /// The library sources currently selectable. Photos is always one of
-    /// them; Stash needs a configured server and Local needs its Settings
-    /// toggle on — either, both, or neither can be true at once.
+    /// The library sources currently selectable. Photos and Local need no
+    /// setup, so both are always offered; Stash joins once a server is
+    /// configured.
     var availableLibrarySources: [LibrarySource] {
-        var sources: [LibrarySource] = [.photos]
+        var sources: [LibrarySource] = [.photos, .local]
         if hasStashServer { sources.append(.stash) }
-        if enableLocalLibrary { sources.append(.local) }
         return sources
     }
 
     /// The library actually in force: the stored choice when it is currently
     /// available, and Photos otherwise — the one source that always is. This
-    /// is what makes disabling Stash or Local fall back cleanly instead of
+    /// is what makes losing the Stash server fall back cleanly instead of
     /// leaving `librarySource` pointing at something no longer offered.
     var effectiveLibrarySource: LibrarySource {
         availableLibrarySources.contains(librarySource) ? librarySource : .photos
