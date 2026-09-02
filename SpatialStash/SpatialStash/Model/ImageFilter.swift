@@ -114,7 +114,7 @@ enum ImageSortField: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .path: return "Path"
         case .rating: return "Rating"
-        case .oCount: return "O Count"
+        case .oCount: return "Activity"
         case .filesize: return "File Size"
         case .date: return "Date"
         case .createdAt: return "Created At"
@@ -150,7 +150,7 @@ enum SceneSortField: String, CaseIterable, Identifiable, Codable {
         case .date: return "Date"
         case .title: return "Title"
         case .rating: return "Rating"
-        case .oCount: return "O Count"
+        case .oCount: return "Activity"
         case .createdAt: return "Created At"
         case .updatedAt: return "Updated At"
         case .filesize: return "File Size"

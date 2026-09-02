@@ -323,7 +323,7 @@ struct FiltersTabView: View {
             PerformerFilterView(isVideoFilter: isVideoFilter)
         }
 
-        Section("O Count") {
+        Section("Activity") {
             OCountFilterView(isVideoFilter: isVideoFilter)
         }
 
@@ -593,7 +593,7 @@ struct SavedViewRow: View {
             parts.append("Rating filter")
         }
         if view.filter.oCountEnabled {
-            parts.append("O Count filter")
+            parts.append("Activity filter")
         }
         parts.append("\(view.filter.sortField.displayName) \(view.filter.sortDirection.displayName)")
         return parts.joined(separator: " | ")
@@ -677,7 +677,7 @@ struct SavedVideoViewRow: View {
             parts.append("Rating filter")
         }
         if view.filter.oCountEnabled {
-            parts.append("O Count filter")
+            parts.append("Activity filter")
         }
         parts.append("\(view.filter.sortField.displayName) \(view.filter.sortDirection.displayName)")
         return parts.joined(separator: " | ")

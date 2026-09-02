@@ -403,7 +403,7 @@ struct MediaDetailSheet: View {
                 }
             }
 
-            Section("Rating & O Counter") {
+            Section("Rating & Activity") {
                 ratingEditor
                 oCounterEditor
                 Toggle("Organized", isOn: $editOrganized)
@@ -621,12 +621,12 @@ struct MediaDetailSheet: View {
     // MARK: - O Counter Display / Editor
 
     private var oCounterDisplay: some View {
-        LabeledContent("O Count", value: "\(currentOCounter)")
+        LabeledContent("Activity", value: "\(currentOCounter)")
     }
 
     private var oCounterEditor: some View {
         HStack {
-            Text("O Count")
+            Text("Activity")
                 .foregroundColor(.secondary)
             Spacer()
             HStack(spacing: 12) {

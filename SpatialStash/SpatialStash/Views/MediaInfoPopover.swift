@@ -59,7 +59,7 @@ struct MediaInfoPopover: View {
 
             // O Counter
             VStack(spacing: 8) {
-                Text("O Count")
+                Text("Activity")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
 
