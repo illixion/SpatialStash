@@ -5,7 +5,7 @@
 //  Unlike PrivateSpatial3DTuning.swift, this file is ALWAYS compiled. It gives
 //  every spatial-3D presentation path a single call to make, so the call sites
 //  don't each need their own #if and a new path can't silently miss the tuning.
-//  In builds without SPATIALSTASH_PRIVATE_API the body is empty and the call
+//  In builds without HYPNOS_PRIVATE_API the body is empty and the call
 //  compiles away.
 //
 
@@ -21,7 +21,7 @@ extension ImagePresentationComponent {
     /// one-time application at creation is not enough.
     @MainActor
     mutating func applyPrivateSpatial3DTuningIfAvailable() {
-        #if SPATIALSTASH_PRIVATE_API
+        #if HYPNOS_PRIVATE_API
         PrivateSpatial3DTuningStore.shared.apply(to: &self)
         #endif
     }

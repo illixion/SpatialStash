@@ -3,10 +3,10 @@
 //  SpatialStash
 //
 //  Settings UI for the GitHub-only private spatial-3D tuning. Compiled out
-//  unless SPATIALSTASH_PRIVATE_API is defined.
+//  unless HYPNOS_PRIVATE_API is defined.
 //
 
-#if SPATIALSTASH_PRIVATE_API
+#if HYPNOS_PRIVATE_API
 
 import SwiftUI
 
@@ -25,7 +25,7 @@ struct PrivateSpatial3DTuningSection: View {
                 .foregroundStyle(.secondary)
 
             if store.isEnabled {
-                #if SPATIALSTASH_PRIVATE_API_V27
+                #if HYPNOS_PRIVATE_API_V27
                 // The one knob confirmed to fix the visionOS 27 immersive
                 // change, as a single tap so it needn't be rediscovered.
                 Button("Restore Pre-visionOS 27 Immersive Look") {
@@ -66,7 +66,7 @@ struct PrivateSpatial3DTuningSection: View {
                     caption: "No visible effect observed. Stock is 44."
                 )
 
-                #if SPATIALSTASH_PRIVATE_API_V27
+                #if HYPNOS_PRIVATE_API_V27
                 repositionModeKnob()
 
                 boolKnob(
@@ -90,7 +90,7 @@ struct PrivateSpatial3DTuningSection: View {
                     caption: "No visible effect observed. Stock is off."
                 )
                 #else
-                Text("Three further knobs (User Interaction Enabled, MXI Render Two-Pass, Force Update When Inactive) exist only on visionOS 27. Build with SPATIALSTASH_PRIVATE_API_V27 and a 27.0 deployment target to expose them.")
+                Text("Three further knobs (User Interaction Enabled, MXI Render Two-Pass, Force Update When Inactive) exist only on visionOS 27. Build with HYPNOS_PRIVATE_API_V27 and a 27.0 deployment target to expose them.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 #endif
@@ -103,7 +103,7 @@ struct PrivateSpatial3DTuningSection: View {
 
     // MARK: - Knob builders
 
-    #if SPATIALSTASH_PRIVATE_API_V27
+    #if HYPNOS_PRIVATE_API_V27
     /// The zero-parallax alignment mode. RealityKit may re-assert its own value
     /// when entering the immersive presentation; the tuning is re-applied on
     /// every viewing-mode change, so toggle 3D off and on after changing it.

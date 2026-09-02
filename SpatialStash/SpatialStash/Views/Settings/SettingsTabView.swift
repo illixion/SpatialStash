@@ -390,7 +390,7 @@ struct SettingsTabView: View {
                     }
                 }
 
-                #if SPATIALSTASH_PRIVATE_API
+                #if HYPNOS_PRIVATE_API
                 PrivateSpatial3DTuningSection()
                 #endif
 

@@ -3,14 +3,14 @@
 //  SpatialStash
 //
 //  GitHub-only build feature. Compiled out entirely unless the
-//  SPATIALSTASH_PRIVATE_API compilation condition is set (see
+//  HYPNOS_PRIVATE_API compilation condition is set (see
 //  Configuration/SpatialStash.xcconfig and scripts/build-and-sign.sh
 //  --private-api). App Store builds must never define it: the accessors below
 //  bind to symbols that exist in the shipping RealityFoundation binary but are
 //  declared in no public header.
 //
 
-#if SPATIALSTASH_PRIVATE_API
+#if HYPNOS_PRIVATE_API
 
 import Foundation
 import Observation
@@ -116,7 +116,7 @@ extension ImagePresentationComponent {
     @_silgen_name("$s17RealityFoundation26ImagePresentationComponentV31enableSpecularAndFresnelEffectsSbvs")
     mutating func __privateSetSpecularAndFresnelEffects(_ newValue: Bool)
 
-    #if SPATIALSTASH_PRIVATE_API_V27
+    #if HYPNOS_PRIVATE_API_V27
     // New in visionOS 27. These symbols do NOT exist in 26.x, and a missing
     // non-weak symbol is a dyld failure at launch, not a recoverable error —
     // so a build defining this condition must also raise
@@ -147,7 +147,7 @@ extension ImagePresentationComponent {
     #endif
 }
 
-#if SPATIALSTASH_PRIVATE_API_V27
+#if HYPNOS_PRIVATE_API_V27
 extension ImagePresentationComponent {
     /// Raw tag of `mxiSceneRepositionMode`, read through the `@out` convention.
     var privateSceneRepositionModeRaw: UInt8 {
@@ -279,7 +279,7 @@ final class PrivateSpatial3DTuningStore {
             component.__privateSetSpecularAndFresnelEffects(v); changed = true
         }
 
-        #if SPATIALSTASH_PRIVATE_API_V27
+        #if HYPNOS_PRIVATE_API_V27
         if let v = settings.userInteractionEnabled,
            component.__privateGetUserInteractionEnabled() != v {
             component.__privateSetUserInteractionEnabled(v); changed = true

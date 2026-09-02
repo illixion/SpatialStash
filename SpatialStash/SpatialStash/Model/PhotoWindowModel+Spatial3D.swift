@@ -643,7 +643,7 @@ extension PhotoWindowModel {
         // knobs. Unlike the billboard above this is not restricted to windowed
         // .spatial3D — the visionOS 27 behaviour it counteracts is in the
         // immersive mode. No-op unless the tuning is enabled and non-default.
-        #if SPATIALSTASH_PRIVATE_API
+        #if HYPNOS_PRIVATE_API
         applyPrivateSpatial3DTuning()
         #endif
     }
