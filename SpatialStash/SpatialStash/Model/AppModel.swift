@@ -183,6 +183,12 @@ class AppModel {
 
     private(set) var videoSource: any VideoSource
 
+    // MARK: - Entitlements (App Store commerce seam)
+
+    /// `NoopEntitlementProvider` (everything unlocked) outside a
+    /// `HYPNOS_APPSTORE` build — see `EntitlementProviderFactory`.
+    private(set) var entitlementProvider: any EntitlementProviding
+
     // MARK: - Selected Items for Detail View
 
     var selectedImage: GalleryImage?
@@ -1508,6 +1514,9 @@ class AppModel {
         let initialSources = AppModel.makeSources(for: initialSource, apiClient: client)
         self.imageSource = initialSources.image
         self.videoSource = initialSources.video
+        let entitlementProvider = EntitlementProviderFactory.make()
+        self.entitlementProvider = entitlementProvider
+        Task { await entitlementProvider.refresh() }
 
         // Now all stored properties are initialized, we can use self
         AppLogger.appModel.info("Init - Has API Key: \(!self.stashAPIKey.isEmpty, privacy: .public)")
