@@ -98,12 +98,16 @@ actor RemoteAPIClient {
         _ = try await session.data(from: url)
     }
 
-    /// Fetch the server-side rolling history (most recent first). The
-    /// server's RAM-resident buffer (~50 entries) is the single source of
-    /// truth across all kiosks/clients, so this lets multiple viewers share
-    /// the same view of "what has been shown lately" instead of each
-    /// accumulating its own local list.
-    func fetchHistory(baseURL: String, accessToken: String) async throws -> [RemoteHistoryEntry] {
+    /// Fetch the server-side rolling history (most recent first), both as a
+    /// flat, deduped-by-id stream and grouped per display (`deviceId`). The
+    /// server's RAM-resident buffer (~50 entries per display) is the single
+    /// source of truth across all kiosks/clients, so this lets multiple
+    /// viewers share the same view of "what has been shown lately" instead
+    /// of each accumulating its own local list. Unlike `flat`, a post shown
+    /// on two displays appears once per group in `groups` rather than being
+    /// deduped away — that's what lets a client mirror the server's own
+    /// /history page, which sections by display.
+    func fetchHistory(baseURL: String, accessToken: String) async throws -> RemoteHistoryPayload {
         guard let url = URL(string: withToken("\(normalize(baseURL))/history.json", token: accessToken)) else {
             throw RemoteAPIError.invalidURL
         }
@@ -111,8 +115,12 @@ actor RemoteAPIClient {
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
             throw RemoteAPIError.serverError
         }
-        struct Payload: Decodable { let history: [RemoteHistoryEntry] }
-        return try JSONDecoder().decode(Payload.self, from: data).history
+        struct Payload: Decodable {
+            let history: [RemoteHistoryEntry]
+            let groups: [RemoteHistoryGroup]
+        }
+        let payload = try JSONDecoder().decode(Payload.self, from: data)
+        return RemoteHistoryPayload(flat: payload.history, groups: payload.groups)
     }
 
     // Tag lists used to be fetched from /tags.json. They now arrive over the WebSocket
@@ -122,6 +130,23 @@ actor RemoteAPIClient {
 struct RemoteHistoryEntry: Decodable, Identifiable, Hashable {
     let id: Int
     let ext: String
+}
+
+/// One display's section of the server's history, as returned in
+/// /history.json's `groups`. `deviceId` is the raw value the server bucketed
+/// under — `"others"` for requests with no deviceId — display formatting is
+/// left to the view.
+struct RemoteHistoryGroup: Decodable, Identifiable, Hashable {
+    let deviceId: String
+    let posts: [RemoteHistoryEntry]
+    var id: String { deviceId }
+}
+
+/// The full /history.json response: the flat, deduped-by-id stream plus the
+/// same rolling window sectioned per display.
+struct RemoteHistoryPayload {
+    let flat: [RemoteHistoryEntry]
+    let groups: [RemoteHistoryGroup]
 }
 
 enum RemoteAPIError: LocalizedError {

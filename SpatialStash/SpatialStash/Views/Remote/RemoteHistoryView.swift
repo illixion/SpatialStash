@@ -3,7 +3,9 @@
 
  Grid overlay showing the RoboFrame server's rolling viewing history,
  fetched from /history.json and shared across all viewer windows pointed
- at the same endpoint.
+ at the same endpoint. Sectioned per display (`groups`), mirroring the
+ server's own /history page, rather than one merged list — the same post
+ can legitimately appear under more than one display's section.
  */
 
 import SwiftUI
@@ -12,38 +14,25 @@ struct RemoteHistoryView: View {
     let store: RemoteHistoryStore
     var onEntrySelected: ((RemoteHistoryEntry) -> Void)?
 
+    /// The server's sentinel bucket for requests with no deviceId.
+    private static let othersDeviceId = "others"
+
     var body: some View {
         ScrollView {
-            if store.entries.isEmpty {
+            if store.groups.isEmpty {
                 emptyState
             } else {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 8)], spacing: 8) {
-                    ForEach(store.entries) { entry in
-                        Group {
-                            if let url = store.imageURL(for: entry) {
-                                AsyncImage(url: url) { phase in
-                                    switch phase {
-                                    case .success(let image):
-                                        image
-                                            .resizable()
-                                            .aspectRatio(contentMode: .fill)
-                                            .frame(height: 120)
-                                            .clipped()
-                                            .cornerRadius(8)
-                                    case .failure:
-                                        placeholder
-                                    case .empty:
-                                        placeholder
-                                            .overlay(ProgressView().scaleEffect(0.6))
-                                    @unknown default:
-                                        placeholder
-                                    }
+                LazyVStack(alignment: .leading, spacing: 20) {
+                    ForEach(store.groups) { group in
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(label(for: group.deviceId))
+                                .font(.headline)
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 8)], spacing: 8) {
+                                ForEach(group.posts) { entry in
+                                    thumbnail(for: entry)
                                 }
-                            } else {
-                                placeholder
                             }
                         }
-                        .onTapGesture { onEntrySelected?(entry) }
                     }
                 }
                 .padding()
@@ -58,6 +47,42 @@ struct RemoteHistoryView: View {
                     .padding(16)
             }
         }
+    }
+
+    /// "others" (no deviceId attached to the request) reads better as
+    /// "Other" than the server's raw bucket name; every other deviceId is
+    /// shown verbatim since it's whatever string the viewing display was
+    /// configured with.
+    private func label(for deviceId: String) -> String {
+        deviceId == Self.othersDeviceId ? "Other" : deviceId
+    }
+
+    private func thumbnail(for entry: RemoteHistoryEntry) -> some View {
+        Group {
+            if let url = store.imageURL(for: entry) {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(height: 120)
+                            .clipped()
+                            .cornerRadius(8)
+                    case .failure:
+                        placeholder
+                    case .empty:
+                        placeholder
+                            .overlay(ProgressView().scaleEffect(0.6))
+                    @unknown default:
+                        placeholder
+                    }
+                }
+            } else {
+                placeholder
+            }
+        }
+        .onTapGesture { onEntrySelected?(entry) }
     }
 
     private var emptyState: some View {

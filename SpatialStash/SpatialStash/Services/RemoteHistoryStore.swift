@@ -21,6 +21,11 @@ final class RemoteHistoryStore {
     private let apiClient: RemoteAPIClient
 
     private(set) var entries: [RemoteHistoryEntry] = []
+    /// The same rolling window as `entries`, sectioned per display. A post
+    /// shown on two displays appears once per group here, unlike `entries`
+    /// which dedupes it away — this is what lets the history grid mirror
+    /// the server's own /history page instead of assuming one shared list.
+    private(set) var groups: [RemoteHistoryGroup] = []
     private(set) var isLoading: Bool = false
     private(set) var lastError: String?
 
@@ -46,7 +51,8 @@ final class RemoteHistoryStore {
         defer { isLoading = false }
         do {
             let fresh = try await apiClient.fetchHistory(baseURL: endpoint, accessToken: accessToken)
-            entries = fresh
+            entries = fresh.flat
+            groups = fresh.groups
             lastError = nil
         } catch {
             lastError = error.localizedDescription
