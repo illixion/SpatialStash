@@ -5,6 +5,7 @@
  Supports both static images and animated GIFs.
  */
 
+import ImageIO
 import os
 import SwiftUI
 
@@ -48,6 +49,18 @@ actor ImageLoader {
         config.timeoutIntervalForRequest = 20
         config.timeoutIntervalForResource = 300
         config.waitsForConnectivity = false
+        // No URLCache: `.default` otherwise inherits `URLCache.shared`, a
+        // disk-backed cache that survives relaunch. A transient server-side
+        // failure (e.g. Stash failing to generate a thumbnail) can come back
+        // as a cacheable 200 with a broken/empty body; the OS cache then
+        // replays that same broken response for every future request to the
+        // URL — including after a relaunch and even once the server is
+        // serving the real thumbnail again — since nothing here ever primes
+        // a `Cache-Control`/ETag revalidation. DiskImageCache/ThumbnailCache
+        // already provide our own on-disk cache, gated on a successful
+        // decode, so the OS-level cache is pure downside here.
+        config.urlCache = nil
+        config.requestCachePolicy = .reloadIgnoringLocalCacheData
         return URLSession(configuration: config)
     }()
 
@@ -282,6 +295,21 @@ actor ImageLoader {
             }
             guard (200...299).contains(httpResponse.statusCode) else {
                 throw ImageLoaderError.httpStatus(httpResponse.statusCode)
+            }
+
+            // A 2xx status doesn't guarantee a real image — Stash can answer
+            // with a broken/placeholder body (or a truncated one from a
+            // dropped connection) and still say 200. Unlike the full
+            // UIImage(data:)-decoding loaders, this path skips decoding for
+            // speed, so without this check a bad response would get written
+            // to DiskImageCache and served back on every future load —
+            // including after a relaunch, and even once the server starts
+            // returning the real thumbnail again — since disk-cache reads
+            // never revalidate against the network. A cheap header-only
+            // probe via CGImageSource is enough to reject non-image bytes
+            // without paying for a full decode.
+            guard CGImageSourceCreateWithData(data as CFData, nil) != nil else {
+                return nil
             }
 
             // Cache to disk only (skip memory cache since we're not decoding)
