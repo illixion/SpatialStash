@@ -44,7 +44,81 @@ class PhotoWindowModel {
     /// is irrelevant on a snapped wall view and can pop up unexpectedly on
     /// device reboot since restored windows start in a snapped state.
     var isWindowSnapped: Bool = false
-    var isLoadingDetailImage: Bool = false
+
+    /// Whether the window is waiting on image bytes / a decode.
+    ///
+    /// Backed by a stored property rather than declared directly so every one
+    /// of the ~20 assignment sites across the extensions funnels through one
+    /// place that arms and disarms the stall watchdog below. A stalled or
+    /// failing backend used to leave this `true` forever, and since the whole
+    /// ornament is gated on it the window became uninteractable — the bug this
+    /// machinery exists to make impossible.
+    @ObservationIgnored private var _isLoadingDetailImage: Bool = false
+    var isLoadingDetailImage: Bool {
+        get {
+            access(keyPath: \.isLoadingDetailImage)
+            return _isLoadingDetailImage
+        }
+        set {
+            let wasLoading = _isLoadingDetailImage
+            withMutation(keyPath: \.isLoadingDetailImage) {
+                _isLoadingDetailImage = newValue
+            }
+            guard wasLoading != newValue else { return }
+            if newValue {
+                armLoadStallWatchdog()
+            } else {
+                cancelLoadStallWatchdog()
+            }
+        }
+    }
+
+    /// Human-readable reason the current image could not be loaded, or nil when
+    /// there is no failure. Set by `loadImageDataForDetail`; cleared when a load
+    /// starts or succeeds. Drives the in-window error card and re-enables the
+    /// ornament so a dead image never traps the window.
+    var loadFailure: String? = nil
+
+    /// Set by the watchdog when a load has been outstanding for longer than
+    /// `loadStallTimeout`. Doesn't abort anything — it just stops the loading
+    /// state from holding the ornament hostage, and surfaces the fact that the
+    /// backend is not answering.
+    var isLoadStalled: Bool = false
+
+    /// Seconds a load may run before the window stops treating it as a normal
+    /// wait. Comfortably longer than a slow-but-healthy fetch, and well under
+    /// `ImageLoader`'s own request timeout so the UI degrades first.
+    static let loadStallTimeout: TimeInterval = 8
+
+    @ObservationIgnored private var loadStallWatchdogTask: Task<Void, Never>?
+
+    /// The single gate the ornament's controls use. Loading only locks the
+    /// controls while the load is both in progress *and* behaving: once it
+    /// fails or stalls, everything comes back so the user can retry, navigate
+    /// away, or close the window.
+    var controlsLocked: Bool {
+        isLoadingDetailImage && loadFailure == nil && !isLoadStalled
+    }
+
+    private func armLoadStallWatchdog() {
+        loadStallWatchdogTask?.cancel()
+        isLoadStalled = false
+        loadStallWatchdogTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(PhotoWindowModel.loadStallTimeout))
+            guard let self, !Task.isCancelled, self.isLoadingDetailImage else { return }
+            self.isLoadStalled = true
+            AppLogger.photoWindow.warning(
+                "Image load still outstanding after \(PhotoWindowModel.loadStallTimeout, privacy: .public)s — releasing viewer controls"
+            )
+        }
+    }
+
+    private func cancelLoadStallWatchdog() {
+        loadStallWatchdogTask?.cancel()
+        loadStallWatchdogTask = nil
+        isLoadStalled = false
+    }
+
     var inputPlaneEntity: Entity = Entity()
 
     /// True while this window owns the Spatial3D ImmersiveSpace presentation.
@@ -309,6 +383,10 @@ class PhotoWindowModel {
         // would generate spatial 3D for all of them at once. The user can
         // still opt in per window via the ornament.
         guard !isRestoredPopOut else { return }
+        // Nothing decoded, so every mode below would fail its own way and
+        // replace the failure card with an empty RealityView. Leave the window
+        // in the failed state where the user has a Retry.
+        guard loadFailure == nil else { return }
         guard !isAnimatedImage else { return }
         guard backgroundRemovalState == .original else { return }
         guard !is3DMode, desiredViewingMode == .mono else { return }
@@ -579,7 +657,10 @@ class PhotoWindowModel {
         self.appModel = appModel
         self.popOutWindowValue = popOutWindowValue
         self.useRealityKitDisplay = useRealityKitDisplay
-        self.isLoadingDetailImage = true
+        // Stored form on purpose: the property's setter arms the stall
+        // watchdog, and `init` must stay side-effect-free (SwiftUI re-creates
+        // the view struct and discards duplicate models). `start()` arms it.
+        self._isLoadingDetailImage = true
 
         // Capture pagination state for lazy loading. Local images navigate
         // over LocalImageSource's flat scan of the Documents folder, not the
@@ -616,6 +697,9 @@ class PhotoWindowModel {
         guard !didStart else { return }
         didStart = true
         isInitialLoadInProgress = true
+        // init set the loading flag through its stored backing, so arm the
+        // watchdog now that the window is really starting to load.
+        if isLoadingDetailImage { armLoadStallWatchdog() }
 
         appModel.openPhotoWindowCount += 1
         appModel.registerWindowModel(self)
@@ -694,73 +778,145 @@ class PhotoWindowModel {
     /// Pass autoRestore: false when calling from loadDisplayImage — that path only
     /// needs the raw data and must not trigger a second concurrent auto-restoration.
     func loadImageDataForDetail(url: URL, autoRestore: Bool = true) async {
+        loadFailure = nil
+        let data: Data
         do {
-            if let data = try await ImageLoader.shared.loadRawData(from: url) {
-                currentImageData = data
-                animatedImageSourceURL = await resolveSourceFileURL() ?? url
-                isAnimatedGIF = data.isAnimatedGIF
-                let fileNameExtension = (image.fileName as NSString?)?.pathExtension.lowercased() ?? ""
-                let visualFileType = image.visualFileType ?? ""
-                let lowerURL = url.absoluteString.lowercased()
-                let isWebPByURL = url.pathExtension.lowercased() == "webp" || lowerURL.contains("webp")
-                let isWebPByFileName = fileNameExtension == "webp"
-                let isWebPByBytes = data.isWebP
-                let isAnimatedWebPByBytes = data.isAnimatedWebP
-                isAnimatedWebVisual = visualFileType == "VideoFile"
-                // Stash image endpoints often hide the real file extension in the URL.
-                // Use the original filename from GraphQL as the format hint, then hand
-                // the asset to the browser-based renderer which can display both static
-                // and animated WebP correctly.
-                isAnimatedWebP = isWebPByFileName || isAnimatedWebPByBytes || isWebPByBytes || isWebPByURL
-                isAnimatedJXL = data.isAnimatedJXL
-
-                if isAnimatedGIF {
-                    // For GIFs, calculate aspect ratio from the image data
-                    if let image = UIImage(data: data) {
-                        imageAspectRatio = image.size.width / image.size.height
-                    }
-
-                    // Show the raw GIF immediately — WebKit animates it in an
-                    // <img>. Prefer a cached HEVC clip if one already exists;
-                    // otherwise convert in the background (non-blocking) so this
-                    // session stays responsive and the next open plays the
-                    // lighter cached video.
-                    isLoadingDetailImage = false
-                    animatedHEVCURL = await DiskAnimatedHEVCCache.shared.cachedFileURL(for: url)
-                    if animatedHEVCURL == nil {
-                        startAnimatedConversion(data: data, url: url)
-                    }
-                } else if isAnimatedWebP || isAnimatedWebVisual || isAnimatedJXL {
-                    if let image = UIImage(data: data) {
-                        imageAspectRatio = image.size.width / image.size.height
-                    }
-                    // Animated JXL shares the GIF HEVC path: if a prior WASM
-                    // decode was already converted, play that natively and skip
-                    // the WebView decode entirely. Otherwise AnimatedJXLWebView
-                    // decodes it on-device this session and kicks off the HEVC
-                    // conversion for next time.
-                    if isAnimatedJXL {
-                        animatedHEVCURL = await DiskAnimatedHEVCCache.shared.cachedFileURL(for: url)
-                    }
-                    isLoadingDetailImage = false
-                } else if autoRestore {
-                    // Check if the image was previously enhanced and auto-restore
-                    await autoRestorePreviousEnhancement()
-                }
-
-                // Animated content never auto-generates 3D/diorama (the guards
-                // in the auto paths key off isAnimatedImage). If the user's
-                // settings would have auto-3D'd a still, offer 3D via the pill
-                // instead so they can choose 3D (of the first frame) or just
-                // watch the animation.
-                if isAnimatedImage {
-                    await maybeOfferAnimated3DIfNeeded()
-                }
+            guard let loaded = try await ImageLoader.shared.loadRawData(from: url) else {
+                // The loader has nothing for this URL and no error to report
+                // (an unresolvable Photos asset, a non-HTTP response). Nothing
+                // downstream would clear the loading flag, so finish here.
+                recordLoadFailure("This image could not be loaded.", url: url)
+                return
             }
+            data = loaded
         } catch {
-            AppLogger.photoWindow.error("Error loading image data: \(error.localizedDescription, privacy: .public)")
-            isLoadingDetailImage = false
+            recordLoadFailure(loadFailureMessage(for: error), url: url, error: error)
+            return
         }
+
+        currentImageData = data
+        animatedImageSourceURL = await resolveSourceFileURL() ?? url
+        isAnimatedGIF = data.isAnimatedGIF
+        let fileNameExtension = (image.fileName as NSString?)?.pathExtension.lowercased() ?? ""
+        let visualFileType = image.visualFileType ?? ""
+        let lowerURL = url.absoluteString.lowercased()
+        let isWebPByURL = url.pathExtension.lowercased() == "webp" || lowerURL.contains("webp")
+        let isWebPByFileName = fileNameExtension == "webp"
+        let isWebPByBytes = data.isWebP
+        let isAnimatedWebPByBytes = data.isAnimatedWebP
+        isAnimatedWebVisual = visualFileType == "VideoFile"
+        // Stash image endpoints often hide the real file extension in the URL.
+        // Use the original filename from GraphQL as the format hint, then hand
+        // the asset to the browser-based renderer which can display both static
+        // and animated WebP correctly.
+        isAnimatedWebP = isWebPByFileName || isAnimatedWebPByBytes || isWebPByBytes || isWebPByURL
+        isAnimatedJXL = data.isAnimatedJXL
+
+        if isAnimatedGIF {
+            // For GIFs, calculate aspect ratio from the image data
+            if let image = UIImage(data: data) {
+                imageAspectRatio = image.size.width / image.size.height
+            }
+
+            // Show the raw GIF immediately — WebKit animates it in an
+            // <img>. Prefer a cached HEVC clip if one already exists;
+            // otherwise convert in the background (non-blocking) so this
+            // session stays responsive and the next open plays the
+            // lighter cached video.
+            isLoadingDetailImage = false
+            animatedHEVCURL = await DiskAnimatedHEVCCache.shared.cachedFileURL(for: url)
+            if animatedHEVCURL == nil {
+                startAnimatedConversion(data: data, url: url)
+            }
+        } else if isAnimatedWebP || isAnimatedWebVisual || isAnimatedJXL {
+            if let image = UIImage(data: data) {
+                imageAspectRatio = image.size.width / image.size.height
+            }
+            // Animated JXL shares the GIF HEVC path: if a prior WASM
+            // decode was already converted, play that natively and skip
+            // the WebView decode entirely. Otherwise AnimatedJXLWebView
+            // decodes it on-device this session and kicks off the HEVC
+            // conversion for next time.
+            if isAnimatedJXL {
+                animatedHEVCURL = await DiskAnimatedHEVCCache.shared.cachedFileURL(for: url)
+            }
+            isLoadingDetailImage = false
+        } else if autoRestore {
+            // Check if the image was previously enhanced and auto-restore
+            await autoRestorePreviousEnhancement()
+        }
+
+        // Animated content never auto-generates 3D/diorama (the guards
+        // in the auto paths key off isAnimatedImage). If the user's
+        // settings would have auto-3D'd a still, offer 3D via the pill
+        // instead so they can choose 3D (of the first frame) or just
+        // watch the animation.
+        if isAnimatedImage {
+            await maybeOfferAnimated3DIfNeeded()
+        }
+    }
+
+    /// Put the window into a recoverable failed-load state: stop loading (so the
+    /// ornament unlocks), remember why, and let `PhotoDisplayView` offer a retry.
+    /// Every exit from a failed load goes through here — leaving
+    /// `isLoadingDetailImage` set is what used to jam the window.
+    private func recordLoadFailure(_ message: String, url: URL, error: Error? = nil) {
+        if let error {
+            AppLogger.photoWindow.error(
+                "Error loading image data: \(error.localizedDescription, privacy: .public)"
+            )
+        } else {
+            AppLogger.photoWindow.error(
+                "Image load produced no data for \(url.loggableDescription, privacy: .public)"
+            )
+        }
+        isInitialLoadInProgress = false
+        isLoadingDetailImage = false
+        loadFailure = message
+    }
+
+    private func loadFailureMessage(for error: Error) -> String {
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .timedOut:
+                return "The server took too long to respond."
+            case .notConnectedToInternet:
+                return "No internet connection."
+            case .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed:
+                return "Can't reach the server."
+            case .networkConnectionLost:
+                return "The connection was lost."
+            default:
+                break
+            }
+        }
+        if let loaderError = error as? ImageLoaderError {
+            return loaderError.errorDescription ?? "This image could not be loaded."
+        }
+        return error.localizedDescription
+    }
+
+    /// Re-run the load for the image this window is showing. Used by the failed
+    /// / stalled state's Retry button.
+    func retryImageLoad() async {
+        recordInteraction()
+        loadFailure = nil
+        isLoadStalled = false
+        currentImageData = nil
+        currentDisplayMaxDimension = 0
+        isLoadingDetailImage = true
+        // The flag may already have been true (retrying a stall rather than a
+        // failure), in which case the setter short-circuits — re-arm explicitly
+        // so a retry that also stalls surfaces the Retry button again.
+        armLoadStallWatchdog()
+        await loadImageDataForDetail(url: imageURL)
+        guard loadFailure == nil else { return }
+        if !isAnimatedImage, !is3DMode, backgroundRemovalState == .original,
+           !currentAdjustments.isAutoEnhanced {
+            let windowSize = lastWindowSize ?? appModel.mainWindowSize
+            await loadDisplayImage(for: windowSize)
+        }
+        isLoadingDetailImage = false
     }
 
     /// Kick off the background animated-GIF → HEVC conversion and adopt the
@@ -877,6 +1033,9 @@ class PhotoWindowModel {
         // autoRestore: false — auto-restoration runs exclusively from start(), not here.
         if currentImageData == nil {
             await loadImageDataForDetail(url: imageURL, autoRestore: false)
+            // A second failed round trip against a dead backend buys nothing and
+            // doubles the wait; the failure card already offers an explicit retry.
+            guard loadFailure == nil else { return }
         }
         guard !isAnimatedImage else { return }
         // autoRestorePreviousEnhancement may have run inside loadImageDataForDetail —
@@ -922,6 +1081,10 @@ class PhotoWindowModel {
         if displayTexture != nil, currentDisplayMaxDimension > 0 {
             let ratio = targetDimension / currentDisplayMaxDimension
             if ratio > 0.8 && ratio < 1.2 {
+                // Already at a good-enough resolution — but this is still an
+                // exit from the load, so release the loading state rather than
+                // leaving the ornament locked.
+                isLoadingDetailImage = false
                 return
             }
         }
@@ -1175,6 +1338,9 @@ class PhotoWindowModel {
         adjustments3DReloadTask = nil
         adjustmentPreviewTeardownTask?.cancel()
         adjustmentPreviewTeardownTask = nil
+        // Clearing the flag disarms the stall watchdog through the setter.
+        isLoadingDetailImage = false
+        loadFailure = nil
 
         // If 3D generation is in progress, we CANNOT remove the
         // ImagePresentationComponent — RealityKit's generate() ignores Swift

@@ -19,8 +19,37 @@ final class CachedImageData: NSObject, @unchecked Sendable {
     }
 }
 
+/// Failures the loader reports to callers instead of a silent `nil`, so a
+/// viewer window can tell "the server refused this image" apart from "there was
+/// nothing to load" and surface a retry rather than spinning forever.
+enum ImageLoaderError: LocalizedError {
+    case httpStatus(Int)
+
+    var errorDescription: String? {
+        switch self {
+        case .httpStatus(let code):
+            return "The server returned HTTP \(code)."
+        }
+    }
+}
+
 actor ImageLoader {
     static let shared = ImageLoader()
+
+    /// Image downloads run on a session with bounded timeouts rather than
+    /// `URLSession.shared`, whose default `timeoutIntervalForResource` is seven
+    /// days: a Stash server that accepts the connection and then stalls would
+    /// otherwise hold a viewer window in its loading state effectively forever.
+    /// `timeoutIntervalForRequest` is the inactivity budget between bytes, so a
+    /// slow-but-progressing transfer is not penalised; the resource timeout is
+    /// the ceiling on the whole download.
+    nonisolated static let session: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 20
+        config.timeoutIntervalForResource = 300
+        config.waitsForConnectivity = false
+        return URLSession(configuration: config)
+    }()
 
     private var cache = NSCache<NSURL, CachedImageData>()
     private var inProgressTasks: [URL: Task<CachedImageData?, Error>] = [:]
@@ -110,7 +139,7 @@ actor ImageLoader {
 
         // Start new load task for remote URLs
         let task = Task<CachedImageData?, Error> { [self] in
-            let (data, response) = try await URLSession.shared.data(from: url)
+            let (data, response) = try await Self.session.data(from: url)
 
             // Validate response
             guard let httpResponse = response as? HTTPURLResponse,
@@ -180,7 +209,7 @@ actor ImageLoader {
 
         // Start new load task for remote URLs
         let task = Task<CachedImageData?, Error> { [self] in
-            let (data, response) = try await URLSession.shared.data(from: url)
+            let (data, response) = try await Self.session.data(from: url)
 
             // Validate response
             guard let httpResponse = response as? HTTPURLResponse,
@@ -243,11 +272,16 @@ actor ImageLoader {
 
         // Download without decoding to UIImage
         let task = Task<Data?, Error> {
-            let (data, response) = try await URLSession.shared.data(from: url)
+            let (data, response) = try await Self.session.data(from: url)
 
-            guard let httpResponse = response as? HTTPURLResponse,
-                  (200...299).contains(httpResponse.statusCode) else {
+            // Report a refusal as an error rather than a silent nil: the photo
+            // viewer needs to tell "server said no" apart from "nothing to
+            // load" so it can show the failure instead of loading forever.
+            guard let httpResponse = response as? HTTPURLResponse else {
                 return nil
+            }
+            guard (200...299).contains(httpResponse.statusCode) else {
+                throw ImageLoaderError.httpStatus(httpResponse.statusCode)
             }
 
             // Cache to disk only (skip memory cache since we're not decoding)
@@ -297,7 +331,7 @@ actor ImageLoader {
 
         // Start new load task for remote URLs
         let task = Task<CachedImageData?, Error> { [self] in
-            let (data, response) = try await URLSession.shared.data(from: url)
+            let (data, response) = try await Self.session.data(from: url)
 
             // Validate response
             guard let httpResponse = response as? HTTPURLResponse,

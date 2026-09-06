@@ -136,11 +136,19 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
                 .font(.title3)
         }
         .buttonStyle(.borderless)
-        .disabled(!windowModel.hasPreviousGalleryImage || windowModel.isLoadingDetailImage)
+        .disabled(!windowModel.hasPreviousGalleryImage || windowModel.controlsLocked)
 
-        if windowModel.isLoadingDetailImage {
+        if windowModel.controlsLocked {
             ProgressView()
                 .frame(minWidth: 60)
+        } else if windowModel.loadFailure != nil {
+            // A failed load replaces the position counter rather than the
+            // spinner that used to sit here forever.
+            Image(systemName: "exclamationmark.triangle")
+                .font(.callout)
+                .foregroundColor(.orange)
+                .frame(minWidth: 60)
+                .help(windowModel.loadFailure ?? "")
         } else {
             Text("\(windowModel.currentGalleryPosition) / \(windowModel.galleryImageCount)")
                 .font(.callout)
@@ -157,7 +165,7 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
                 .font(.title3)
         }
         .buttonStyle(.borderless)
-        .disabled(!windowModel.hasNextGalleryImage || windowModel.isLoadingDetailImage)
+        .disabled(!windowModel.hasNextGalleryImage || windowModel.controlsLocked)
     }
 
     // MARK: - Slideshow Button
@@ -170,7 +178,7 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
                 .font(.title3)
         }
         .buttonStyle(.borderless)
-        .disabled(windowModel.isLoadingDetailImage)
+        .disabled(windowModel.controlsLocked)
         .help("Slideshow")
     }
 
@@ -344,7 +352,7 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
         }
         .menuStyle(.button)
         .buttonStyle(.borderless)
-        .disabled(windowModel.isLoadingDetailImage)
+        .disabled(windowModel.controlsLocked)
         .help(activeOverride != nil ? "\(helpPrefix) Override: \(resolutionOverrideLabel)" : helpPrefix)
     }
 
@@ -366,7 +374,7 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
                 .foregroundColor(windowModel.image.rating100 != nil ? .yellow : nil)
         }
         .buttonStyle(.borderless)
-        .disabled(windowModel.isLoadingDetailImage)
+        .disabled(windowModel.controlsLocked)
         .help("Info")
         .sheet(isPresented: Bindable(windowModel).showMediaInfoPopover) {
             if let stashId = windowModel.image.stashId {
@@ -512,7 +520,7 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
             .font(.title3)
         }
         .buttonStyle(.borderless)
-        .disabled(windowModel.isPreparingShare || windowModel.isLoadingDetailImage)
+        .disabled(windowModel.isPreparingShare || windowModel.controlsLocked)
         .help("Share")
         .sheet(isPresented: Binding(
             get: { windowModel.shareFileURL != nil },

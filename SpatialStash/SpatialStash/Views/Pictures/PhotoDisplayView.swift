@@ -737,6 +737,74 @@ struct PhotoDisplayView: View {
                         scheduleWindowSizeVerification()
                     }
                 }
+        } else {
+            // Nothing renderable yet: still fetching, or the fetch failed.
+            // This branch used to be absent, so a photo the backend never
+            // returned left an empty window whose ornament was locked by the
+            // loading flag — no retry, no way to tell what had happened.
+            loadStatusPlaceholder
+        }
+    }
+
+    // MARK: - Loading / Failure Placeholder
+
+    @ViewBuilder
+    private var loadStatusPlaceholder: some View {
+        VStack(spacing: 16) {
+            if let failure = windowModel.loadFailure {
+                Image(systemName: "photo.badge.exclamationmark")
+                    .font(.system(size: 44))
+                    .foregroundStyle(.secondary)
+                Text("Couldn't load this image")
+                    .font(.title3.weight(.semibold))
+                Text(failure)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 420)
+            } else {
+                ProgressView()
+                    .controlSize(.large)
+                if windowModel.isLoadStalled {
+                    Text("Still waiting for the server")
+                        .font(.title3.weight(.semibold))
+                    Text("The image hasn't arrived yet. You can keep waiting, retry, or move on.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 420)
+                }
+            }
+
+            if windowModel.loadFailure != nil || windowModel.isLoadStalled {
+                Button {
+                    Task { await windowModel.retryImageLoad() }
+                } label: {
+                    Label("Retry", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(32)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .contentShape(.rect)
+        .onTapGesture {
+            windowModel.toggleUIVisibility()
+        }
+        .onChange(of: windowModel.loadFailure) { _, failure in
+            // A restored window sits behind the "Restoring Photo" diagnostic
+            // until media reaches the presentation layer. A failed load never
+            // gets there, so release it here — otherwise the failure card is
+            // covered by a placeholder that spins forever.
+            if failure != nil {
+                windowModel.isUIHidden = false
+                onFirstFramePresented?()
+            }
+        }
+        .onAppear {
+            if windowModel.loadFailure != nil {
+                onFirstFramePresented?()
+            }
         }
     }
 

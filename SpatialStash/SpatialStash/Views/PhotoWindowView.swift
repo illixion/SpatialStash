@@ -125,7 +125,7 @@ struct PhotoWindowView: View {
                             } label: {
                                 Label("Pop Out", systemImage: "rectangle.portrait.and.arrow.forward")
                             }
-                            .disabled(windowModel.isLoadingDetailImage)
+                            .disabled(windowModel.controlsLocked)
                         }
                     }
                 )
@@ -194,8 +194,11 @@ struct PhotoWindowView: View {
     }
 
     private var photoRestorationStatus: String {
+        if let failure = windowModel.loadFailure {
+            return failure
+        }
         if windowModel.isLoadingDetailImage {
-            return "Loading image data"
+            return windowModel.isLoadStalled ? "Waiting on the server" : "Loading image data"
         }
         if let texture = windowModel.displayTexture {
             return "Waiting for Metal frame (\(texture.width)x\(texture.height))"

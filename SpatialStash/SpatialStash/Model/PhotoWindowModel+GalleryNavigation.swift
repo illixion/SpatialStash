@@ -22,6 +22,9 @@ extension PhotoWindowModel {
         let wasHostingFullyImmersive = hostFullyImmersiveSpace
         image = newImage
         imageURL = newImage.fullSizeURL
+        // Drop the previous image's failure before the new load starts, so a
+        // dead image doesn't leave its error card up over its successor.
+        loadFailure = nil
         isLoadingDetailImage = true
 
         // Update pop-out window tracking so saved window groups capture the current image
@@ -101,8 +104,11 @@ extension PhotoWindowModel {
 
         await loadImageDataForDetail(url: newImage.fullSizeURL)
 
-        if !isAnimatedImage && !useRealityKitDisplay, let windowSize = lastWindowSize {
-            await loadDisplayImage(for: windowSize)
+        if !isAnimatedImage && !useRealityKitDisplay {
+            // Fall back to the main window size rather than skipping the load:
+            // `loadDisplayImage` is what clears `isLoadingDetailImage` on this
+            // path, so bailing out here would leave the window stuck loading.
+            await loadDisplayImage(for: lastWindowSize ?? appModel.mainWindowSize)
         }
 
         if appModel.rememberImageEnhancements, !is3DMode {
