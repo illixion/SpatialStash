@@ -22,6 +22,8 @@ import RealityKit
 import SwiftUI
 import UIKit
 
+#if os(visionOS)
+
 /// Two-slot host that orchestrates pre-generation + crossfade. Slot A and
 /// Slot B alternate which one is "currently visible" — whichever slot is
 /// in the "hidden / next" role takes the engine's prefetched next image
@@ -482,3 +484,23 @@ struct SlideshowSpatial3DSlotView: View {
         return UIImage(cgImage: cgImage).jpegData(compressionQuality: 0.95)
     }
 }
+
+#else
+
+/// iOS stand-in: RealityKit's `ImagePresentationComponent` spatial-photo
+/// slideshow has no flat-screen equivalent, so this layer renders nothing.
+/// Same init shape as the visionOS version so `RemoteViewerWindowView`
+/// compiles unchanged; `Slideshow3DMode` is never offered as a UI choice on
+/// iOS (see `PlatformCapabilities.supportsSpatial3D`), so this is unreachable
+/// in practice.
+struct SlideshowSpatial3DLayer: View {
+    @Bindable var model: RemoteViewerModel
+    var onTap: () -> Void = {}
+    var onSpatial3DGenerated: (UIImage) -> Void = { _ in }
+
+    var body: some View {
+        Color.clear
+    }
+}
+
+#endif

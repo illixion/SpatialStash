@@ -1,7 +1,13 @@
 /*
  Spatial Stash - App Entry Point
 
- Vision Pro app for viewing photos with 2D to 3D spatial conversion.
+ Vision Pro app for viewing photos with 2D to 3D spatial conversion, and its
+ iPhone/iPad counterpart.
+
+ The scene graph is the one thing the two platforms cannot share: visionOS
+ gets a window per viewer plus two immersive spaces, iOS gets a single window
+ whose `IOSRootView` layers the same viewers as full-screen covers (see
+ `IOSWindowRouter`). Everything below the scene roots is common code.
  */
 
 import os
@@ -25,6 +31,31 @@ struct SpatialStashApp: App {
     }
 
     var body: some Scene {
+        #if os(visionOS)
+        visionOSScenes
+        #else
+        iOSScenes
+        #endif
+    }
+
+    // MARK: - iOS
+
+    #if !os(visionOS)
+    private var iOSScenes: some Scene {
+        // One window. With `UIApplicationSupportsMultipleScenes` on, iPadOS can
+        // still open several instances of it side by side; each is a complete
+        // gallery with its own cover stack.
+        WindowGroup("Spatial Stash", id: "main") {
+            IOSRootView(appModel: appModel)
+        }
+    }
+    #endif
+
+    // MARK: - visionOS
+
+    #if os(visionOS)
+    @SceneBuilder
+    private var visionOSScenes: some Scene {
         // Main gallery window — WindowGroup allows multiple instances.
         // UUID identity ensures each openWindow call creates a new window.
         WindowGroup("Spatial Stash", id: "main", for: UUID.self) { $windowId in
@@ -190,8 +221,10 @@ struct SpatialStashApp: App {
         }
         .immersionStyle(selection: .constant(.mixed), in: .mixed)
     }
+    #endif
 }
 
+#if os(visionOS)
 /// Wrapper view for the main window that handles shared media URLs
 private struct MainWindowView: View {
     let appModel: AppModel
@@ -215,3 +248,4 @@ private struct MainWindowView: View {
             }
     }
 }
+#endif

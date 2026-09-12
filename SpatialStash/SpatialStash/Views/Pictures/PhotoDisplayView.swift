@@ -15,10 +15,21 @@ struct PhotoDisplayView: View {
     @Bindable var windowModel: PhotoWindowModel
     @Environment(AppModel.self) private var appModel
     @Environment(SceneDelegate.self) private var sceneDelegate: SceneDelegate?
-    @Environment(\.surfaceSnappingInfo) private var snappingInfo: SurfaceSnappingInfo
     @Environment(\.scenePhase) private var scenePhase
+    #if os(visionOS)
+    @Environment(\.surfaceSnappingInfo) private var snappingInfo: SurfaceSnappingInfo
     @Environment(\.openImmersiveSpace) private var openImmersiveSpace
     @Environment(\.dismissImmersiveSpace) private var dismissImmersiveSpace
+    #endif
+
+    /// Whether the window is snapped to a surface. Only visionOS windows can be.
+    private var isWindowSnapped: Bool {
+        #if os(visionOS)
+        return snappingInfo.isSnapped
+        #else
+        return false
+        #endif
+    }
 
     /// Whether swipe navigation between gallery images is enabled
     let enableSwipeNavigation: Bool
@@ -41,12 +52,20 @@ struct PhotoDisplayView: View {
     var metalRendererGeneration: Int = 0
     var onMetalRenderStalled: (() -> Void)? = nil
 
+    /// Closes the viewer. Bound to the iOS pull-down gesture; on visionOS the
+    /// gesture is not compiled and a window is closed by its own controls.
+    @DismissWindowProxy private var dismissWindow
+
+    private func dismissViewer() {
+        dismissWindow()
+    }
+
     /// Effective swipe navigation state: disabled when window is snapped to a surface,
     /// and only active while the viewer's UI chrome is visible so swipes don't fire
     /// during the hidden-chrome immersive state.
     private var isSwipeEnabled: Bool {
         enableSwipeNavigation
-            && !snappingInfo.isSnapped
+            && !isWindowSnapped
             && !windowModel.isUIHidden
     }
 
@@ -132,6 +151,17 @@ struct PhotoDisplayView: View {
 
     var body: some View {
         ZStack {
+            #if !os(visionOS)
+            // visionOS sizes the window to the photo, so the window *is* the
+            // photo and a tap anywhere in it lands on the image. A phone's
+            // screen has a fixed shape, so an aspect-fit photo leaves black
+            // margins — without this layer a tap there does nothing, and the
+            // chrome can only be summoned by hitting the picture itself.
+            Color.clear
+                .contentShape(.rect)
+                .onTapGesture { windowModel.toggleUIVisibility() }
+            #endif
+
             imageContent
                 .scaleEffect(x: windowModel.isImageFlipped ? -1 : 1, y: 1)
                 .offset(x: dragOffset)
@@ -277,14 +307,16 @@ struct PhotoDisplayView: View {
             // Schedule post-restoration size verification (initial 2D load is
             // handled sequentially by PhotoWindowModel.start())
             scheduleWindowSizeVerification()
-            windowModel.isWindowSnapped = snappingInfo.isSnapped
+            windowModel.isWindowSnapped = isWindowSnapped
         }
+        #if os(visionOS)
         .onChange(of: snappingInfo.isSnapped) { _, isSnapped in
             windowModel.isWindowSnapped = isSnapped
             if isSnapped {
                 windowModel.dismissAutoRestorePrompt()
             }
         }
+        #endif
         .onChange(of: windowModel.isLoadingDetailImage) { wasLoading, isLoading in
             if wasLoading && !isLoading && !isSwipeTransitioning {
                 windowModel.isUIHidden = false
@@ -298,6 +330,7 @@ struct PhotoDisplayView: View {
                 }
             }
         }
+        #if os(visionOS)
         .onChange(of: windowModel.hostFullyImmersiveSpace) { _, isOpen in
             // The photo window stays open and doubles as the controls
             // anchor — its RealityView content is hidden by an opacity
@@ -340,9 +373,11 @@ struct PhotoDisplayView: View {
                 }
             }
         }
+        #endif
         .onDisappear {
             immersiveResizeVerifyTask?.cancel()
             immersiveResizeVerifyTask = nil
+            #if os(visionOS)
             if windowModel.hostFullyImmersiveSpace {
                 windowModel.hostFullyImmersiveSpace = false
                 appModel.immersiveLoanEntity = nil
@@ -351,6 +386,7 @@ struct PhotoDisplayView: View {
                 }
                 Task { await dismissImmersiveSpace() }
             }
+            #endif
         }
         // MARK: - Scene Phase Idle Downscale
         .onChange(of: scenePhase) { oldPhase, newPhase in
@@ -399,7 +435,7 @@ struct PhotoDisplayView: View {
             .saturation(windowModel.effectiveAdjustments.saturation)
             .opacity(windowModel.effectiveAdjustments.opacity)
             .aspectRatio(windowModel.imageAspectRatio, contentMode: .fit)
-            .clipShape(RoundedRectangle(cornerRadius: appModel.roundedCorners ? 50 : 0, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: appModel.photoCornerRadius, style: .continuous))
             .overlay {
                 // Transparent tap target to re-show photo ornaments when UI is hidden.
                 // When visible, taps pass through to the HTML video controls instead.
@@ -411,7 +447,7 @@ struct PhotoDisplayView: View {
                         }
                 }
             }
-            .modifier(SwipeGestureModifier(enabled: isSwipeEnabled, onEnded: handleDragEnded))
+            .modifier(SwipeGestureModifier(enabled: isSwipeEnabled, onEnded: handleDragEnded, onDismissDrag: dismissViewer))
             .onAppear {
                 onFirstFramePresented?()
                 let initialBounds = windowModel.savedWindowSize ?? appModel.mainWindowSize
@@ -437,7 +473,7 @@ struct PhotoDisplayView: View {
                 .saturation(windowModel.effectiveAdjustments.saturation)
                 .opacity(windowModel.effectiveAdjustments.opacity)
                 .aspectRatio(windowModel.imageAspectRatio, contentMode: .fit)
-                .clipShape(RoundedRectangle(cornerRadius: appModel.roundedCorners ? 50 : 0, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: appModel.photoCornerRadius, style: .continuous))
                 .overlay {
                     if windowModel.isUIHidden {
                         Color.clear
@@ -447,7 +483,7 @@ struct PhotoDisplayView: View {
                             }
                     }
                 }
-                .modifier(SwipeGestureModifier(enabled: isSwipeEnabled, onEnded: handleDragEnded))
+                .modifier(SwipeGestureModifier(enabled: isSwipeEnabled, onEnded: handleDragEnded, onDismissDrag: dismissViewer))
                 .onAppear {
                     onFirstFramePresented?()
                     let initialBounds = windowModel.savedWindowSize ?? appModel.mainWindowSize
@@ -469,7 +505,7 @@ struct PhotoDisplayView: View {
                 .saturation(windowModel.effectiveAdjustments.saturation)
                 .opacity(windowModel.effectiveAdjustments.opacity)
                 .aspectRatio(windowModel.imageAspectRatio, contentMode: .fit)
-                .clipShape(RoundedRectangle(cornerRadius: appModel.roundedCorners ? 50 : 0, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: appModel.photoCornerRadius, style: .continuous))
                 .overlay {
                     if windowModel.isUIHidden {
                         Color.clear
@@ -479,7 +515,7 @@ struct PhotoDisplayView: View {
                             }
                     }
                 }
-                .modifier(SwipeGestureModifier(enabled: isSwipeEnabled, onEnded: handleDragEnded))
+                .modifier(SwipeGestureModifier(enabled: isSwipeEnabled, onEnded: handleDragEnded, onDismissDrag: dismissViewer))
                 .onAppear {
                     onFirstFramePresented?()
                     let initialBounds = windowModel.savedWindowSize ?? appModel.mainWindowSize
@@ -509,7 +545,7 @@ struct PhotoDisplayView: View {
                 .saturation(windowModel.effectiveAdjustments.saturation)
                 .opacity(windowModel.effectiveAdjustments.opacity)
                 .aspectRatio(windowModel.imageAspectRatio, contentMode: .fit)
-                .clipShape(RoundedRectangle(cornerRadius: appModel.roundedCorners ? 50 : 0, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: appModel.photoCornerRadius, style: .continuous))
                 .overlay {
                     if windowModel.isUIHidden {
                         Color.clear
@@ -519,7 +555,7 @@ struct PhotoDisplayView: View {
                             }
                     }
                 }
-                .modifier(SwipeGestureModifier(enabled: isSwipeEnabled, onEnded: handleDragEnded))
+                .modifier(SwipeGestureModifier(enabled: isSwipeEnabled, onEnded: handleDragEnded, onDismissDrag: dismissViewer))
                 .onAppear {
                     onFirstFramePresented?()
                     let initialBounds = windowModel.savedWindowSize ?? appModel.mainWindowSize
@@ -530,6 +566,7 @@ struct PhotoDisplayView: View {
                     resizeGIFWindowToFit(newAspectRatio, within: currentBounds)
                 }
         } else if windowModel.is3DMode {
+            #if os(visionOS)
             // Display with RealityKit for 3D spatial conversion (full resolution)
             GeometryReader3D { geometry in
                 RealityView { content in
@@ -606,7 +643,7 @@ struct PhotoDisplayView: View {
                         AppLogger.views.warning("Unable to get the window scene. Unable to set the resizing restrictions.")
                         return
                     }
-                    windowScene.requestGeometryUpdate(.Vision(resizingRestrictions: .uniform))
+                    WindowGeometry.request(windowScene, restriction: .uniform, animated: true)
                 }
                 .onChange(of: windowModel.imageAspectRatio) { _, newAspectRatio in
                     guard !suppressWindowResize else { return }
@@ -652,9 +689,15 @@ struct PhotoDisplayView: View {
             // up the spatial scene.
             .opacity(windowModel.hostFullyImmersiveSpace ? 0 : windowModel.effectiveAdjustments.opacity)
             .clipShape(RoundedRectangle(
-                cornerRadius: (appModel.roundedCorners && !windowModel.isViewingSpatial3DImmersive) ? 50 : 0,
+                cornerRadius: windowModel.isViewingSpatial3DImmersive ? 0 : appModel.photoCornerRadius,
                 style: .continuous
             ))
+            #else
+            // Spatial 3D is visionOS-only; `is3DMode` is never set on iOS
+            // (PlatformCapabilities.supportsSpatial3D), so this is a guard
+            // against persisted state, not a path a user can reach.
+            loadStatusPlaceholder
+            #endif
         } else if let texture = windowModel.displayTexture {
             // GPU-backed 2D display using Metal (texture lives in GPU private memory,
             // not counted as dirty CPU pages — reduces jetsam pressure significantly)
@@ -671,12 +714,12 @@ struct PhotoDisplayView: View {
             .id(metalRendererGeneration)
             .opacity(windowModel.effectiveAdjustments.opacity)
             .aspectRatio(windowModel.imageAspectRatio, contentMode: .fit)
-            .clipShape(RoundedRectangle(cornerRadius: appModel.roundedCorners ? 50 : 0, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: appModel.photoCornerRadius, style: .continuous))
             .contentShape(.rect)
             .onTapGesture {
                 windowModel.toggleUIVisibility()
             }
-            .modifier(SwipeGestureModifier(enabled: isSwipeEnabled, onEnded: handleDragEnded))
+            .modifier(SwipeGestureModifier(enabled: isSwipeEnabled, onEnded: handleDragEnded, onDismissDrag: dismissViewer))
             .onAppear {
                 // The 3D-adjustment 2D preview re-mounts this branch
                 // every time is3DMode flips false. Re-running the
@@ -710,12 +753,12 @@ struct PhotoDisplayView: View {
                 .contrast(windowModel.effectiveAdjustments.contrast)
                 .saturation(windowModel.effectiveAdjustments.saturation)
             .opacity(windowModel.effectiveAdjustments.opacity)
-                .clipShape(RoundedRectangle(cornerRadius: appModel.roundedCorners ? 50 : 0, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: appModel.photoCornerRadius, style: .continuous))
                 .contentShape(.rect)
                 .onTapGesture {
                     windowModel.toggleUIVisibility()
                 }
-                .modifier(SwipeGestureModifier(enabled: isSwipeEnabled, onEnded: handleDragEnded))
+                .modifier(SwipeGestureModifier(enabled: isSwipeEnabled, onEnded: handleDragEnded, onDismissDrag: dismissViewer))
                 .onAppear {
                     onFirstFramePresented?()
                     // Same rationale as the MetalImageView branch above —
@@ -955,10 +998,8 @@ struct PhotoDisplayView: View {
         
         let effectiveBounds = shouldUseImmersive ? immersiveWindowSize : bounds
         let size = windowSize(for: aspectRatio, within: effectiveBounds)
-        
-        UIView.performWithoutAnimation {
-            windowScene.requestGeometryUpdate(.Vision(size: size))
-        }
+
+        WindowGeometry.request(windowScene, size: size)
     }
 
     /// Grow the window for immersive 3D, then verify the grant is actually an
@@ -1061,9 +1102,7 @@ struct PhotoDisplayView: View {
 
         // Use the same windowSize helper for consistent sizing
         let size = windowSize(for: aspectRatio, within: bounds)
-        UIView.performWithoutAnimation {
-            windowScene.requestGeometryUpdate(.Vision(size: size, resizingRestrictions: .uniform))
-        }
+        WindowGeometry.request(windowScene, size: size, restriction: .uniform)
     }
 
     /// Alternating 1pt nudge: each call moves the window by -1pt OR +1pt
@@ -1089,12 +1128,10 @@ struct PhotoDisplayView: View {
         guard let windowScene = resolvedWindowScene else { return }
         didApplyRestoredSize = true
         suppressWindowResize = true
-        UIView.performWithoutAnimation {
-            if windowModel.isAnimatedImage {
-                windowScene.requestGeometryUpdate(.Vision(size: restoredSize, resizingRestrictions: .uniform))
-            } else {
-                windowScene.requestGeometryUpdate(.Vision(size: restoredSize))
-            }
+        if windowModel.isAnimatedImage {
+            WindowGeometry.request(windowScene, size: restoredSize, restriction: .uniform)
+        } else {
+            WindowGeometry.request(windowScene, size: restoredSize)
         }
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(1))
@@ -1160,13 +1197,11 @@ struct PhotoDisplayView: View {
     }
 
     private func setUniformResizing() {
-        guard let windowScene = resolvedWindowScene else { return }
-        windowScene.requestGeometryUpdate(.Vision(resizingRestrictions: .uniform))
+        WindowGeometry.request(resolvedWindowScene, restriction: .uniform, animated: true)
     }
 
     func resetWindowRestrictions() {
-        guard let windowScene = resolvedWindowScene else { return }
-        windowScene.requestGeometryUpdate(.Vision(resizingRestrictions: .freeform))
+        WindowGeometry.request(resolvedWindowScene, restriction: .freeform, animated: true)
     }
 
     /// Fit the image presentation inside a bounding box by scaling the content entity.
@@ -1220,6 +1255,15 @@ struct PhotoDisplayView: View {
 private struct SwipeGestureModifier: ViewModifier {
     let enabled: Bool
     let onEnded: (CGFloat, CGFloat) -> Void
+    /// iOS: pull-down-to-close, the way Photos closes a full-screen photo.
+    /// Nil (and unused) on visionOS, where a window is closed by its own
+    /// controls and there is nothing to drag it out of.
+    var onDismissDrag: (() -> Void)? = nil
+
+    /// How far the photo has been pulled down, tracked here so **every**
+    /// render tier gets the same follow-the-finger feedback without each one
+    /// wiring up its own state.
+    @State private var dismissDrag: CGFloat = 0
 
     // Keep view identity stable across `enabled` flips: an if/else here
     // produces a _ConditionalContent whose branch swap reroots the wrapped
@@ -1227,13 +1271,48 @@ private struct SwipeGestureModifier: ViewModifier {
     // ImagePresentationComponent and the immersive window vanishes when the
     // ornament auto-hides.
     func body(content: Content) -> some View {
-        content.gesture(
-            DragGesture(minimumDistance: 20)
-                .onEnded { value in
-                    guard enabled else { return }
-                    onEnded(value.translation.width, value.predictedEndTranslation.width)
+        #if os(visionOS)
+        content.gesture(gesture)
+        #else
+        content
+            .offset(y: dismissDrag)
+            // Shrink a little as it goes, so the photo reads as leaving
+            // rather than sliding off the bottom.
+            .scaleEffect(1 - min(dismissDrag / 1600, 0.12))
+            .gesture(gesture)
+        #endif
+    }
+
+    private var gesture: some Gesture {
+        DragGesture(minimumDistance: 20)
+            .onChanged { value in
+                #if !os(visionOS)
+                guard onDismissDrag != nil else { return }
+                // Claim the drag only once it is clearly vertical, so a
+                // horizontal swipe between gallery images is untouched.
+                guard abs(value.translation.height) > abs(value.translation.width) else { return }
+                dismissDrag = max(0, value.translation.height)
+                #endif
+            }
+            .onEnded { value in
+                #if !os(visionOS)
+                if let onDismissDrag,
+                   abs(value.translation.height) > abs(value.translation.width) {
+                    // Either a decisive distance or a flick counts, matching
+                    // the horizontal swipe's own velocity assist.
+                    if value.translation.height > 120 || value.predictedEndTranslation.height > 320 {
+                        onDismissDrag()
+                    }
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                        dismissDrag = 0
+                    }
+                    return
                 }
-        )
+                dismissDrag = 0
+                #endif
+                guard enabled else { return }
+                onEnded(value.translation.width, value.predictedEndTranslation.width)
+            }
     }
 }
 

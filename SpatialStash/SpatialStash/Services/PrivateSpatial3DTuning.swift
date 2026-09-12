@@ -10,7 +10,11 @@
 //  declared in no public header.
 //
 
-#if HYPNOS_PRIVATE_API
+#if HYPNOS_PRIVATE_API && os(visionOS)
+// Also gated to visionOS: the @_silgen_name accessors below bind directly to
+// symbols in the visionOS RealityFoundation binary and would fail to link
+// anywhere else, even if HYPNOS_PRIVATE_API were ever mistakenly defined for
+// an iOS build.
 
 import Foundation
 import Observation

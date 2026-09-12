@@ -21,6 +21,7 @@ struct WindowsTabView: View {
     @Environment(SceneDelegate.self) private var sceneDelegate: SceneDelegate?
 
     var body: some View {
+        #if os(visionOS)
         RAVEWindowManagerView(
             emptyMessage: "Photo, video, slideshow and tool windows you open will be listed here, so you can bring them back to you or close them."
         ) {
@@ -40,12 +41,23 @@ struct WindowsTabView: View {
                 Text("Close All destroys every window scene except this one — including any the app could not list above, which is how a window left blank at launch is cleared.")
             }
         }
+        #else
+        // iOS has exactly one window per scene and no summon/close registry
+        // (RAVEUI's window manager is visionOS-only) — nothing to inventory.
+        ContentUnavailableView(
+            "One Window",
+            systemImage: "macwindow",
+            description: Text("Windows can be managed on Apple Vision Pro.")
+        )
+        #endif
     }
 
+    #if os(visionOS)
     /// Scene-level rather than registry-level on purpose: a window that never
     /// got a layout pass never registered, and those are exactly the ones the
     /// bulk controls need to reach.
     private var hasSecondaryWindows: Bool {
         RAVEWindowScenes.hasWindows(besides: sceneDelegate?.windowScene?.session)
     }
+    #endif
 }

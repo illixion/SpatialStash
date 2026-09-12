@@ -16,6 +16,8 @@ import RealityKit
 import RAVEMedia
 import SwiftUI
 
+#if os(visionOS)
+
 struct Pseudo3DVideoPlayerView: View {
     let videoURL: URL
     var isRoomActive: Bool = true
@@ -222,3 +224,46 @@ private struct AnimatableSceneOpacity: ViewModifier, Animatable {
 
     func body(content: Content) -> some View { content }
 }
+
+#endif
+
+#if !os(visionOS)
+
+/// iOS stand-in: the real-time fake-3D stereo pipeline
+/// (`Pseudo3DStereoEngine`/`StereoPump`) is visionOS-only within RAVEMedia
+/// (gated `#if os(visionOS)` there too), and there is no per-eye rendering
+/// surface on a flat display anyway. This renders nothing and immediately
+/// reports playback failure so every caller (`VideoWindowView`,
+/// `RemoteViewerWindowView`, `VideoQuickLookView`) falls back to its flat
+/// player automatically — the same recovery path already used when depth
+/// pipeline setup fails on visionOS. Same init shape as the real view so
+/// call sites compile unchanged.
+struct Pseudo3DVideoPlayerView: View {
+    let videoURL: URL
+    var isRoomActive: Bool = true
+    var chromeOpen: Bool = false
+    var onVideoSizeKnown: ((CGSize) -> Void)? = nil
+    var visualAdjustments: VisualAdjustments = VisualAdjustments()
+    var settings: Pseudo3DSettings = .default
+    var depthMode: Pseudo3DDepthMode = .realtime
+    var startAtSeconds: Double? = nil
+    var startPaused: Bool = false
+    var isFlipped: Bool = false
+    var loopController: VideoLoopController? = nil
+    var playbackModel: VideoWindowModel? = nil
+    var startMuted: Bool = true
+    var loops: Bool = true
+    var contentOpacity: Double = 1
+    var onDurationKnown: ((Double) -> Void)? = nil
+    var onPlaybackError: (() -> Void)? = nil
+    var onToggleUI: (() -> Void)? = nil
+
+    var body: some View {
+        Color.black
+            .onAppear {
+                onPlaybackError?()
+            }
+    }
+}
+
+#endif

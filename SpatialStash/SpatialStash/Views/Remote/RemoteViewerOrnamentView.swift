@@ -5,11 +5,12 @@
  [ Grid | History | Prev | Next | Save | Home | Tag List | Mod Tags | Sync | Adjustments | Block ]
  */
 
+import RAVEUI
 import SwiftUI
 
 struct RemoteViewerOrnamentView: View {
     @Environment(AppModel.self) private var appModel
-    @Environment(\.openWindow) private var openWindow
+    @OpenWindowProxy private var openWindow
     @Bindable var model: RemoteViewerModel
     var tagListManager: TagListManager
     var modTagManager: ModTagManager
@@ -22,7 +23,7 @@ struct RemoteViewerOrnamentView: View {
     @State private var newPresetText = ""
 
     var body: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: RAVEChromeMetrics.spacing) {
             // Grid - Open main app window
             Button {
                 appModel.showMainWindow(openWindow: openWindow)
@@ -30,7 +31,7 @@ struct RemoteViewerOrnamentView: View {
                 Image(systemName: "square.grid.2x2")
                     .font(.title3)
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.raveChrome)
             .help("Open Gallery")
 
             // History
@@ -42,7 +43,7 @@ struct RemoteViewerOrnamentView: View {
                     .padding(6)
                     .background(showHistory ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.raveChrome)
             .help("View History")
 
             Divider()
@@ -55,7 +56,7 @@ struct RemoteViewerOrnamentView: View {
                 Image(systemName: "chevron.left")
                     .font(.title3)
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.raveChrome)
             .disabled(model.postHistory.count < 2)
             .help("Previous Image")
 
@@ -66,7 +67,7 @@ struct RemoteViewerOrnamentView: View {
                 Image(systemName: "chevron.right")
                     .font(.title3)
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.raveChrome)
             .help("Next Image")
 
             Divider()
@@ -80,7 +81,7 @@ struct RemoteViewerOrnamentView: View {
                     Image(systemName: "square.and.arrow.down")
                         .font(.title3)
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.raveChrome)
                 .disabled(model.saveablePost == nil)
                 .help("Save Image")
 
@@ -91,7 +92,7 @@ struct RemoteViewerOrnamentView: View {
                     Image(systemName: "arrow.trianglehead.2.clockwise.rotate.90")
                         .font(.title3)
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.raveChrome)
                 .help("Reshuffle")
 
                 // Tag List Selector
@@ -109,12 +110,14 @@ struct RemoteViewerOrnamentView: View {
                         .padding(6)
                         .background(model.enableDisplaySync ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.raveChrome)
                 .help(model.enableDisplaySync ? "Display Sync On" : "Display Sync Off")
             }
 
             // 3D Mode Menu
-            slideshow3DMenu
+            if PlatformCapabilities.supportsSpatial3D {
+                slideshow3DMenu
+            }
 
             // Max Image Resolution Menu (per current mode: 2D or 3D)
             resolutionMenu
@@ -131,7 +134,7 @@ struct RemoteViewerOrnamentView: View {
                         .font(.title3)
                         .foregroundStyle(.red)
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.raveChrome)
                 .disabled(model.currentPost == nil)
                 .help("Block Post")
             }
@@ -141,8 +144,8 @@ struct RemoteViewerOrnamentView: View {
 
             identityLabel
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 12)
+        .padding(.horizontal, RAVEChromeMetrics.horizontalPadding)
+        .padding(.vertical, RAVEChromeMetrics.verticalPadding)
         .glassBackgroundEffect()
     }
 
@@ -197,7 +200,7 @@ struct RemoteViewerOrnamentView: View {
             }
         }
         .menuStyle(.button)
-        .buttonStyle(.borderless)
+        .buttonStyle(.raveChrome)
         .disabled(tagListManager.tagLists.count <= 1)
         .help("Tag List")
     }
@@ -254,7 +257,7 @@ struct RemoteViewerOrnamentView: View {
             }
         }
         .menuStyle(.button)
-        .buttonStyle(.borderless)
+        .buttonStyle(.raveChrome)
         .help("Mod Tags")
         .popover(isPresented: $showAddPresetPopover) {
             addPresetPopover
@@ -335,7 +338,7 @@ struct RemoteViewerOrnamentView: View {
                     in: .rect(cornerRadius: 8)
                 )
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(.raveChrome)
         .help("Visual Adjustments")
         .popover(isPresented: $model.showAdjustmentsPopover) {
             VisualAdjustmentsPopover(
@@ -372,7 +375,7 @@ struct RemoteViewerOrnamentView: View {
                 .background(model.config.slideshow3DMode != .off ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
         }
         .menuStyle(.button)
-        .buttonStyle(.borderless)
+        .buttonStyle(.raveChrome)
         .help("Slideshow 3D Mode")
     }
 
@@ -418,7 +421,7 @@ struct RemoteViewerOrnamentView: View {
             }
         }
         .menuStyle(.button)
-        .buttonStyle(.borderless)
+        .buttonStyle(.raveChrome)
         .help(is3D ? "Max Image Resolution (3D)" : "Max Image Resolution (2D)")
     }
 

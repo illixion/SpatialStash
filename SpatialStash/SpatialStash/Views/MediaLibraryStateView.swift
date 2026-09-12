@@ -120,7 +120,11 @@ struct PhotoLibraryStateView: View {
             MediaLibraryMessageView(
                 icon: "photo.on.rectangle.angled",
                 title: "Show Your \(kind == .photos ? "Photos" : "Videos")?",
-                message: "Spatial Stash can browse the \(kind.noun) on this device and convert them to 3D. Your library is read on this device only — nothing is uploaded.",
+                // Only Vision Pro converts to 3D; on iOS the promise is
+                // browsing, slideshows and enhancements.
+                message: PlatformCapabilities.supportsSpatial3D
+                    ? "Spatial Stash can browse the \(kind.noun) on this device and convert them to 3D. Your library is read on this device only — nothing is uploaded."
+                    : "Spatial Stash can browse the \(kind.noun) on this device. Your library is read on this device only — nothing is uploaded.",
                 actionTitle: "Allow Access to Photos",
                 action: onRequestAccess
             ) {

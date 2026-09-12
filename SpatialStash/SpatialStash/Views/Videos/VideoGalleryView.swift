@@ -10,8 +10,8 @@ import SwiftUI
 
 struct VideoGalleryView: View {
     @Environment(AppModel.self) private var appModel
-    @Environment(\.pushWindow) private var pushWindow
-    @Environment(\.openWindow) private var openWindow
+    @PushWindowProxy private var pushWindow
+    @OpenWindowProxy private var openWindow
 
     @State private var showBulkDeleteConfirmation = false
     @State private var quickLookVideo: GalleryVideo?

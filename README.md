@@ -1,6 +1,8 @@
 # Spatial Stash
 
-A visionOS app for Apple Vision Pro that transforms your 2D images into immersive 3D spatial photos. Browse your media library from a [Stash](https://github.com/stashapp/stash) server, local files, or use the built-in demo mode.
+A visionOS app for Apple Vision Pro that transforms your 2D images into immersive 3D spatial photos, with an iPhone and iPad version of the same app. Browse your media library from a [Stash](https://github.com/stashapp/stash) server, your photo library, local files, or use the built-in demo mode.
+
+The one project builds for both platforms. Everything that isn't about depth — the galleries, filters, slideshows, video playback, enhancements, background removal, the RoboFrame viewer, pinned web pages, settings backup — runs on iOS too. What stays Vision Pro-only is what needs a stereoscopic display or several windows: spatial 3D photo conversion, immersive 3D, pseudo-3D and MV-HEVC video, diorama layers, and the window manager. See [Platforms](#platforms).
 
 ## Features
 
@@ -29,10 +31,38 @@ A visionOS app for Apple Vision Pro that transforms your 2D images into immersiv
 
 ## Requirements
 
-- Apple Vision Pro or visionOS Simulator
-- Xcode 15.0+
-- visionOS 26.0+
+- Apple Vision Pro or visionOS Simulator, **or** an iPhone/iPad or iOS Simulator
+- Xcode 26+
+- visionOS 26.0+ / iOS 26.0+
 - (Optional) [Stash](https://github.com/stashapp/stash) server for media library integration
+
+## Platforms
+
+Spatial Stash is one target with two platforms. The scene graph is the only
+thing that differs: visionOS opens a window per viewer plus two immersive
+spaces; iOS has a single window in which the same viewers open as full-screen
+covers and the tool windows as sheets (`IOSWindowRouter`). Everything below the
+scene roots is shared code.
+
+| Feature | visionOS | iOS / iPadOS |
+|---|---|---|
+| Photos, Stash and Local libraries, albums, filters, multi-select | ✓ | ✓ |
+| Photo viewer: Metal 2D display, swipe navigation, animated GIF/WebP/JXL, adjustments, auto-enhance, background removal, flip, share, info/edit | ✓ | ✓ |
+| Video: native Metal and WebKit players, custom transport, A-B loop, Stash transcode fallback, adjustments | ✓ | ✓ |
+| Slideshows (gallery and RoboFrame), Ken Burns, clock/sensor overlays, WebSocket control, Display Sync | ✓ | ✓ |
+| Pinned web pages, `spatialstash://play` handoff, web-yt-dlp | ✓ | ✓ |
+| Settings backup/import, disk cache manager, debug console | ✓ | ✓ |
+| Spatial 3D photo conversion, Immersive 3D, Quick Look in 3D | ✓ | — needs a stereoscopic display |
+| Pseudo-3D and MV-HEVC immersive video, depth models | ✓ | — |
+| Diorama layers and diorama thumbnails | ✓ | — depth axis only |
+| Multiple windows, Windows tab, saved window groups, "open in new window" | ✓ | — one window; iPad can still open several app instances |
+
+Build for iOS from the command line with:
+
+```bash
+xcodebuild -quiet -project SpatialStash/SpatialStash.xcodeproj -scheme SpatialStash \
+  -destination 'generic/platform=iOS Simulator' build CODE_SIGNING_ALLOWED=NO
+```
 
 ## Dependencies
 
@@ -83,7 +113,7 @@ update its callers" a single atomic edit.
 
 3. Select your development team in Xcode (Project → Signing & Capabilities)
 
-4. Build and run on visionOS Simulator or device (Cmd+R)
+4. Pick a visionOS or iOS run destination and build and run (Cmd+R)
 
 ## Configuration
 

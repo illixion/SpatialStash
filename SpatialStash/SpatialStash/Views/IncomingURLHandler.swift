@@ -16,7 +16,7 @@ import SwiftUI
 
 struct IncomingURLHandler: ViewModifier {
     let appModel: AppModel
-    @Environment(\.openWindow) private var openWindow
+    @OpenWindowProxy private var openWindow
 
     func body(content: Content) -> some View {
         content

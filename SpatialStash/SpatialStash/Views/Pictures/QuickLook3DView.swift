@@ -228,6 +228,12 @@ struct QuickLook3DView: View {
                 // SwiftUI compositing in ways that hide the 2D layer
                 // anyway, so swapping is both more correct and avoids
                 // wasted bandwidth.
+                //
+                // iOS never sets `spatialReady` (the "View in 3D" side-menu
+                // button that starts spatial generation is hidden there —
+                // see `sideMenu`), so this branch is unreachable in
+                // practice; it still needs to type-check, hence the #else.
+                #if os(visionOS)
                 GeometryReader3D { geometry3D in
                     RealityView { content in
                         content.add(entity)
@@ -237,6 +243,9 @@ struct QuickLook3DView: View {
                     }
                 }
                 .frame(width: size.width, height: size.height)
+                #else
+                EmptyView()
+                #endif
             } else if let loadedImage {
                 Image(uiImage: loadedImage)
                     .resizable()
@@ -301,16 +310,18 @@ struct QuickLook3DView: View {
 
     private var sideMenu: some View {
         VStack(spacing: 0) {
-            menuButton(
-                title: spatialReady ? "Spatial 3D" : (spatialLoading ? "Generating…" : "View in 3D"),
-                systemImage: "cube",
-                tinted: spatialReady,
-                disabled: spatialLoading || spatialReady || spatialFailed
-            ) {
-                spatialRequested = true
-            }
+            if PlatformCapabilities.supportsSpatial3D {
+                menuButton(
+                    title: spatialReady ? "Spatial 3D" : (spatialLoading ? "Generating…" : "View in 3D"),
+                    systemImage: "cube",
+                    tinted: spatialReady,
+                    disabled: spatialLoading || spatialReady || spatialFailed
+                ) {
+                    spatialRequested = true
+                }
 
-            Divider().opacity(0.3)
+                Divider().opacity(0.3)
+            }
 
             menuButton(
                 title: "Close",
@@ -357,6 +368,7 @@ struct QuickLook3DView: View {
         }
     }
 
+    #if os(visionOS)
     private func scaleEntityToFit(content: RealityViewContent, geometry: GeometryProxy3D) {
         guard let ipc = entity.components[ImagePresentationComponent.self] else { return }
         let presentation = ipc.presentationScreenSize
@@ -368,6 +380,7 @@ struct QuickLook3DView: View {
         )
         entity.scale = SIMD3<Float>(scale, scale, 1.0)
     }
+    #endif
 
     // MARK: - Progressive load
 

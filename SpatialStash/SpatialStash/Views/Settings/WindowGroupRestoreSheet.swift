@@ -11,7 +11,7 @@ import SwiftUI
 struct WindowGroupRestoreSheet: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.dismissWindow) private var dismissWindow
+    @DismissWindowProxy private var dismissWindow
 
     let group: SavedWindowGroup
     @State private var restoredEntryIds: Set<UUID> = []

@@ -763,6 +763,21 @@ class AppModel {
         }
     }
 
+    /// Corner radius the photo viewer clips its picture to.
+    ///
+    /// A visionOS window *is* the photo — it is sized to the image and drawn
+    /// as a rounded glass slab, so square corners poke out of it. A phone's
+    /// screen is the frame and the photo is content inside it; rounding there
+    /// only shaves the corners off the picture, which is why the setting is
+    /// visionOS-only rather than merely defaulted off.
+    var photoCornerRadius: CGFloat {
+        #if os(visionOS)
+        roundedCorners ? 50 : 0
+        #else
+        0
+        #endif
+    }
+
     /// When true, media selections open in separate pop-out windows (openWindow).
     /// When false, media selections use pushWindow for in-place navigation.
     var openMediaInNewWindows: Bool {
@@ -2404,7 +2419,7 @@ class AppModel {
 
     /// Opens a new main gallery window.
     /// Each call creates a fresh instance (UUID-keyed WindowGroup).
-    func showMainWindow(openWindow: OpenWindowAction) {
+    func showMainWindow(openWindow: WindowOpenAction) {
         openWindow(id: "main", value: UUID())
     }
 
@@ -2413,7 +2428,7 @@ class AppModel {
     /// tab + scene filter; otherwise the Pictures tab + image filter. The new
     /// window's `ContentView` consumes `pendingGalleryFilter` on appear to
     /// switch tabs and run the query.
-    func openGalleryFilteredByTag(id tagId: String, name tagName: String, isVideo: Bool, openWindow: OpenWindowAction) {
+    func openGalleryFilteredByTag(id tagId: String, name tagName: String, isVideo: Bool, openWindow: WindowOpenAction) {
         let item = AutocompleteItem(id: tagId, name: tagName)
         if isVideo {
             currentVideoFilter.clearFilters()

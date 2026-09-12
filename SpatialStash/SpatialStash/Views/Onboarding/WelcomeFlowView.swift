@@ -48,6 +48,7 @@ final class WelcomeFlowModel {
 
 struct WelcomeFlowView: View {
     @Environment(AppModel.self) private var appModel
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var flow = WelcomeFlowModel()
     @State private var sample = WelcomeSampleModel()
     /// Whether any source has been set up, which changes the last button from
@@ -65,8 +66,8 @@ struct WelcomeFlowView: View {
                 .ignoresSafeArea()
 
             panel
-                .frame(maxWidth: 1120, maxHeight: 660)
-                .padding(24)
+                .frame(maxWidth: 1120, maxHeight: isCompact ? .infinity : 660)
+                .padding(isCompact ? 12 : 24)
                 // `.contain` rather than a bare identifier: SwiftUI only puts a
                 // group in the accessibility tree when asked to, so without it
                 // the identifier has nothing to attach to and a UI test cannot
@@ -95,9 +96,21 @@ struct WelcomeFlowView: View {
         RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
     }
 
+    /// A phone in portrait: the spread stacks instead of sitting side by side.
+    private var isCompact: Bool { horizontalSizeClass == .compact }
+
     // MARK: - Intro
 
+    @ViewBuilder
     private var introSpread: some View {
+        if isCompact {
+            introStack
+        } else {
+            introSideBySide
+        }
+    }
+
+    private var introSideBySide: some View {
         GeometryReader { geometry in
             HStack(spacing: 0) {
                 WelcomeSampleImage(model: sample)
@@ -112,20 +125,7 @@ struct WelcomeFlowView: View {
                     .frame(maxHeight: .infinity)
 
                 VStack(alignment: .leading, spacing: 0) {
-                    VStack(alignment: .leading, spacing: 14) {
-                        Text("Photos, with depth")
-                            .font(.system(size: 40, weight: .semibold))
-                            .fixedSize(horizontal: false, vertical: true)
-
-                        Text("Spatial Stash turns flat photos and videos into spatial 3D, right here on the device. Nothing is uploaded.")
-                            .font(.title3)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-
-                        Text("Try it on the photo beside this text.")
-                            .font(.callout)
-                            .foregroundStyle(.tertiary)
-                    }
+                    introCopy(titleSize: 40)
 
                     WelcomeSampleControls(model: sample)
                         .padding(.top, 32)
@@ -140,6 +140,56 @@ struct WelcomeFlowView: View {
         }
     }
 
+    /// Compact-width layout: photo on top, copy and controls under it.
+    private var introStack: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            WelcomeSampleImage(model: sample)
+                .aspectRatio(sample.aspectRatio, contentMode: .fit)
+                .frame(maxWidth: .infinity)
+                .frame(maxHeight: 320)
+                .clipped()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    introCopy(titleSize: 30)
+                    WelcomeSampleControls(model: sample)
+                        .padding(.top, 20)
+                }
+                .padding(24)
+            }
+            .scrollBounceBehavior(.basedOnSize)
+
+            footer
+                .padding(24)
+        }
+    }
+
+    private func introCopy(titleSize: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(PlatformCapabilities.supportsSpatial3D ? "Photos, with depth" : "Your photos, everywhere")
+                .font(.system(size: titleSize, weight: .semibold))
+                .fixedSize(horizontal: false, vertical: true)
+
+            if PlatformCapabilities.supportsSpatial3D {
+                Text("Spatial Stash turns flat photos and videos into spatial 3D, right here on the device. Nothing is uploaded.")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Text("Try it on the photo beside this text.")
+                    .font(.callout)
+                    .foregroundStyle(.tertiary)
+            } else {
+                // The sample's control caption already names the platform
+                // that converts to 3D; no second line about it here.
+                Text("Spatial Stash browses your photo library, your files and your Stash media server — with slideshows, enhancements and background removal, right here on the device. Nothing is uploaded.")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
     // MARK: - Sources
 
     private var sourcesPage: some View {
@@ -148,7 +198,8 @@ struct WelcomeFlowView: View {
                 .frame(maxHeight: .infinity)
             footer
         }
-        .padding(36)
+        // A phone has no room for the visionOS window's generous margin.
+        .padding(isCompact ? 20 : 36)
     }
 
     // MARK: - Footer

@@ -33,9 +33,16 @@ import SwiftUI
 /// Payload passed to `openImmersiveSpace(value:)` so the immersive scene
 /// knows which image to render. Conforms to `Codable` + `Hashable` per
 /// visionOS' ImmersiveSpace value requirements.
+///
+/// Kept outside the `#if os(visionOS)` gate below (unlike the view itself)
+/// because it is a plain Codable value type referenced from SpatialStashApp
+/// and PhotoDisplayView, both only inside their own visionOS branches — but
+/// the type declaration itself costs nothing to keep available on iOS too.
 struct Spatial3DImmersiveValue: Codable, Hashable {
     let imageURL: URL
 }
+
+#if os(visionOS)
 
 struct Spatial3DImmersiveView: View {
     let value: Spatial3DImmersiveValue
@@ -210,3 +217,5 @@ struct Spatial3DImmersiveView: View {
         }
     }
 }
+
+#endif

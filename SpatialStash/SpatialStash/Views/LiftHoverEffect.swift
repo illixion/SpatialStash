@@ -3,9 +3,15 @@
 
  Custom visionOS 2.0 hover effect that lifts thumbnails on focus
  by adding depth offset and a subtle scale.
+
+ `CustomHoverEffect` is visionOS-only. On iOS the type exists so call sites
+ compile, and `hoverEffect(LiftHoverEffect())` degrades to the system
+ pointer highlight (iPad trackpad / mouse); touch has no hover to react to.
  */
 
 import SwiftUI
+
+#if os(visionOS)
 
 struct LiftHoverEffect: CustomHoverEffect {
     func body(content: Content) -> some CustomHoverEffect {
@@ -20,3 +26,15 @@ struct LiftHoverEffect: CustomHoverEffect {
         }
     }
 }
+
+#else
+
+struct LiftHoverEffect {}
+
+extension View {
+    func hoverEffect(_ effect: LiftHoverEffect) -> some View {
+        hoverEffect(.lift)
+    }
+}
+
+#endif

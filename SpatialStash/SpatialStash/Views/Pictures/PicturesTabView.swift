@@ -10,7 +10,7 @@ import SwiftUI
 
 struct PicturesTabView: View {
     @Environment(AppModel.self) private var appModel
-    @Environment(\.pushWindow) private var pushWindow
+    @PushWindowProxy private var pushWindow
     
     var body: some View {
         VStack(spacing: 0) {

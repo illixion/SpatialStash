@@ -12,7 +12,7 @@ import SwiftUI
 
 struct GPUMemoryMonitorView: View {
     @Environment(AppModel.self) private var appModel
-    @Environment(\.openWindow) private var openWindow
+    @OpenWindowProxy private var openWindow
 
     /// The latest reading. GPU allocation is the number this window exists for
     /// — it is what moves when texture compression changes, whereas the process
@@ -94,7 +94,12 @@ struct GPUMemoryMonitorView: View {
         .frame(minWidth: 400, minHeight: 300)
         .onAppear { startPolling() }
         .onDisappear { stopPolling() }
-        .ornament(attachmentAnchor: .scene(.bottom)) {
+        // Only a separate window needs its own way back to the gallery; the
+        // iOS sheet has a Done button.
+        .ornament(
+            visibility: PlatformCapabilities.supportsMultipleWindows ? .visible : .hidden,
+            attachmentAnchor: .scene(.bottom)
+        ) {
             HStack(spacing: 16) {
                 Button {
                     appModel.showMainWindow(openWindow: openWindow)

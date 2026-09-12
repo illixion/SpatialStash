@@ -21,8 +21,11 @@ extension ImagePresentationComponent {
     /// one-time application at creation is not enough.
     @MainActor
     mutating func applyPrivateSpatial3DTuningIfAvailable() {
-        #if HYPNOS_PRIVATE_API
+        #if HYPNOS_PRIVATE_API && os(visionOS)
         PrivateSpatial3DTuningStore.shared.apply(to: &self)
         #endif
+        // iOS (and any non-private build): no-op. `ImagePresentationComponent`
+        // is the null-object shim from PlatformShims.swift there, so this
+        // compiles unchanged with nothing to tune.
     }
 }

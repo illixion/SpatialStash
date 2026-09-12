@@ -16,6 +16,8 @@
 import Foundation
 import RAVEUI
 
+#if os(visionOS)
+
 // MARK: - Fresh-identity clones
 
 extension PhotoWindowValue {
@@ -169,3 +171,5 @@ enum ManagedWindows {
         )
     }
 }
+
+#endif

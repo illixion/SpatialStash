@@ -11,6 +11,8 @@ import AVKit
 import os
 import SwiftUI
 
+#if os(visionOS)
+
 struct StereoscopicVideoView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.dismiss) private var dismiss
@@ -413,4 +415,41 @@ struct StereoscopicVideoView_Previews: PreviewProvider {
         .environment(appModel)
     }
 }
+#endif
+
+#endif
+
+#if !os(visionOS)
+
+/// iOS stand-in: no `ImmersiveSpace`/MV-HEVC stereo playback on this
+/// platform. Same init shape as the visionOS view so `VideoWindowView`
+/// compiles unchanged; offers a way back to the flat player instead of a
+/// dead end.
+struct StereoscopicVideoView: View {
+    let video: GalleryVideo
+
+    /// The owning window's model — unused on iOS, kept for call-site parity.
+    let windowModel: VideoWindowModel
+
+    /// Optional initial settings (if provided, uses these instead of tag-detected)
+    var initialSettings: Video3DSettings?
+
+    /// Callback when user wants to revert to 2D mode
+    var onRevertTo2D: (() -> Void)?
+
+    /// Callback when settings change (so parent can track)
+    var onSettingsChanged: ((Video3DSettings) -> Void)?
+
+    var body: some View {
+        ContentUnavailableView {
+            Label("Immersive 3D video needs Apple Vision Pro", systemImage: "visionpro")
+        } actions: {
+            Button("Play as 2D") {
+                onRevertTo2D?()
+            }
+            .buttonStyle(.borderedProminent)
+        }
+    }
+}
+
 #endif

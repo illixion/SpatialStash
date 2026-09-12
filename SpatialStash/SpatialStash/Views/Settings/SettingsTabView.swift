@@ -13,7 +13,7 @@ import UniformTypeIdentifiers
 struct SettingsTabView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(MainWindowModel.self) private var windowModel
-    @Environment(\.openWindow) private var openWindow
+    @OpenWindowProxy private var openWindow
     @State private var showSaveGroupAlert = false
     @State private var newGroupName = ""
     @State private var showRenameGroupAlert = false
@@ -45,7 +45,8 @@ struct SettingsTabView: View {
                             .foregroundColor(.secondary)
                     }
 
-                    if !appModel.effectiveReduceMotion {
+                    // Diorama thumbnails pop their foreground forward in z.
+                    if PlatformCapabilities.supportsDiorama, !appModel.effectiveReduceMotion {
                         Picker("Thumbnail Style", selection: $appModel.thumbnailStyle) {
                             ForEach(ThumbnailStyle.allCases) { style in
                                 Text(style.label).tag(style)
@@ -54,9 +55,16 @@ struct SettingsTabView: View {
                         .pickerStyle(.menu)
                     }
 
-                    Toggle("Rounded Corners", isOn: $appModel.roundedCorners)
+                    // A window with rounded glass corners is a visionOS
+                    // thing; on a phone the photo is content inside the
+                    // screen, and rounding it just crops the picture.
+                    if PlatformCapabilities.supportsWindowResizing {
+                        Toggle("Rounded Corners", isOn: $appModel.roundedCorners)
+                    }
 
-                    Toggle("Always Open In New Window", isOn: $appModel.openMediaInNewWindows)
+                    if PlatformCapabilities.supportsMultipleWindows {
+                        Toggle("Always Open In New Window", isOn: $appModel.openMediaInNewWindows)
+                    }
 
                     Toggle("Remember Image Enhancements", isOn: Binding(
                         get: { appModel.rememberImageEnhancements },
@@ -69,16 +77,18 @@ struct SettingsTabView: View {
                         }
                     ))
 
-                    if appModel.rememberImageEnhancements {
+                    if PlatformCapabilities.supportsSpatial3D, appModel.rememberImageEnhancements {
                         Toggle("Remember Last 3D State", isOn: $appModel.autoRestoreSpatial3D)
                     }
 
-                    Picker("Default Viewing Mode", selection: $appModel.defaultImageViewingMode) {
-                        ForEach(DefaultImageViewingMode.allCases) { mode in
-                            Text(mode.label).tag(mode)
+                    if PlatformCapabilities.supportsSpatial3D {
+                        Picker("Default Viewing Mode", selection: $appModel.defaultImageViewingMode) {
+                            ForEach(DefaultImageViewingMode.allCases) { mode in
+                                Text(mode.label).tag(mode)
+                            }
                         }
+                        .pickerStyle(.menu)
                     }
-                    .pickerStyle(.menu)
 
                     Picker("2D Image Resolution Limit", selection: $appModel.maxImageResolution) {
                         ForEach(AppModel.maxImageResolutionOptions, id: \.value) { option in
@@ -87,14 +97,18 @@ struct SettingsTabView: View {
                     }
                     .pickerStyle(.menu)
 
-                    Picker("Spatial 3D Resolution Limit", selection: $appModel.spatial3DMaxResolution) {
-                        ForEach(AppModel.maxImageResolutionOptions, id: \.value) { option in
-                            Text(option.label).tag(option.value)
+                    if PlatformCapabilities.supportsSpatial3D {
+                        Picker("Spatial 3D Resolution Limit", selection: $appModel.spatial3DMaxResolution) {
+                            ForEach(AppModel.maxImageResolutionOptions, id: \.value) { option in
+                                Text(option.label).tag(option.value)
+                            }
                         }
+                        .pickerStyle(.menu)
                     }
-                    .pickerStyle(.menu)
 
-                    Toggle("Fully Immersive 3D Mode", isOn: $appModel.fullyImmersive3DMode)
+                    if PlatformCapabilities.supportsImmersiveSpaces {
+                        Toggle("Fully Immersive 3D Mode", isOn: $appModel.fullyImmersive3DMode)
+                    }
 
                     Toggle("Mute Videos on Open", isOn: $appModel.videoAutoplayMuted)
                     Text("Videos always start playing automatically; turn this off to open them with sound. Applies to video windows and the gallery long-press preview.")
@@ -105,25 +119,29 @@ struct SettingsTabView: View {
                     // gates every frame (keep this fast), while pre-process
                     // conversion can afford a slower, higher-quality model.
                     // Models are added/removed in Developer → Depth Model Manager.
-                    depthModelPicker(
-                        "Real-Time 3D Depth Model",
-                        selection: $appModel.realtimeDepthModelName
-                    )
-                    depthModelPicker(
-                        "Pre-Process 3D Depth Model",
-                        selection: $appModel.preprocessDepthModelName
-                    )
-                    Toggle("Real-Time 3D for All Videos", isOn: $appModel.defaultRealtimePseudo3D)
-                    Text("Convert to 3D uses these models: Real-Time for instant playback (fast model recommended), Pre-Process for background conversion (a larger model can be used). Manage installed models under Developer. With Real-Time 3D for All Videos on, compatible videos open already converted — using this video's pre-processed conversion when available, otherwise real-time.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-
-                    Picker("Diorama Layer Distance", selection: $appModel.dioramaDistance) {
-                        ForEach(AppModel.dioramaDistanceOptions, id: \.value) { option in
-                            Text(option.label).tag(option.value)
-                        }
+                    if PlatformCapabilities.supportsStereoVideo {
+                        depthModelPicker(
+                            "Real-Time 3D Depth Model",
+                            selection: $appModel.realtimeDepthModelName
+                        )
+                        depthModelPicker(
+                            "Pre-Process 3D Depth Model",
+                            selection: $appModel.preprocessDepthModelName
+                        )
+                        Toggle("Real-Time 3D for All Videos", isOn: $appModel.defaultRealtimePseudo3D)
+                        Text("Convert to 3D uses these models: Real-Time for instant playback (fast model recommended), Pre-Process for background conversion (a larger model can be used). Manage installed models under Developer. With Real-Time 3D for All Videos on, compatible videos open already converted — using this video's pre-processed conversion when available, otherwise real-time.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
-                    .pickerStyle(.menu)
+
+                    if PlatformCapabilities.supportsDiorama {
+                        Picker("Diorama Layer Distance", selection: $appModel.dioramaDistance) {
+                            ForEach(AppModel.dioramaDistanceOptions, id: \.value) { option in
+                                Text(option.label).tag(option.value)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                    }
 
                     Picker("Auto-hide Controls After", selection: $appModel.autoHideDelay) {
                         ForEach(AppModel.autoHideDelayOptions, id: \.value) { option in
@@ -153,7 +171,9 @@ struct SettingsTabView: View {
                     Toggle("Fit to Window Aspect Ratio", isOn: $appModel.slideshowUseAspectRatio)
                     Toggle("Ken Burns Effect", isOn: $appModel.slideshowEnableKenBurns)
                     Toggle("Dynamic Brightness", isOn: $appModel.slideshowEnableDynamicBrightness)
-                    Toggle("Diorama Layers", isOn: $appModel.slideshowEnableDiorama)
+                    if PlatformCapabilities.supportsDiorama {
+                        Toggle("Diorama Layers", isOn: $appModel.slideshowEnableDiorama)
+                    }
                     Toggle("Transparent Background", isOn: $appModel.slideshowTransparentBackground)
 
                     Picker("Max Image Resolution (2D)", selection: $appModel.slideshowMaxImageResolution2D) {
@@ -163,12 +183,14 @@ struct SettingsTabView: View {
                     }
                     .pickerStyle(.menu)
 
-                    Picker("Max Image Resolution (3D)", selection: $appModel.slideshowMaxImageResolution3D) {
-                        ForEach(AppModel.maxImageResolutionOptions, id: \.value) { option in
-                            Text(option.label).tag(option.value)
+                    if PlatformCapabilities.supportsSpatial3D {
+                        Picker("Max Image Resolution (3D)", selection: $appModel.slideshowMaxImageResolution3D) {
+                            ForEach(AppModel.maxImageResolutionOptions, id: \.value) { option in
+                                Text(option.label).tag(option.value)
+                            }
                         }
+                        .pickerStyle(.menu)
                     }
-                    .pickerStyle(.menu)
 
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
@@ -185,7 +207,9 @@ struct SettingsTabView: View {
                     Text("Used when starting a slideshow from any source. Saved Remote API profiles override these per-profile.")
                 }
 
-                windowGroupsSection
+                if PlatformCapabilities.supportsMultipleWindows {
+                    windowGroupsSection
+                }
 
                 Section("Photo Library") {
                     switch PhotosAuthorization.status {
@@ -218,7 +242,7 @@ struct SettingsTabView: View {
                     // No toggle — needs no permission and no setup, so unlike
                     // Photos or a media server there is nothing to gate. This
                     // is purely where "where do I put files" gets explained.
-                    Text("Browse and convert files you place in this app's Documents folder — in the Files app, under \"On My Apple Vision Pro\" → Spatial Stash. Always available as a library alongside Photos and any media server.")
+                    Text("Browse and convert files you place in this app's Documents folder — in the Files app, under \"On My \(PlatformCapabilities.deviceFamilyName)\" → Spatial Stash. Always available as a library alongside Photos and any media server.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -363,25 +387,27 @@ struct SettingsTabView: View {
                     // Fake-3D depth models are managed (added/downloaded/deleted)
                     // in a dedicated modal; which model each pipeline USES is
                     // picked in the Display section's two dropdowns.
-                    Button {
-                        showDepthModelManager = true
-                    } label: {
-                        Label("Depth Model Manager", systemImage: "shippingbox")
-                    }
-                    if let downloading = DepthModelManager.variants.first(where: { depthModels.isDownloading($0) }) {
-                        HStack(spacing: 12) {
-                            ProgressView(value: depthModels.progress[downloading.name] ?? 0)
-                            Text("Downloading \(downloading.displayName)…")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                    if PlatformCapabilities.supportsStereoVideo {
+                        Button {
+                            showDepthModelManager = true
+                        } label: {
+                            Label("Depth Model Manager", systemImage: "shippingbox")
                         }
-                    }
-                    Text("Pseudo 3D video requires a monocular depth model (~19–50 MB, downloaded from Apple's Hugging Face repo). Videos already pre-processed keep playing in 3D even without a model.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                        if let downloading = DepthModelManager.variants.first(where: { depthModels.isDownloading($0) }) {
+                            HStack(spacing: 12) {
+                                ProgressView(value: depthModels.progress[downloading.name] ?? 0)
+                                Text("Downloading \(downloading.displayName)…")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        Text("Pseudo 3D video requires a monocular depth model (~19–50 MB, downloaded from Apple's Hugging Face repo). Videos already pre-processed keep playing in 3D even without a model.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
 
-                    // Pre-processed fake-3D depth caches (Convert to 3D → Pre-Process).
-                    DepthCacheSettingsView()
+                        // Pre-processed fake-3D depth caches (Convert to 3D → Pre-Process).
+                        DepthCacheSettingsView()
+                    }
 
                     Button {
                         openWindow(id: "gpu-memory")

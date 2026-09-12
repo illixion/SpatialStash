@@ -7,11 +7,12 @@
  Styled to match RemoteViewerOrnamentView.
  */
 
+import RAVEUI
 import SwiftUI
 
 struct WebPageOrnamentView: View {
     @Environment(AppModel.self) private var appModel
-    @Environment(\.openWindow) private var openWindow
+    @OpenWindowProxy private var openWindow
     @Bindable var model: WebPageWindowModel
 
     /// Hides the ornaments (and with them, page interaction) on demand. While
@@ -20,14 +21,14 @@ struct WebPageOrnamentView: View {
     var onHideControls: () -> Void
 
     var body: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: RAVEChromeMetrics.spacing) {
             Button {
                 appModel.showMainWindow(openWindow: openWindow)
             } label: {
                 Image(systemName: "square.grid.2x2")
                     .font(.title3)
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.raveChrome)
             .help("Open Gallery")
 
             Divider()
@@ -43,7 +44,7 @@ struct WebPageOrnamentView: View {
                     Image(systemName: "chevron.left")
                         .font(.title3)
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.raveChrome)
                 .help("Back")
             }
 
@@ -54,7 +55,7 @@ struct WebPageOrnamentView: View {
                     Image(systemName: "chevron.right")
                         .font(.title3)
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.raveChrome)
                 .help("Forward")
             }
 
@@ -68,7 +69,7 @@ struct WebPageOrnamentView: View {
                 Image(systemName: model.isLoading ? "xmark" : "arrow.clockwise")
                     .font(.title3)
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.raveChrome)
             .help(model.isLoading ? "Stop Loading" : "Reload")
 
             Button {
@@ -77,7 +78,7 @@ struct WebPageOrnamentView: View {
                 Image(systemName: "house")
                     .font(.title3)
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.raveChrome)
             .disabled(model.config.resolvedWebPageURL == nil)
             .help("Back to the configured page")
 
@@ -105,11 +106,11 @@ struct WebPageOrnamentView: View {
                 Image(systemName: "eye.slash")
                     .font(.title3)
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.raveChrome)
             .help("Hide Controls (blocks page interaction)")
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 12)
+        .padding(.horizontal, RAVEChromeMetrics.horizontalPadding)
+        .padding(.vertical, RAVEChromeMetrics.verticalPadding)
         .glassBackgroundEffect()
     }
 

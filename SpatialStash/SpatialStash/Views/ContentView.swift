@@ -1,7 +1,11 @@
 /*
  Spatial Stash - Content View
 
- Root view with tab-based content switching and ornament navigation.
+ Root view with tab-based content switching. visionOS hangs the tab bar off the
+ window as an ornament (`TabBarOrnament`); iOS uses the system `TabView`, with
+ the ornament's extra controls (library switch, slideshow) in each tab's
+ navigation bar. Everything else — the first-run flow, the pending-filter
+ hand-off and the window-open queues — is shared.
  */
 
 import RAVEUI
@@ -9,37 +13,19 @@ import SwiftUI
 
 struct ContentView: View {
     @Environment(AppModel.self) private var appModel
-    @Environment(\.openWindow) private var openWindow
-    @Environment(\.dismissWindow) private var dismissWindow
+    @OpenWindowProxy private var openWindow
+    @DismissWindowProxy private var dismissWindow
     @State private var windowModel = MainWindowModel()
+    #if !os(visionOS)
+    @Environment(IOSWindowRouter.self) private var router: IOSWindowRouter?
+    #endif
 
     /// Whether this window is showing the first-run flow.
     private var showWelcome: Bool { !appModel.hasCompletedWelcome }
 
     var body: some View {
         ZStack {
-            Group {
-                switch windowModel.selectedTab {
-                case .pictures:
-                    PicturesTabView()
-                case .videos:
-                    VideosTabView()
-                case .albums:
-                    AlbumsTabView()
-                case .filters:
-                    FiltersTabView()
-                case .windows:
-                    WindowsTabView()
-                case .settings:
-                    SettingsTabView()
-                case .remote:
-                    RemoteTabView()
-                case .console:
-                    ConsoleTabView()
-                }
-            }
-            .id(windowModel.selectedTab)
-            .transition(.opacity)
+            tabs
 
             // First run, over the top of everything. Not a sheet: the intro
             // screen is a photo meant to be leaned into, and a sheet on
@@ -67,6 +53,7 @@ struct ContentView: View {
         }
         .environment(appModel)
         .environment(windowModel)
+        #if os(visionOS)
         .ornament(
             // Nothing behind the welcome flow is useful yet, and a visible tab
             // bar under it invites an escape into an empty gallery.
@@ -79,6 +66,7 @@ struct ContentView: View {
                     .environment(windowModel)
             }
         )
+        #endif
         .background(
             GeometryReader { geo in
                 Color.clear
@@ -144,7 +132,99 @@ struct ContentView: View {
         .onChange(of: appModel.activeRemoteViewerOpenRequest?.id) { _, _ in
             handleRemoteViewerOpenIfNeeded()
         }
+        #if !os(visionOS)
+        // On visionOS a tag tapped in an info sheet opens a *new* main window,
+        // whose onAppear adopts the seeded filter. iOS has one gallery, so the
+        // router's "show main" request is the moment to adopt it instead.
+        .onChange(of: router?.mainWindowRequests) { _, _ in
+            consumePendingGalleryFilterIfNeeded()
+        }
+        #endif
     }
+
+    // MARK: - Tabs
+
+    @ViewBuilder
+    private func tabContent(_ tab: Tab) -> some View {
+        switch tab {
+        case .pictures:
+            PicturesTabView()
+        case .videos:
+            VideosTabView()
+        case .albums:
+            AlbumsTabView()
+        case .filters:
+            FiltersTabView()
+        case .windows:
+            WindowsTabView()
+        case .settings:
+            SettingsTabView()
+        case .remote:
+            RemoteTabView()
+        case .console:
+            ConsoleTabView()
+        }
+    }
+
+    #if os(visionOS)
+    private var tabs: some View {
+        Group {
+            tabContent(windowModel.selectedTab)
+        }
+        .id(windowModel.selectedTab)
+        .transition(.opacity)
+    }
+    #else
+    /// The system tab bar. Tabs that already carry their own `NavigationStack`
+    /// (Filters, Remote, Settings) are used as-is; the rest get one so they
+    /// have a title bar for the library switch, slideshow and Select buttons.
+    private var tabs: some View {
+        TabView(selection: tabSelection) {
+            ForEach(MainTabCatalog.visibleTabs(appModel: appModel)) { tab in
+                SwiftUI.Tab(tab.rawValue, systemImage: tab.systemImage, value: tab) {
+                    iosTabPage(tab)
+                }
+                .accessibilityIdentifier(tab.accessibilityIdentifier)
+            }
+        }
+        .tabViewStyle(.sidebarAdaptable)
+    }
+
+    @ViewBuilder
+    private func iosTabPage(_ tab: Tab) -> some View {
+        Group {
+            switch tab {
+            case .filters, .remote, .settings:
+                tabContent(tab)
+            default:
+                NavigationStack {
+                    tabContent(tab)
+                        .navigationTitle(tab.rawValue)
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar {
+                            IOSTabToolbar(tab: tab)
+                        }
+                }
+            }
+        }
+        // Nothing behind the welcome flow is useful yet, and a visible tab
+        // bar under it invites an escape into an empty gallery. Set on the
+        // page, not the TabView — tab-bar visibility is a content preference.
+        .toolbarVisibility(showWelcome ? .hidden : .visible, for: .tabBar)
+    }
+
+    /// Routed through `MainTabCatalog.select` rather than straight to the
+    /// model: re-tapping Albums while already there is a "pop to the folder
+    /// root" gesture for its local-folder browser, which a plain selection
+    /// binding cannot see. The system tab bar does call the setter with the
+    /// same value on a re-tap.
+    private var tabSelection: Binding<Tab> {
+        Binding(
+            get: { windowModel.selectedTab },
+            set: { MainTabCatalog.select($0, in: windowModel) }
+        )
+    }
+    #endif
 
     // MARK: - Pending Gallery Filter (tag-tapped from media info)
 

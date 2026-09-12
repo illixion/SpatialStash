@@ -23,8 +23,8 @@ struct LocalFolderBrowserView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(MainWindowModel.self) private var windowModel
     @Environment(SceneDelegate.self) private var sceneDelegate: SceneDelegate?
-    @Environment(\.pushWindow) private var pushWindow
-    @Environment(\.openWindow) private var openWindow
+    @PushWindowProxy private var pushWindow
+    @OpenWindowProxy private var openWindow
 
     let isVideo: Bool
 
@@ -205,12 +205,11 @@ struct LocalFolderBrowserView: View {
             }
         }
         .onAppear {
-            if let windowScene = resolvedWindowScene {
-                windowScene.requestGeometryUpdate(.Vision(
-                    size: CGSize(width: 1200, height: 800),
-                    resizingRestrictions: .freeform
-                ))
-            }
+            WindowGeometry.request(
+                resolvedWindowScene,
+                size: CGSize(width: 1200, height: 800),
+                restriction: .freeform
+            )
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(A11y.Albums.localBrowser)

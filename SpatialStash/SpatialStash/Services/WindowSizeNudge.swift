@@ -52,12 +52,8 @@ enum WindowSizeNudge {
         // non-positive size. A real minimum belongs to the persistence layer.
         guard base.width > 2, base.height > 2 else { return }
         let nudged = CGSize(width: base.width + delta, height: base.height + delta)
-        UIView.performWithoutAnimation {
-            scene.requestGeometryUpdate(.Vision(size: nudged))
-        }
+        WindowGeometry.request(scene, size: nudged)
         try? await Task.sleep(for: .milliseconds(150))
-        UIView.performWithoutAnimation {
-            scene.requestGeometryUpdate(.Vision(size: base))
-        }
+        WindowGeometry.request(scene, size: base)
     }
 }

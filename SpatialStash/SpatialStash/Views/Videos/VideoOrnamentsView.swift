@@ -14,13 +14,14 @@
  */
 
 import RAVEMedia
+import RAVEUI
 import SwiftUI
 
 struct VideoOrnamentsView: View {
     @Bindable var windowModel: VideoWindowModel
     @Environment(AppModel.self) private var appModel
-    @Environment(\.openWindow) private var openWindow
-    @Environment(\.dismissWindow) private var dismissWindow
+    @OpenWindowProxy private var openWindow
+    @DismissWindowProxy private var dismissWindow
     @Environment(\.openURL) private var openURL
     @State private var depthModels = DepthModelManager.shared
 
@@ -49,13 +50,13 @@ struct VideoOrnamentsView: View {
     }
 
     private var buttonRow: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: RAVEChromeMetrics.spacing) {
             // Gallery button
             Button(action: onGalleryButtonTap) {
                 Image(systemName: "square.grid.2x2")
                     .font(.title3)
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.raveChrome)
             .help(windowModel.wasPushed ? "Videos" : "Show Gallery")
 
             Divider()
@@ -68,7 +69,7 @@ struct VideoOrnamentsView: View {
                 Image(systemName: "chevron.left")
                     .font(.title3)
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.raveChrome)
             .disabled(!windowModel.hasPreviousVideo)
 
             // Video counter
@@ -84,7 +85,7 @@ struct VideoOrnamentsView: View {
                 Image(systemName: "chevron.right")
                     .font(.title3)
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.raveChrome)
             .disabled(!windowModel.hasNextVideo)
 
             // View mode toggle (2D/3D)
@@ -135,9 +136,20 @@ struct VideoOrnamentsView: View {
             // dropdown and dropping taps.
             ConversionStatusRow(videoIdentity: video.identity)
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 12)
+        .padding(.horizontal, RAVEChromeMetrics.horizontalPadding)
+        .padding(.vertical, RAVEChromeMetrics.verticalPadding)
         .glassBackgroundEffect()
+        #if !os(visionOS)
+        // The bar scrolls when it is wider than the screen, and a scroll is
+        // not a button press — without this the chrome auto-hides out from
+        // under the finger mid-drag. Simultaneous so buttons and the scroll
+        // view still get the gesture.
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { _ in windowModel.cancelAutoHideTimer() }
+                .onEnded { _ in windowModel.startAutoHideTimer() }
+        )
+        #endif
         .onChange(of: windowModel.showMediaInfo) { _, isOpen in
             if isOpen { windowModel.cancelAutoHideTimer() }
             else { windowModel.startAutoHideTimer() }
@@ -164,7 +176,7 @@ struct VideoOrnamentsView: View {
                 .font(.title3)
                 .foregroundColor(video.rating100 != nil ? .yellow : nil)
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(.raveChrome)
         .help("Info")
         .sheet(isPresented: $windowModel.showMediaInfo) {
             MediaDetailSheet(
@@ -208,7 +220,7 @@ struct VideoOrnamentsView: View {
             }
             .font(.title3)
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(.raveChrome)
         .disabled(windowModel.isPreparingShare)
         .help("Share")
         .sheet(isPresented: Binding(
@@ -283,7 +295,7 @@ struct VideoOrnamentsView: View {
                 .background(moreMenuHighlighted ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
         }
         .menuStyle(.button)
-        .buttonStyle(.borderless)
+        .buttonStyle(.raveChrome)
         .help("More")
     }
 
@@ -336,59 +348,64 @@ struct VideoOrnamentsView: View {
                 windowModel.set2DMode()
             }
 
-            Divider()
-
-            modeButton("3D", mode: .stereoscopic) {
-                Task { await windowModel.enable3DMode() }
-            }
-
-            if windowModel.shouldUse3DMode {
+            if PlatformCapabilities.supportsImmersiveSpaces {
                 Divider()
 
-                Button {
-                    windowModel.showVideo3DSettingsSheet = true
-                } label: {
-                    Label("Edit 3D Settings", systemImage: "slider.horizontal.3")
+                modeButton("3D", mode: .stereoscopic) {
+                    Task { await windowModel.enable3DMode() }
+                }
+
+                if windowModel.shouldUse3DMode {
+                    Divider()
+
+                    Button {
+                        windowModel.showVideo3DSettingsSheet = true
+                    } label: {
+                        Label("Edit 3D Settings", systemImage: "slider.horizontal.3")
+                    }
                 }
             }
 
             // Fake-3D conversion of a mono video: realtime inference or
             // pre-processed cached depth. Needs an AVFoundation-decodable
             // source — either already native, or reachable by swapping to the
-            // Stash server transcode (how WebM qualifies).
-            Divider()
+            // Stash server transcode (how WebM qualifies). The whole pipeline
+            // is the RAVEMedia stereo pump, which is visionOS-only.
+            if PlatformCapabilities.supportsStereoVideo {
+                Divider()
 
-            modeButton("Convert to 3D (Beta)", mode: .pseudo3D) {
-                windowModel.requestPseudo3D()
-            }
-            .disabled(!windowModel.pseudo3DAvailable)
+                modeButton("Convert to 3D (Beta)", mode: .pseudo3D) {
+                    windowModel.requestPseudo3D()
+                }
+                .disabled(!windowModel.pseudo3DAvailable)
 
-            // Background depth conversion for THIS video: status + cancel.
-            // Isolated in its own view so its observation of the (continuously
-            // updating) DepthConversionManager doesn't re-run this menu's body
-            // — that recreates the whole Menu and makes the open dropdown drop
-            // taps. The subview shows the phase *kind* only (no live %) so even
-            // its own updates don't reflow the menu items.
-            ConversionMenuStatus(videoIdentity: video.identity)
+                // Background depth conversion for THIS video: status + cancel.
+                // Isolated in its own view so its observation of the (continuously
+                // updating) DepthConversionManager doesn't re-run this menu's body
+                // — that recreates the whole Menu and makes the open dropdown drop
+                // taps. The subview shows the phase *kind* only (no live %) so even
+                // its own updates don't reflow the menu items.
+                ConversionMenuStatus(videoIdentity: video.identity)
 
-            // (No depth-strength presets: strength is fixed at the Subtle
-            // level — anything above it demands more vergence than comfortably
-            // fuses. Convergence stays adjustable in the Adjustments window.)
+                // (No depth-strength presets: strength is fixed at the Subtle
+                // level — anything above it demands more vergence than comfortably
+                // fuses. Convergence stays adjustable in the Adjustments window.)
 
-            // Depth-model pickers, one per pipeline, shown whenever fake-3D
-            // is available. Real-Time live-reloads a playing fake-3D video;
-            // Pre-Process picks the model future conversions (and the engage
-            // flow's cache lookup) use — changing it here means the next
-            // Convert to 3D offers a fresh conversion with that model.
-            if windowModel.pseudo3DAvailable {
-                depthModelMenu(
-                    "Depth Model (Real-Time)",
-                    preference: appModel.realtimeDepthModelName
-                ) { appModel.realtimeDepthModelName = $0 }
-                depthModelMenu(
-                    "Depth Model (Pre-Process)",
-                    preference: appModel.preprocessDepthModelName
-                ) { appModel.preprocessDepthModelName = $0 }
+                // Depth-model pickers, one per pipeline, shown whenever fake-3D
+                // is available. Real-Time live-reloads a playing fake-3D video;
+                // Pre-Process picks the model future conversions (and the engage
+                // flow's cache lookup) use — changing it here means the next
+                // Convert to 3D offers a fresh conversion with that model.
+                if windowModel.pseudo3DAvailable {
+                    depthModelMenu(
+                        "Depth Model (Real-Time)",
+                        preference: appModel.realtimeDepthModelName
+                    ) { appModel.realtimeDepthModelName = $0 }
+                    depthModelMenu(
+                        "Depth Model (Pre-Process)",
+                        preference: appModel.preprocessDepthModelName
+                    ) { appModel.preprocessDepthModelName = $0 }
+                }
             }
             }
             .onAppear { chromeMenu(opened: true) }
@@ -411,7 +428,7 @@ struct VideoOrnamentsView: View {
         // (with a tiny disclosure glyph) even in 2D. Borderless keeps it flat,
         // so the only highlight comes from the active-mode background above.
         .menuStyle(.button)
-        .buttonStyle(.borderless)
+        .buttonStyle(.raveChrome)
         .help("View Mode")
     }
 

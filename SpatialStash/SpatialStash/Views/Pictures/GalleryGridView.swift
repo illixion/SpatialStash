@@ -209,12 +209,11 @@ struct GalleryGridView: View {
             }
         }
         .onAppear {
-            if let windowScene = resolvedWindowScene {
-                windowScene.requestGeometryUpdate(.Vision(
-                    size: CGSize(width: 1200, height: 800),
-                    resizingRestrictions: .freeform
-                ))
-            }
+            WindowGeometry.request(
+                resolvedWindowScene,
+                size: CGSize(width: 1200, height: 800),
+                restriction: .freeform
+            )
         }
         .task {
             if appModel.galleryImages.isEmpty {

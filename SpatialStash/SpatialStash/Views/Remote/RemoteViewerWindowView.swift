@@ -20,8 +20,8 @@ struct RemoteViewerWindowView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(SceneDelegate.self) private var sceneDelegate: SceneDelegate?
     @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.openWindow) private var openWindow
-    @Environment(\.dismissWindow) private var dismissWindow
+    @OpenWindowProxy private var openWindow
+    @DismissWindowProxy private var dismissWindow
 
     @State private var viewerModel: RemoteViewerModel?
     @State private var showHistory = false

@@ -356,6 +356,9 @@ final class VideoWindowModel {
 
     /// Whether this window should render with the stereoscopic player.
     var shouldUse3DMode: Bool {
+        // Immersive MV-HEVC playback needs an ImmersiveSpace; on iOS a
+        // stereoscopic file plays flat (one eye), whatever it is tagged as.
+        guard PlatformCapabilities.supportsImmersiveSpaces else { return false }
         if stereoscopicOverride == false { return false }
         if stereoscopicOverride == true || video3DSettings != nil { return true }
         return video.isStereoscopic
@@ -694,7 +697,10 @@ final class VideoWindowModel {
     /// get it there. WebM lands in the second case: WebKit plays the original,
     /// and picking 3D re-routes playback through the HLS transcode.
     var pseudo3DAvailable: Bool {
-        playbackRenderer == .nativeMetal || canUseTranscodedStream
+        // The stereo pump renders a per-eye pair; there is nothing to show it
+        // on without a stereoscopic display.
+        guard PlatformCapabilities.supportsStereoVideo else { return false }
+        return playbackRenderer == .nativeMetal || canUseTranscodedStream
     }
 
     func forceWebKitPlayback() {

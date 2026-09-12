@@ -21,7 +21,7 @@ extension PhotoWindowModel {
     /// and would otherwise appear unexpectedly on device reboot, since
     /// restored windows start with `isSnapped == true`.
     func presentAutoRestorePrompt(immersive: Bool) {
-        guard !isWindowSnapped else { return }
+        guard PlatformCapabilities.supportsSpatial3D, !isWindowSnapped else { return }
 
         autoRestoreImmersive = immersive
         showAutoRestorePrompt = true
@@ -95,6 +95,8 @@ extension PhotoWindowModel {
     /// - Parameter generateImmediately: If true, RealityView will generate the 3D depth map
     ///   right after creating the component (used when the user explicitly taps "Generate 3D").
     func activate3DMode(generateImmediately: Bool = false, explicit: Bool = false) {
+        // No spatial-3D conversion off visionOS; a remembered 3D mode stays 2D.
+        guard PlatformCapabilities.supportsSpatial3D else { return }
         recordInteraction()
         // Auto paths never 3D animated content; an explicit user choice (the
         // pill / ornament) may, rendering the first frame in 3D.
@@ -513,6 +515,9 @@ extension PhotoWindowModel {
     ///   active Fully Immersive session without writing immersive as the
     ///   remembered viewing mode for every image they tap through.
     func switchToViewingMode(_ mode: ImagePresentationComponent.ViewingMode, trackChange: Bool = true) async {
+        // Only `.mono` exists off visionOS; every other mode needs the
+        // RealityKit conversion this platform doesn't have.
+        guard PlatformCapabilities.supportsSpatial3D || mode == .mono else { return }
         if isLoadingDetailImage {
             pendingViewingMode = mode
             desiredViewingMode = mode

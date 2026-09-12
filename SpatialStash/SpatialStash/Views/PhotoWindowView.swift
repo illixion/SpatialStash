@@ -22,8 +22,8 @@ struct PhotoWindowView: View {
     @State private var windowModel: PhotoWindowModel
     @Environment(AppModel.self) private var appModel
     @Environment(SceneDelegate.self) private var sceneDelegate: SceneDelegate?
-    @Environment(\.openWindow) private var openWindow
-    @Environment(\.dismissWindow) private var dismissWindow
+    @OpenWindowProxy private var openWindow
+    @DismissWindowProxy private var dismissWindow
 
     @State private var pendingPopOutImage: GalleryImage? = nil
     @State private var showDuplicateWindowAlert: Bool = false

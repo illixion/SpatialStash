@@ -569,9 +569,11 @@ struct RemoteTabView: View {
                 Slider(value: $editingConfig.delay, in: 3...120, step: 1)
             }
 
-            Picker("3D Mode", selection: $editingConfig.slideshow3DMode) {
-                ForEach(Slideshow3DMode.allCases) { mode in
-                    Text(mode.label).tag(mode)
+            if PlatformCapabilities.supportsSpatial3D {
+                Picker("3D Mode", selection: $editingConfig.slideshow3DMode) {
+                    ForEach(Slideshow3DMode.allCases) { mode in
+                        Text(mode.label).tag(mode)
+                    }
                 }
             }
 

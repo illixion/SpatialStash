@@ -11,6 +11,7 @@
  The scrubber shows the buffered range and A/B loop markers.
  */
 
+import RAVEUI
 import SwiftUI
 
 struct VideoControlBar: View {
@@ -59,7 +60,7 @@ struct VideoControlBar: View {
                 .font(.title2)
                 .frame(width: 28)
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(.raveChrome)
         .help(windowModel.isPaused ? "Play" : "Pause")
     }
 
@@ -142,7 +143,7 @@ struct VideoControlBar: View {
                 .foregroundStyle(windowModel.loopController.isEngaged ? Color.accentColor : .primary)
                 .frame(width: 28)
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(.raveChrome)
         .help(windowModel.loopController.helpText)
     }
 
@@ -154,7 +155,7 @@ struct VideoControlBar: View {
                 .font(.title3)
                 .foregroundStyle(.secondary)
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(.raveChrome)
         .help("Clear A-B Loop")
     }
 
@@ -168,7 +169,7 @@ struct VideoControlBar: View {
                 .font(.title3)
                 .frame(width: 28)
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(.raveChrome)
         .help(windowModel.isMuted ? "Unmute" : "Mute")
     }
 

@@ -169,6 +169,7 @@ struct WelcomeSampleImage: View {
             case .unavailable:
                 MissingSampleCard()
             default:
+                #if os(visionOS)
                 if model.isShowingRealityKit {
                     spatialImage
                 } else if let image = model.flatImage {
@@ -176,11 +177,23 @@ struct WelcomeSampleImage: View {
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                 }
+                #else
+                // No RealityKit path on iOS — the sample stays flat; the
+                // Convert control never enters `.converting`/`.ready` (see
+                // WelcomeSampleControls) so `isShowingRealityKit` never asks
+                // for it anyway.
+                if let image = model.flatImage {
+                    Image(uiImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                }
+                #endif
             }
         }
         .task { await model.loadFlatImage() }
     }
 
+    #if os(visionOS)
     private var spatialImage: some View {
         GeometryReader3D { geometry in
             RealityView { content in
@@ -201,6 +214,7 @@ struct WelcomeSampleImage: View {
             }
         }
     }
+    #endif
 }
 
 // MARK: - Control
@@ -216,15 +230,21 @@ struct WelcomeSampleControls: View {
                 EmptyView()
 
             case .flat:
-                Button {
-                    model.beginConversion()
-                } label: {
-                    Label("Convert to 3D", systemImage: "cube.transparent")
-                        .padding(.horizontal, 8)
+                if PlatformCapabilities.supportsSpatial3D {
+                    Button {
+                        model.beginConversion()
+                    } label: {
+                        Label("Convert to 3D", systemImage: "cube.transparent")
+                            .padding(.horizontal, 8)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .accessibilityIdentifier(A11y.Welcome.sampleConvert)
+                } else {
+                    Text("Spatial 3D conversion is available on Apple Vision Pro.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .accessibilityIdentifier(A11y.Welcome.sampleConvert)
 
             case .converting:
                 HStack(spacing: 12) {

@@ -16,6 +16,8 @@
 import AppIntents
 import RAVEUI
 
+#if os(visionOS)
+
 // A standalone conformer, not an extension on SpatialStashApp: the App
 // protocol is MainActor-isolated and cannot satisfy this nonisolated protocol
 // under Swift 6.
@@ -40,3 +42,5 @@ struct SpatialStashShortcuts: AppShortcutsProvider {
         )
     }
 }
+
+#endif

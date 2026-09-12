@@ -6,7 +6,8 @@
 //  unless HYPNOS_PRIVATE_API is defined.
 //
 
-#if HYPNOS_PRIVATE_API
+#if HYPNOS_PRIVATE_API && os(visionOS)
+// PrivateSpatial3DTuningStore itself is visionOS-only (see PrivateSpatial3DTuning.swift).
 
 import SwiftUI
 

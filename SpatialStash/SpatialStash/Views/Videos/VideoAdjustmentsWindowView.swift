@@ -16,7 +16,7 @@ import SwiftUI
 
 struct VideoAdjustmentsWindowView: View {
     @Environment(AppModel.self) private var appModel
-    @Environment(\.dismissWindow) private var dismissWindow
+    @DismissWindowProxy private var dismissWindow
 
     var body: some View {
         Group {

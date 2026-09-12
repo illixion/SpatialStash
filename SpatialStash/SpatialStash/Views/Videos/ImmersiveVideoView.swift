@@ -12,6 +12,8 @@ import os
 import RealityKit
 import SwiftUI
 
+#if os(visionOS)
+
 struct ImmersiveVideoView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.dismissImmersiveSpace) private var dismissImmersiveSpace
@@ -304,3 +306,5 @@ private struct VideoInfo {
     let projectionType: CMProjectionType?
     let horizontalFieldOfView: Float?
 }
+
+#endif

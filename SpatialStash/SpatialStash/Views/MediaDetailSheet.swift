@@ -47,7 +47,7 @@ struct MediaDetailSheet: View {
     let mediaType: MediaDetailType
     @Environment(AppModel.self) private var appModel
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.openWindow) private var openWindow
+    @OpenWindowProxy private var openWindow
 
     @State private var selectedTab = 0
     @State private var isLoading = true

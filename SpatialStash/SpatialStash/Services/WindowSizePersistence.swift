@@ -113,9 +113,7 @@ final class WindowSizePersistence {
             defer { self.suppressWriteback = false }
             for attempt in 0..<8 {
                 if let scene = self.windowScene?() {
-                    UIView.performWithoutAnimation {
-                        scene.requestGeometryUpdate(.Vision(size: restored))
-                    }
+                    WindowGeometry.request(scene, size: restored)
                 }
                 // Give the OS time to resolve (or ignore) the request, then
                 // check the live size reported by the host's geometry observer.

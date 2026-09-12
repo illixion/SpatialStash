@@ -7,6 +7,8 @@
 import RAVEUI
 import SwiftUI
 
+#if os(visionOS)
+
 struct TabBarOrnament: View {
     @Environment(AppModel.self) private var appModel
     @Environment(MainWindowModel.self) private var windowModel
@@ -209,3 +211,5 @@ struct TabBarOrnament: View {
         }
     }
 }
+
+#endif

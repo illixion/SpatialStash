@@ -21,8 +21,8 @@ struct VideoWindowView: View {
     let windowValue: VideoWindowValue
     @State private var windowModel: VideoWindowModel
     @Environment(AppModel.self) private var appModel
-    @Environment(\.openWindow) private var openWindow
-    @Environment(\.dismissWindow) private var dismissWindow
+    @OpenWindowProxy private var openWindow
+    @DismissWindowProxy private var dismissWindow
     @Environment(\.scenePhase) private var scenePhase
     /// THIS window's scene (used for aspect-ratio locking). Reading it from the
     /// environment avoids the multi-window bug of resizing an arbitrary
@@ -460,11 +460,15 @@ struct VideoWindowView: View {
     /// Lock the window's resize aspect ratio to the video's native dimensions
     /// (reported by the HTML video element's loadedmetadata event).
     private func lockWindowToVideoAspectRatio(videoSize: CGSize) {
-        guard videoSize.width > 0, videoSize.height > 0,
-              let windowScene = resolvedWindowScene else { return }
+        guard videoSize.width > 0, videoSize.height > 0 else { return }
 
         let videoAspectRatio = videoSize.width / videoSize.height
         windowModel.videoAspectRatio = videoAspectRatio
+
+        // The letterbox above is all a fixed-size window needs; the rest of
+        // this method resizes the window to the video, which only visionOS allows.
+        guard PlatformCapabilities.supportsWindowResizing,
+              let windowScene = resolvedWindowScene else { return }
 
         // Fit the video area into a bounded box. The default box is square, so
         // the LONGER side is what gets capped: fixing width at 1200 meant a tall
@@ -500,9 +504,7 @@ struct VideoWindowView: View {
         let windowSize = CGSize(width: videoWidth, height: totalHeight)
 
         AppLogger.videoWindow.info("Aspect lock: video \(Int(videoSize.width))x\(Int(videoSize.height)), requesting window \(Int(windowSize.width))x\(Int(windowSize.height)) (pad \(Int(self.ornamentBottomPadding)))")
-        UIView.performWithoutAnimation {
-            windowScene.requestGeometryUpdate(.Vision(size: windowSize, resizingRestrictions: .uniform))
-        }
+        WindowGeometry.request(windowScene, size: windowSize, restriction: .uniform)
 
         // visionOS may clamp the granted size — portrait videos hit the
         // platform's max window height long before landscape ones hit the
@@ -529,15 +531,12 @@ struct VideoWindowView: View {
             AppLogger.videoWindow.info(
                 "Aspect lock clamped: requested \(Int(windowSize.width))x\(Int(windowSize.height)), granted \(Int(granted.width))x\(Int(granted.height)); re-locking to \(Int(corrected.width))x\(Int(corrected.height))"
             )
-            UIView.performWithoutAnimation {
-                scene.requestGeometryUpdate(.Vision(size: corrected, resizingRestrictions: .uniform))
-            }
+            WindowGeometry.request(scene, size: corrected, restriction: .uniform)
         }
     }
 
     private func restoreWindowResizing() {
-        guard let windowScene = resolvedWindowScene else { return }
-        windowScene.requestGeometryUpdate(.Vision(resizingRestrictions: .freeform))
+        WindowGeometry.request(resolvedWindowScene, restriction: .freeform, animated: true)
     }
 
     // MARK: - Live Size Reporting

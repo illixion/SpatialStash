@@ -7,7 +7,7 @@
 import Foundation
 import RAVEUI
 
-enum Tab: String, CaseIterable, RAVETabItem {
+enum Tab: String, CaseIterable {
     case pictures = "Pictures"
     case videos = "Videos"
     case albums = "Albums"
@@ -38,3 +38,19 @@ enum Tab: String, CaseIterable, RAVETabItem {
         }
     }
 }
+
+// `RAVETabItem` (RAVEUI's ornament tab bar protocol) is visionOS-only.
+#if os(visionOS)
+extension Tab: RAVETabItem {}
+#else
+// iOS drives its own (non-ornament) tab bar off the same `Tab` cases; it
+// needs `Identifiable` and a display `title`, which RAVETabItem otherwise
+// would have supplied.
+extension Tab: Identifiable {
+    var id: Self { self }
+}
+
+extension Tab {
+    var title: String { rawValue }
+}
+#endif

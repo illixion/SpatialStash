@@ -13,7 +13,7 @@ struct SharedPhotoWindowView: View {
     let item: SharedMediaItem
     @State private var windowModel: PhotoWindowModel
     @Environment(AppModel.self) private var appModel
-    @Environment(\.openWindow) private var openWindow
+    @OpenWindowProxy private var openWindow
 
     @State private var isSaving = false
     @State private var isSaved = false
