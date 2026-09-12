@@ -86,7 +86,7 @@ struct SettingsBackup: Codable {
     var globalPseudo3DSettings: Data?
     var cacheSizePreset: String?
 
-    #if HYPNOS_PRIVATE_API
+    #if HYPNOS_PRIVATE_API && os(visionOS)
     // GitHub-only private Spatial 3D tuning (undocumented
     // ImagePresentationComponent knobs — see PrivateSpatial3DTuning.swift).
     // Guarded so an App Store build's backups carry no trace of it.
