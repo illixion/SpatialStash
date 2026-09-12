@@ -161,7 +161,6 @@ struct Spatial3DImmersiveView: View {
     private func applyImmersiveViewingMode(to entity: Entity) {
         guard var ipc = entity.components[ImagePresentationComponent.self] else { return }
         ipc.desiredViewingMode = .spatial3DImmersive
-        ipc.applyPrivateSpatial3DTuningIfAvailable()
         entity.components.set(ipc)
     }
 
@@ -206,7 +205,6 @@ struct Spatial3DImmersiveView: View {
             }
             var ipc = ImagePresentationComponent(spatial3DImage: spatial3DImage)
             ipc.desiredViewingMode = .spatial3DImmersive
-            ipc.applyPrivateSpatial3DTuningIfAvailable()
             let entity = Entity()
             entity.components.set(ipc)
             try await spatial3DImage.generate()

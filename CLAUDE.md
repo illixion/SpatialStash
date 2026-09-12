@@ -63,8 +63,7 @@ How the port is structured (all in `Support/` unless noted):
   `onPlaybackError` so callers fall back to the flat player),
   `StereoscopicVideoView` (stub offers "Play as 2D"), `SlideshowSpatial3DLayer`
   (empty), `ImmersiveVideoView`, `Spatial3DImmersiveView`, `ManagedWindows`,
-  `TabBarOrnament`, `SpatialStashAppIntents`, the private-API tuning files
-  (`HYPNOS_PRIVATE_API && os(visionOS)`), and `LiftHoverEffect`/
+  `TabBarOrnament`, `SpatialStashAppIntents`, and `LiftHoverEffect`/
   `ScaleHoverEffect` (degrade to the system pointer hover).
 - **`Views/MainTabCatalog.swift`** — which tabs are visible and what the
   slideshow button starts, shared by `TabBarOrnament` (visionOS) and

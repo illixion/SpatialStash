@@ -8,7 +8,7 @@
  `#if HYPNOS_APPSTORE`. On `main`, where that condition is never defined,
  this whole block is skipped before the compiler ever tries to resolve the
  import, exactly like the existing `HYPNOS_PRIVATE_API` guards in
- `PrivateSpatial3DTuning.swift` — that's what keeps `main` buildable with
+ `PrivateSpatial3DiOS.swift` — that's what keeps `main` buildable with
  no access to the private repo at all.
  */
 

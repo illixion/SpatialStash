@@ -416,9 +416,7 @@ struct SettingsTabView: View {
                     }
                 }
 
-                #if HYPNOS_PRIVATE_API && os(visionOS)
-                PrivateSpatial3DTuningSection()
-                #elseif HYPNOS_PRIVATE_API
+                #if HYPNOS_PRIVATE_API && !os(visionOS)
                 PrivateSpatial3DiOSProbeSection()
                 #endif
 
