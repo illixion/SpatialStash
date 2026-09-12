@@ -56,7 +56,7 @@ struct VideoOrnamentsView: View {
                 Image(systemName: "square.grid.2x2")
                     .font(.title3)
             }
-            .buttonStyle(.raveChrome)
+            .raveChromeButtonStyle()
             .help(windowModel.wasPushed ? "Videos" : "Show Gallery")
 
             Divider()
@@ -69,7 +69,7 @@ struct VideoOrnamentsView: View {
                 Image(systemName: "chevron.left")
                     .font(.title3)
             }
-            .buttonStyle(.raveChrome)
+            .raveChromeButtonStyle()
             .disabled(!windowModel.hasPreviousVideo)
 
             // Video counter
@@ -85,7 +85,7 @@ struct VideoOrnamentsView: View {
                 Image(systemName: "chevron.right")
                     .font(.title3)
             }
-            .buttonStyle(.raveChrome)
+            .raveChromeButtonStyle()
             .disabled(!windowModel.hasNextVideo)
 
             // View mode toggle (2D/3D)
@@ -176,7 +176,7 @@ struct VideoOrnamentsView: View {
                 .font(.title3)
                 .foregroundColor(video.rating100 != nil ? .yellow : nil)
         }
-        .buttonStyle(.raveChrome)
+        .raveChromeButtonStyle()
         .help("Info")
         .sheet(isPresented: $windowModel.showMediaInfo) {
             MediaDetailSheet(
@@ -220,7 +220,7 @@ struct VideoOrnamentsView: View {
             }
             .font(.title3)
         }
-        .buttonStyle(.raveChrome)
+        .raveChromeButtonStyle()
         .disabled(windowModel.isPreparingShare)
         .help("Share")
         .sheet(isPresented: Binding(
@@ -295,7 +295,7 @@ struct VideoOrnamentsView: View {
                 .background(moreMenuHighlighted ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
         }
         .menuStyle(.button)
-        .buttonStyle(.raveChrome)
+        .raveChromeButtonStyle()
         .help("More")
     }
 
@@ -428,7 +428,7 @@ struct VideoOrnamentsView: View {
         // (with a tiny disclosure glyph) even in 2D. Borderless keeps it flat,
         // so the only highlight comes from the active-mode background above.
         .menuStyle(.button)
-        .buttonStyle(.raveChrome)
+        .raveChromeButtonStyle()
         .help("View Mode")
     }
 

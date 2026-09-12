@@ -41,7 +41,7 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
                 Image(systemName: "square.grid.2x2")
                     .font(.title3)
             }
-            .buttonStyle(.raveChrome)
+            .raveChromeButtonStyle()
             .help(context == .pushedFromGallery ? "Pictures" : "Show Gallery")
 
             Divider()
@@ -86,7 +86,7 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
             // dedicated "More" menu would be a single-item drop-down.
             extraMenuItems()
                 .labelStyle(.iconOnly)
-                .buttonStyle(.raveChrome)
+                .raveChromeButtonStyle()
                 .font(.title3)
 
             // Resolution indicator: in 3D mode controls the spatial 3D source
@@ -149,7 +149,7 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
             Image(systemName: "chevron.left")
                 .font(.title3)
         }
-        .buttonStyle(.raveChrome)
+        .raveChromeButtonStyle()
         .disabled(!windowModel.hasPreviousGalleryImage || windowModel.controlsLocked)
 
         if windowModel.controlsLocked {
@@ -178,7 +178,7 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
             Image(systemName: "chevron.right")
                 .font(.title3)
         }
-        .buttonStyle(.raveChrome)
+        .raveChromeButtonStyle()
         .disabled(!windowModel.hasNextGalleryImage || windowModel.controlsLocked)
     }
 
@@ -191,7 +191,7 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
             Image(systemName: "play.fill")
                 .font(.title3)
         }
-        .buttonStyle(.raveChrome)
+        .raveChromeButtonStyle()
         .disabled(windowModel.controlsLocked)
         .help("Slideshow")
     }
@@ -291,7 +291,7 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
             .background(isAnyAlternateModeActive ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
         }
         .menuStyle(.button)
-        .buttonStyle(.raveChrome)
+        .raveChromeButtonStyle()
         // Enabled for animated images too: 3D / Immersive 3D convert the first
         // frame (the same explicit path the auto-restore pill uses), and 2D
         // returns to the animation. Diorama stays disabled for animated via its
@@ -365,7 +365,7 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
                 .foregroundColor(activeOverride != nil ? .accentColor : .secondary)
         }
         .menuStyle(.button)
-        .buttonStyle(.raveChrome)
+        .raveChromeButtonStyle()
         .disabled(windowModel.controlsLocked)
         .help(activeOverride != nil ? "\(helpPrefix) Override: \(resolutionOverrideLabel)" : helpPrefix)
     }
@@ -387,7 +387,7 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
                 .font(.title3)
                 .foregroundColor(windowModel.image.rating100 != nil ? .yellow : nil)
         }
-        .buttonStyle(.raveChrome)
+        .raveChromeButtonStyle()
         .disabled(windowModel.controlsLocked)
         .help("Info")
         .sheet(isPresented: Bindable(windowModel).showMediaInfoPopover) {
@@ -426,7 +426,7 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
                 .padding(6)
                 .background(adjustmentsHighlighted ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
         }
-        .buttonStyle(.raveChrome)
+        .raveChromeButtonStyle()
         .help("Adjustments")
         .popover(isPresented: Bindable(windowModel).showAdjustmentsPopover) {
             VisualAdjustmentsPopover(
@@ -533,7 +533,7 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
             }
             .font(.title3)
         }
-        .buttonStyle(.raveChrome)
+        .raveChromeButtonStyle()
         .disabled(windowModel.isPreparingShare || windowModel.controlsLocked)
         .help("Share")
         .sheet(isPresented: Binding(

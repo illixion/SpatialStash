@@ -31,7 +31,7 @@ struct RemoteViewerOrnamentView: View {
                 Image(systemName: "square.grid.2x2")
                     .font(.title3)
             }
-            .buttonStyle(.raveChrome)
+            .raveChromeButtonStyle()
             .help("Open Gallery")
 
             // History
@@ -43,7 +43,7 @@ struct RemoteViewerOrnamentView: View {
                     .padding(6)
                     .background(showHistory ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
             }
-            .buttonStyle(.raveChrome)
+            .raveChromeButtonStyle()
             .help("View History")
 
             Divider()
@@ -56,7 +56,7 @@ struct RemoteViewerOrnamentView: View {
                 Image(systemName: "chevron.left")
                     .font(.title3)
             }
-            .buttonStyle(.raveChrome)
+            .raveChromeButtonStyle()
             .disabled(model.postHistory.count < 2)
             .help("Previous Image")
 
@@ -67,7 +67,7 @@ struct RemoteViewerOrnamentView: View {
                 Image(systemName: "chevron.right")
                     .font(.title3)
             }
-            .buttonStyle(.raveChrome)
+            .raveChromeButtonStyle()
             .help("Next Image")
 
             Divider()
@@ -81,7 +81,7 @@ struct RemoteViewerOrnamentView: View {
                     Image(systemName: "square.and.arrow.down")
                         .font(.title3)
                 }
-                .buttonStyle(.raveChrome)
+                .raveChromeButtonStyle()
                 .disabled(model.saveablePost == nil)
                 .help("Save Image")
 
@@ -92,7 +92,7 @@ struct RemoteViewerOrnamentView: View {
                     Image(systemName: "arrow.trianglehead.2.clockwise.rotate.90")
                         .font(.title3)
                 }
-                .buttonStyle(.raveChrome)
+                .raveChromeButtonStyle()
                 .help("Reshuffle")
 
                 // Tag List Selector
@@ -110,7 +110,7 @@ struct RemoteViewerOrnamentView: View {
                         .padding(6)
                         .background(model.enableDisplaySync ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
                 }
-                .buttonStyle(.raveChrome)
+                .raveChromeButtonStyle()
                 .help(model.enableDisplaySync ? "Display Sync On" : "Display Sync Off")
             }
 
@@ -134,7 +134,7 @@ struct RemoteViewerOrnamentView: View {
                         .font(.title3)
                         .foregroundStyle(.red)
                 }
-                .buttonStyle(.raveChrome)
+                .raveChromeButtonStyle()
                 .disabled(model.currentPost == nil)
                 .help("Block Post")
             }
@@ -200,7 +200,7 @@ struct RemoteViewerOrnamentView: View {
             }
         }
         .menuStyle(.button)
-        .buttonStyle(.raveChrome)
+        .raveChromeButtonStyle()
         .disabled(tagListManager.tagLists.count <= 1)
         .help("Tag List")
     }
@@ -257,7 +257,7 @@ struct RemoteViewerOrnamentView: View {
             }
         }
         .menuStyle(.button)
-        .buttonStyle(.raveChrome)
+        .raveChromeButtonStyle()
         .help("Mod Tags")
         .popover(isPresented: $showAddPresetPopover) {
             addPresetPopover
@@ -338,7 +338,7 @@ struct RemoteViewerOrnamentView: View {
                     in: .rect(cornerRadius: 8)
                 )
         }
-        .buttonStyle(.raveChrome)
+        .raveChromeButtonStyle()
         .help("Visual Adjustments")
         .popover(isPresented: $model.showAdjustmentsPopover) {
             VisualAdjustmentsPopover(
@@ -375,7 +375,7 @@ struct RemoteViewerOrnamentView: View {
                 .background(model.config.slideshow3DMode != .off ? .white.opacity(0.3) : .clear, in: .rect(cornerRadius: 8))
         }
         .menuStyle(.button)
-        .buttonStyle(.raveChrome)
+        .raveChromeButtonStyle()
         .help("Slideshow 3D Mode")
     }
 
@@ -421,7 +421,7 @@ struct RemoteViewerOrnamentView: View {
             }
         }
         .menuStyle(.button)
-        .buttonStyle(.raveChrome)
+        .raveChromeButtonStyle()
         .help(is3D ? "Max Image Resolution (3D)" : "Max Image Resolution (2D)")
     }
 

@@ -28,7 +28,7 @@ struct WebPageOrnamentView: View {
                 Image(systemName: "square.grid.2x2")
                     .font(.title3)
             }
-            .buttonStyle(.raveChrome)
+            .raveChromeButtonStyle()
             .help("Open Gallery")
 
             Divider()
@@ -44,7 +44,7 @@ struct WebPageOrnamentView: View {
                     Image(systemName: "chevron.left")
                         .font(.title3)
                 }
-                .buttonStyle(.raveChrome)
+                .raveChromeButtonStyle()
                 .help("Back")
             }
 
@@ -55,7 +55,7 @@ struct WebPageOrnamentView: View {
                     Image(systemName: "chevron.right")
                         .font(.title3)
                 }
-                .buttonStyle(.raveChrome)
+                .raveChromeButtonStyle()
                 .help("Forward")
             }
 
@@ -69,7 +69,7 @@ struct WebPageOrnamentView: View {
                 Image(systemName: model.isLoading ? "xmark" : "arrow.clockwise")
                     .font(.title3)
             }
-            .buttonStyle(.raveChrome)
+            .raveChromeButtonStyle()
             .help(model.isLoading ? "Stop Loading" : "Reload")
 
             Button {
@@ -78,7 +78,7 @@ struct WebPageOrnamentView: View {
                 Image(systemName: "house")
                     .font(.title3)
             }
-            .buttonStyle(.raveChrome)
+            .raveChromeButtonStyle()
             .disabled(model.config.resolvedWebPageURL == nil)
             .help("Back to the configured page")
 
@@ -106,7 +106,7 @@ struct WebPageOrnamentView: View {
                 Image(systemName: "eye.slash")
                     .font(.title3)
             }
-            .buttonStyle(.raveChrome)
+            .raveChromeButtonStyle()
             .help("Hide Controls (blocks page interaction)")
         }
         .padding(.horizontal, RAVEChromeMetrics.horizontalPadding)

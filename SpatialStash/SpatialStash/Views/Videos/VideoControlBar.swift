@@ -60,7 +60,7 @@ struct VideoControlBar: View {
                 .font(.title2)
                 .frame(width: 28)
         }
-        .buttonStyle(.raveChrome)
+        .raveChromeButtonStyle()
         .help(windowModel.isPaused ? "Play" : "Pause")
     }
 
@@ -143,7 +143,7 @@ struct VideoControlBar: View {
                 .foregroundStyle(windowModel.loopController.isEngaged ? Color.accentColor : .primary)
                 .frame(width: 28)
         }
-        .buttonStyle(.raveChrome)
+        .raveChromeButtonStyle()
         .help(windowModel.loopController.helpText)
     }
 
@@ -155,7 +155,7 @@ struct VideoControlBar: View {
                 .font(.title3)
                 .foregroundStyle(.secondary)
         }
-        .buttonStyle(.raveChrome)
+        .raveChromeButtonStyle()
         .help("Clear A-B Loop")
     }
 
@@ -169,7 +169,7 @@ struct VideoControlBar: View {
                 .font(.title3)
                 .frame(width: 28)
         }
-        .buttonStyle(.raveChrome)
+        .raveChromeButtonStyle()
         .help(windowModel.isMuted ? "Unmute" : "Mute")
     }
 
