@@ -420,6 +420,12 @@ struct SettingsTabView: View {
                 PrivateSpatial3DiOSProbeSection()
                 #endif
 
+                // On-device numbers for the lookahead realtime fake-3D design
+                // (model budget, live refinement cost, decode-ahead depth).
+                if PlatformCapabilities.supportsStereoVideo {
+                    DepthPipelineSpikeSection()
+                }
+
                 Section("About") {
                     HStack {
                         Text("App Name")
