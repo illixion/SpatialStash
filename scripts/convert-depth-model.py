@@ -10,7 +10,7 @@
 # ]
 # ///
 """
-Convert Depth Anything V2 (Small / Base / Large) to Core ML for Spatial Stash,
+Convert Depth Anything V2 (Small / Base / Large) to Core ML for Hypnos,
 matching Apple's official Small model I/O so CoreMLDepthProvider uses the
 result unchanged.
 

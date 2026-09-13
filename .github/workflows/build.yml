@@ -22,7 +22,7 @@ jobs:
         run: sudo xcode-select -s /Applications/Xcode_26.4.app/Contents/Developer
 
       # RAVESDK and RAVEEngine are local Swift package path references
-      # (../../RAVESDK, ../../RAVEEngine relative to SpatialStash.xcodeproj), so
+      # (../../RAVESDK, ../../RAVEEngine relative to Hypnos.xcodeproj), so
       # they have to land one level ABOVE $GITHUB_WORKSPACE. That is why this is
       # a plain clone rather than actions/checkout: that action rejects any
       # `path:` resolving outside the workspace. Without this step the build
@@ -48,8 +48,8 @@ jobs:
       - name: Build for visionOS
         run: |
           xcodebuild -quiet \
-            -project SpatialStash/SpatialStash.xcodeproj \
-            -scheme SpatialStash \
+            -project Hypnos/Hypnos.xcodeproj \
+            -scheme Hypnos \
             -destination 'generic/platform=visionOS' \
             -derivedDataPath build/DerivedData \
             CODE_SIGN_IDENTITY="-" \
@@ -64,13 +64,13 @@ jobs:
           APP_PATH=$(find build/DerivedData -name '*.app' -type d | head -1)
           mkdir -p build/Payload
           cp -R "$APP_PATH" build/Payload/
-          cd build && zip -qr SpatialStash.ipa Payload
+          cd build && zip -qr Hypnos.ipa Payload
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SpatialStash
-          path: build/SpatialStash.ipa
+          name: Hypnos
+          path: build/Hypnos.ipa
 
       - name: Create a version string
         id: version
@@ -88,8 +88,8 @@ jobs:
       - name: Rename IPA with version
         id: ipa
         run: |
-          IPA_NAME="SpatialStash-${{ steps.version.outputs.version }}-unsigned.ipa"
-          cp build/SpatialStash.ipa "$IPA_NAME"
+          IPA_NAME="Hypnos-${{ steps.version.outputs.version }}-unsigned.ipa"
+          cp build/Hypnos.ipa "$IPA_NAME"
           echo "ipa_file=$IPA_NAME" >> $GITHUB_OUTPUT
 
       - name: Generate changelog

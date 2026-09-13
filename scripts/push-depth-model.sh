@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# Push a depth model into Spatial Stash's Documents folder on the device, where
+# Push a depth model into Hypnos's Documents folder on the device, where
 # CoreMLDepthProvider loads it from (see DepthProvider.findModelURL). This keeps
 # the ~186MB model out of the app bundle (fast builds) and lets you swap models
 # without rebuilding — push a different .mlmodelc/.mlpackage and relaunch.
@@ -24,7 +24,7 @@ if [[ -z "$MODEL_SRC" || ! -e "$MODEL_SRC" ]]; then
     exit 1
 fi
 
-BUNDLE_ID="${BUNDLE_ID:-com.illixion.spatialstash}"
+BUNDLE_ID="${BUNDLE_ID:-com.illixion.hypnos}"
 DEVICE_NAME="${DEVICE_NAME:-AVP}"
 [[ -f "$CONF_FILE" ]] && source "$CONF_FILE"
 
@@ -44,4 +44,4 @@ xcrun devicectl device copy to \
     --source "$(cd "$(dirname "$MODEL_SRC")" && pwd)/$BASENAME" \
     --destination "Documents/$BASENAME"
 
-echo "Done. Relaunch Spatial Stash to load it."
+echo "Done. Relaunch Hypnos to load it."

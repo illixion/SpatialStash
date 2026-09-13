@@ -29,11 +29,11 @@ lifecycle — pause/resume offscreen — the same reason the video path uses
 
 ```sh
 ./build.sh
-cp build/jxl_decoder.js ../../SpatialStash/SpatialStash/Resources/JXL/jxl_decoder.js
+cp build/jxl_decoder.js ../../Hypnos/Hypnos/Resources/JXL/jxl_decoder.js
 ```
 
 The two shipped runtime files live in
-`SpatialStash/SpatialStash/Resources/JXL/`:
+`Hypnos/Hypnos/Resources/JXL/`:
 
 - `jxl_decoder.js` — the emscripten module (build output; ~888 KB, wasm
   embedded). Loaded via a `data:` URL `<script src>` because the minified

@@ -10,7 +10,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$SCRIPT_DIR/.."
-XCCONFIG="$REPO_ROOT/SpatialStash/BuildInfo.xcconfig"
+XCCONFIG="$REPO_ROOT/Hypnos/BuildInfo.xcconfig"
 
 if [ $# -ge 1 ]; then
     HASH="$1"

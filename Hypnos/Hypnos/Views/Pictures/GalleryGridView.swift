@@ -1,0 +1,354 @@
+/*
+ Hypnos - Gallery Grid View
+
+ LazyVGrid-based gallery view with lazy loading for thumbnails.
+ Supports multi-select mode for bulk operations.
+ */
+
+import Photos
+import SwiftUI
+import UIKit
+
+struct GalleryGridView: View {
+    @Environment(AppModel.self) private var appModel
+    @Environment(SceneDelegate.self) private var sceneDelegate: SceneDelegate?
+    var onImageSelected: ((GalleryImage) -> Void)? = nil
+
+    @State private var showBulkDeleteConfirmation = false
+    @State private var quickLookImage: GalleryImage?
+    /// Snapshot of the source cell's loaded thumbnail at long-press
+    /// time. Seeds the QL view's initial paint so we never show the
+    /// gray loading state during the pop animation.
+    @State private var quickLookSeedImage: UIImage?
+    @State private var cellFrames: [UUID: CGRect] = [:]
+    /// Re-read on appear and whenever the app returns to the foreground: the
+    /// user may have changed the permission in the Settings app, and PhotoKit
+    /// publishes no notification for that.
+    @State private var photosStatus: PHAuthorizationStatus = PhotosAuthorization.status
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.openURL) private var openURL
+    private let gallerySpace = "gallery"
+
+    private let gridSpacing: CGFloat = 16
+    /// Preferred (and maximum) thumbnail edge. Wide windows keep cells at
+    /// this size and grow the gaps; narrow windows shrink below it instead of
+    /// dropping a column.
+    private let preferredCellSize: CGFloat = 200
+    /// Never lay out fewer than this many columns — once the window is too
+    /// narrow to fit them at `preferredCellSize`, thumbnails shrink to fit.
+    private let minColumns = 4
+
+    /// Column layout plus the cell edge. Unlike the video/local grids, image
+    /// cells are a fixed square *centered* in the column and capped at
+    /// `preferredCellSize`, so wide windows grow the inter-cell gaps; the cap is
+    /// applied here on top of the shared column resolution.
+    private func gridLayout(forWidth width: CGFloat) -> (columns: [GridItem], cellSize: CGFloat) {
+        let layout = GridColumnLayout.resolve(width: width,
+                                              preferredCellSize: preferredCellSize,
+                                              minColumns: minColumns,
+                                              spacing: gridSpacing)
+        return (layout.columns, min(preferredCellSize, layout.columnWidth))
+    }
+
+    var body: some View {
+        content
+            .onAppear { photosStatus = PhotosAuthorization.status }
+            .onChange(of: scenePhase) { _, phase in
+                guard phase == .active else { return }
+                let latest = PhotosAuthorization.status
+                guard latest != photosStatus else { return }
+                photosStatus = latest
+                // A grant made in the Settings app needs the source rebuilt.
+                Task { await appModel.requestPhotosAccessAndReload() }
+            }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        Group {
+            if shouldShowLibraryState {
+                PhotoLibraryStateView(
+                    kind: .photos,
+                    status: photosStatus,
+                    filterActive: appModel.currentFilter.hasActivePhotoLibraryFilters,
+                    onClearFilters: {
+                        appModel.currentFilter.clearPhotoLibraryFilters()
+                        Task { await appModel.loadInitialGallery() }
+                    },
+                    indexingMessage: PhotosLibraryIndexer.shared.blockingMessage
+                ) {
+                    Task {
+                        await appModel.requestPhotosAccessAndReload()
+                        photosStatus = PhotosAuthorization.status
+                    }
+                }
+            } else if appModel.galleryImages.isEmpty && appModel.isLoadingGallery {
+                // Loading state
+                VStack(spacing: 20) {
+                    ProgressView()
+                        .scaleEffect(2)
+                    Text("Loading images...")
+                        .font(.title2)
+                        .foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if appModel.galleryImages.isEmpty {
+                MediaLibraryMessageView(
+                    icon: "photo.on.rectangle.angled",
+                    title: "No Images Available",
+                    message: "This library has nothing to show right now."
+                ) {
+                    LibrarySafetyNetView()
+                }
+            } else {
+                // Gallery grid
+                GeometryReader { geo in
+                    let layout = gridLayout(forWidth: geo.size.width)
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            LazyVGrid(columns: layout.columns, spacing: gridSpacing) {
+                                ForEach(appModel.galleryImages) { image in
+                                    thumbnailCell(for: image, cellSize: layout.cellSize)
+                                        .id(image.id)
+                                        .onAppear {
+                                            if image == appModel.galleryImages.last && appModel.hasMorePages {
+                                                Task {
+                                                    await appModel.loadNextPage()
+                                                }
+                                            }
+                                        }
+                                }
+
+                                if appModel.isLoadingGallery {
+                                    ProgressView()
+                                        .frame(maxWidth: .infinity)
+                                        .padding()
+                                }
+                            }
+                            .padding()
+                            // Animate only the column-count transition: cells
+                            // slide into their new positions when a column is
+                            // added/removed. In-band resizing (and the small-mode
+                            // cell shrink, where count stays at the floor) keeps
+                            // count stable, so it tracks the drag live with no
+                            // animation. Keyed on count so appending images or
+                            // the live resize don't trigger a transaction.
+                            .animation(appModel.effectiveReduceMotion ? nil : .smooth(duration: 0.3),
+                                       value: layout.columns.count)
+                        }
+                        .refreshable {
+                            await appModel.refreshGallery()
+                        }
+                        .onAppear {
+                            if let lastId = appModel.lastViewedImageId {
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                        proxy.scrollTo(lastId, anchor: .center)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .coordinateSpace(name: gallerySpace)
+        .onPreferenceChange(CellFramePreferenceKey.self) { cellFrames = $0 }
+        .overlay {
+            // Outer GeometryReader resolves container size on the SAME
+            // render commit that the QL view is inserted — feeding it
+            // in as a parameter means the QL's first paint already has
+            // correct geometry (no flicker from a layout-settle pass).
+            GeometryReader { geo in
+                if let quickLookImage {
+                    let useScalePop = !appModel.effectiveReduceMotion
+                    let sourceFrame = cellFrames[quickLookImage.id]
+                    QuickLook3DView(
+                        image: quickLookImage,
+                        sourceFrame: sourceFrame,
+                        containerSize: geo.size,
+                        useScalePop: useScalePop,
+                        initialImage: quickLookSeedImage,
+                        onDismiss: {
+                            // Suppress any inherited animation context
+                            // (visionOS occasionally leaves one behind
+                            // after gesture recognition, especially
+                            // post-swipe-dismiss). Without this, the
+                            // cell's opacity flip back to 1 rides the
+                            // ambient transaction and the thumbnail
+                            // "flies in" instead of snapping into place.
+                            var t = Transaction()
+                            t.disablesAnimations = true
+                            withTransaction(t) {
+                                self.quickLookImage = nil
+                                self.quickLookSeedImage = nil
+                            }
+                        }
+                    )
+                    .zIndex(10)
+                }
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            if appModel.isSelectingImages {
+                selectionToolbar
+            }
+        }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    if appModel.isSelectingImages {
+                        appModel.exitImageSelection()
+                    } else {
+                        appModel.isSelectingImages = true
+                    }
+                } label: {
+                    Text(appModel.isSelectingImages ? "Cancel" : "Select")
+                }
+            }
+        }
+        .onAppear {
+            WindowGeometry.request(
+                resolvedWindowScene,
+                size: CGSize(width: 1200, height: 800),
+                restriction: .freeform
+            )
+        }
+        .task {
+            if appModel.galleryImages.isEmpty {
+                await appModel.loadInitialGallery()
+            }
+        }
+        .confirmationDialog(
+            "Delete \(appModel.selectedImageIds.count) Image\(appModel.selectedImageIds.count == 1 ? "" : "s")",
+            isPresented: $showBulkDeleteConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Remove from Stash", role: .destructive) {
+                Task { await bulkDelete(deleteFile: false) }
+            }
+            Button("Delete Files from Disk", role: .destructive) {
+                Task { await bulkDelete(deleteFile: true) }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+    }
+
+    /// Whether the grid is currently backed by the device photo library, and so
+    /// should explain a permission state rather than just showing nothing.
+    private var isShowingPhotoLibrary: Bool {
+        appModel.imageSource is PhotosImageSource
+    }
+
+    /// Show an explanation only when there is genuinely nothing to draw.
+    ///
+    /// `.limited` is readable, so a limited grant with photos in it must still
+    /// render the grid — testing `status != .authorized` here would have hidden
+    /// a perfectly good library behind a "no photos" message.
+    private var shouldShowLibraryState: Bool {
+        guard isShowingPhotoLibrary else { return false }
+        guard PhotosAuthorization.isReadable(photosStatus) else { return true }
+        return appModel.galleryImages.isEmpty && !appModel.isLoadingGallery
+    }
+
+    @ViewBuilder
+    private func thumbnailCell(for image: GalleryImage, cellSize: CGFloat) -> some View {
+        if appModel.isSelectingImages {
+            GalleryThumbnailView(image: image, size: cellSize)
+                .overlay(alignment: .topTrailing) {
+                    let isSelected = image.stashId.map { appModel.selectedImageIds.contains($0) } ?? false
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.title2)
+                        .foregroundColor(isSelected ? .accentColor : .white)
+                        .shadow(radius: 2)
+                        .padding(8)
+                }
+                .onTapGesture {
+                    guard let stashId = image.stashId else { return }
+                    if appModel.selectedImageIds.contains(stashId) {
+                        appModel.selectedImageIds.remove(stashId)
+                    } else {
+                        appModel.selectedImageIds.insert(stashId)
+                    }
+                }
+        } else {
+            GalleryThumbnailView(
+                image: image,
+                size: cellSize,
+                onTap: {
+                    appModel.lastViewedImageId = image.id
+                    onImageSelected?(image)
+                },
+                onLongPress: { thumb in
+                    // Capture the cell's loaded UIImage so QL can paint
+                    // it immediately at the start of the animation.
+                    quickLookSeedImage = thumb
+                    // QL drives its own present animation from @State,
+                    // so we just install it — no withAnimation wrapper.
+                    quickLookImage = image
+                },
+                quickLookActive: quickLookImage?.id == image.id,
+                cellCoordinateSpace: gallerySpace
+            )
+        }
+    }
+
+    // MARK: - Selection Toolbar
+
+    private var selectionToolbar: some View {
+        HStack(spacing: 20) {
+            Button {
+                let allIds = Set(appModel.galleryImages.compactMap(\.stashId))
+                if appModel.selectedImageIds == allIds {
+                    appModel.selectedImageIds.removeAll()
+                } else {
+                    appModel.selectedImageIds = allIds
+                }
+            } label: {
+                let allIds = Set(appModel.galleryImages.compactMap(\.stashId))
+                Text(appModel.selectedImageIds == allIds ? "Deselect All" : "Select All")
+            }
+
+            Spacer()
+
+            Text("\(appModel.selectedImageIds.count) selected")
+                .font(.callout)
+                .foregroundColor(.secondary)
+
+            Spacer()
+
+            Button("Delete", role: .destructive) {
+                showBulkDeleteConfirmation = true
+            }
+            .disabled(appModel.selectedImageIds.isEmpty)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+        .glassBackgroundEffect()
+    }
+
+    // MARK: - Bulk Delete
+
+    private func bulkDelete(deleteFile: Bool) async {
+        let ids = Array(appModel.selectedImageIds)
+        guard !ids.isEmpty else { return }
+        do {
+            try await appModel.apiClient.destroyImages(ids: ids, deleteFile: deleteFile)
+            appModel.removeDeletedImages(stashIds: Set(ids))
+            if appModel.selectedImageIds.isEmpty {
+                appModel.exitImageSelection()
+            }
+        } catch {}
+    }
+
+    private var resolvedWindowScene: UIWindowScene? {
+        if let sceneDelegate {
+            return sceneDelegate.windowScene
+        }
+
+        return UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive }
+    }
+}

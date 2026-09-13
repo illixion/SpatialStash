@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Spatial Stash is a visionOS app for Apple Vision Pro that displays images and videos with 2D to 3D spatial photo conversion. It integrates with [Stash](https://stashapp.cc/) media server via GraphQL API, supports local files, and can receive media via the system share sheet.
+Hypnos is a visionOS app for Apple Vision Pro that displays images and videos with 2D to 3D spatial photo conversion. It integrates with [Stash](https://stashapp.cc/) media server via GraphQL API, supports local files, and can receive media via the system share sheet.
 
 ## Workflow
 
@@ -14,7 +14,7 @@ Always create a git commit at the end of a task, without waiting for the user to
 
 Run this command to test your changes:
 ```bash
-xcodebuild -quiet -project SpatialStash/SpatialStash.xcodeproj -scheme SpatialStash -destination 'generic/platform=visionOS' build CODE_SIGNING_ALLOWED=NO
+xcodebuild -quiet -project Hypnos/Hypnos.xcodeproj -scheme Hypnos -destination 'generic/platform=visionOS' build CODE_SIGNING_ALLOWED=NO
 ```
 
 ## iOS / iPadOS
@@ -23,7 +23,7 @@ The same target builds for iOS 26 (`SUPPORTED_PLATFORMS` covers iphoneos,
 iphonesimulator, xros, xrsimulator; device family 1,2,7). Compile check:
 
 ```bash
-xcodebuild -quiet -project SpatialStash/SpatialStash.xcodeproj -scheme SpatialStash -destination 'generic/platform=iOS Simulator' build CODE_SIGNING_ALLOWED=NO
+xcodebuild -quiet -project Hypnos/Hypnos.xcodeproj -scheme Hypnos -destination 'generic/platform=iOS Simulator' build CODE_SIGNING_ALLOWED=NO
 ```
 
 **Always compile both platforms before committing** — a visionOS-only API is
@@ -43,7 +43,7 @@ How the port is structured (all in `Support/` unless noted):
   full-screen covers over the gallery; `console`/`gpu-memory`/
   `video-adjustments` become sheets; `main` dismisses back to the gallery.
   Opening a value already on the stack pops back to it (the summon).
-  `SpatialStashApp` declares the visionOS scenes under `#if os(visionOS)`
+  `HypnosApp` declares the visionOS scenes under `#if os(visionOS)`
   and a single `WindowGroup` hosting `IOSRootView` otherwise.
 - **`PlatformShims.swift`** — iOS-only same-name stand-ins so shared views
   compile unchanged: `.ornament(...)` → edge overlay (horizontally scrolling
@@ -63,7 +63,7 @@ How the port is structured (all in `Support/` unless noted):
   `onPlaybackError` so callers fall back to the flat player),
   `StereoscopicVideoView` (stub offers "Play as 2D"), `SlideshowSpatial3DLayer`
   (empty), `ImmersiveVideoView`, `Spatial3DImmersiveView`, `ManagedWindows`,
-  `TabBarOrnament`, `SpatialStashAppIntents`, and `LiftHoverEffect`/
+  `TabBarOrnament`, `HypnosAppIntents`, and `LiftHoverEffect`/
   `ScaleHoverEffect` (degrade to the system pointer hover).
 - **`Views/MainTabCatalog.swift`** — which tabs are visible and what the
   slideshow button starts, shared by `TabBarOrnament` (visionOS) and
@@ -76,7 +76,7 @@ How the port is structured (all in `Support/` unless noted):
   remembered 3D preference never activates a 3D path on iOS.
 - The iOS app icon is `Assets.xcassets/AppIcon.appiconset` (a flattened
   composite of the visionOS layer stack, which keeps the same `AppIcon` name).
-- `SpatialStashUITests` stays visionOS-only.
+- `HypnosUITests` stays visionOS-only.
 
 ## UI Tests (XCUITest)
 
@@ -86,7 +86,7 @@ How the port is structured (all in `Support/` unless noted):
 ./scripts/run-ui-tests.sh WelcomeFlowUITests/testSkipDismissesTheFlowAndLandsInTheApp
 ```
 
-`SpatialStashUITests` is the app's only test target and exists because **XCUITest is
+`HypnosUITests` is the app's only test target and exists because **XCUITest is
 the only way to drive a visionOS app's UI**: `simctl` has no tap/swipe/scroll
 subcommand of any kind, so the alternative is coordinate math against a screenshot
 through `macos-control`, one Touch ID prompt per session, and gestures the simulator
@@ -106,7 +106,7 @@ Three pieces make it work:
   deliberately the case name rather than the display title, which is mid-rename.
 - **`Support/UITestingConfiguration.swift`** applies `-UITestDefault key=value` launch
   arguments to UserDefaults before `AppModel.init` reads them (hence
-  `SpatialStashApp.init` being written out rather than using a property default —
+  `HypnosApp.init` being written out rather than using a property default —
   a default value expression would run first). DEBUG-only, so a release build has no
   launch arguments that rewrite settings.
 - **`AppLauncher.baseline` states the flags every test reads.** Resetting the defaults
@@ -136,8 +136,8 @@ pop-out, which needs media. Seeding that is `simctl addmedia` plus
 ## Architecture
 
 ### App Structure
-- **SpatialStashApp.swift** - App entry point defining scenes: main window, photo-detail pop-out, video-detail, shared-photo viewer (shared *videos* reuse video-detail), console, GPU memory monitor, remote-viewer, remote-video, remote-alert, and StereoscopicVideoSpace (immersive)
-- **SpatialStashAppIntents.swift** - App-target glue for `RAVEOpenMainWindowIntent` (RAVEUI): the `AppIntentsPackage` chain plus the Siri/Shortcuts phrases ("Open a Spatial Stash window"). Exists because a visionOS icon tap with any window alive summons the nearest window to the user (dragging pinned windows out of their rooms) with no public opt-out — the intent is the supported way to always get a fresh main window at your location. The window-session registry itself is RAVEUI's `RAVEWindowSessionRegistry` (the local `WindowSessionRegistry` was deleted). The type window values persist their size as is likewise RAVEUI's now, `RAVECodableSize` — same property names as the deleted local `CodableSize`, so existing scene-restoration archives still decode.
+- **HypnosApp.swift** - App entry point defining scenes: main window, photo-detail pop-out, video-detail, shared-photo viewer (shared *videos* reuse video-detail), console, GPU memory monitor, remote-viewer, remote-video, remote-alert, and StereoscopicVideoSpace (immersive)
+- **HypnosAppIntents.swift** - App-target glue for `RAVEOpenMainWindowIntent` (RAVEUI): the `AppIntentsPackage` chain plus the Siri/Shortcuts phrases ("Open a Hypnos window"). Exists because a visionOS icon tap with any window alive summons the nearest window to the user (dragging pinned windows out of their rooms) with no public opt-out — the intent is the supported way to always get a fresh main window at your location. The window-session registry itself is RAVEUI's `RAVEWindowSessionRegistry` (the local `WindowSessionRegistry` was deleted). The type window values persist their size as is likewise RAVEUI's now, `RAVECodableSize` — same property names as the deleted local `CodableSize`, so existing scene-restoration archives still decode.
 - **AppModel.swift** - Central `@Observable` state container for gallery data, server config, filter state, video playback state, memory monitoring, and persisted settings (UserDefaults)
 - **PhotoWindowModel.swift** - Per-window `@Observable` model for individual photo viewers. Contains all stored properties, init/start lifecycle, core image loading pipeline, interaction tracking, shared utilities, and resource cleanup. Split into extension files by concern:
   - **PhotoWindowModel+VisualAdjustments.swift** - Auto-enhance (3-tier cache), brightness/contrast/saturation adjustments, 3D adjustment preview with debounced reload
@@ -148,7 +148,7 @@ pop-out, which needs media. Seeding that is `simctl addmedia` plus
   - **PhotoWindowModel+UIControls.swift** - Share sheet, UI auto-hide timers, image flip
 
 ### Windows Tab (window manager)
-`WindowsTabView` is the app's window inventory: every open window with **Summon** and **Close** on each, plus Hide All / Close All underneath. The registry, the rows and the recycle mechanics are **RAVEUI's** `RAVEWindowRegistry` / `RAVEWindowManagerView`; the app supplies only labels and fresh-identity clones, in `Model/ManagedWindows.swift`, applied to each scene root in `SpatialStashApp` via `.manageWindow(...)`.
+`WindowsTabView` is the app's window inventory: every open window with **Summon** and **Close** on each, plus Hide All / Close All underneath. The registry, the rows and the recycle mechanics are **RAVEUI's** `RAVEWindowRegistry` / `RAVEWindowManagerView`; the app supplies only labels and fresh-identity clones, in `Model/ManagedWindows.swift`, applied to each scene root in `HypnosApp` via `.manageWindow(...)`.
 
 **Summon is a recycle, not a recall** — it dismisses the scene and opens an equivalent fresh one. That serves the ordinary case (fetch a window snapped in another room) *and* the visionOS 27 regression where a summoned scene is activated but never re-attached to a compositor placement, leaving the window permanently invisible while the scene still reports itself active and visible (`internal_docs/visionos27-invisible-window-feedback.md`; reproduces with stock Clock). Nothing app-side redraws such a scene, so destroying it is the only recovery — and `openWindow` against the live scene is the call that *causes* it, which is why the same dismiss-then-reopen shape already guards the cross-room summon in `ContentView.handleRemoteViewerOpenIfNeeded` / `handlePhotoWindowOpenIfNeeded`.
 
@@ -274,7 +274,7 @@ Three seams that migration created, and that will bite if missed:
 - **AppLogger** - Structured os.Logger instances across domains
 
 ### Incoming URLs & web-yt-dlp (YouTube-in-3D)
-The app registers a `spatialstash://play?url=<link>` custom URL scheme (declared in `Info.plist`, handled by **IncomingURLHandler**; a `SceneDelegate` notification path covers file-share cold launches that SwiftUI's `.onOpenURL` misses, so `AppModel.shouldProcessIncomingURL` de-dupes the double-fire). This is the primary way to send arbitrary web videos into the app — most conveniently via the **"Open in Spatial Viewer"** iOS/visionOS Shortcut (<https://www.icloud.com/shortcuts/c313953ed4c245f988ca746808109b8d>), which shares any link into the scheme; a bookmarklet works too.
+The app registers a `hypnos://play?url=<link>` custom URL scheme (declared in `Info.plist`, handled by **IncomingURLHandler**; a `SceneDelegate` notification path covers file-share cold launches that SwiftUI's `.onOpenURL` misses, so `AppModel.shouldProcessIncomingURL` de-dupes the double-fire). This is the primary way to send arbitrary web videos into the app — most conveniently via the **"Open in Spatial Viewer"** iOS/visionOS Shortcut (<https://www.icloud.com/shortcuts/c313953ed4c245f988ca746808109b8d>), which shares any link into the scheme; a bookmarklet works too.
 
 - **StreamableURLResolver** classifies the incoming URL: `.directVideo` (MP4/HLS — plays immediately, no proxy), `.webPage` (routed through web-yt-dlp when enabled), or `.notPlayable`. Direct links open a stream video window straight away.
 - **WebYTDLPClient** (`struct`, built from `AppModel.webYTDLPClient`) builds `{endpoint}/stream?url=<page>&token=<token>&preset=<preset>&height=<height>` for a self-hosted [web-yt-dlp](https://github.com/illixion/web-yt-dlp) instance. The app does **not** pre-resolve metadata — it hands the stream URL straight to AVPlayer and the server runs yt-dlp + muxes + streams on the fly (HTTP Range supported). Token rides as a query param because AVPlayer can't easily attach a Bearer header. Playing web videos this way feeds the native-Metal player, so they can be converted to fake-3D — the point of the feature is watching e.g. 4K YouTube in windowed stereoscopic 3D.

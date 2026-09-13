@@ -28,7 +28,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$SCRIPT_DIR/.."
-PROJECT="$REPO_ROOT/SpatialStash/SpatialStash.xcodeproj"
+PROJECT="$REPO_ROOT/Hypnos/Hypnos.xcodeproj"
 DERIVED_DATA="$REPO_ROOT/build/uitest-dd"
 
 # The newest available Vision Pro simulator, unless told otherwise. `-J` keeps
@@ -55,7 +55,7 @@ fi
 # value never contains whitespace, so `${VAR:+"$VAR"}` is safe here.
 ONLY_TESTING=""
 if [ $# -ge 1 ]; then
-    ONLY_TESTING="-only-testing:SpatialStashUITests/$1"
+    ONLY_TESTING="-only-testing:HypnosUITests/$1"
 fi
 
 echo "Simulator: $SIM_UDID"
@@ -67,7 +67,7 @@ xcrun simctl bootstatus "$SIM_UDID" -b >/dev/null
 set +e
 xcodebuild \
     -project "$PROJECT" \
-    -scheme SpatialStash \
+    -scheme Hypnos \
     -destination "platform=visionOS Simulator,id=$SIM_UDID" \
     -derivedDataPath "$DERIVED_DATA" \
     -collect-test-diagnostics never \

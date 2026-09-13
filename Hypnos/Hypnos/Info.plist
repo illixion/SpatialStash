@@ -1,0 +1,156 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CommitHash</key>
+	<string>$(COMMIT_HASH)</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Hypnos shows your photos and videos, and on Apple Vision Pro converts them to 3D. Your library is read on this device only — nothing is uploaded.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>This app can connect to a local Stash server if Local Network Area access is granted.</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<!-- The app talks to user-owned Stash and RoboFrame instances over the
+		     local network or Tailscale, which commonly serve plain HTTP: an
+		     extra TLS layer adds setup friction (mkcert, trust store) without
+		     a real privacy gain on a private mesh, and Tailscale already
+		     terminates traffic in WireGuard.
+
+		     NSAllowsLocalNetworking permits exactly that — cleartext to local
+		     hostnames and private address ranges — without the blanket
+		     NSAllowsArbitraryLoads exception, which App Review questions and
+		     which would also have relaxed ATS for the public internet. Servers
+		     reached over a public hostname still need HTTPS. -->
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>NSWorldSensingUsageDescription</key>
+	<string>This is used to determine window locking state to improve user experience.</string>
+	<key>UIWantsDetailedSurfaceInfo</key>
+	<true/>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Image</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.image</string>
+				<string>public.jpeg</string>
+				<string>public.png</string>
+				<string>public.heic</string>
+				<string>public.heif</string>
+				<string>public.jpeg-xl</string>
+				<string>org.webmproject.webp</string>
+				<string>public.tiff</string>
+				<string>com.microsoft.bmp</string>
+				<string>com.compuserve.gif</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Video</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.movie</string>
+				<string>public.video</string>
+				<string>public.audiovisual-content</string>
+				<string>public.mpeg-4</string>
+				<string>com.apple.quicktime-movie</string>
+				<string>public.avi</string>
+				<string>public.mpeg</string>
+				<string>public.mpeg-2-transport-stream</string>
+				<string>org.matroska.mkv</string>
+				<string>org.webmproject.webm</string>
+			</array>
+		</dict>
+	</array>
+	<!-- mkv/webm are not system-declared UTIs on every OS version, so without
+	     an import declaration those identifiers are inert in the document type
+	     above (and an unresolvable identifier can cost the whole entry its
+	     LaunchServices registration — i.e. no "Open in Hypnos" for any
+	     video). Declaring them here makes them resolvable and gives the app a
+	     real conformance to public.movie for those containers. -->
+	<key>UTImportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>org.matroska.mkv</string>
+			<key>UTTypeDescription</key>
+			<string>Matroska Video</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.movie</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>mkv</string>
+				</array>
+				<key>public.mime-type</key>
+				<array>
+					<string>video/x-matroska</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>org.webmproject.webm</string>
+			<key>UTTypeDescription</key>
+			<string>WebM Video</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.movie</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>webm</string>
+				</array>
+				<key>public.mime-type</key>
+				<array>
+					<string>video/webm</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<!-- Custom scheme for handing a video/page URL from Safari (via a
+			     Shortcut or bookmarklet) into the in-app player, e.g.
+			     hypnos://play?url=<percent-encoded URL>. Routed in
+			     HypnosApp.handleIncomingURL. -->
+			<key>CFBundleURLName</key>
+			<string>com.illixion.hypnos.play</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>hypnos</string>
+			</array>
+		</dict>
+	</array>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationPreferredDefaultSceneSessionRole</key>
+		<string>UIWindowSceneSessionRoleApplication</string>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<true/>
+		<key>UISceneConfigurations</key>
+		<dict/>
+	</dict>
+	<key>UIFileSharingEnabled</key>
+	<true/>
+</dict>
+</plist>

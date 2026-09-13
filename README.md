@@ -1,4 +1,4 @@
-# Spatial Stash
+# Hypnos
 
 A visionOS app for Apple Vision Pro that transforms your 2D images into immersive 3D spatial photos, with an iPhone and iPad version of the same app. Browse your media library from a [Stash](https://github.com/stashapp/stash) server, your photo library, local files, or use the built-in demo mode.
 
@@ -38,7 +38,7 @@ The one project builds for both platforms. Everything that isn't about depth —
 
 ## Platforms
 
-Spatial Stash is one target with two platforms. The scene graph is the only
+Hypnos is one target with two platforms. The scene graph is the only
 thing that differs: visionOS opens a window per viewer plus two immersive
 spaces; iOS has a single window in which the same viewers open as full-screen
 covers and the tool windows as sheets (`IOSWindowRouter`). Everything below the
@@ -50,7 +50,7 @@ scene roots is shared code.
 | Photo viewer: Metal 2D display, swipe navigation, animated GIF/WebP/JXL, adjustments, auto-enhance, background removal, flip, share, info/edit | ✓ | ✓ |
 | Video: native Metal and WebKit players, custom transport, A-B loop, Stash transcode fallback, adjustments | ✓ | ✓ |
 | Slideshows (gallery and RoboFrame), Ken Burns, clock/sensor overlays, WebSocket control, Display Sync | ✓ | ✓ |
-| Pinned web pages, `spatialstash://play` handoff, web-yt-dlp | ✓ | ✓ |
+| Pinned web pages, `hypnos://play` handoff, web-yt-dlp | ✓ | ✓ |
 | Settings backup/import, disk cache manager, debug console | ✓ | ✓ |
 | Spatial 3D photo conversion, Immersive 3D, Quick Look in 3D | ✓ | — needs a stereoscopic display |
 | Pseudo-3D and MV-HEVC immersive video, depth models | ✓ | — |
@@ -60,13 +60,13 @@ scene roots is shared code.
 Build for iOS from the command line with:
 
 ```bash
-xcodebuild -quiet -project SpatialStash/SpatialStash.xcodeproj -scheme SpatialStash \
+xcodebuild -quiet -project Hypnos/Hypnos.xcodeproj -scheme Hypnos \
   -destination 'generic/platform=iOS Simulator' build CODE_SIGNING_ALLOWED=NO
 ```
 
 ## Dependencies
 
-Spatial Stash links two shared packages:
+Hypnos links two shared packages:
 
 | Package | Products used |
 |---|---|
@@ -75,7 +75,7 @@ Spatial Stash links two shared packages:
 
 Both are referenced as **local** Swift packages by relative path —
 `../../RAVESDK` and `../../RAVEEngine`, resolved against the directory holding
-`SpatialStash.xcodeproj` — not as versioned remote dependencies. So a clone does
+`Hypnos.xcodeproj` — not as versioned remote dependencies. So a clone does
 not fetch them: check them out as **siblings** of this repo, which is what step 1
 below does.
 
@@ -108,7 +108,7 @@ update its callers" a single atomic edit.
 2. Open the project in Xcode:
    ```bash
    cd spatialstash
-   open SpatialStash/SpatialStash.xcodeproj
+   open Hypnos/Hypnos.xcodeproj
    ```
 
 3. Select your development team in Xcode (Project → Signing & Capabilities)
@@ -205,11 +205,11 @@ A slideshow viewer for displaying images from a [RoboFrame](https://github.com/i
 - **Visual adjustments** shared with the photo/video viewer system (brightness, contrast, saturation)
 
 ### Play Web Videos in 3D (Developer)
-Spatial Stash can play arbitrary web videos — including YouTube — and convert them to Pseudo 3D on the fly. This is what makes it easy to watch, say, a 4K YouTube video in windowed stereoscopic 3D on Vision Pro. Enable **Web yt-dlp Support** in Settings → Developer.
+Hypnos can play arbitrary web videos — including YouTube — and convert them to Pseudo 3D on the fly. This is what makes it easy to watch, say, a 4K YouTube video in windowed stereoscopic 3D on Vision Pro. Enable **Web yt-dlp Support** in Settings → Developer.
 
 - **How it works** — page links (e.g. a YouTube URL) are routed through a self-hosted [web-yt-dlp](https://github.com/illixion/web-yt-dlp) proxy that runs yt-dlp, muxes, and streams the result with HTTP Range support. The app plays the proxied stream directly through the native-Metal player, so the Pseudo 3D pipeline can convert it. Configure the proxy **Endpoint URL** and **Token** in the same section.
 - **Codec / Max Resolution** — two dropdowns control what the proxy re-encodes to: **Codec** (HEVC/H.265, recommended on Apple platforms for smaller files at higher quality; or H.264 for compatibility) and **Max Resolution** (1080p or 2160p/4K). HEVC output is tagged `hvc1` so AVPlayer decodes it natively, and the proxy stream-copies already-HEVC sources rather than transcoding.
-- **Getting links into the app** — the app registers a `spatialstash://play?url=…` callback URL scheme. Any direct video link (MP4/HLS) opens and plays immediately without the proxy; web page links are routed through web-yt-dlp when it's enabled. The easiest way to hand a link over is the **[Open in Spatial Viewer](https://www.icloud.com/shortcuts/c313953ed4c245f988ca746808109b8d)** Shortcut — add it, then use the Share sheet on any video or link to send it straight into Spatial Stash. A bookmarklet that opens the same URL scheme works too.
+- **Getting links into the app** — the app registers a `hypnos://play?url=…` callback URL scheme. Any direct video link (MP4/HLS) opens and plays immediately without the proxy; web page links are routed through web-yt-dlp when it's enabled. The easiest way to hand a link over is the **[Open in Spatial Viewer](https://www.icloud.com/shortcuts/c313953ed4c245f988ca746808109b8d)** Shortcut — add it, then use the Share sheet on any video or link to send it straight into Hypnos. A bookmarklet that opens the same URL scheme works too.
 
 ## Architecture
 

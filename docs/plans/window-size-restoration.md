@@ -71,7 +71,7 @@ request or user-drag, which avoids feedback loops with our own
 
 Implementation notes:
 
-- The bound `$windowValue` is available in `SpatialStashApp.swift:29-38` (photo)
+- The bound `$windowValue` is available in `HypnosApp.swift:29-38` (photo)
   and `:97-106` (remote). Thread the `Binding<PhotoWindowValue>` /
   `Binding<RemoteViewerWindowValue>` into `PhotoWindowView` /
   `RemoteViewerWindowView` so the views can mutate `restoredSize`.
@@ -121,9 +121,9 @@ the size and the slideshow fits to it.
 - New `Model/CodableSize.swift` (or extension) — `struct CodableSize: Codable, Hashable { var width, height: CGFloat }` with `CGSize` interop. Reusable.
 
 ### App / Scene wiring
-- `SpatialStashApp.swift:29-38` — pass `$windowValue` binding into
+- `HypnosApp.swift:29-38` — pass `$windowValue` binding into
   `PhotoWindowView` so it can write `restoredSize` back.
-- `SpatialStashApp.swift:97-106` — same for `RemoteViewerWindowView`.
+- `HypnosApp.swift:97-106` — same for `RemoteViewerWindowView`.
 
 ### Photo viewer
 - `Views/Pictures/PhotoWindowView.swift` — accept `Binding<PhotoWindowValue>`,
