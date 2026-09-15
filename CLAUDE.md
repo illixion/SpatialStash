@@ -58,6 +58,12 @@ How the port is structured (all in `Support/` unless noted):
   branch on these to hide controls) and **`WindowGeometry.request(scene,
   size:restriction:animated:)`**, the only way shared code may call
   `requestGeometryUpdate` (`.Vision` preferences don't exist on iOS).
+  A bar that wants to know it is being dragged reads the shim's
+  `\.ornamentIsScrolling` environment value, published down from the scroller.
+  **Never attach a `DragGesture(minimumDistance: 0)` to an ornament bar**: it
+  claims the touch at touch-down, the scroll view's pan never begins, and every
+  control past the screen edge becomes unreachable (measured on an iPhone 18
+  Pro Max, iOS 27 — identical bars scrolled 171pt without it, 0pt with it).
 - **Whole-file `#if os(visionOS)` gates** with iOS stubs where other files
   reference the type: `Pseudo3DVideoPlayerView` (stub calls
   `onPlaybackError` so callers fall back to the flat player),

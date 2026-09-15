@@ -42,6 +42,11 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
     @ViewBuilder var extraMenuItems: () -> ExtraMenuItems
     @OpenWindowProxy private var openWindow
     @DismissWindowProxy private var dismissWindow
+    #if !os(visionOS)
+    /// Set while the ornament's horizontal scroller is being dragged; see
+    /// `EnvironmentValues.ornamentIsScrolling`.
+    @Environment(\.ornamentIsScrolling) private var ornamentIsScrolling
+    #endif
 
     var body: some View {
         HStack(spacing: RAVEChromeMetrics.spacing) {
@@ -115,13 +120,15 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
         #if !os(visionOS)
         // The bar scrolls when it is wider than the screen, and a scroll is
         // not a button press — without this the chrome auto-hides out from
-        // under the finger mid-drag. Simultaneous so buttons and the scroll
-        // view still get the gesture.
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { _ in windowModel.cancelAutoHideTimer() }
-                .onEnded { _ in windowModel.startAutoHideTimer() }
-        )
+        // under the finger mid-drag. The signal comes from the scroller
+        // (`\.ornamentIsScrolling`) rather than from a drag gesture here: a
+        // zero-distance DragGesture on the scroller's content takes the touch
+        // at touch-down and the pan never starts, which is what made the
+        // controls past the right edge unreachable.
+        .onChange(of: ornamentIsScrolling) { _, isScrolling in
+            if isScrolling { windowModel.cancelAutoHideTimer() }
+            else { windowModel.startAutoHideTimer() }
+        }
         #endif
         .onChange(of: windowModel.showMediaInfoPopover) { _, isOpen in
             if isOpen { windowModel.cancelAutoHideTimer() }

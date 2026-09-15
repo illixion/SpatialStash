@@ -175,7 +175,9 @@ extension View {
     /// laid over the content at the matching edge, inside the safe area.
     ///
     /// Bars wider than the view scroll horizontally rather than clipping —
-    /// every viewer bar in this app is wider than an iPhone in portrait.
+    /// every viewer bar in this app is wider than an iPhone in portrait. A bar
+    /// that wants to know about that scroll reads `\.ornamentIsScrolling`
+    /// rather than attaching its own gesture; see the note on that key.
     func ornament<Content: View>(
         visibility: Visibility = .automatic,
         attachmentAnchor: OrnamentAttachmentAnchor,
@@ -199,11 +201,34 @@ extension View {
     }
 }
 
+/// Whether the ornament bar around this view is being scrolled horizontally.
+///
+/// It is published *down* from the scroller because a bar cannot detect the
+/// drag itself: a `DragGesture(minimumDistance: 0)` attached to the scroller's
+/// own content claims the touch at touch-down and the scroll view's pan never
+/// begins, so every control past the screen edge becomes unreachable. Measured
+/// on an iPhone 18 Pro Max, iOS 27: identical bars scrolled 171 points without
+/// that gesture and 0 with it.
+///
+/// A bar that suppresses an auto-hide timer while the user is handling it
+/// therefore observes this instead of adding a gesture of its own.
+private struct OrnamentIsScrollingKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    var ornamentIsScrolling: Bool {
+        get { self[OrnamentIsScrollingKey.self] }
+        set { self[OrnamentIsScrollingKey.self] = newValue }
+    }
+}
+
 /// Hosts an ornament's content as an edge overlay. Its frame hugs the content,
 /// so taps outside the bar still reach whatever is underneath.
 private struct IOSOrnamentContainer<Content: View>: View {
     let edgeAlignment: Alignment
     @ViewBuilder let content: () -> Content
+    @State private var isScrolling = false
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
@@ -214,7 +239,11 @@ private struct IOSOrnamentContainer<Content: View>: View {
             }
             .scrollIndicators(.hidden)
             .scrollClipDisabled()
+            .onScrollPhaseChange { _, phase in
+                isScrolling = phase.isScrolling
+            }
         }
+        .environment(\.ornamentIsScrolling, isScrolling)
         .padding(.horizontal, 12)
         .padding(edgeAlignment == .top ? .top : .bottom, 8)
     }

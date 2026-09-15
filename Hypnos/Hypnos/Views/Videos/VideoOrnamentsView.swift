@@ -29,6 +29,11 @@ struct VideoOrnamentsView: View {
     @DismissWindowProxy private var dismissWindow
     @Environment(\.openURL) private var openURL
     @State private var depthModels = DepthModelManager.shared
+    #if !os(visionOS)
+    /// Set while the ornament's horizontal scroller is being dragged; see
+    /// `EnvironmentValues.ornamentIsScrolling`.
+    @Environment(\.ornamentIsScrolling) private var ornamentIsScrolling
+    #endif
 
     /// When true, stack the playback transport (VideoControlBar) above the button
     /// row as a second ornament row. Used by fake-3D, where the video lives in a
@@ -147,13 +152,15 @@ struct VideoOrnamentsView: View {
         #if !os(visionOS)
         // The bar scrolls when it is wider than the screen, and a scroll is
         // not a button press — without this the chrome auto-hides out from
-        // under the finger mid-drag. Simultaneous so buttons and the scroll
-        // view still get the gesture.
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { _ in windowModel.cancelAutoHideTimer() }
-                .onEnded { _ in windowModel.startAutoHideTimer() }
-        )
+        // under the finger mid-drag. The signal comes from the scroller
+        // (`\.ornamentIsScrolling`) rather than from a drag gesture here: a
+        // zero-distance DragGesture on the scroller's content takes the touch
+        // at touch-down and the pan never starts, which is what made the
+        // controls past the right edge unreachable.
+        .onChange(of: ornamentIsScrolling) { _, isScrolling in
+            if isScrolling { windowModel.cancelAutoHideTimer() }
+            else { windowModel.startAutoHideTimer() }
+        }
         #endif
         .onChange(of: windowModel.showMediaInfo) { _, isOpen in
             if isOpen { windowModel.cancelAutoHideTimer() }
