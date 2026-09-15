@@ -91,6 +91,16 @@ struct PhotoDisplayView: View {
     /// Suppresses window resize during swipe transitions
     @State private var suppressWindowResize: Bool = false
 
+    /// Every geometry request this window makes goes through here. Six
+    /// independent triggers compute the same target size for one image open,
+    /// and on visionOS each granted resize also re-anchors the window in
+    /// space — which, for a pushed viewer sharing the gallery's scene, is what
+    /// walks the grid window across the room. The coalescer sends the first
+    /// request and drops the restatements; it re-reads the live grant, so a
+    /// request the system clamped or ignored is never mistaken for one that
+    /// landed. See `WindowResizeCoalescer`.
+    @State private var resizeCoalescer = WindowResizeCoalescer()
+
     /// One-shot follow-up after an immersive resize request, verifying that the
     /// request actually took effect. visionOS can drop a geometry request made
     /// while the scene is still being placed, and nothing else re-requests — so
@@ -643,7 +653,7 @@ struct PhotoDisplayView: View {
                         AppLogger.views.warning("Unable to get the window scene. Unable to set the resizing restrictions.")
                         return
                     }
-                    WindowGeometry.request(windowScene, restriction: .uniform, animated: true)
+                    resizeCoalescer.request(windowScene, restriction: .uniform, animated: true)
                 }
                 .onChange(of: windowModel.imageAspectRatio) { _, newAspectRatio in
                     guard !suppressWindowResize else { return }
@@ -663,9 +673,13 @@ struct PhotoDisplayView: View {
                             windowModel.preImmersiveWindowSize = preImmersiveSize
                             requestVerifiedImmersiveResize(from: preImmersiveSize)
                         } else {
-                            // Exiting immersive - restore original size
+                            // Exiting immersive - restore original size.
+                            // The coalescer's memory is of a request made
+                            // against the immersive bounds, which says nothing
+                            // about the windowed geometry being restored here.
                             immersiveResizeVerifyTask?.cancel()
                             immersiveResizeVerifyTask = nil
+                            resizeCoalescer.invalidate()
                             let restoreSize = windowModel.preImmersiveWindowSize ?? appModel.mainWindowSize
                             resizeWindowToFit(windowModel.imageAspectRatio, within: restoreSize, forceImmersive: false)
                             windowModel.preImmersiveWindowSize = nil
@@ -974,7 +988,12 @@ struct PhotoDisplayView: View {
     }
 
     /// Resize window to fit image aspect ratio within given bounds
-    private func resizeWindowToFit(_ aspectRatio: CGFloat, within bounds: CGSize, forceImmersive: Bool? = nil) {
+    private func resizeWindowToFit(
+        _ aspectRatio: CGFloat,
+        within bounds: CGSize,
+        forceImmersive: Bool? = nil,
+        force: Bool = false
+    ) {
         guard let windowScene = resolvedWindowScene else { return }
 
         // Use explicit immersive flag if provided, otherwise detect automatically.
@@ -999,7 +1018,7 @@ struct PhotoDisplayView: View {
         let effectiveBounds = shouldUseImmersive ? immersiveWindowSize : bounds
         let size = windowSize(for: aspectRatio, within: effectiveBounds)
 
-        WindowGeometry.request(windowScene, size: size)
+        resizeCoalescer.request(windowScene, size: size, force: force)
     }
 
     /// Grow the window for immersive 3D, then verify the grant is actually an
@@ -1031,16 +1050,39 @@ struct PhotoDisplayView: View {
         // visible lag, which measured worse than the snap it was meant to
         // avoid. A freshly opened window's dropped request is recovered by the
         // verifier below instead.
-        resizeWindowToFit(windowModel.imageAspectRatio, within: immersiveWindowSize, forceImmersive: true)
+        //
+        // Forced past the coalescer, here and on every re-request below: this
+        // is the one path that deliberately asks for a size it knows will be
+        // clamped, so its request never matches its own grant and
+        // "already asked for that" reasoning does not apply to it.
+        //
+        // The window's geometry *in scene units*, sampled before the request.
+        // `preImmersiveSize` is a SwiftUI content size and the readback below
+        // is a scene size; the two differ by the window's chrome insets, so
+        // only this one can answer "has the window moved at all yet".
+        let preImmersiveGranted = resolvedWindowScene?.effectiveGeometry.coordinateSpace.bounds.size
+
+        resizeWindowToFit(
+            windowModel.imageAspectRatio,
+            within: immersiveWindowSize,
+            forceImmersive: true,
+            force: true
+        )
 
         immersiveResizeVerifyTask?.cancel()
         immersiveResizeVerifyTask = Task { @MainActor in
-            // Largest grant seen so far; the window starts at its pre-immersive
-            // size, so anything at or below that has not taken effect yet.
-            var lastGranted = CGSize(
-                width: max(preImmersiveSize.width - 3, 0),
-                height: max(preImmersiveSize.height - 3, 0)
-            )
+            // Largest grant seen so far. Seeded at zero, not just below the
+            // pre-immersive size: the old seed made the first aspect-correct
+            // grant read as "still growing" and drew a second, identical
+            // request on *every* immersive entry — one extra re-anchor in the
+            // healthy case, which on a pushed window is one extra shove of the
+            // gallery window across the room. Growth is now only watched; a
+            // re-request needs evidence that the grant is actually wrong.
+            var lastGranted: CGSize = .zero
+            // Consecutive samples showing the window still sitting at exactly
+            // its pre-immersive size. One is not evidence (the grant may not
+            // have been applied yet); two means the request never landed.
+            var unchangedSamples = 0
             for attempt in 1...Self.immersiveResizeVerifyAttempts {
                 // Front-loaded cadence: a correction the user can see as a
                 // "snap" is far less noticeable at 150ms than at 500ms, while
@@ -1086,23 +1128,49 @@ struct PhotoDisplayView: View {
                 let aspectMatches = abs(grantedAspect - aspect) <= aspect * 0.02
                 let stalled = granted.width <= lastGranted.width + 2
                     && granted.height <= lastGranted.height + 2
-                if aspectMatches && stalled { return }
+                let atPreImmersiveSize = preImmersiveGranted.map {
+                    abs(granted.width - $0.width) <= 2 && abs(granted.height - $0.height) <= 2
+                } ?? false
+
+                if aspectMatches {
+                    if !atPreImmersiveSize {
+                        // Correctly-shaped immersive geometry. Either it has
+                        // settled, or it is still growing toward the platform
+                        // ceiling — and a window that is growing on its own
+                        // needs watching, not pushing.
+                        if stalled { return }
+                        continue
+                    }
+                    unchangedSamples += 1
+                    // Sample 1: too early to call. Sample 2: re-request once.
+                    // Sample 3+: the platform will not grow this window (it may
+                    // already have been at the ceiling), so stop asking.
+                    if unchangedSamples != 2 {
+                        if unchangedSamples > 2 { return }
+                        continue
+                    }
+                }
 
                 AppLogger.views.info(
-                    "Immersive resize not settled (granted \(Int(granted.width), privacy: .public)x\(Int(granted.height), privacy: .public) aspect=\(grantedAspect, privacy: .public) want=\(aspect, privacy: .public) shapeOK=\(aspectMatches, privacy: .public) stalled=\(stalled, privacy: .public)); re-requesting, attempt \(attempt, privacy: .public)"
+                    "Immersive resize not settled (granted \(Int(granted.width), privacy: .public)x\(Int(granted.height), privacy: .public) aspect=\(grantedAspect, privacy: .public) want=\(aspect, privacy: .public) shapeOK=\(aspectMatches, privacy: .public) atPreImmersive=\(atPreImmersiveSize, privacy: .public)); re-requesting, attempt \(attempt, privacy: .public)"
                 )
-                resizeWindowToFit(windowModel.imageAspectRatio, within: immersiveWindowSize, forceImmersive: true)
+                resizeWindowToFit(
+                    windowModel.imageAspectRatio,
+                    within: immersiveWindowSize,
+                    forceImmersive: true,
+                    force: true
+                )
             }
         }
     }
 
     /// Resize GIF window to fit image aspect ratio within given bounds (with uniform restrictions)
-    private func resizeGIFWindowToFit(_ aspectRatio: CGFloat, within bounds: CGSize) {
+    private func resizeGIFWindowToFit(_ aspectRatio: CGFloat, within bounds: CGSize, force: Bool = false) {
         guard let windowScene = resolvedWindowScene else { return }
 
         // Use the same windowSize helper for consistent sizing
         let size = windowSize(for: aspectRatio, within: bounds)
-        WindowGeometry.request(windowScene, size: size, restriction: .uniform)
+        resizeCoalescer.request(windowScene, size: size, restriction: .uniform, force: force)
     }
 
     /// Alternating 1pt nudge: each call moves the window by -1pt OR +1pt
@@ -1129,9 +1197,9 @@ struct PhotoDisplayView: View {
         didApplyRestoredSize = true
         suppressWindowResize = true
         if windowModel.isAnimatedImage {
-            WindowGeometry.request(windowScene, size: restoredSize, restriction: .uniform)
+            resizeCoalescer.request(windowScene, size: restoredSize, restriction: .uniform)
         } else {
-            WindowGeometry.request(windowScene, size: restoredSize)
+            resizeCoalescer.request(windowScene, size: restoredSize)
         }
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(1))
@@ -1189,19 +1257,22 @@ struct PhotoDisplayView: View {
         guard widthRatio < 0.95 || widthRatio > 1.05 || heightRatio < 0.95 || heightRatio > 1.05 else { return }
 
         AppLogger.views.info("Window size mismatch detected (current: \(currentSize.width, privacy: .public)x\(currentSize.height, privacy: .public), expected: \(expectedSize.width, privacy: .public)x\(expectedSize.height, privacy: .public)). Resizing.")
+        // Forced: this is the app's safety net and it only gets here having
+        // measured a >5% mismatch, which is exactly the read-back evidence the
+        // coalescer's dedupe is not allowed to second-guess.
         if windowModel.isAnimatedImage {
-            resizeGIFWindowToFit(windowModel.imageAspectRatio, within: targetBounds)
+            resizeGIFWindowToFit(windowModel.imageAspectRatio, within: targetBounds, force: true)
         } else {
-            resizeWindowToFit(windowModel.imageAspectRatio, within: targetBounds)
+            resizeWindowToFit(windowModel.imageAspectRatio, within: targetBounds, force: true)
         }
     }
 
     private func setUniformResizing() {
-        WindowGeometry.request(resolvedWindowScene, restriction: .uniform, animated: true)
+        resizeCoalescer.request(resolvedWindowScene, restriction: .uniform, animated: true)
     }
 
     func resetWindowRestrictions() {
-        WindowGeometry.request(resolvedWindowScene, restriction: .freeform, animated: true)
+        resizeCoalescer.request(resolvedWindowScene, restriction: .freeform, animated: true)
     }
 
     /// Fit the image presentation inside a bounding box by scaling the content entity.

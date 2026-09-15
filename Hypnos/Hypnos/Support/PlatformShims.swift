@@ -82,7 +82,7 @@ enum PlatformCapabilities {
 /// are sized by the system, so the request is dropped.
 @MainActor
 enum WindowGeometry {
-    enum ResizingRestriction {
+    enum ResizingRestriction: Equatable {
         /// Keep the window's aspect ratio while the user resizes it.
         case uniform
         /// Any size.

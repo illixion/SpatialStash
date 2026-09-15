@@ -16,6 +16,15 @@ import RealityKit
 import RAVEUI
 import SwiftUI
 
+/// Footprint a spinner is pinned to when it stands in for a glyph or a label
+/// in the ornament bar. A `ProgressView`'s intrinsic height is taller than a
+/// `.title3` icon or a `.callout` line, and `scaleEffect` scales rendering
+/// without changing layout — so an unconstrained spinner grows the bar's
+/// height for as long as it is on screen. File-scope rather than a static on
+/// the view: `PhotoOrnamentView` is generic, and generic types can't hold
+/// static stored properties.
+private let ornamentGlyphSize: CGFloat = 22
+
 /// Determines which controls are visible in the photo ornament
 enum PhotoViewerContext {
     /// Pushed from gallery grid — back button (dismissWindow), nav, slideshow, 3D, rating, extra buttons
@@ -153,7 +162,14 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
         .disabled(!windowModel.hasPreviousGalleryImage || windowModel.controlsLocked)
 
         if windowModel.controlsLocked {
+            // Same footprint as the position counter it replaces. A bare
+            // ProgressView is taller than a .callout line, and scaleEffect
+            // only scales rendering, not layout — so without an explicit
+            // height the whole ornament bar grows while an image loads and
+            // shrinks again when it lands.
             ProgressView()
+                .controlSize(.small)
+                .frame(height: ornamentGlyphSize)
                 .frame(minWidth: 60)
         } else if windowModel.loadFailure != nil {
             // A failed load replaces the position counter rather than the
@@ -281,7 +297,7 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
                     // grows the ornament's height while converting.
                     ProgressView()
                         .controlSize(.small)
-                        .frame(width: 22, height: 22)
+                        .frame(width: ornamentGlyphSize, height: ornamentGlyphSize)
                 } else {
                     Image(systemName: threeDMenuIcon)
                 }
@@ -525,8 +541,11 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
         } label: {
             Group {
                 if windowModel.isPreparingShare {
+                    // Constrained to the icon's footprint for the same reason
+                    // as the loading spinner in `navigationControls`.
                     ProgressView()
-                        .scaleEffect(0.8)
+                        .controlSize(.small)
+                        .frame(width: ornamentGlyphSize, height: ornamentGlyphSize)
                 } else {
                     Image(systemName: "square.and.arrow.up")
                 }

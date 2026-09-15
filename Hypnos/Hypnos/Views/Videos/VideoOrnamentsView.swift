@@ -17,6 +17,11 @@ import RAVEMedia
 import RAVEUI
 import SwiftUI
 
+/// Footprint a spinner is pinned to when it stands in for a glyph in the
+/// ornament bar, so the bar's height doesn't change while one is showing.
+/// Matches `PhotoOrnamentView`'s.
+private let videoOrnamentGlyphSize: CGFloat = 22
+
 struct VideoOrnamentsView: View {
     @Bindable var windowModel: VideoWindowModel
     @Environment(AppModel.self) private var appModel
@@ -212,8 +217,13 @@ struct VideoOrnamentsView: View {
         } label: {
             Group {
                 if windowModel.isPreparingShare {
+                    // Pinned to the icon's footprint: a bare ProgressView is
+                    // taller than a .title3 glyph and scaleEffect only scales
+                    // rendering, not layout, so the ornament bar would grow
+                    // while a share is being prepared.
                     ProgressView()
-                        .scaleEffect(0.8)
+                        .controlSize(.small)
+                        .frame(width: videoOrnamentGlyphSize, height: videoOrnamentGlyphSize)
                 } else {
                     Image(systemName: "square.and.arrow.up")
                 }
