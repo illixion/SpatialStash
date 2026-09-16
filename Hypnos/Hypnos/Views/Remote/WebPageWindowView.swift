@@ -103,6 +103,7 @@ struct WebPageWindowView: View {
         // in-front catcher above is a confirmed-working way back — it is the
         // sole reveal path, so don't remove it without replacing it.
         .persistentSystemOverlays(controlsVisible ? .automatic : .hidden)
+        .hidesStatusBar(!controlsVisible)
         .onAppear {
             setup()
         }

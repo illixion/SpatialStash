@@ -313,6 +313,7 @@ struct VideoWindowView: View {
             recordWindowSize(newSize)
         }
         .persistentSystemOverlays(windowModel.isWindowControlsHidden ? .hidden : .visible)
+        .hidesStatusBar(windowModel.isUIHidden)
         .ornament(
             visibility: windowModel.isUIHidden ? .hidden : .visible,
             attachmentAnchor: .scene(.bottomFront),

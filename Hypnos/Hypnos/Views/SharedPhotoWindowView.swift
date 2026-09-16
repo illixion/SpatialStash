@@ -34,6 +34,7 @@ struct SharedPhotoWindowView: View {
         }
         .opacity(appModel.allWindowsHidden ? 0 : 1)
         .persistentSystemOverlays(windowModel.isWindowControlsHidden ? .hidden : .visible)
+        .hidesStatusBar(windowModel.isUIHidden)
         .ornament(
             visibility: windowModel.isUIHidden ? .hidden : .visible,
             attachmentAnchor: .scene(.bottomFront),

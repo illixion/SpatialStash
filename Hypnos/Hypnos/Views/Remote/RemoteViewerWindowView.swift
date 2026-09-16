@@ -288,6 +288,7 @@ struct RemoteViewerWindowView: View {
             }
         }
         .persistentSystemOverlays(controlsVisible ? .automatic : .hidden)
+        .hidesStatusBar(!controlsVisible)
     }
 
     @ViewBuilder

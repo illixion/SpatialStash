@@ -140,6 +140,23 @@ private extension WindowGeometry.ResizingRestriction {
 }
 #endif
 
+// MARK: - Shared: status bar
+
+extension View {
+    /// visionOS has no status bar; iOS shows one with the clock, battery and
+    /// signal glyphs on top of every full-screen viewer. Hide it in sync with
+    /// the ornaments so a maximized photo/video/slideshow actually uses the
+    /// whole screen instead of leaving a bar of chrome behind after the rest
+    /// of the UI has auto-hidden.
+    func hidesStatusBar(_ hidden: Bool) -> some View {
+        #if os(visionOS)
+        return self
+        #else
+        return self.statusBar(hidden: hidden)
+        #endif
+    }
+}
+
 #if !os(visionOS)
 
 // MARK: - iOS: ornaments become overlays
