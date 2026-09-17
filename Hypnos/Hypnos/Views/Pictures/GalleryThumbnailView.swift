@@ -101,6 +101,11 @@ struct GalleryThumbnailView: View {
         .animation(nil, value: quickLookActive)
         .background(cellFrameProbe)
         .onTapGesture {
+            guard appModel.beginMediaOpenTap() else { return }
+            if !appModel.effectiveReduceMotion {
+                withAnimation(.easeOut(duration: 0.08)) { pressPhase = .pressed }
+                withAnimation(.easeOut(duration: 0.15).delay(0.08)) { pressPhase = .idle }
+            }
             onTap?()
         }
         .onLongPressGesture(

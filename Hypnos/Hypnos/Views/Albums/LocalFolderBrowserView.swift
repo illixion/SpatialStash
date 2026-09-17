@@ -353,12 +353,14 @@ struct LocalFolderBrowserView: View {
 // MARK: - Thumbnail
 
 struct LocalMediaThumbnailView: View {
+    @Environment(AppModel.self) private var appModel
     let file: LocalMediaFile
     var onTap: (() -> Void)? = nil
 
     @State private var loadedImage: UIImage?
     @State private var isLoading = true
     @State private var loadFailed = false
+    @State private var isPressed = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -400,7 +402,13 @@ struct LocalMediaThumbnailView: View {
         .clipped()
         .contentShape(Rectangle())
         .hoverEffect(ScaleHoverEffect())
+        .scaleEffect(isPressed ? 0.92 : 1.0)
         .onTapGesture {
+            guard appModel.beginMediaOpenTap() else { return }
+            if !appModel.effectiveReduceMotion {
+                withAnimation(.easeOut(duration: 0.08)) { isPressed = true }
+                withAnimation(.easeOut(duration: 0.15).delay(0.08)) { isPressed = false }
+            }
             onTap?()
         }
         .task {

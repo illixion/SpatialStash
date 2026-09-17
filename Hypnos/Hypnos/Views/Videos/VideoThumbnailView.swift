@@ -13,7 +13,12 @@ struct VideoThumbnailView: View {
     /// small so 60+ thumbnails don't thrash memory/compositing bandwidth.
     static let thumbnailMaxSize: CGFloat = 384
 
+    @Environment(AppModel.self) private var appModel
     let video: GalleryVideo
+    /// Fires on tap, after the debounce guard and press-flash animation.
+    /// Mirrors `GalleryThumbnailView.onTap`. `nil` in selection mode, where
+    /// the grid attaches its own external tap gesture instead.
+    var onTap: (() -> Void)? = nil
     /// Fires when the cell's long-press grow-and-pop gesture completes.
     /// Receives the cell's already-loaded thumbnail bitmap (if any) so the
     /// quick look preview can use it as an instant poster seed while the
@@ -158,6 +163,14 @@ struct VideoThumbnailView: View {
         // context would smear the opacity change across a settling spring.
         .animation(nil, value: quickLookActive)
         .background(cellFrameProbe)
+        .onTapGesture {
+            guard appModel.beginMediaOpenTap() else { return }
+            if !appModel.effectiveReduceMotion {
+                withAnimation(.easeOut(duration: 0.08)) { pressPhase = .pressed }
+                withAnimation(.easeOut(duration: 0.15).delay(0.08)) { pressPhase = .idle }
+            }
+            onTap?()
+        }
         .onLongPressGesture(
             minimumDuration: 0.65,
             perform: {

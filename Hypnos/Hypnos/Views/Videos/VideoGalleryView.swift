@@ -250,6 +250,9 @@ struct VideoGalleryView: View {
         } else {
             VideoThumbnailView(
                 video: video,
+                onTap: {
+                    openVideoDetail(video)
+                },
                 onLongPress: { thumb in
                     quickLookSeedImage = thumb
                     quickLookVideo = video
@@ -257,9 +260,6 @@ struct VideoGalleryView: View {
                 quickLookActive: quickLookVideo?.id == video.id,
                 cellCoordinateSpace: gallerySpace
             )
-            .onTapGesture {
-                openVideoDetail(video)
-            }
         }
     }
 

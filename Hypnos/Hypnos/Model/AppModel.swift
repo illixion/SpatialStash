@@ -199,6 +199,34 @@ class AppModel {
     var lastViewedImageId: UUID?
     var lastViewedVideoId: UUID?
 
+    // MARK: - Media Open Tap Debounce
+
+    /// Pictures, Videos and the Local browser each have their own tap gesture
+    /// and open function (see GalleryThumbnailView/PicturesTabView,
+    /// VideoThumbnailView/VideoGalleryView, LocalMediaThumbnailView/
+    /// LocalFolderBrowserView) — there's no single shared "open media" call to
+    /// gate, so this cooldown lives on AppModel and every one of those tap
+    /// handlers calls it first. One check covers two failure modes at once:
+    /// a double-tap on the same thumbnail spawning a second pushed window, and
+    /// a second tap landing on a *different* thumbnail (e.g. gaze moved to
+    /// another cell mid-gesture) before the first tap's window has actually
+    /// opened. Both are just "a tap arrived while the previous one is still
+    /// being handled."
+    private var lastMediaOpenTapAt: Date = .distantPast
+    private let mediaOpenTapCooldown: TimeInterval = 0.5
+
+    /// Returns true if a tap-to-open should proceed. Call at the very top of
+    /// the tap handler, before touching any state (lastViewedImageId, etc.),
+    /// so a suppressed tap has no side effects at all.
+    func beginMediaOpenTap() -> Bool {
+        let now = Date()
+        guard now.timeIntervalSince(lastMediaOpenTapAt) >= mediaOpenTapCooldown else {
+            return false
+        }
+        lastMediaOpenTapAt = now
+        return true
+    }
+
     // MARK: - Main Window State
 
     var mainWindowSize: CGSize = CGSize(width: 1200, height: 800)
