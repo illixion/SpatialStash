@@ -7,10 +7,11 @@
 
 import CoreGraphics
 import os
+import RAVESlideshow
 import UIKit
 
 @MainActor
-class GalleryContentProvider: SlideshowContentProvider {
+class GalleryContentProvider: SlideshowContentProvider, RAVESlideshowContentProvider {
     let imageSource: any ImageSource
     var filter: ImageFilterCriteria?
 
@@ -94,5 +95,63 @@ class GalleryContentProvider: SlideshowContentProvider {
     func resetPagination() {
         page = 0
         galleryURLMap.removeAll()
+    }
+
+    func fetchMoreContent(_ request: RAVESlideshowFetchRequest) async throws -> [RAVESlideshowItem] {
+        let posts = await fetchMoreContent(
+            tagQuery: "",
+            ratioRange: nil,
+            blockedPosts: [],
+            blockedTags: request.excludedTags
+        )
+        return posts.map { post in
+            RAVESlideshowItem(
+                id: String(post._id),
+                title: nil,
+                mediaKind: .image,
+                fileExtension: post.file_ext,
+                tags: Set(post.tags),
+                metadata: [
+                    "legacyID": String(post._id),
+                    "url": resolveImageURL(for: post)?.absoluteString ?? ""
+                ]
+            )
+        }
+    }
+
+    func loadMedia(for item: RAVESlideshowItem, maxResolution: Int) async throws -> RAVESlideshowLoadedMedia {
+        guard let id = Int(item.id) else { throw RAVESlideshowError.noContent }
+        let post = RemotePost(
+            _id: id,
+            file_ext: item.fileExtension,
+            tags: Array(item.tags),
+            rating: nil,
+            image_width: nil,
+            image_height: nil,
+            fav_count: nil,
+            md5: nil,
+            parent_id: nil,
+            score: nil,
+            ratio: nil,
+            path: item.metadata["url"],
+            duration: nil
+        )
+        guard let media = await downloadImage(for: post, maxResolution: maxResolution) else {
+            throw RAVESlideshowError.noContent
+        }
+        switch media {
+        case let .still(_, data):
+            let url = resolveImageURL(for: post)
+            if data.isAnimatedGIF || data.isAnimatedWebP || data.isAnimatedJXL {
+                return .animatedImage(data: data, displayURL: url ?? URL(fileURLWithPath: "/"))
+            }
+            return .still(data: data, displayURL: url ?? URL(fileURLWithPath: "/"))
+        case let .video(url):
+            return .video(url: url, hlsURL: nil)
+        }
+    }
+
+    func displayURL(for item: RAVESlideshowItem) -> URL? {
+        item.metadata["url"].flatMap(URL.init(string:))
     }
 }

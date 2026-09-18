@@ -12,7 +12,7 @@ The one project builds for both platforms. Everything that isn't about depth —
 - **Share Sheet Support** - Receive images and videos from other apps via the system share sheet, with save-to-files option
 - **Advanced Filtering** - Filter by galleries, tags, ratings, performers and more with saved filter presets
 - **Swipe Navigation** - Swipe between images in the gallery with smooth transitions
-- **Slideshow** - Random image slideshow with Ken Burns animation, dynamic brightness, clock overlay, and visual adjustments. Launches in a dedicated viewer window with configurable display options
+- **Slideshow** - Random image/video slideshow with Ken Burns animation, dynamic brightness, clock overlay, and visual adjustments. Local gallery and app-gallery playback uses the shared `RAVESlideshow` lifecycle/provider/synchronization package; RoboFrame playback remains server-driven in the legacy Remote product until the dedicated client completes parity. Launches in a dedicated viewer window with configurable display options
 - **Rating & O-Count** - View and edit image ratings and O-count directly from the viewer
 - **Video Playback** - Stream videos directly from your Stash server or play local files
 - **Stereoscopic 3D Video** - Automatically detects SBS/OU stereoscopic formats from tags, converts to MV-HEVC, and plays in full immersive mode

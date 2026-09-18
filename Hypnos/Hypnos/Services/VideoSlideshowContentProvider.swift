@@ -11,9 +11,10 @@
 import Foundation
 import UIKit
 import os
+import RAVESlideshow
 
 @MainActor
-class VideoSlideshowContentProvider: SlideshowContentProvider {
+class VideoSlideshowContentProvider: SlideshowContentProvider, RAVESlideshowContentProvider {
     let videoSource: any VideoSource
     var filter: SceneFilterCriteria?
 
@@ -95,5 +96,72 @@ class VideoSlideshowContentProvider: SlideshowContentProvider {
         page = 0
         videoURLMap.removeAll()
         transcodeURLMap.removeAll()
+    }
+
+    func fetchMoreContent(_ request: RAVESlideshowFetchRequest) async throws -> [RAVESlideshowItem] {
+        let posts = await fetchMoreContent(
+            tagQuery: "",
+            ratioRange: nil,
+            blockedPosts: [],
+            blockedTags: request.excludedTags
+        )
+        return posts.map { post in
+            RAVESlideshowItem(
+                id: String(post._id),
+                title: nil,
+                mediaKind: .video,
+                fileExtension: post.file_ext,
+                duration: post.duration,
+                metadata: [
+                    "legacyID": String(post._id),
+                    "url": resolveImageURL(for: post)?.absoluteString ?? ""
+                ]
+            )
+        }
+    }
+
+    func loadMedia(for item: RAVESlideshowItem, maxResolution: Int) async throws -> RAVESlideshowLoadedMedia {
+        guard let id = Int(item.id) else { throw RAVESlideshowError.noContent }
+        let post = RemotePost(
+            _id: id,
+            file_ext: item.fileExtension,
+            tags: [],
+            rating: nil,
+            image_width: nil,
+            image_height: nil,
+            fav_count: nil,
+            md5: nil,
+            parent_id: nil,
+            score: nil,
+            ratio: nil,
+            path: item.metadata["url"],
+            duration: item.duration
+        )
+        guard let url = resolveImageURL(for: post) else { throw RAVESlideshowError.noContent }
+        return .video(url: url, hlsURL: hlsURL(for: post))
+    }
+
+    func displayURL(for item: RAVESlideshowItem) -> URL? {
+        item.metadata["url"].flatMap(URL.init(string:))
+    }
+
+    func streamingFallbackURL(for item: RAVESlideshowItem) -> URL? {
+        guard let id = Int(item.id) else { return nil }
+        let post = RemotePost(
+            _id: id,
+            file_ext: item.fileExtension,
+            tags: [],
+            rating: nil,
+            image_width: nil,
+            image_height: nil,
+            fav_count: nil,
+            md5: nil,
+            parent_id: nil,
+            score: nil,
+            ratio: nil,
+            path: item.metadata["url"],
+            duration: item.duration
+        )
+        return hlsURL(for: post)
     }
 }

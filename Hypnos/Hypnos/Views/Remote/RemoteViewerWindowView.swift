@@ -7,8 +7,9 @@
  */
 
 import Combine
-import RAVEMedia
 import os
+import RAVEMedia
+import RAVESlideshow
 import RAVEUI
 import SwiftUI
 
@@ -954,6 +955,18 @@ struct RemoteViewerWindowView: View {
         self.viewerModel = model
         appModel.registerRemoteViewerWindow(configId: config.id, windowValue: windowValue)
         appModel.registerRemoteViewerModel(model)
+        if config.mode == .appGallery {
+            let mode3D: RAVESlideshow3DMode = switch config.slideshow3DMode {
+            case .off: .off
+            case .spatial3D: .spatial3D
+            case .immersive3D: .immersive3D
+            }
+            model.useRAVESlideshowForLocalContent(
+                mode3D: mode3D,
+                maxImageResolution2D: resolved2D,
+                maxImageResolution3D: resolved3D
+            )
+        }
         model.start()
     }
 

@@ -14,6 +14,7 @@
 
 import CoreGraphics
 import Metal
+import RAVESlideshow
 import RAVEMedia
 import os
 import SwiftUI
@@ -545,6 +546,8 @@ class SlideshowEngine {
     // MARK: - Content Provider & Tag List Manager
 
     var contentProvider: SlideshowContentProvider?
+    private var sharedLocalEngine: RAVESlideshowEngine?
+    private var usesSharedLocalEngine = false
     var tagListManager: TagListManager?
     let engineId = UUID()
 
@@ -757,6 +760,12 @@ class SlideshowEngine {
             return
         }
 
+        if usesSharedLocalEngine, let sharedLocalEngine {
+            transition(to: .loading)
+            sharedLocalEngine.start()
+            return
+        }
+
         if let tagListManager {
             tagListManager.addChangeHandler(id: engineId) { [weak self] in
                 self?.handleTagListChanged()
@@ -769,6 +778,11 @@ class SlideshowEngine {
 
     func stop() {
         transition(to: .stopped)
+        if let sharedLocalEngine {
+            RAVESlideshowLocalSyncCoordinator.shared.unregister(sharedLocalEngine)
+            sharedLocalEngine.stop()
+            self.sharedLocalEngine = nil
+        }
         runLoopTask?.cancel()
         runLoopTask = nil
         cancelPrefetch()
@@ -779,6 +793,109 @@ class SlideshowEngine {
         pseudo3DResolveTask?.cancel()
         pseudo3DResolveTask = nil
         tagListManager?.removeChangeHandler(id: engineId)
+    }
+
+    func useRAVESlideshowForLocalContent(
+        mode3D: RAVESlideshow3DMode = .off,
+        maxImageResolution2D: Int = 0,
+        maxImageResolution3D: Int = 0
+    ) {
+        guard !serverDriven, let provider = contentProvider as? any RAVESlideshowContentProvider else {
+            return
+        }
+        let settings = RAVESlideshowDisplaySettings(
+            delay: delay,
+            transitionDuration: reduceMotion ? 0 : 1,
+            showClock: true,
+            showSensors: false,
+            useAspectRatio: useAspectRatio,
+            enableKenBurns: enableKenBurns,
+            enableDynamicBrightness: enableDynamicBrightness,
+            enableDiorama: enableDiorama,
+            transparentBackground: false,
+            textScale: 1,
+            reduceMotion: reduceMotion,
+            mode3D: mode3D,
+            maxImageResolution2D: maxImageResolution2D,
+            maxImageResolution3D: maxImageResolution3D
+        )
+        let configuration = RAVESlideshowConfiguration(
+            prefetchLimit: 3,
+            retryLimit: 2,
+            automaticAdvancement: true,
+            platformCapabilities: .current
+        )
+        let engine = RAVESlideshowEngine(
+            provider: provider,
+            displaySettings: settings,
+            configuration: configuration
+        )
+        engine.onTransition = { [weak self] displayed in
+            self?.adoptSharedLocalMedia(displayed)
+            RAVESlideshowLocalSyncCoordinator.shared.broadcast(from: engine)
+        }
+        engine.onSettingsChanged = { [weak self] display, _ in
+            guard let self else { return }
+            self.delay = display.delay
+            self.enableKenBurns = display.enableKenBurns
+            self.useAspectRatio = display.useAspectRatio
+            self.enableDynamicBrightness = display.enableDynamicBrightness
+            self.enableDiorama = display.enableDiorama
+        }
+        sharedLocalEngine = engine
+        usesSharedLocalEngine = true
+        RAVESlideshowLocalSyncCoordinator.shared.register(engine)
+    }
+
+    private func adoptSharedLocalMedia(_ displayed: RAVESlideshowDisplayedMedia) {
+        let id = Int(displayed.item.id) ?? abs(displayed.item.id.hashValue)
+        let post = RemotePost(
+            _id: id,
+            file_ext: displayed.item.fileExtension,
+            tags: Array(displayed.item.tags),
+            rating: nil,
+            image_width: nil,
+            image_height: nil,
+            fav_count: nil,
+            md5: nil,
+            parent_id: nil,
+            score: nil,
+            ratio: nil,
+            path: displayed.media.displayURL?.absoluteString,
+            duration: displayed.item.duration
+        )
+        nextImage = nil
+        nextPost = nil
+        currentPost = post
+        currentVideoHLSURL = nil
+        currentAnimatedData = nil
+        videoNativeImgFailed = false
+        switch displayed.media {
+        case let .still(data, _):
+            currentImage = UIImage(data: data)
+            currentTexture = currentImage.flatMap {
+                MetalImageRenderer.shared?.createTexture(from: $0, autoCropTransparentEdges: false)
+            }
+            currentMediaType = .image
+        case let .animatedImage(data, url):
+            currentImage = data.flatMap(UIImage.init(data:))
+            currentTexture = currentImage.flatMap {
+                MetalImageRenderer.shared?.createTexture(from: $0, autoCropTransparentEdges: false)
+            }
+            currentAnimatedData = data
+            currentMediaType = url.pathExtension.lowercased() == "gif"
+                ? .animatedGIF(url)
+                : .animatedWebP(url)
+        case let .video(url, hlsURL):
+            currentImage = nil
+            currentTexture = nil
+            currentMediaType = .video(url)
+            currentVideoHLSURL = hlsURL
+        }
+        isCurrentPostAnimatedGIF = currentMediaType == .animatedGIF(displayed.media.displayURL ?? URL(fileURLWithPath: "/"))
+        isLoading = false
+        isTransitioning = false
+        transition(to: .displaying)
     }
 
     // MARK: - Watchdog
@@ -865,6 +982,7 @@ class SlideshowEngine {
         guard wasVisible != isVisible else { return }
 
         if isVisible {
+            sharedLocalEngine?.setVisible(true)
             // Returning to visible. isRoomActive flips before the hook runs
             // so overrides observe the new activity state — the model's
             // barrier-rejoin imageReady gates on it and would be silently
@@ -886,6 +1004,7 @@ class SlideshowEngine {
                     // Resume the slideshow timer
                     transition(to: .displaying)
                 } else {
+                    sharedLocalEngine?.setVisible(false)
                     // Content was never loaded (backgrounded before first fetch) — fetch fresh
                     transition(to: .loading)
                 }

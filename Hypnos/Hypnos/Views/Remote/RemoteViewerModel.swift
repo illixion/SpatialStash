@@ -191,7 +191,9 @@ class RemoteViewerModel: SlideshowEngine {
     override func start() {
         guard state == .idle else { return }
 
-        SlideshowSyncHub.shared.registerForLocalSync(self)
+        if !isGalleryMode {
+            SlideshowSyncHub.shared.registerForLocalSync(self)
+        }
 
         if !isGalleryMode {
             // Remote mode is purely server-paced — the orchestrator's playback
@@ -233,7 +235,9 @@ class RemoteViewerModel: SlideshowEngine {
 
     override func stop() {
         super.stop()
-        SlideshowSyncHub.shared.unregisterForLocalSync(self)
+        if !isGalleryMode {
+            SlideshowSyncHub.shared.unregisterForLocalSync(self)
+        }
         wsSession?.close()
         modTagManager?.removeSendHandler(id: engineId)
         tagListManager?.removeSendHandler(id: engineId)

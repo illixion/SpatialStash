@@ -12,6 +12,7 @@
 		AA06000000000000000000C3 /* RAVEUI in Frameworks */ = {isa = PBXBuildFile; productRef = AA06000000000000000000C2 /* RAVEUI */; };
 		AA06000000000000000000C5 /* RAVEConsole in Frameworks */ = {isa = PBXBuildFile; productRef = AA06000000000000000000C4 /* RAVEConsole */; };
 		AA07000000000000000000D3 /* RAVEMedia in Frameworks */ = {isa = PBXBuildFile; productRef = AA07000000000000000000D2 /* RAVEMedia */; };
+		AA09000000000000000000F3 /* RAVESlideshow in Frameworks */ = {isa = PBXBuildFile; productRef = AA09000000000000000000F2 /* RAVESlideshow */; };
 		AA08000000000000000000ED /* RAVEUI in Frameworks */ = {isa = PBXBuildFile; productRef = AA08000000000000000000EC /* RAVEUI */; };
 		AA08000000000000000000F0 /* AccessibilityIdentifiers.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA08000000000000000000EF /* AccessibilityIdentifiers.swift */; };
 		AA08000000000000000000F1 /* AccessibilityIdentifiers.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA08000000000000000000EF /* AccessibilityIdentifiers.swift */; };
@@ -70,6 +71,7 @@
 				AA06000000000000000000C3 /* RAVEUI in Frameworks */,
 				AA06000000000000000000C5 /* RAVEConsole in Frameworks */,
 				AA07000000000000000000D3 /* RAVEMedia in Frameworks */,
+				AA09000000000000000000F3 /* RAVESlideshow in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -157,6 +159,7 @@
 				AA06000000000000000000C2 /* RAVEUI */,
 				AA06000000000000000000C4 /* RAVEConsole */,
 				AA07000000000000000000D2 /* RAVEMedia */,
+				AA09000000000000000000F2 /* RAVESlideshow */,
 			);
 			productName = Hypnos;
 			productReference = 0778651A2D811C5500BCF113 /* Hypnos.app */;
@@ -573,6 +576,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = AA01000000000000000000A1 /* XCLocalSwiftPackageReference "../../RAVESDK" */;
 			productName = RAVEMedia;
+		};
+		AA09000000000000000000F2 /* RAVESlideshow */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AA01000000000000000000A1 /* XCLocalSwiftPackageReference "../../RAVESDK" */;
+			productName = RAVESlideshow;
 		};
 		AA08000000000000000000EC /* RAVEUI */ = {
 			isa = XCSwiftPackageProductDependency;
