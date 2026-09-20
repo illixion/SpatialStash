@@ -55,7 +55,7 @@ public actor NextcloudClient {
         request.setValue("text/xml; charset=utf-8", forHTTPHeaderField: "Content-Type")
         request.setValue(server.authorizationHeader, forHTTPHeaderField: "Authorization")
 
-        let data = try await perform(request)
+        let data = try await performRequest(request)
         let entries = try NextcloudMultiStatusParser.parse(data)
         let items = NextcloudItemMapper.items(from: entries, server: server)
 
@@ -97,7 +97,8 @@ public actor NextcloudClient {
 
     // MARK: - Transport
 
-    private func perform(_ request: URLRequest) async throws -> Data {
+    /// Not private: the folder-listing extension lives in another file.
+    func performRequest(_ request: URLRequest) async throws -> Data {
         let data: Data
         let response: URLResponse
         do {

@@ -25,6 +25,11 @@ import NextcloudMedia
 struct Bench {
 
     static func main() async {
+        // Line-buffer stdout. Swift's `print` block-buffers whenever stdout is
+        // not a terminal, so `login` — whose entire job is to show a URL and
+        // then wait for the user — emits nothing at all when piped or
+        // redirected, and looks like it hung before it ever got going.
+        setvbuf(stdout, nil, _IOLBF, 0)
         do {
             try await run()
         } catch {
@@ -102,6 +107,7 @@ struct Bench {
         case "search":  try await search()
         case "page":    try await page()
         case "preview": try await preview()
+        case "folders": try await folders()
         default:        usage()
         }
     }
@@ -199,6 +205,18 @@ struct Bench {
                      fileID, size, result.0.count / 1024, ms))
     }
 
+    static func folders() async throws {
+        let client = NextcloudClient(server: try makeServer())
+        let path = flag("path") ?? ""
+        let (list, ms) = try await timed { try await client.folders(in: path) }
+        print(String(format: "%d folders under %@ in %.0f ms",
+                     list.count, path.isEmpty ? "/" : path, ms))
+        for folder in list {
+            let size = folder.childCount.map { " (\($0) bytes)" } ?? ""
+            print("  \(folder.path)\(size)")
+        }
+    }
+
     static func usage() {
         print("""
             ncbench — live bench for the Nextcloud client
@@ -208,6 +226,7 @@ struct Bench {
               search [--kind images|videos|both] [--limit N] [--offset N] [--term T]
               page   [--limit N] [--pages N]         paging cost at increasing depth
               preview --id <fileId> [--size 512]
+              folders [--path Photos]                list collections, for the root picker
 
             Environment: NC_SERVER, NC_USER, NC_APP_PASSWORD, NC_ROOT (default Photos)
             """)
