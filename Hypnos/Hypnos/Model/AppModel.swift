@@ -51,7 +51,9 @@ class AppModel {
             let trimmed = stashAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed != stashAPIKey { stashAPIKey = trimmed }
             if stashAPIKey != oldValue {
-                UserDefaults.standard.set(stashAPIKey, forKey: "stashAPIKey")
+                // Keychain, not UserDefaults: the defaults plist is an ordinary
+                // readable file in the container. See KeychainStore.
+                KeychainStore.set(stashAPIKey, for: .stashAPIKey)
                 updateAPIClient()
             }
         }
@@ -1306,9 +1308,14 @@ class AppModel {
         let defaultSlideshowDelay: TimeInterval = 5.0
 
         let loadedServerURL = UserDefaults.standard.string(forKey: "stashServerURL") ?? defaultServerURL
+        // The API key lives in the Keychain. Installs that predate that wrote it
+        // to UserDefaults, so pull it across first — the migration is a no-op
+        // once the legacy key is gone, and it deletes the plaintext copy only
+        // after the Keychain write succeeds.
+        KeychainStore.migrateFromUserDefaults(legacyKey: "stashAPIKey", to: .stashAPIKey)
         // Trim persisted keys too — pre-fix installs (and restored backups) may
         // have stored a key with trailing whitespace; see stashAPIKey.didSet.
-        let loadedAPIKey = (UserDefaults.standard.string(forKey: "stashAPIKey") ?? defaultAPIKey)
+        let loadedAPIKey = (KeychainStore.string(for: .stashAPIKey) ?? defaultAPIKey)
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
         // Load auto-hide delay (0 means disabled, use default if not set)
