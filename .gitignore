@@ -37,3 +37,9 @@ build/
 
 # Local compiled depth models (pushed to device, not bundled)
 /models/
+
+# Swift package build products (Packages/*)
+.build/
+
+# ncbench writes a live Nextcloud app password here — never commit it
+.ncbench-credentials.json
