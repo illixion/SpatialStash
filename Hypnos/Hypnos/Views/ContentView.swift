@@ -118,6 +118,11 @@ struct ContentView: View {
             Text("A viewer with this configuration is already open. You can summon it or open a copy.")
         }
         .onAppear {
+            // Only once a scene is on screen: the prompt is presented on the
+            // app's own window, so asking for it before that hangs the launch.
+            if appModel.usesLocalNetworkFeatures {
+                LocalNetworkPermission.prewarm(reason: "gallery appeared with a LAN source configured")
+            }
             consumePendingGalleryFilterIfNeeded()
             handlePhotoWindowOpenIfNeeded()
             handleVideoWindowOpenIfNeeded()

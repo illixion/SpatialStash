@@ -2484,6 +2484,9 @@ class AppModel {
     /// that rebuilds the sources, so letting it run after the key and the
     /// library choice are in place means the rebuild sees the finished state.
     func commitStashServer(url: String, apiKey: String) {
+        // Configuring a server is the moment the app first needs the LAN, and
+        // the UI is unambiguously up by now, so this is the in-context prompt.
+        LocalNetworkPermission.prewarm(reason: "Stash server configured")
         stashAPIKey = apiKey
         librarySource = .stash
         let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2533,6 +2536,14 @@ class AppModel {
     /// of library to make at all.
     var hasStashServer: Bool {
         !stashServerURL.isEmpty
+    }
+
+    /// Whether anything the user has configured will talk to the local
+    /// network. Gates the local-network permission prewarm so a Photos-only
+    /// user is never prompted for access the app will not use.
+    var usesLocalNetworkFeatures: Bool {
+        if hasStashServer { return true }
+        return savedRemoteConfigs.contains { !$0.apiEndpoint.isEmpty }
     }
 
     /// The library sources currently selectable. Photos and Local need no
