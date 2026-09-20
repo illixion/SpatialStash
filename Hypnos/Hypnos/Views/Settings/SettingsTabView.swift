@@ -345,6 +345,13 @@ struct SettingsTabView: View {
                     } label: {
                         Label("Import from Documents Folder", systemImage: "folder")
                     }
+
+                    // Says so up front: the file is shareable, and someone who
+                    // assumed it was complete would restore onto a server that
+                    // silently fails to authenticate.
+                    Text("Backups include your server addresses and display settings, but not passwords or API keys — re-enter those after restoring.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 Section("Developer") {

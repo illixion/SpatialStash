@@ -2279,7 +2279,10 @@ class AppModel {
             exportDate: Date(),
             appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown",
             stashServerURL: stashServerURL,
-            stashAPIKey: stashAPIKey,
+            // Deliberately nil: a backup is a file the user mails and AirDrops
+            // around, and it must not carry a server credential. See
+            // SettingsBackup.stashAPIKey.
+            stashAPIKey: nil,
             autoHideDelay: autoHideDelay,
             slideshowDelay: slideshowDelay,
             slideshowShowClock: slideshowShowClock,

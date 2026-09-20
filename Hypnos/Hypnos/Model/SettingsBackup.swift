@@ -19,6 +19,16 @@ struct SettingsBackup: Codable {
 
     // Simple display settings (all optional for forward/backward compatibility)
     var stashServerURL: String?
+
+    /// **Never written by an export.** Kept decodable so a backup taken before
+    /// version 2 still restores the key it contains.
+    ///
+    /// A backup is a plain JSON file the user saves, AirDrops and mails to
+    /// themselves; a server credential riding along inside it turns every one
+    /// of those into a credential leak, and the file gives no hint that it
+    /// holds one. Server *addresses* still travel — they are configuration, not
+    /// secrets — so a restore rebuilds everything except the password, which
+    /// the user re-enters once. See `KeychainStore`.
     var stashAPIKey: String?
     var autoHideDelay: TimeInterval?
     var slideshowDelay: TimeInterval?
@@ -86,7 +96,9 @@ struct SettingsBackup: Codable {
     var globalPseudo3DSettings: Data?
     var cacheSizePreset: String?
 
-    static let currentVersion = 1
+    /// 2: credentials are no longer exported (see `stashAPIKey`). Version 1
+    /// files may contain one and are still imported as before.
+    static let currentVersion = 2
 }
 
 // MARK: - FileDocument Wrapper
