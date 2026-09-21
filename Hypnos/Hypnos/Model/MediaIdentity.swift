@@ -35,6 +35,8 @@ enum MediaSource: String, Codable, Sendable {
     case photos
     /// A file handed in through the share sheet and copied to the share cache.
     case shared
+    /// A file on a Nextcloud server, served over WebDAV.
+    case nextcloud
 
     /// Whether this source's URLs point inside the app container, and so go
     /// stale whenever visionOS reassigns the container UUID at launch.

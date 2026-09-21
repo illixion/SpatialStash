@@ -5,6 +5,7 @@
  Includes navigation state, gallery management, and spatial image handling.
  */
 
+import NextcloudMedia
 import Photos
 import RAVEMedia
 import os
@@ -66,6 +67,65 @@ class AppModel {
             }
         }
     }
+
+    // MARK: - Nextcloud Configuration
+
+    /// Base URL of the Nextcloud instance, e.g. `https://cloud.example.com`.
+    ///
+    /// The three settings below are stored plainly; only the app password is a
+    /// secret, and it lives in the Keychain. They are deliberately separate
+    /// properties rather than one Codable blob so each can carry its own
+    /// observer, matching how the Stash pair already works.
+    var nextcloudServerURL: String {
+        didSet {
+            guard nextcloudServerURL != oldValue else { return }
+            UserDefaults.standard.set(nextcloudServerURL, forKey: "nextcloudServerURL")
+            // Same reasoning as the Stash server's observer: only the *current*
+            // host is re-registered below, so an abandoned one has to be
+            // dropped here or its credential outlives the server.
+            if let oldHost = URL(string: oldValue)?.host {
+                MediaAuthorization.shared.unregister(host: oldHost)
+            }
+            updateNextcloudClient()
+        }
+    }
+
+    var nextcloudUsername: String {
+        didSet {
+            guard nextcloudUsername != oldValue else { return }
+            UserDefaults.standard.set(nextcloudUsername, forKey: "nextcloudUsername")
+            updateNextcloudClient()
+        }
+    }
+
+    var nextcloudAppPassword: String {
+        didSet {
+            guard nextcloudAppPassword != oldValue else { return }
+            KeychainStore.set(nextcloudAppPassword, for: .nextcloudAppPassword)
+            updateNextcloudClient()
+        }
+    }
+
+    /// Library root relative to the account's files, e.g. `Photos`.
+    ///
+    /// Not cosmetic: an unscoped search returns every image the account can
+    /// see, which on a server that also holds a music library means thousands
+    /// of album-art JPEGs interleaved with the photos. Chosen from a dropdown
+    /// of the server's actual folders — see `NextcloudClient.folders(in:)` —
+    /// because typing a path means guessing, and a wrong guess reads as an
+    /// empty library rather than an error.
+    var nextcloudRoot: String {
+        didSet {
+            guard nextcloudRoot != oldValue else { return }
+            UserDefaults.standard.set(nextcloudRoot, forKey: "nextcloudRoot")
+            updateNextcloudClient()
+        }
+    }
+
+    /// Rebuilt whenever any of the four settings above change. Nil until the
+    /// server is fully configured, which is also what `hasNextcloudServer`
+    /// reports and what keeps the library out of the picker until it works.
+    private(set) var nextcloudClient: NextcloudClient?
 
     var galleryImages: [GalleryImage] = []
     var isLoadingGallery: Bool = false
@@ -1326,6 +1386,15 @@ class AppModel {
         let loadedAPIKey = (KeychainStore.string(for: .stashAPIKey) ?? defaultAPIKey)
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
+        let loadedNextcloudServerURL = UserDefaults.standard.string(forKey: "nextcloudServerURL") ?? ""
+        let loadedNextcloudUsername = UserDefaults.standard.string(forKey: "nextcloudUsername") ?? ""
+        // Never in UserDefaults, so there is nothing to migrate across: this
+        // setting only ever existed after the Keychain store did.
+        let loadedNextcloudAppPassword = KeychainStore.string(for: .nextcloudAppPassword) ?? ""
+        // "Photos" rather than "" so a fresh setup doesn't start by searching
+        // the whole account — see `nextcloudRoot` for why that matters.
+        let loadedNextcloudRoot = UserDefaults.standard.string(forKey: "nextcloudRoot") ?? "Photos"
+
         // Load auto-hide delay (0 means disabled, use default if not set)
         let savedAutoHideDelay = UserDefaults.standard.double(forKey: "autoHideDelay")
         let loadedAutoHideDelay = UserDefaults.standard.object(forKey: "autoHideDelay") != nil ? savedAutoHideDelay : defaultAutoHideDelay
@@ -1508,6 +1577,10 @@ class AppModel {
         // Initialize stored properties
         self.stashServerURL = loadedServerURL
         self.stashAPIKey = loadedAPIKey
+        self.nextcloudServerURL = loadedNextcloudServerURL
+        self.nextcloudUsername = loadedNextcloudUsername
+        self.nextcloudAppPassword = loadedNextcloudAppPassword
+        self.nextcloudRoot = loadedNextcloudRoot
         self.autoHideDelay = loadedAutoHideDelay
         self.slideshowDelay = loadedSlideshowDelay
         self.slideshowShowClock = loadedSlideshowShowClock
@@ -1564,12 +1637,34 @@ class AppModel {
             AppLogger.appModel.info("Init - No Stash Server configured, using standalone sources")
         }
 
+        let nextcloud: NextcloudClient?
+        if !loadedNextcloudServerURL.isEmpty, !loadedNextcloudUsername.isEmpty,
+           !loadedNextcloudAppPassword.isEmpty,
+           let url = URL(string: loadedNextcloudServerURL) {
+            nextcloud = NextcloudClient(server: NextcloudServer(
+                baseURL: url,
+                username: loadedNextcloudUsername,
+                appPassword: loadedNextcloudAppPassword,
+                root: loadedNextcloudRoot))
+        } else {
+            nextcloud = nil
+        }
+        self.nextcloudClient = nextcloud
+
         // `effectiveLibrarySource` cannot be read yet — self is not fully
-        // initialized — so the "no server means Photos" rule is restated here
-        // and nowhere else. The mapping from a choice to a pair of sources is
-        // `makeSources`, shared with `applyLibrarySource`.
-        let initialSource: LibrarySource = loadedServerURL.isEmpty ? .photos : loadedLibrarySource
-        let initialSources = AppModel.makeSources(for: initialSource, apiClient: client)
+        // initialized — so its "fall back to Photos unless the stored choice is
+        // actually available" rule is restated here and nowhere else. The
+        // mapping from a choice to a pair of sources is `makeSources`, shared
+        // with `applyLibrarySource`.
+        let initialAvailable: [LibrarySource] = [.photos, .local]
+            + (loadedServerURL.isEmpty ? [] : [.stash])
+            + (nextcloud == nil ? [] : [.nextcloud])
+        let initialSource: LibrarySource = initialAvailable.contains(loadedLibrarySource)
+            ? loadedLibrarySource
+            : .photos
+        let initialSources = AppModel.makeSources(for: initialSource,
+                                                  apiClient: client,
+                                                  nextcloudClient: nextcloud)
         self.imageSource = initialSources.image
         self.videoSource = initialSources.video
         let entitlementProvider = EntitlementProviderFactory.make()
@@ -1615,12 +1710,14 @@ class AppModel {
         // property didSet doesn't fire for in-init assignment.
         updateDeviceTelemetry()
 
-        // Same reason: the server URL and key were assigned during phase-1
-        // init, so their observers never ran and nothing registered the
-        // credential. Without this a cold launch leaves MediaAuthorization
-        // empty until the user happens to edit the server settings, and every
-        // URL the app authenticates client-side goes out unsigned.
+        // Same reason: the server settings were assigned during phase-1 init,
+        // so their observers never ran and nothing registered the credentials.
+        // Without this a cold launch leaves MediaAuthorization empty until the
+        // user happens to edit the server settings, and every URL the app
+        // authenticates client-side goes out unsigned — for Nextcloud, whose
+        // URLs carry no credential of their own at all, that is every request.
         updateStashMediaCredential()
+        updateNextcloudMediaCredential()
 
         // Monitor memory pressure and downscale windows that have been
         // backgrounded (not in active room) for at least 2 minutes.
@@ -2560,6 +2657,70 @@ class AppModel {
     /// the ordinary `?apikey=` query param — previously honored only by the
     /// animated-image WebView, now uniform across every consumer since they
     /// all resolve through the same registry.
+    /// Whether a Nextcloud server is configured well enough to browse.
+    ///
+    /// All three parts are required: the username is part of every DAV path,
+    /// and the app password is the only credential (Nextcloud has no
+    /// unauthenticated media endpoint the way a guest-readable Stash does).
+    var hasNextcloudServer: Bool {
+        !nextcloudServerURL.isEmpty && !nextcloudUsername.isEmpty && !nextcloudAppPassword.isEmpty
+    }
+
+    /// Rebuilds the Nextcloud client and registers its credential.
+    ///
+    /// The registration is what makes every URL these sources hand out work:
+    /// a Nextcloud preview or download URL carries no credential of its own —
+    /// unlike Stash, which bakes its key into the URLs it returns — so the
+    /// image loader and the video players authenticate by host at request
+    /// time. Without this the grid would be a wall of 401s.
+    func updateNextcloudClient() {
+        updateNextcloudMediaCredential()
+        guard let server = currentNextcloudServer else {
+            nextcloudClient = nil
+            applyLibrarySource()
+            return
+        }
+
+        // Reuse the existing actor when only the server details changed, so a
+        // root switch mid-browse doesn't strand in-flight requests against a
+        // client nothing holds any more.
+        if let client = nextcloudClient {
+            Task { await client.updateServer(server) }
+        } else {
+            nextcloudClient = NextcloudClient(server: server)
+        }
+        AppLogger.appModel.info("Nextcloud client updated (root: \(self.nextcloudRoot, privacy: .public))")
+        applyLibrarySource()
+    }
+
+    /// The configured server, or nil when any required part is missing.
+    private var currentNextcloudServer: NextcloudServer? {
+        guard hasNextcloudServer, let baseURL = URL(string: nextcloudServerURL) else { return nil }
+        return NextcloudServer(baseURL: baseURL,
+                               username: nextcloudUsername,
+                               appPassword: nextcloudAppPassword,
+                               root: nextcloudRoot)
+    }
+
+    /// Registers the Basic credential for the Nextcloud host, mirroring
+    /// `updateStashMediaCredential`. Split out of `updateNextcloudClient` so
+    /// `init` can register without also triggering the source rebuild that
+    /// init does directly.
+    private func updateNextcloudMediaCredential() {
+        // Clearing the username or password leaves the URL — and so the host —
+        // in place, so an incomplete configuration has to drop the credential
+        // here rather than only in the URL's observer.
+        guard let server = currentNextcloudServer, let host = server.baseURL.host else {
+            if let staleHost = URL(string: nextcloudServerURL)?.host {
+                MediaAuthorization.shared.unregister(host: staleHost)
+            }
+            return
+        }
+        MediaAuthorization.shared.register(
+            host: host,
+            credential: .header(name: "Authorization", value: server.authorizationHeader))
+    }
+
     private func updateStashMediaCredential() {
         guard !stashServerURL.isEmpty, let host = URL(string: stashServerURL)?.host else { return }
         let raw = stashAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2604,6 +2765,7 @@ class AppModel {
     var availableLibrarySources: [LibrarySource] {
         var sources: [LibrarySource] = [.photos, .local]
         if hasStashServer { sources.append(.stash) }
+        if hasNextcloudServer { sources.append(.nextcloud) }
         return sources
     }
 
@@ -2623,7 +2785,8 @@ class AppModel {
     /// gallery which permission state to explain rather than leaving an
     /// unexplained empty grid.
     static func makeSources(for source: LibrarySource,
-                            apiClient: StashAPIClient) -> (image: any ImageSource, video: any VideoSource) {
+                            apiClient: StashAPIClient,
+                            nextcloudClient: NextcloudClient?) -> (image: any ImageSource, video: any VideoSource) {
         switch source {
         case .photos:
             return (PhotosImageSource(), PhotosVideoSource())
@@ -2634,6 +2797,16 @@ class AppModel {
             // video results either — see `LocalMediaSource.photosDirectory`.
             return (LocalImageSource(rootURL: LocalMediaSource.photosDirectory),
                     LocalVideoSource(rootURL: LocalMediaSource.videosDirectory))
+        case .nextcloud:
+            // Only reachable with a configured server — `.nextcloud` is not in
+            // `availableLibrarySources` without one, so `effectiveLibrarySource`
+            // can't resolve to it — but a nil client here still has to mean
+            // something, and Photos is the same fallback that rule already uses.
+            guard let nextcloudClient else {
+                return (PhotosImageSource(), PhotosVideoSource())
+            }
+            return (NextcloudImageSource(client: nextcloudClient),
+                    NextcloudVideoSource(client: nextcloudClient))
         }
     }
 
@@ -2654,7 +2827,9 @@ class AppModel {
             // token-driven sync that usually finds nothing.
             PhotosLibraryIndexer.shared.start()
         }
-        let sources = AppModel.makeSources(for: effectiveLibrarySource, apiClient: apiClient)
+        let sources = AppModel.makeSources(for: effectiveLibrarySource,
+                                           apiClient: apiClient,
+                                           nextcloudClient: nextcloudClient)
         imageSource = sources.image
         videoSource = sources.video
         AppLogger.appModel.info("Library source → \(self.effectiveLibrarySource.rawValue, privacy: .public)")
@@ -3082,10 +3257,11 @@ class AppModel {
                 mediaContainers = []
             }
 
-        case .local:
-            // Never actually called: AlbumsTabView renders its own
-            // LocalFolderBrowserView for this source instead of the
-            // container grid. Kept exhaustive, not reachable.
+        case .local, .nextcloud:
+            // Never actually called. Local renders its own
+            // LocalFolderBrowserView instead of the container grid, and
+            // Nextcloud hides the Albums tab altogether
+            // (`LibrarySource.offersAlbums`). Kept exhaustive, not reachable.
             mediaContainers = []
         }
         AppLogger.appModel.log(level: AppLogger.effectiveDebugLevel,
@@ -3178,10 +3354,11 @@ class AppModel {
             if isVideo {
                 await loadGroups()
             }
-        case .local:
-            // The Filters tab hides itself for this source (nothing here
+        case .local, .nextcloud:
+            // The Filters tab hides itself for these sources (nothing here
             // has tags, albums or galleries to filter by) and redirects away
-            // if it was already open — see ContentView. Not reachable.
+            // if it was already open — see ContentView and
+            // `LibrarySource.offersFilters`. Not reachable.
             break
         }
     }

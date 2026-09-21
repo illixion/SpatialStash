@@ -28,10 +28,12 @@ struct TabBarOrnament: View {
             case .console:
                 return appModel.showDebugConsole
             case .filters:
-                // Nothing to filter by while browsing Local — no tags,
+                // Nothing to filter by in a file-tree library — no tags,
                 // albums or galleries. See ContentView for the redirect if
                 // this tab was already open when the library changed.
-                return appModel.effectiveLibrarySource != .local
+                return appModel.effectiveLibrarySource.offersFilters
+            case .albums:
+                return appModel.effectiveLibrarySource.offersAlbums
             default:
                 return true
             }

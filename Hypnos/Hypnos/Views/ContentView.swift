@@ -40,14 +40,16 @@ struct ContentView: View {
         }
         .animation(.smooth(duration: 0.25), value: windowModel.selectedTab)
         .animation(.smooth(duration: 0.35), value: showWelcome)
-        // The Filters tab has nothing to filter by while browsing the Local
-        // library (no tags, albums or galleries), so it hides itself in the
-        // tab bar — but if it was already open when the library changed to
-        // Local, hiding the button alone would strand this window on a
+        // Filters has nothing to filter by in a file-tree library, and Albums
+        // has nothing to browse in one with no folder browser, so each hides
+        // itself in the tab bar — but if it was already open when the library
+        // changed, hiding the button alone would strand this window on a
         // screen with no way back to it. Redirected here, in one place,
         // regardless of which of several controls changed the library.
         .onChange(of: appModel.effectiveLibrarySource) { _, newSource in
-            if newSource == .local && windowModel.selectedTab == .filters {
+            let stranded = (windowModel.selectedTab == .filters && !newSource.offersFilters)
+                || (windowModel.selectedTab == .albums && !newSource.offersAlbums)
+            if stranded {
                 windowModel.selectedTab = windowModel.lastContentTab
             }
         }

@@ -73,10 +73,11 @@ struct MediaContainer: Identifiable, Hashable, Sendable {
             case .photos: return .album
             case .stash:  return isVideo ? .group : .gallery
             // Unreachable in practice — Local bypasses this browser entirely
-            // (see the header comment) — but the switch has to stay
+            // (see the header comment) and Nextcloud has no Albums tab at all
+            // (`LibrarySource.offersAlbums`) — but the switch has to stay
             // exhaustive, and inventing a Kind nothing constructs would be
             // the opposite of the point.
-            case .local:  return .album
+            case .local, .nextcloud: return .album
             }
         }
     }
