@@ -824,8 +824,7 @@ final class VideoWindowModel {
     }
 
     private func authenticatedURL(_ url: URL) -> URL {
-        guard !url.isFileURL else { return url }
-        return MediaAuthorization.shared.authorizedURL(url)
+        MediaAuthorization.shared.authorizedURL(url)
     }
 
     private nonisolated static func canPlayNatively(url: URL) async -> Bool {

@@ -64,6 +64,21 @@ actor ImageLoader {
         return URLSession(configuration: config)
     }()
 
+    /// An authenticated request for a remote media URL, with this loader's
+    /// no-OS-cache policy restated on the request itself.
+    ///
+    /// A hand-built `URLRequest` carries its own `.useProtocolCachePolicy`
+    /// default, so whether the session configuration's
+    /// `requestCachePolicy` still wins is ambiguous in a way `data(from:)`
+    /// never was. `urlCache` being nil already makes this moot — there is no
+    /// cache to serve a stale body from — so this is belt and braces for the
+    /// reasons the session comment above spells out.
+    private nonisolated static func remoteRequest(for url: URL) -> URLRequest {
+        var request = MediaAuthorization.shared.request(for: url)
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        return request
+    }
+
     private var cache = NSCache<NSURL, CachedImageData>()
     private var inProgressTasks: [URL: Task<CachedImageData?, Error>] = [:]
     /// In-flight dedupe for decode-free raw-data fetches, so a prefetch
@@ -152,7 +167,7 @@ actor ImageLoader {
 
         // Start new load task for remote URLs
         let task = Task<CachedImageData?, Error> { [self] in
-            let (data, response) = try await Self.session.data(for: MediaAuthorization.shared.request(for: url))
+            let (data, response) = try await Self.session.data(for: Self.remoteRequest(for: url))
 
             // Validate response
             guard let httpResponse = response as? HTTPURLResponse,
@@ -222,7 +237,7 @@ actor ImageLoader {
 
         // Start new load task for remote URLs
         let task = Task<CachedImageData?, Error> { [self] in
-            let (data, response) = try await Self.session.data(for: MediaAuthorization.shared.request(for: url))
+            let (data, response) = try await Self.session.data(for: Self.remoteRequest(for: url))
 
             // Validate response
             guard let httpResponse = response as? HTTPURLResponse,
@@ -285,7 +300,7 @@ actor ImageLoader {
 
         // Download without decoding to UIImage
         let task = Task<Data?, Error> {
-            let (data, response) = try await Self.session.data(for: MediaAuthorization.shared.request(for: url))
+            let (data, response) = try await Self.session.data(for: Self.remoteRequest(for: url))
 
             // Report a refusal as an error rather than a silent nil: the photo
             // viewer needs to tell "server said no" apart from "nothing to
@@ -359,7 +374,7 @@ actor ImageLoader {
 
         // Start new load task for remote URLs
         let task = Task<CachedImageData?, Error> { [self] in
-            let (data, response) = try await Self.session.data(for: MediaAuthorization.shared.request(for: url))
+            let (data, response) = try await Self.session.data(for: Self.remoteRequest(for: url))
 
             // Validate response
             guard let httpResponse = response as? HTTPURLResponse,

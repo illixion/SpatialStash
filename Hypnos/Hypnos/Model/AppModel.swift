@@ -1615,6 +1615,13 @@ class AppModel {
         // property didSet doesn't fire for in-init assignment.
         updateDeviceTelemetry()
 
+        // Same reason: the server URL and key were assigned during phase-1
+        // init, so their observers never ran and nothing registered the
+        // credential. Without this a cold launch leaves MediaAuthorization
+        // empty until the user happens to edit the server settings, and every
+        // URL the app authenticates client-side goes out unsigned.
+        updateStashMediaCredential()
+
         // Monitor memory pressure and downscale windows that have been
         // backgrounded (not in active room) for at least 2 minutes.
         // Windows in the current room are never touched — the OS can

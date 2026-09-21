@@ -50,10 +50,11 @@ struct MediaAuthorization: Sendable {
 
     private init() {}
 
-    /// Registers (or replaces) the credential for `host`. `host` may be a
-    /// bare hostname or a full server URL string — either way only the host
-    /// component is kept, so a caller can pass the server URL it already has
-    /// on hand.
+    /// Registers (or replaces) the credential for `host`, which is a bare
+    /// hostname (`URL.host`), not a URL — accepting both would mean guessing
+    /// which one a caller meant, and `URL(string:)` reads a bare `host:port`
+    /// as a scheme rather than a host, so the guess would sometimes be wrong
+    /// in a way that silently never matches.
     func register(host: String, credential: MediaCredential) {
         guard let normalized = normalizedHost(host) else { return }
         state.withLock { entries in
@@ -74,12 +75,16 @@ struct MediaAuthorization: Sendable {
 
     // MARK: - Applying a credential
 
-    /// A `URLRequest` for `url`, header-authenticated if its host has a
-    /// header credential. Query-param credentials need no request-level
-    /// work — the URL already carries them, either baked in by the server or
-    /// via `authorizedURL` upstream — so this only ever adds a header.
+    /// An authenticated `URLRequest` for `url`, whichever form its host's
+    /// credential takes.
+    ///
+    /// It applies the query param as well as the header, even though Stash
+    /// bakes its key into most URLs it hands back: `authorizedURL` is a no-op
+    /// on a URL that already carries the parameter, so the cost is nothing and
+    /// the alternative is a primitive that silently returns an unauthenticated
+    /// request for a client-derived Stash URL.
     func request(for url: URL) -> URLRequest {
-        var request = URLRequest(url: url)
+        var request = URLRequest(url: authorizedURL(url))
         if case .header(let name, let value) = credential(for: url) {
             request.setValue(value, forHTTPHeaderField: name)
         }
@@ -115,9 +120,6 @@ struct MediaAuthorization: Sendable {
 
     private func normalizedHost(_ host: String?) -> String? {
         guard let host, !host.isEmpty else { return nil }
-        // Accept a full URL string as a convenience for callers that only
-        // have the server URL on hand.
-        if let parsedHost = URL(string: host)?.host { return parsedHost.lowercased() }
         return host.lowercased()
     }
 }

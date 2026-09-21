@@ -413,7 +413,6 @@ struct VideoQuickLookView: View {
     // MARK: - Auth
 
     private func authenticatedURL(_ url: URL) -> URL {
-        guard !url.isFileURL else { return url }
-        return MediaAuthorization.shared.authorizedURL(url)
+        MediaAuthorization.shared.authorizedURL(url)
     }
 }
