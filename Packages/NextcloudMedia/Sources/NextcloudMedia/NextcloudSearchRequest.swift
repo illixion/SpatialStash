@@ -14,6 +14,17 @@ import Foundation
 /// shape is testable without a server.
 enum NextcloudSearchRequest {
 
+    /// Namespace the offset element must be in.
+    ///
+    /// Nextcloud does not implement SEARCH itself — `icewind/searchdav` does,
+    /// and its `Limit` deserializer reads `{DAV:}nresults` but takes
+    /// `firstresult` **only** from this namespace, defaulting to 0 for
+    /// anything else. So an offset sent as `nc:firstresult` (or `d:`, or
+    /// `oc:`) is not rejected, it is silently ignored: every page comes back
+    /// as page one, which looks like working pagination right up until you
+    /// compare the contents rather than the timings.
+    static let searchDAVNamespace = "https://github.com/icewind1991/SearchDAV/ns"
+
     /// XML-escapes text destined for a `<d:literal>` or href.
     ///
     /// Filenames routinely contain `&`, and a raw ampersand makes the server
@@ -81,7 +92,7 @@ enum NextcloudSearchRequest {
         return """
             <?xml version="1.0" encoding="UTF-8"?>
             <d:searchrequest xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns" \
-            xmlns:nc="http://nextcloud.org/ns">
+            xmlns:nc="http://nextcloud.org/ns" xmlns:sd="\(searchDAVNamespace)">
               <d:basicsearch>
                 <d:select>
                   <d:prop>
@@ -111,7 +122,7 @@ enum NextcloudSearchRequest {
                 </d:orderby>
                 <d:limit>
                   <d:nresults>\(query.limit)</d:nresults>
-                  <nc:firstresult>\(query.offset)</nc:firstresult>
+                  <sd:firstresult>\(query.offset)</sd:firstresult>
                 </d:limit>
               </d:basicsearch>
             </d:searchrequest>

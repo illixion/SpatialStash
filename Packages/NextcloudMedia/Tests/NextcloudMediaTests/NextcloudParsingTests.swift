@@ -224,12 +224,22 @@ struct SearchRequestTests {
         #expect(body.contains("%100\\%%"))
     }
 
-    @Test("Paging uses nresults and firstresult")
+    @Test("Paging uses nresults, and firstresult in the SearchDAV namespace")
     func buildsPaging() {
         let body = NextcloudSearchRequest.body(
             for: NextcloudQuery(offset: 300, limit: 100), scope: server.searchScope)
         #expect(body.contains("<d:nresults>100</d:nresults>"))
-        #expect(body.contains("<nc:firstresult>300</nc:firstresult>"))
+
+        // The namespace is the whole assertion, and an earlier version of this
+        // test missed the bug precisely by not making it: it checked for
+        // `<nc:firstresult>`, which confirmed the builder emitted the prefix
+        // the builder had chosen and nothing more. Nextcloud delegates SEARCH
+        // to icewind/searchdav, whose Limit deserializer reads firstresult
+        // only from this namespace and silently defaults to 0 otherwise — so
+        // the wrong prefix is not an error, it is every page returning page
+        // one while `hasMore` keeps saying there is more.
+        #expect(body.contains("xmlns:sd=\"https://github.com/icewind1991/SearchDAV/ns\""))
+        #expect(body.contains("<sd:firstresult>300</sd:firstresult>"))
     }
 
     @Test("Sort direction and field are honoured")
