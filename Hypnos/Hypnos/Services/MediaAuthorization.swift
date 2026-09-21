@@ -14,6 +14,7 @@
  can only hand WebKit a `src` attribute).
  */
 
+import AVFoundation
 import Foundation
 import os
 
@@ -91,12 +92,31 @@ struct MediaAuthorization: Sendable {
         return request
     }
 
-    /// Header fields for a consumer that can't build a `URLRequest`, namely
-    /// `AVURLAsset(url:options:)`. Empty for a query-param credential or an
-    /// unregistered host.
+    /// Header fields for a consumer that can't build a `URLRequest`. Empty for
+    /// a query-param credential or an unregistered host.
     func headerFields(for url: URL) -> [String: String] {
         guard case .header(let name, let value) = credential(for: url) else { return [:] }
         return [name: value]
+    }
+
+    /// An authenticated `AVURLAsset`.
+    ///
+    /// Every AVFoundation path goes through this so the decode probe and the
+    /// player that acts on its answer cannot disagree: a probe built without
+    /// the header reports a perfectly playable Nextcloud video as undecodable
+    /// (a 401 is indistinguishable from an unsupported container from here),
+    /// which routes it to WebKit — where a bare `<video src>` can't
+    /// authenticate either, so it fails there too.
+    func asset(for url: URL) -> AVURLAsset {
+        let fields = headerFields(for: url)
+        guard !fields.isEmpty else { return AVURLAsset(url: authorizedURL(url)) }
+        // The Swift overlay no longer exposes `AVURLAssetHTTPHeaderFieldsKey`
+        // as a symbol — verified absent from every SDK's AVFoundation
+        // swiftinterface, present only in the linker's export list — so the
+        // literal is the documented value and the only way to reach the still
+        // functional options key.
+        return AVURLAsset(url: authorizedURL(url),
+                          options: ["AVURLAssetHTTPHeaderFieldsKey": fields])
     }
 
     /// `url` with a query-param credential appended. A header credential

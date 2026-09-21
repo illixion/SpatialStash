@@ -180,15 +180,7 @@ struct NativeMetalVideoPlayerView: UIViewRepresentable {
             loadedURL = url
             guard let renderer else { return }
 
-            let headerFields = MediaAuthorization.shared.headerFields(for: url)
-            let asset = headerFields.isEmpty
-                ? AVURLAsset(url: url)
-                // The Swift overlay no longer exposes `AVURLAssetHTTPHeaderFieldsKey`
-                // as a symbol (verified absent from every SDK's AVFoundation
-                // swiftinterface, present only in the linker's export list) —
-                // the literal is the documented value and the only way to
-                // reach the still-functional options key.
-                : AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": headerFields])
+            let asset = MediaAuthorization.shared.asset(for: url)
             let item = AVPlayerItem(asset: asset)
             item.applySpatialAudioPolicy()
             let output = AVPlayerItemVideoOutput(pixelBufferAttributes: [

@@ -30,6 +30,17 @@ struct SettingsBackup: Codable {
     /// secrets — so a restore rebuilds everything except the password, which
     /// the user re-enters once. See `KeychainStore`.
     var stashAPIKey: String?
+
+    /// Nextcloud's configuration, on the same terms as Stash's: the address,
+    /// the account name and the chosen root travel, and the app password —
+    /// the only secret of the four — does not. A restore therefore rebuilds
+    /// the whole setup except the sign-in, which is one pass through Login
+    /// Flow v2 (and re-signing in is the right shape anyway: an app password
+    /// is issued per device).
+    var nextcloudServerURL: String?
+    var nextcloudUsername: String?
+    var nextcloudRoot: String?
+
     var autoHideDelay: TimeInterval?
     var slideshowDelay: TimeInterval?
     var slideshowShowClock: Bool?

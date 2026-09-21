@@ -2395,6 +2395,9 @@ class AppModel {
             // around, and it must not carry a server credential. See
             // SettingsBackup.stashAPIKey.
             stashAPIKey: nil,
+            nextcloudServerURL: nextcloudServerURL,
+            nextcloudUsername: nextcloudUsername,
+            nextcloudRoot: nextcloudRoot,
             autoHideDelay: autoHideDelay,
             slideshowDelay: slideshowDelay,
             slideshowShowClock: slideshowShowClock,
@@ -2458,6 +2461,9 @@ class AppModel {
         // Simple settings — only apply if present in backup
         if let v = backup.stashServerURL { stashServerURL = v }
         if let v = backup.stashAPIKey { stashAPIKey = v }
+        if let v = backup.nextcloudServerURL { nextcloudServerURL = v }
+        if let v = backup.nextcloudUsername { nextcloudUsername = v }
+        if let v = backup.nextcloudRoot { nextcloudRoot = v }
         if let v = backup.autoHideDelay { autoHideDelay = v }
         if let v = backup.slideshowDelay { slideshowDelay = v }
         if let v = backup.slideshowShowClock { slideshowShowClock = v }

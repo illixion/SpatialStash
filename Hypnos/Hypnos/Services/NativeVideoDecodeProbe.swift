@@ -18,7 +18,9 @@ enum NativeVideoDecodeProbe {
     /// track. Any error (bad URL, auth, TLS, unsupported container) is a "no" —
     /// the caller falls back to WebKit / flat playback.
     static func canPlayNatively(url: URL) async -> Bool {
-        let asset = AVURLAsset(url: url)
+        // Authenticated, or a server that needs a header answers 401 and the
+        // probe reads that as "undecodable" — see MediaAuthorization.asset.
+        let asset = MediaAuthorization.shared.asset(for: url)
         do {
             let isPlayable = try await asset.load(.isPlayable)
             guard isPlayable else { return false }

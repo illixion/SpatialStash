@@ -87,7 +87,8 @@ struct Pseudo3DVideoPlayerView: View {
                 engine.setContentOpacity(contentOpacity)
                 content.add(engine.makeVideoEntity())
                 engine.observeVideoSize(content: content)
-                engine.load(url: videoURL, roomActive: isRoomActive, depthMode: depthMode, startAt: startAtSeconds, startPaused: startPaused)
+                engine.load(url: videoURL, roomActive: isRoomActive, depthMode: depthMode, startAt: startAtSeconds, startPaused: startPaused,
+                            httpHeaderFields: MediaAuthorization.shared.headerFields(for: videoURL))
             } update: { content in
                 // Fit the video plane to the window (VideoPlayerComponent's screen
                 // defaults to ~2× the window otherwise).
@@ -113,7 +114,8 @@ struct Pseudo3DVideoPlayerView: View {
         // Align the video plane with the chrome — see videoPlaneZRecess.
         .offset(z: -Self.videoPlaneZRecess)
         .onChange(of: videoURL) { _, newURL in
-            engine.load(url: newURL, roomActive: isRoomActive, depthMode: depthMode)
+            engine.load(url: newURL, roomActive: isRoomActive, depthMode: depthMode,
+                        httpHeaderFields: MediaAuthorization.shared.headerFields(for: newURL))
         }
         .onChange(of: depthMode) { _, newMode in
             engine.setDepthMode(newMode)
