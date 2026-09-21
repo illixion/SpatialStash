@@ -290,6 +290,8 @@ struct SettingsTabView: View {
                     Text("Connects to a self-hosted Stash server to browse and convert its library.")
                 }
 
+                NextcloudSettingsSection()
+
                 Section("Gallery Statistics") {
                     HStack {
                         Text("Images Loaded")
