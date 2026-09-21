@@ -252,7 +252,6 @@ struct VideoQuickLookView: View {
         } else if useWebKit {
             WebVideoPlayerView(
                 videoURL: previewURL,
-                apiKey: appModel.stashAPIKey.isEmpty ? nil : appModel.stashAPIKey,
                 showControls: false,
                 onVideoSizeKnown: updateAspect,
                 loop: true,
@@ -413,18 +412,8 @@ struct VideoQuickLookView: View {
 
     // MARK: - Auth
 
-    /// Append the Stash apikey query item (mirrors VideoWindowModel).
     private func authenticatedURL(_ url: URL) -> URL {
-        guard !url.isFileURL,
-              !appModel.stashAPIKey.isEmpty,
-              var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
-            return url
-        }
-        var queryItems = components.queryItems ?? []
-        if !queryItems.contains(where: { $0.name == "apikey" }) {
-            queryItems.append(URLQueryItem(name: "apikey", value: appModel.stashAPIKey))
-            components.queryItems = queryItems
-        }
-        return components.url ?? url
+        guard !url.isFileURL else { return url }
+        return MediaAuthorization.shared.authorizedURL(url)
     }
 }

@@ -146,19 +146,6 @@ struct PhotoDisplayView: View {
         return viewerWindowSize ?? windowModel.savedWindowSize ?? appModel.mainWindowSize
     }
 
-    private var animatedImageAuth: (apiKey: String?, token: String?) {
-        let raw = appModel.stashAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !raw.isEmpty else { return (nil, nil) }
-
-        let lower = raw.lowercased()
-        if lower.hasPrefix("bearer ") {
-            let token = String(raw.dropFirst(7)).trimmingCharacters(in: .whitespacesAndNewlines)
-            return token.isEmpty ? (nil, nil) : (nil, token)
-        }
-
-        return (raw, nil)
-    }
-
     var body: some View {
         ZStack {
             #if !os(visionOS)
@@ -425,7 +412,6 @@ struct PhotoDisplayView: View {
                 if windowModel.animatedImgPlaybackFailed {
                     WebVideoPlayerView(
                         videoURL: hevcURL,
-                        apiKey: nil,
                         showControls: !windowModel.isUIHidden,
                         isRoomActive: windowModel.isInActiveRoom
                     )
@@ -506,9 +492,7 @@ struct PhotoDisplayView: View {
         } else if (windowModel.isAnimatedWebP || windowModel.isAnimatedWebVisual), !windowModel.is3DMode {
             AnimatedImageWebView(
                 imageURL: windowModel.animatedImageSourceURL ?? windowModel.imageURL,
-                elementType: windowModel.isAnimatedWebVisual ? .video : .image,
-                apiKey: animatedImageAuth.apiKey,
-                authorizationToken: animatedImageAuth.token
+                elementType: windowModel.isAnimatedWebVisual ? .video : .image
             )
                 .brightness(windowModel.effectiveAdjustments.brightness)
                 .contrast(windowModel.effectiveAdjustments.contrast)

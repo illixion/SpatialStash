@@ -17,7 +17,6 @@ struct WebVideoPlayerView: UIViewRepresentable {
     /// window leaves this nil and uses `onSourceUnplayable` instead, so the
     /// re-route also updates the renderer and unlocks the AVFoundation features.
     var fallbackVideoURL: URL? = nil
-    let apiKey: String?
     var showControls: Bool = true
     /// Whether the window is in the user's current room. When false, auto-resume
     /// is suppressed and the video is paused to save resources.
@@ -165,7 +164,7 @@ struct WebVideoPlayerView: UIViewRepresentable {
             if videoURL.isFileURL {
                 loadLocalVideo(webView: webView, coordinator: coordinator, fileURL: videoURL)
             } else {
-                let html = generateVideoHTML(for: videoURL, apiKey: apiKey)
+                let html = generateVideoHTML(for: videoURL)
                 webView.loadHTMLString(html, baseURL: videoURL)
             }
         }
@@ -425,27 +424,15 @@ struct WebVideoPlayerView: UIViewRepresentable {
         }
     }
 
-    private func generateVideoHTML(for url: URL, apiKey: String?) -> String {
-        // Append API key as query parameter if present
-        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
-        if let apiKey = apiKey, !apiKey.isEmpty {
-            var queryItems = components.queryItems ?? []
-            if !queryItems.contains(where: { $0.name == "apikey" }) {
-                queryItems.append(URLQueryItem(name: "apikey", value: apiKey))
-                components.queryItems = queryItems
-            }
-        }
-        let videoURLString = components.url?.absoluteString ?? url.absoluteString
-        let fallbackURLString = fallbackVideoURL.map { fallbackURL in
-            var fallbackComponents = URLComponents(url: fallbackURL, resolvingAgainstBaseURL: false)
-            if let apiKey = apiKey, !apiKey.isEmpty {
-                var queryItems = fallbackComponents?.queryItems ?? []
-                if !queryItems.contains(where: { $0.name == "apikey" }) {
-                    queryItems.append(URLQueryItem(name: "apikey", value: apiKey))
-                    fallbackComponents?.queryItems = queryItems
-                }
-            }
-            return fallbackComponents?.url?.absoluteString ?? fallbackURL.absoluteString
+    private func generateVideoHTML(for url: URL) -> String {
+        // A `<video src>` can carry neither a header nor an out-of-band
+        // credential, so only a query-param auth (Stash) is reachable here —
+        // a header-credentialed host (or a future Nextcloud source, which
+        // never routes through this player; see NativeMetalVideoPlayerView)
+        // is returned unauthenticated by authorizedURL and the request 401s.
+        let videoURLString = MediaAuthorization.shared.authorizedURL(url).absoluteString
+        let fallbackURLString = fallbackVideoURL.map {
+            MediaAuthorization.shared.authorizedURL($0).absoluteString
         }
         return generateVideoHTML(videoSrc: videoURLString, fallbackVideoSrc: fallbackURLString)
     }

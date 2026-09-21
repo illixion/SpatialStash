@@ -327,7 +327,6 @@ struct RemoteViewerWindowView: View {
                 if model.isRoomActive {
                     WebVideoPlayerView(
                         videoURL: hevcURL,
-                        apiKey: nil,
                         showControls: false,
                         isRoomActive: model.isRoomActive
                     )
@@ -344,8 +343,6 @@ struct RemoteViewerWindowView: View {
                     AnimatedImageWebView(
                         imageURL: url,
                         elementType: .image,
-                        apiKey: nil,
-                        authorizationToken: nil,
                         imageData: model.currentAnimatedData,
                         imageDataMimeType: "image/webp"
                     )
@@ -565,7 +562,6 @@ struct RemoteViewerWindowView: View {
                         WebVideoPlayerView(
                             videoURL: videoURL,
                             fallbackVideoURL: model.currentVideoHLSURL,
-                            apiKey: nil,
                             showControls: false,
                             isRoomActive: model.isRoomActive,
                             onDurationKnown: { [weak model] seconds in

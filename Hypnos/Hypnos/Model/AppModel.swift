@@ -33,6 +33,14 @@ class AppModel {
         didSet {
             if stashServerURL != oldValue {
                 UserDefaults.standard.set(stashServerURL, forKey: "stashServerURL")
+                // The new URL's host (if any) is (re-)registered by
+                // updateAPIClient() below; a *changed or cleared* old host
+                // needs its own unregister first, since updateStashMediaCredential
+                // only ever touches the current host and would otherwise leave
+                // a stale credential registered under an abandoned server.
+                if let oldHost = URL(string: oldValue)?.host {
+                    MediaAuthorization.shared.unregister(host: oldHost)
+                }
                 updateAPIClient()
             }
         }
@@ -2510,6 +2518,7 @@ class AppModel {
     }
 
     func updateAPIClient() {
+        updateStashMediaCredential()
         if !stashServerURL.isEmpty, let url = URL(string: stashServerURL) {
             // Update with Stash server config
             let config = StashServerConfig(
@@ -2530,6 +2539,32 @@ class AppModel {
             // No server URL — fall back to the device photo library.
             AppLogger.appModel.info("No Stash Server URL configured, using the photo library")
             applyLibrarySource()
+        }
+    }
+
+    /// Keeps `MediaAuthorization` in sync with the configured Stash server,
+    /// so `ImageLoader`, the video players and the animated-image view can
+    /// authenticate requests without any of them holding a reference to
+    /// `AppModel`. Called from both `stashServerURL` and `stashAPIKey`'s
+    /// observers via `updateAPIClient()`.
+    ///
+    /// A key prefixed `Bearer ` is a manual escape hatch (paste
+    /// `Bearer <token>` into the field) for the header-auth path instead of
+    /// the ordinary `?apikey=` query param — previously honored only by the
+    /// animated-image WebView, now uniform across every consumer since they
+    /// all resolve through the same registry.
+    private func updateStashMediaCredential() {
+        guard !stashServerURL.isEmpty, let host = URL(string: stashServerURL)?.host else { return }
+        let raw = stashAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else {
+            MediaAuthorization.shared.unregister(host: host)
+            return
+        }
+        if raw.lowercased().hasPrefix("bearer ") {
+            let token = String(raw.dropFirst(7)).trimmingCharacters(in: .whitespacesAndNewlines)
+            MediaAuthorization.shared.register(host: host, credential: .header(name: "Authorization", value: "Bearer \(token)"))
+        } else {
+            MediaAuthorization.shared.register(host: host, credential: .queryParam(name: "apikey", value: raw))
         }
     }
 

@@ -16,8 +16,6 @@ struct AnimatedImageWebView: UIViewRepresentable {
 
     let imageURL: URL
     var elementType: ElementType = .image
-    var apiKey: String?
-    var authorizationToken: String?
     /// Optional pre-downloaded bytes. When supplied, the WebView decodes
     /// them inline via a `data:` URL instead of re-fetching `imageURL` —
     /// avoids a multi-second re-download for animated WebP/GIF where the
@@ -50,8 +48,7 @@ struct AnimatedImageWebView: UIViewRepresentable {
         context.coordinator.onError = onError
         let digest = imageURL.absoluteString.hashValue
             ^ elementType.rawValue.hashValue
-            ^ (apiKey ?? "").hashValue
-            ^ (authorizationToken ?? "").hashValue
+            ^ credentialDigest
             ^ (imageData?.count ?? 0)
         guard context.coordinator.loadedDigest != digest else { return }
         context.coordinator.loadedDigest = digest
@@ -78,10 +75,17 @@ struct AnimatedImageWebView: UIViewRepresentable {
             return
         }
 
-        let resolvedURL = resolvedRemoteURL() ?? imageURL
-        let html = authorizationToken?.isEmpty == false
-            ? htmlForRemoteFetch(url: resolvedURL, bearerToken: authorizationToken ?? "")
-            : htmlForRemoteSource(url: resolvedURL)
+        let html: String
+        if case .header(let name, let value) = MediaAuthorization.shared.credential(for: imageURL) {
+            // A `<img>`/`<video> src` carries neither a header nor an
+            // out-of-band credential, so a header-authenticated host (a
+            // Basic-auth Nextcloud server, or Stash's manual `Bearer …`
+            // escape hatch) is fetched in JS and handed to the element as a
+            // blob URL instead.
+            html = htmlForRemoteFetch(url: imageURL, headerName: name, headerValue: value)
+        } else {
+            html = htmlForRemoteSource(url: MediaAuthorization.shared.authorizedURL(imageURL))
+        }
         webView.loadHTMLString(html, baseURL: nil)
     }
 
@@ -103,18 +107,15 @@ struct AnimatedImageWebView: UIViewRepresentable {
         }
     }
 
-    private func resolvedRemoteURL() -> URL? {
-        guard !imageURL.isFileURL else { return imageURL }
-
-        guard let apiKey, !apiKey.isEmpty,
-              var components = URLComponents(url: imageURL, resolvingAgainstBaseURL: false) else {
-            return imageURL
+    /// A coarse hash of this URL's credential, so a credential change (e.g.
+    /// the Stash server being reconfigured) invalidates the loaded digest
+    /// even though `imageURL` itself didn't change.
+    private var credentialDigest: Int {
+        switch MediaAuthorization.shared.credential(for: imageURL) {
+        case .none: return 0
+        case .queryParam(let name, let value): return name.hashValue ^ value.hashValue
+        case .header(let name, let value): return name.hashValue ^ value.hashValue ^ 1
         }
-
-        var queryItems = components.queryItems ?? []
-        queryItems.append(URLQueryItem(name: "apikey", value: apiKey))
-        components.queryItems = queryItems
-        return components.url
     }
 
     private func mediaElementMarkup(source: String, isObjectURL: Bool) -> String {
@@ -186,14 +187,15 @@ struct AnimatedImageWebView: UIViewRepresentable {
         sharedHTML(body: mediaElementMarkup(source: url.absoluteString.jsEscapedForSingleQuotedString, isObjectURL: false))
     }
 
-    private func htmlForRemoteFetch(url: URL, bearerToken: String) -> String {
+    private func htmlForRemoteFetch(url: URL, headerName: String, headerValue: String) -> String {
         let escapedURL = url.absoluteString.jsEscapedForSingleQuotedString
-        let escapedToken = bearerToken.jsEscapedForSingleQuotedString
+        let escapedHeaderName = headerName.jsEscapedForSingleQuotedString
+        let escapedHeaderValue = headerValue.jsEscapedForSingleQuotedString
         let body = mediaElementMarkup(source: "", isObjectURL: true)
         let script = """
         (async function() {
             const response = await fetch('\(escapedURL)', {
-                headers: { Authorization: 'Bearer \(escapedToken)' }
+                headers: { '\(escapedHeaderName)': '\(escapedHeaderValue)' }
             });
             const blob = await response.blob();
             const objectURL = URL.createObjectURL(blob);

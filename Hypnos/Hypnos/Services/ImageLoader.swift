@@ -152,7 +152,7 @@ actor ImageLoader {
 
         // Start new load task for remote URLs
         let task = Task<CachedImageData?, Error> { [self] in
-            let (data, response) = try await Self.session.data(from: url)
+            let (data, response) = try await Self.session.data(for: MediaAuthorization.shared.request(for: url))
 
             // Validate response
             guard let httpResponse = response as? HTTPURLResponse,
@@ -222,7 +222,7 @@ actor ImageLoader {
 
         // Start new load task for remote URLs
         let task = Task<CachedImageData?, Error> { [self] in
-            let (data, response) = try await Self.session.data(from: url)
+            let (data, response) = try await Self.session.data(for: MediaAuthorization.shared.request(for: url))
 
             // Validate response
             guard let httpResponse = response as? HTTPURLResponse,
@@ -285,7 +285,7 @@ actor ImageLoader {
 
         // Download without decoding to UIImage
         let task = Task<Data?, Error> {
-            let (data, response) = try await Self.session.data(from: url)
+            let (data, response) = try await Self.session.data(for: MediaAuthorization.shared.request(for: url))
 
             // Report a refusal as an error rather than a silent nil: the photo
             // viewer needs to tell "server said no" apart from "nothing to
@@ -359,7 +359,7 @@ actor ImageLoader {
 
         // Start new load task for remote URLs
         let task = Task<CachedImageData?, Error> { [self] in
-            let (data, response) = try await Self.session.data(from: url)
+            let (data, response) = try await Self.session.data(for: MediaAuthorization.shared.request(for: url))
 
             // Validate response
             guard let httpResponse = response as? HTTPURLResponse,

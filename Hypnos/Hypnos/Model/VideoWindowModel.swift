@@ -824,17 +824,8 @@ final class VideoWindowModel {
     }
 
     private func authenticatedURL(_ url: URL) -> URL {
-        guard !url.isFileURL,
-              !appModel.stashAPIKey.isEmpty,
-              var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
-            return url
-        }
-        var queryItems = components.queryItems ?? []
-        if !queryItems.contains(where: { $0.name == "apikey" }) {
-            queryItems.append(URLQueryItem(name: "apikey", value: appModel.stashAPIKey))
-            components.queryItems = queryItems
-        }
-        return components.url ?? url
+        guard !url.isFileURL else { return url }
+        return MediaAuthorization.shared.authorizedURL(url)
     }
 
     private nonisolated static func canPlayNatively(url: URL) async -> Bool {

@@ -43,10 +43,7 @@ struct StereoscopicVideoView: View {
         ZStack {
             if fallbackTo2D {
                 // Fallback to 2D web player with original stream
-                WebVideoPlayerView(
-                    videoURL: video.streamURL,
-                    apiKey: appModel.stashAPIKey.isEmpty ? nil : appModel.stashAPIKey
-                )
+                WebVideoPlayerView(videoURL: video.streamURL)
             } else if hasEnteredImmersiveSpace {
                 // Show minimal UI when in immersive space
                 immersiveSpaceActiveView
