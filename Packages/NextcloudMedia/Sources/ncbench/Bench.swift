@@ -212,7 +212,7 @@ struct Bench {
         print(String(format: "%d folders under %@ in %.0f ms",
                      list.count, path.isEmpty ? "/" : path, ms))
         for folder in list {
-            let size = folder.childCount.map { " (\($0) bytes)" } ?? ""
+            let size = folder.totalBytes.map { " (\($0) bytes)" } ?? ""
             print("  \(folder.path)\(size)")
         }
     }

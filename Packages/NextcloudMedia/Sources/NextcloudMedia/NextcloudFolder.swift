@@ -10,19 +10,24 @@ public struct NextcloudFolder: Sendable, Equatable, Identifiable {
     /// slashes. `""` is the account root.
     public let path: String
     public let name: String
-    /// Direct children, when the server reported a count. Nextcloud does not
-    /// report one for every collection, so this is advisory.
-    public let childCount: Int?
+    /// Recursive size of the collection in **bytes**, as `oc:size` reports it.
+    ///
+    /// Not a count of anything — an earlier version of this called it
+    /// `childCount`, which read plausibly right up until a live listing
+    /// returned 343,669,554,388 for a music folder. Useful for telling a real
+    /// media folder apart from an empty one when choosing a library root,
+    /// which is the only thing it is used for.
+    public let totalBytes: Int64?
 
     public var id: String { path }
 
     /// What `NextcloudServer.root` should be set to for this folder.
     public var asRoot: String { path }
 
-    public init(path: String, name: String, childCount: Int?) {
+    public init(path: String, name: String, totalBytes: Int64?) {
         self.path = path
         self.name = name
-        self.childCount = childCount
+        self.totalBytes = totalBytes
     }
 }
 
@@ -69,20 +74,35 @@ extension NextcloudClient {
 
         let data = try await performRequest(request)
         let entries = try NextcloudMultiStatusParser.parse(data)
+        return NextcloudFolder.folders(from: entries,
+                                       username: currentServer.username,
+                                       listing: normalized)
+    }
+}
 
-        return entries.compactMap { entry -> NextcloudFolder? in
+extension NextcloudFolder {
+    /// The collections a `PROPFIND Depth: 1` response lists, excluding the one
+    /// being listed.
+    ///
+    /// Split out of `folders(in:)` so it can be tested without a server — the
+    /// mapping is where the mistakes live, as `oc:size` being bytes rather than
+    /// a child count demonstrated.
+    static func folders(from entries: [NextcloudMultiStatusParser.Entry],
+                        username: String,
+                        listing normalizedPath: String) -> [NextcloudFolder] {
+        entries.compactMap { entry -> NextcloudFolder? in
             guard entry.isCollection else { return nil }
             guard let relative = NextcloudItemMapper.relativePath(
-                fromHref: entry.href, username: currentServer.username) else { return nil }
+                fromHref: entry.href, username: username) else { return nil }
 
             // PROPFIND always echoes the collection being listed as its own
             // first result. Including it would put "Photos" inside "Photos".
             let trimmed = relative.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            guard trimmed != normalized else { return nil }
+            guard trimmed != normalizedPath else { return nil }
 
             let name = (trimmed as NSString).lastPathComponent
-            let count = entry.properties["http://owncloud.org/ns|size"].flatMap(Int.init)
-            return NextcloudFolder(path: trimmed, name: name, childCount: count)
+            let bytes = entry.properties["http://owncloud.org/ns|size"].flatMap(Int64.init)
+            return NextcloudFolder(path: trimmed, name: name, totalBytes: bytes)
         }
         .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }

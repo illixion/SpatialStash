@@ -149,7 +149,7 @@ struct NextcloudSettingsSection: View {
             Picker("Library Folder", selection: $appModel.nextcloudRoot) {
                 Text("All files").tag("")
                 ForEach(rootOptions, id: \.self) { path in
-                    Text(path).tag(path)
+                    Text(label(forFolder: path)).tag(path)
                 }
             }
         }
@@ -172,6 +172,19 @@ struct NextcloudSettingsSection: View {
             paths.append(current)
         }
         return paths
+    }
+
+    /// Folder name with its size, when the server reported one.
+    ///
+    /// Worth the noise: a real account lists the media folder next to several
+    /// empty ones (`Shared`, a stray project folder), and the names alone give
+    /// no way to tell which holds 174 GB of photos and which holds nothing.
+    private func label(forFolder path: String) -> String {
+        guard let bytes = folders.first(where: { $0.path == path })?.totalBytes, bytes > 0 else {
+            return path
+        }
+        let size = ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+        return "\(path) — \(size)"
     }
 
     private var displayServer: String {

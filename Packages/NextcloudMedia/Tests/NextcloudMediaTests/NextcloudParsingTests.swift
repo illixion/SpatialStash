@@ -282,3 +282,136 @@ struct ServerURLTests {
         }
     }
 }
+
+// MARK: - Folder listing
+
+@Suite("Folder listing")
+struct FolderListingTests {
+
+    /// Shaped after a real `PROPFIND Depth: 1` on the account root: the listed
+    /// collection echoed first, then its children, then a file that has to be
+    /// ignored because the dropdown is offering folders to descend into.
+    private let accountRoot = """
+        <?xml version="1.0"?>
+        <d:multistatus xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns">
+          <d:response>
+            <d:href>/remote.php/dav/files/illixion/</d:href>
+            <d:propstat>
+              <d:prop>
+                <d:resourcetype><d:collection/></d:resourcetype>
+                <oc:size>518000000000</oc:size>
+              </d:prop>
+              <d:status>HTTP/1.1 200 OK</d:status>
+            </d:propstat>
+          </d:response>
+          <d:response>
+            <d:href>/remote.php/dav/files/illixion/Photos/</d:href>
+            <d:propstat>
+              <d:prop>
+                <d:resourcetype><d:collection/></d:resourcetype>
+                <oc:size>174308560190</oc:size>
+              </d:prop>
+              <d:status>HTTP/1.1 200 OK</d:status>
+            </d:propstat>
+          </d:response>
+          <d:response>
+            <d:href>/remote.php/dav/files/illixion/Music/</d:href>
+            <d:propstat>
+              <d:prop>
+                <d:resourcetype><d:collection/></d:resourcetype>
+                <oc:size>343669554388</oc:size>
+              </d:prop>
+              <d:status>HTTP/1.1 200 OK</d:status>
+            </d:propstat>
+          </d:response>
+          <d:response>
+            <d:href>/remote.php/dav/files/illixion/Shared/</d:href>
+            <d:propstat>
+              <d:prop>
+                <d:resourcetype><d:collection/></d:resourcetype>
+                <oc:size>0</oc:size>
+              </d:prop>
+              <d:status>HTTP/1.1 200 OK</d:status>
+            </d:propstat>
+          </d:response>
+          <d:response>
+            <d:href>/remote.php/dav/files/illixion/readme.txt</d:href>
+            <d:propstat>
+              <d:prop>
+                <d:resourcetype/>
+                <oc:size>12</oc:size>
+              </d:prop>
+              <d:status>HTTP/1.1 200 OK</d:status>
+            </d:propstat>
+          </d:response>
+        </d:multistatus>
+        """
+
+    @Test("The listed collection is dropped, its children kept and sorted")
+    func listsChildrenOnly() throws {
+        let entries = try NextcloudMultiStatusParser.parse(Data(accountRoot.utf8))
+        let folders = NextcloudFolder.folders(from: entries, username: "illixion", listing: "")
+
+        // Not four: the echoed root is excluded, or choosing a root would offer
+        // the very folder being listed as something to descend into.
+        #expect(folders.map(\.path) == ["Music", "Photos", "Shared"])
+    }
+
+    @Test("oc:size is bytes, not a count of children")
+    func readsSizeAsBytes() throws {
+        // The bug this exists for: the field was called childCount and read
+        // plausibly until a live listing reported 343,669,554,388 children.
+        let entries = try NextcloudMultiStatusParser.parse(Data(accountRoot.utf8))
+        let folders = NextcloudFolder.folders(from: entries, username: "illixion", listing: "")
+        #expect(folders.first { $0.name == "Music" }?.totalBytes == 343_669_554_388)
+        #expect(folders.first { $0.name == "Shared" }?.totalBytes == 0)
+    }
+
+    @Test("Listing a nested folder drops that folder, not its children")
+    func dropsOnlyTheListedCollection() throws {
+        let xml = """
+            <?xml version="1.0"?>
+            <d:multistatus xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns">
+              <d:response>
+                <d:href>/remote.php/dav/files/illixion/Photos/</d:href>
+                <d:propstat>
+                  <d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop>
+                  <d:status>HTTP/1.1 200 OK</d:status>
+                </d:propstat>
+              </d:response>
+              <d:response>
+                <d:href>/remote.php/dav/files/illixion/Photos/2026/</d:href>
+                <d:propstat>
+                  <d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop>
+                  <d:status>HTTP/1.1 200 OK</d:status>
+                </d:propstat>
+              </d:response>
+            </d:multistatus>
+            """
+        let entries = try NextcloudMultiStatusParser.parse(Data(xml.utf8))
+        let folders = NextcloudFolder.folders(from: entries, username: "illixion", listing: "Photos")
+        // The child keeps its full relative path — that is what becomes the root.
+        #expect(folders.map(\.path) == ["Photos/2026"])
+        #expect(folders.map(\.name) == ["2026"])
+    }
+
+    @Test("A folder with no reported size still lists")
+    func toleratesMissingSize() throws {
+        let xml = """
+            <?xml version="1.0"?>
+            <d:multistatus xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns">
+              <d:response>
+                <d:href>/remote.php/dav/files/illixion/Templates/</d:href>
+                <d:propstat>
+                  <d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop>
+                  <d:status>HTTP/1.1 200 OK</d:status>
+                </d:propstat>
+              </d:response>
+            </d:multistatus>
+            """
+        let entries = try NextcloudMultiStatusParser.parse(Data(xml.utf8))
+        let folders = NextcloudFolder.folders(from: entries, username: "illixion", listing: "")
+        #expect(folders.count == 1)
+        #expect(folders[0].totalBytes == nil)
+    }
+}
