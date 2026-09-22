@@ -537,7 +537,11 @@ actor ImageLoader {
             return crop.map { $0(image) } ?? image
         }
         // Check ThumbnailCache first (fast memory cache, then HEIC disk)
-        if let cached = await ThumbnailCache.shared.loadThumbnail(for: url) {
+        // The cache is keyed by URL alone, so an entry written by an uncapped
+        // caller can be the full original; a capped caller regenerates it
+        // instead of holding that bitmap.
+        if let cached = await ThumbnailCache.shared.loadThumbnail(for: url),
+           maxSize.map({ Self.pixelLongEdge(of: cached) <= $0 }) ?? true {
             return cached
         }
 
@@ -553,7 +557,9 @@ actor ImageLoader {
             guard let image = try? await loadImage(from: url) else {
                 return nil
             }
-            base = image
+            // Still honour the cap, or the cache check above would reject
+            // this entry and refetch it on every visit.
+            base = maxSize.map { Self.fitting(image, maxPixelSize: $0) } ?? image
         }
 
         // Apply crop transform if provided
@@ -563,6 +569,25 @@ actor ImageLoader {
         await ThumbnailCache.shared.saveThumbnail(thumbnail, for: url)
 
         return thumbnail
+    }
+
+    private nonisolated static func pixelLongEdge(of image: UIImage) -> CGFloat {
+        max(image.size.width, image.size.height) * image.scale
+    }
+
+    private nonisolated static func fitting(_ image: UIImage, maxPixelSize: CGFloat) -> UIImage {
+        let longEdge = pixelLongEdge(of: image)
+        guard longEdge > maxPixelSize else { return image }
+        let factor = maxPixelSize / longEdge
+        let pixelSize = CGSize(
+            width: (image.size.width * image.scale * factor).rounded(),
+            height: (image.size.height * image.scale * factor).rounded()
+        )
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        return UIGraphicsImageRenderer(size: pixelSize, format: format).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: pixelSize))
+        }
     }
 
     /// Load thumbnail for a local file using memory-efficient downsampling

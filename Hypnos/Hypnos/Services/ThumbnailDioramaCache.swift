@@ -70,12 +70,19 @@ final class ThumbnailDioramaCache {
     /// Look up `url` in memory and, if missing, on disk. Never invokes
     /// Vision. Populates the in-memory cache on a disk hit so subsequent
     /// scrollbacks are synchronous.
-    func cachedOrDisk(for url: URL) async -> Pair? {
+    /// A disk pair whose long edge exceeds `maxPixelSize` counts as a miss,
+    /// so it gets regenerated from a capped source and overwritten.
+    func cachedOrDisk(for url: URL, maxPixelSize: CGFloat? = nil) async -> Pair? {
         if let mem = cache.object(forKey: url as NSURL) { return mem }
         if let existing = diskLoads[url] { return await existing.value }
 
         let task = Task.detached(priority: .userInitiated) { () -> Pair? in
-            Self.loadPairFromDisk(for: url)
+            guard let pair = Self.loadPairFromDisk(for: url) else { return nil }
+            if let maxPixelSize {
+                let fg = pair.foreground
+                guard max(fg.size.width, fg.size.height) * fg.scale <= maxPixelSize else { return nil }
+            }
+            return pair
         }
         diskLoads[url] = Task { await task.value }
         let pair = await task.value

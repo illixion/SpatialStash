@@ -27,6 +27,12 @@ struct GalleryThumbnailView: View {
     /// cell's frame via `CellFramePreferenceKey`. The Quick Look
     /// overlay reads that frame to drive its scale-from-cell transition.
     var cellCoordinateSpace: String? = nil
+    /// Long-edge cap for remote thumbnails, which are also the diorama's
+    /// source. A server can answer the thumbnail URL with the full original;
+    /// uncapped, that bitmap and its two diorama layers are what stalled the
+    /// grid. 800 keeps the square crop's short edge covering a 200pt cell at
+    /// 2x for sources up to 2:1.
+    static let thumbnailMaxSize: CGFloat = 800
     @State private var loadedImage: UIImage?
     @State private var isLoading = true
     @State private var loadFailed = false
@@ -165,7 +171,7 @@ struct GalleryThumbnailView: View {
     /// `generateDioramaIfPossible()` for cold generation.
     private func preloadCachedDiorama() async -> ThumbnailDioramaCache.Pair? {
         guard appModel.effectiveThumbnailDiorama else { return nil }
-        return await ThumbnailDioramaCache.shared.cachedOrDisk(for: image.thumbnailURL)
+        return await ThumbnailDioramaCache.shared.cachedOrDisk(for: image.thumbnailURL, maxPixelSize: Self.thumbnailMaxSize)
     }
 
     /// Cold-path generation: kicks off Vision-driven foreground/backdrop
@@ -196,7 +202,7 @@ struct GalleryThumbnailView: View {
             }
         } else {
             // Remote URLs: use cached thumbnail path (stores cropped result in ThumbnailCache)
-            if let result = await ImageLoader.shared.loadRemoteThumbnailCached(from: image.thumbnailURL, crop: Self.cropToSquare) {
+            if let result = await ImageLoader.shared.loadRemoteThumbnailCached(from: image.thumbnailURL, maxSize: Self.thumbnailMaxSize, crop: Self.cropToSquare) {
                 loadedImage = result
             } else {
                 AppLogger.views.warning("Failed to load thumbnail for: \(image.thumbnailURL.lastPathComponent, privacy: .private)")
