@@ -64,7 +64,6 @@ class StereoscopicVideoPlayer: ObservableObject {
 
     // State
     private var currentVideo: GalleryVideo?
-    private var apiKey: String?
     @Published private(set) var convertedFileURL: URL?
     private var isUsingCachedVideo: Bool = false
 
@@ -87,10 +86,9 @@ class StereoscopicVideoPlayer: ObservableObject {
     // MARK: - Public API
 
     /// Start playing a stereoscopic video using tag-detected format
-    /// - Parameters:
-    ///   - video: The video to play
-    ///   - apiKey: Optional API key for authentication
-    func play(video: GalleryVideo, apiKey: String?) async {
+    /// - Parameter video: The video to play. Its server's credential is
+    ///   resolved from `MediaAuthorization`, so there's nothing to pass.
+    func play(video: GalleryVideo) async {
         guard video.isStereoscopic,
               let format = video.stereoscopicFormat else {
             state = .error("Video is not stereoscopic")
@@ -105,20 +103,18 @@ class StereoscopicVideoPlayer: ObservableObject {
             horizontalDisparityAdjustment: 200.0
         )
 
-        await play(video: video, apiKey: apiKey, customSettings: settings)
+        await play(video: video, customSettings: settings)
     }
 
     /// Start playing a video with custom 3D settings
     /// - Parameters:
     ///   - video: The video to play
-    ///   - apiKey: Optional API key for authentication
     ///   - customSettings: Custom 3D conversion settings
-    func play(video: GalleryVideo, apiKey: String?, customSettings: Video3DSettings) async {
+    func play(video: GalleryVideo, customSettings: Video3DSettings) async {
         // Stop any existing playback
         stop()
 
         currentVideo = video
-        self.apiKey = apiKey
         currentSettings = customSettings
         isUsingCachedVideo = false
 
@@ -157,7 +153,7 @@ class StereoscopicVideoPlayer: ObservableObject {
                 }
 
                 // Step 1: Download the complete video
-                let localVideoURL = try await downloadVideo(video: video, apiKey: apiKey)
+                let localVideoURL = try await downloadVideo(video: video)
 
                 AppLogger.stereoscopicPlayer.info("Download completed: \(localVideoURL.lastPathComponent)")
 
@@ -411,7 +407,7 @@ class StereoscopicVideoPlayer: ObservableObject {
 
     // MARK: - Private Methods
 
-    private func downloadVideo(video: GalleryVideo, apiKey: String?) async throws -> URL {
+    private func downloadVideo(video: GalleryVideo) async throws -> URL {
         let cachesDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
         let downloadDir = cachesDir.appendingPathComponent("StereoscopicDownloads", isDirectory: true)
         try? FileManager.default.createDirectory(at: downloadDir, withIntermediateDirectories: true)
@@ -425,10 +421,7 @@ class StereoscopicVideoPlayer: ObservableObject {
         // `.m3u8` playlist yields a text file, not video. `transcodedDownloadURL`
         // rewrites that to the server's `/stream.mp4` transcode, which downloads
         // to a normal MP4 that AVAssetReader (and hence MV-HEVC conversion) reads.
-        var request = URLRequest(url: video.transcodedDownloadURL)
-        if let apiKey = apiKey, !apiKey.isEmpty {
-            request.setValue(apiKey, forHTTPHeaderField: "ApiKey")
-        }
+        let request = MediaAuthorization.shared.request(for: video.transcodedDownloadURL)
 
         return try await withCheckedThrowingContinuation { continuation in
             let session = URLSession.shared

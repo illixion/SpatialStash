@@ -72,17 +72,12 @@ actor VideoChunkDownloader {
     }
 
     /// Probe video to get stream information
-    /// - Parameters:
-    ///   - url: The video stream URL
-    ///   - apiKey: Optional API key for authentication
+    /// - Parameter url: The video stream URL. Its server's credential is
+    ///   resolved from `MediaAuthorization`, so there's nothing to pass.
     /// - Returns: Information about the video stream
-    func probeVideo(url: URL, apiKey: String?) async throws -> VideoStreamInfo {
-        var request = URLRequest(url: url)
+    func probeVideo(url: URL) async throws -> VideoStreamInfo {
+        var request = MediaAuthorization.shared.request(for: url)
         request.httpMethod = "HEAD"
-
-        if let apiKey = apiKey, !apiKey.isEmpty {
-            request.setValue(apiKey, forHTTPHeaderField: "ApiKey")
-        }
 
         let (_, response) = try await session.data(for: request)
 
@@ -135,24 +130,18 @@ actor VideoChunkDownloader {
     /// Download a specific chunk by index
     /// - Parameters:
     ///   - url: The video stream URL
-    ///   - apiKey: Optional API key for authentication
     ///   - chunkIndex: The chunk index to download (0-based)
     ///   - videoInfo: Video stream information from probeVideo
     /// - Returns: The downloaded chunk
     func downloadChunk(
         url: URL,
-        apiKey: String?,
         chunkIndex: Int,
         videoInfo: VideoStreamInfo
     ) async throws -> VideoChunk {
         let byteRange = byteRangeForChunk(index: chunkIndex, videoInfo: videoInfo)
 
-        var request = URLRequest(url: url)
+        var request = MediaAuthorization.shared.request(for: url)
         request.setValue("bytes=\(byteRange.lowerBound)-\(byteRange.upperBound - 1)", forHTTPHeaderField: "Range")
-
-        if let apiKey = apiKey, !apiKey.isEmpty {
-            request.setValue(apiKey, forHTTPHeaderField: "ApiKey")
-        }
 
         let (data, response) = try await session.data(for: request)
 
@@ -186,13 +175,11 @@ actor VideoChunkDownloader {
     /// Download multiple chunks concurrently
     /// - Parameters:
     ///   - url: The video stream URL
-    ///   - apiKey: Optional API key for authentication
     ///   - chunkIndices: Array of chunk indices to download
     ///   - videoInfo: Video stream information
     /// - Returns: Array of downloaded chunks (may be fewer than requested if some fail)
     func downloadChunks(
         url: URL,
-        apiKey: String?,
         chunkIndices: [Int],
         videoInfo: VideoStreamInfo
     ) async -> [VideoChunk] {
@@ -201,7 +188,6 @@ actor VideoChunkDownloader {
                 group.addTask {
                     try? await self.downloadChunk(
                         url: url,
-                        apiKey: apiKey,
                         chunkIndex: index,
                         videoInfo: videoInfo
                     )

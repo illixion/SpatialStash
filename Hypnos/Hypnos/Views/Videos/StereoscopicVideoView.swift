@@ -273,18 +273,11 @@ struct StereoscopicVideoView: View {
 
         guard let settings = currentSettings else {
             // Fallback to tag-based playback if somehow settings are nil
-            await player.play(
-                video: video,
-                apiKey: appModel.stashAPIKey.isEmpty ? nil : appModel.stashAPIKey
-            )
+            await player.play(video: video)
             return
         }
 
-        await player.play(
-            video: video,
-            apiKey: appModel.stashAPIKey.isEmpty ? nil : appModel.stashAPIKey,
-            customSettings: settings
-        )
+        await player.play(video: video, customSettings: settings)
     }
 
     private func applyNewSettings(_ newSettings: Video3DSettings) {

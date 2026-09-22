@@ -478,7 +478,7 @@ final class VideoWindowModel {
             videoIdentity: video.identity,
             title: video.title ?? video.fileName,
             sourceURL: depthConversionSourceURL,
-            apiKey: appModel.stashAPIKey.isEmpty ? nil : appModel.stashAPIKey
+            httpHeaderFields: MediaAuthorization.shared.headerFields(for: depthConversionSourceURL)
         ))
         startProgressiveEngageMonitor()
     }
@@ -553,7 +553,9 @@ final class VideoWindowModel {
 
     /// A downloadable, AVAssetReader-readable source for depth conversion. See
     /// `GalleryVideo.transcodedDownloadURL` for the HLS→MP4 rewrite rationale;
-    /// here we just layer the apikey query param on top.
+    /// here we just layer on whatever query-param credential the host has.
+    /// A header credential can't ride a URL, so the conversion request carries
+    /// it separately — see `startDepthPreprocessing`.
     private var depthConversionSourceURL: URL {
         authenticatedURL(video.transcodedDownloadURL)
     }
