@@ -220,6 +220,13 @@ struct HypnosApp: App {
             }
         }
         .immersionStyle(selection: .constant(.mixed), in: .mixed)
+
+        // Developer spike: Atmos objects rendered as spatial sources
+        // (Settings → Developer → Atmos Object Spike).
+        ImmersiveSpace(id: "AtmosSpikeSpace") {
+            AtmosSpikeImmersiveView()
+        }
+        .immersionStyle(selection: .constant(.mixed), in: .mixed)
     }
     #endif
 }

@@ -111,6 +111,9 @@ enum AppLogger {
     /// Streamable-URL handoff (custom scheme, URL classification)
     static let streamURL = Logger(subsystem: subsystem, category: "StreamURL")
 
+    /// Atmos object-audio spike (Settings → Developer)
+    static let atmosSpike = Logger(subsystem: subsystem, category: "AtmosSpike")
+
     // The fake-3D signposter moved to RAVEMedia (`RAVEMediaLog.signposter`)
     // with the pipeline it instruments. Its subsystem is still this app's
     // bundle id, so Instruments and the in-app console see it unchanged; only

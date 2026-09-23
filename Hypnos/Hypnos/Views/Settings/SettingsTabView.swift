@@ -435,6 +435,11 @@ struct SettingsTabView: View {
                     DepthPipelineSpikeSection()
                 }
 
+                #if os(visionOS)
+                // Atmos objects re-rendered as RealityKit spatial sources.
+                AtmosSpikeSection()
+                #endif
+
                 Section("About") {
                     HStack {
                         Text("App Name")
