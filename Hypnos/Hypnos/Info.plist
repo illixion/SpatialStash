@@ -8,6 +8,8 @@
 	<string>Hypnos shows your photos and videos, and on Apple Vision Pro converts them to 3D. Your library is read on this device only — nothing is uploaded.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Hypnos connects to media servers on your network so you can browse and stream your own libraries. Only the servers you configure are contacted — nothing is discovered or scanned for.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>Hypnos follows your headphones’ head movement so spatial audio stays in place when you turn your head.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<!-- The app talks to user-owned Stash and RoboFrame instances over the

@@ -221,12 +221,15 @@ struct HypnosApp: App {
         }
         .immersionStyle(selection: .constant(.mixed), in: .mixed)
 
-        // Developer spike: Atmos objects rendered as spatial sources
-        // (Settings → Developer → Atmos Object Spike).
-        ImmersiveSpace(id: "AtmosSpikeSpace") {
-            AtmosSpikeImmersiveView()
+        // Developer spike: Atmos objects rendered as spatial sources around
+        // this window (Settings → Developer → Atmos Object Spike). A dev
+        // window with no content of its own, so it never restores.
+        Window("Atmos Spike", id: AtmosSpikePlayerView.windowID) {
+            AtmosSpikePlayerView()
         }
-        .immersionStyle(selection: .constant(.mixed), in: .mixed)
+        .defaultSize(width: 1280, height: 720)
+        .defaultLaunchBehavior(.suppressed)
+        .restorationBehavior(.disabled)
     }
     #endif
 }

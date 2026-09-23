@@ -1,14 +1,13 @@
 /*
  Hypnos - Atmos Object Spike (Settings → Developer)
 
- Picks a prepared scene from Documents/AtmosSpike, opens the immersive space
- that renders it, and holds the transport and tuning controls — Settings
- stays usable next to a mixed space, so the knobs live here rather than in
- floating UI inside it. See `AtmosSpike.swift` for the scene format and how
- one is produced.
+ Picks a prepared scene from Documents/AtmosSpike or a Jellyfin item and
+ opens the player that renders it (`AtmosSpikePlayerView`): its own window
+ on visionOS, with tuning kept here beside it, or a tool sheet on iOS (via
+ `IOSWindowRouter`) that holds the tuning itself. See `AtmosSpike.swift` for the scene format and how one
+ is produced.
  */
 
-#if os(visionOS)
 import os
 import SwiftUI
 
@@ -16,10 +15,8 @@ struct AtmosSpikeSection: View {
     @Bindable private var model = AtmosSpikeModel.shared
     @State private var selected: URL?
     @State private var searchTerm = ""
-    /// Scrubber position while dragging; nil follows playback.
-    @State private var scrubSeconds: Double?
-    @Environment(\.openImmersiveSpace) private var openImmersiveSpace
-    @Environment(\.dismissImmersiveSpace) private var dismissImmersiveSpace
+    @OpenWindowProxy private var openWindow
+    @DismissWindowProxy private var dismissWindow
 
     var body: some View {
         Section("Atmos Object Spike") {
@@ -46,20 +43,21 @@ struct AtmosSpikeSection: View {
             }
 
             Button {
-                Task { await toggleSpace() }
+                Task { await togglePlayer() }
             } label: {
-                Label(model.isSpaceOpen ? "Close Space" : (model.isLoading ? "Loading…" : "Open Space"),
-                      systemImage: model.isSpaceOpen ? "xmark.circle" : "speaker.wave.3")
+                Label(model.isStageOpen ? "Close Player" : (model.isLoading ? "Loading…" : "Open Player"),
+                      systemImage: model.isStageOpen ? "xmark.circle" : "speaker.wave.3")
             }
-            .disabled(model.isLoading || (selected == nil && !model.isSpaceOpen))
+            .disabled(model.isLoading || (selected == nil && !model.isStageOpen))
 
-            if model.isSpaceOpen {
-                transport
-                tuning
-                telemetry
+            #if os(visionOS)
+            if model.isStageOpen {
+                AtmosSpikeTuning()
+                AtmosSpikeTelemetry()
             }
+            #endif
 
-            Text("Plays Atmos objects decoded off-device (truehdd → DAMF) as RealityKit spatial sources placed in a virtual room around you. Spheres show object positions; size follows level. Local scenes come from Documents/AtmosSpike; Jellyfin items need the Atmos Objects server plugin.")
+            Text("Plays Atmos objects decoded off-device (truehdd → DAMF) as RealityKit spatial sources placed in a virtual room around you, with the screen as its front wall. The map shows objects from above; colour follows height, size follows level. Local scenes come from Documents/AtmosSpike; Jellyfin items need the Atmos Objects server plugin.")
                 .font(.caption)
                 .foregroundColor(.secondary)
         }
@@ -107,90 +105,15 @@ struct AtmosSpikeSection: View {
     }
 
     private func openJellyfin(_ item: AtmosSpikeJellyfin.Item) async {
-        if model.isSpaceOpen { await dismissImmersiveSpace() }
+        closePlayer()
         await model.loadJellyfin(item)
         guard model.audio != nil, model.loadedRemoteName == item.name else { return }
-        if case .opened = await openImmersiveSpace(id: "AtmosSpikeSpace") { return }
-        AppLogger.atmosSpike.error("Immersive space did not open (another space may already be open)")
+        openPlayer()
     }
 
-    private var transport: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 16) {
-                Button {
-                    model.isPlaying ? model.pause() : model.play()
-                } label: {
-                    Label(model.isPlaying ? "Pause" : "Play", systemImage: model.isPlaying ? "pause.fill" : "play.fill")
-                }
-                Button { model.seek(to: model.positionSeconds - 10) } label: {
-                    Label("−10s", systemImage: "gobackward.10")
-                }
-                Button { model.seek(to: model.positionSeconds + 10) } label: {
-                    Label("+10s", systemImage: "goforward.10")
-                }
-                Button { model.seek(to: 0) } label: {
-                    Label("Restart", systemImage: "backward.end")
-                }
-            }
-            .buttonStyle(.bordered)
-            // Seeks on release, so a drag across a film is one seek, not hundreds.
-            Slider(
-                value: Binding(get: { scrubSeconds ?? model.positionSeconds }, set: { scrubSeconds = $0 }),
-                in: 0...max(model.durationSeconds, 1),
-                onEditingChanged: { editing in
-                    if !editing, let target = scrubSeconds {
-                        model.seek(to: target)
-                        scrubSeconds = nil
-                    }
-                }
-            )
-            Text("\(Self.clock(scrubSeconds ?? model.positionSeconds)) / \(Self.clock(model.durationSeconds))")
-                .font(.caption.monospaced())
-        }
-    }
-
-    private var tuning: some View {
-        Group {
-            slider("Master", value: $model.masterGainDB, in: -24...12, unit: "dB")
-            slider("LFE", value: $model.lfeGainDB, in: -24...10, unit: "dB")
-            slider("Reverb", value: $model.reverbDB, in: -40...0, unit: "dB")
-            slider("Room half-width", value: $model.roomHalfWidth, in: 0.5...5, unit: "m")
-            slider("Room half-depth", value: $model.roomHalfDepth, in: 0.5...5, unit: "m")
-            slider("Ceiling above ears", value: $model.roomHeight, in: 0...3, unit: "m")
-            slider("Ear height", value: $model.earHeight, in: 0.8...2, unit: "m")
-            Toggle("Flatten heights (A/B vs no height)", isOn: $model.flattenHeights)
-            Toggle("Show object spheres", isOn: $model.showSpheres)
-        }
-    }
-
-    private var telemetry: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(String(format: "Render rate: %.0f Hz (scene %.0f Hz)", model.measuredRate, model.audio?.sampleRate ?? 0))
-            Text("Clock: \(model.clockReport)")
-            if !model.streamReport.isEmpty {
-                Text("Stream: \(model.streamReport)")
-            }
-        }
-        .font(.caption.monospaced())
-        .foregroundColor(.secondary)
-        .textSelection(.enabled)
-    }
-
-    private static func clock(_ seconds: Double) -> String {
-        let s = Int(seconds)
-        return String(format: "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60)
-    }
-
-    private func slider(_ title: String, value: Binding<Float>, in range: ClosedRange<Float>, unit: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text("\(title): \(String(format: "%.1f", value.wrappedValue)) \(unit)").font(.caption)
-            Slider(value: value, in: range)
-        }
-    }
-
-    private func toggleSpace() async {
-        if model.isSpaceOpen {
-            await dismissImmersiveSpace()
+    private func togglePlayer() async {
+        if model.isStageOpen {
+            closePlayer()
             return
         }
         guard let selected else { return }
@@ -198,12 +121,14 @@ struct AtmosSpikeSection: View {
             await model.load(selected)
         }
         guard model.audio != nil else { return }
-        switch await openImmersiveSpace(id: "AtmosSpikeSpace") {
-        case .opened:
-            break
-        default:
-            AppLogger.atmosSpike.error("Immersive space did not open (another space may already be open)")
-        }
+        openPlayer()
+    }
+
+    private func openPlayer() {
+        openWindow(id: AtmosSpikePlayerView.windowID)
+    }
+
+    private func closePlayer() {
+        dismissWindow(id: AtmosSpikePlayerView.windowID)
     }
 }
-#endif

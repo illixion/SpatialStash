@@ -1,42 +1,66 @@
 /*
- Hypnos - Atmos Object Spike immersive space
+ Hypnos - Atmos Object Spike stage
 
- Mixed immersive space holding one entity per Atmos element. Objects carry a
+ A `RealityView` holding one entity per Atmos element. Objects carry a
  `SpatialAudioComponent` and move along their DAMF position track; the LFE
  bed has no position, so it plays head-locked through a
  `ChannelAudioComponent`. Each entity's audio is an `AudioGeneratorController`
  whose render callback reads `AtmosSpikeAudio` — see `AtmosSpike.swift` for
  why every generator reads from one shared sample-time anchor.
 
- An immersive space is needed rather than a window because the sources sit
- all around and above the listener (a ~4×5 m virtual room by default), well
- outside any window's bounds. Transport and tuning stay in Settings, which
- remains usable beside a mixed space.
+ The view has no visible content; it only decides where the listener is.
+
+ - visionOS: the view fills the player window. Its origin is the window's
+   centre, with +z pointing out toward the viewer, and RealityKit's
+   listener is the wearer's head. The virtual room is centred
+   `listenerDistance` in front of the window at the window's height, so the
+   room moves with the window and the screen is its front wall. Sources far
+   outside a window's bounds are still placed correctly (measured with
+   `SpatialAudioProbeSection`); only their visuals would be clipped.
+ - iOS: a virtual camera. A `PerspectiveCamera` at the origin is the
+   active camera, and so the audio listener (RealityKit's default when
+   `audioListener` is nil), with the room centred on it.
+   `AtmosSpikeHeadTracker` turns it with the wearer's AirPods. An explicit
+   `audioListener` entity was tried first. With it, reopening the sheet
+   hung the main thread in RealityKit's listener-transform SVD (the usual
+   sign of NaNs), and PHASE once crashed reading a generator stream out of
+   bounds after a loud crackle. Both point at a bad listener transform,
+   which a RealityKit-managed camera should not produce.
  */
 
-#if os(visionOS)
 import AVFoundation
 import os
 import RealityKit
 import SwiftUI
 
-struct AtmosSpikeImmersiveView: View {
+struct AtmosSpikeStageView: View {
     private let model = AtmosSpikeModel.shared
 
-    @State private var root = Entity()
+    /// The virtual room, centred on the listener's ears.
+    @State private var room = Entity()
     @State private var entities: [Int: Entity] = [:]
-    @State private var spheres: [Int: ModelEntity] = [:]
     @State private var controllers: [AudioGeneratorController] = []
     @State private var appliedReverb: Float?
     @State private var tickTask: Task<Void, Never>?
+    #if os(iOS)
+    @State private var listener = PerspectiveCamera()
+    #endif
 
     var body: some View {
         RealityView { content in
-            content.add(root)
+            #if os(iOS)
+            content.camera = .virtual
+            listener.name = "atmos-listener"
+            content.add(listener)
+            #endif
+            content.add(room)
             buildSources()
         }
         .onAppear {
-            model.isSpaceOpen = true
+            model.isStageOpen = true
+            #if os(iOS)
+            AtmosSpikeHeadTracker.shared.start()
+            #endif
             tickTask = Task { @MainActor in
                 while !Task.isCancelled {
                     tick()
@@ -49,16 +73,18 @@ struct AtmosSpikeImmersiveView: View {
             model.pause()
             for controller in controllers { controller.stop() }
             controllers.removeAll()
-            root.children.removeAll()
-            model.isSpaceOpen = false
+            room.children.removeAll()
+            entities.removeAll()
+            #if os(iOS)
+            AtmosSpikeHeadTracker.shared.stop()
+            #endif
+            model.isStageOpen = false
         }
     }
 
     private func buildSources() {
         guard let audio = model.audio else { return }
-        let palette: [UIColor] = [.systemRed, .systemOrange, .systemYellow, .systemGreen, .systemTeal,
-                                  .systemBlue, .systemIndigo, .systemPurple, .systemPink, .systemBrown,
-                                  .white, .systemCyan, .systemMint]
+        placeRoom()
         for element in model.elements {
             let entity = Entity()
             entity.name = "atmos-\(element.id)"
@@ -72,16 +98,9 @@ struct AtmosSpikeImmersiveView: View {
                     directivity: .beam(focus: 0),
                     distanceAttenuation: .rolloff(factor: 0)
                 ))
-                let color = palette[element.channel % palette.count]
-                let sphere = ModelEntity(
-                    mesh: .generateSphere(radius: 0.05),
-                    materials: [UnlitMaterial(color: color)]
-                )
-                entity.addChild(sphere)
-                spheres[element.channel] = sphere
-                entity.position = model.worldPosition(of: element, frame: 0)
+                entity.position = model.listenerPosition(of: element, frame: 0)
             }
-            root.addChild(entity)
+            room.addChild(entity)
             entities[element.channel] = entity
 
             do {
@@ -103,17 +122,24 @@ struct AtmosSpikeImmersiveView: View {
         AppLogger.atmosSpike.info("Built \(controllers.count) generators for \(model.elements.count) elements")
     }
 
+    /// Puts the room's centre where the listener is assumed to be.
+    private func placeRoom() {
+        #if os(visionOS)
+        room.position = SIMD3(0, 0, model.listenerDistance)
+        #else
+        room.position = .zero
+        #endif
+    }
+
     private func tick() {
         model.tick()
+        placeRoom()
+        #if os(iOS)
+        listener.orientation = AtmosSpikeHeadTracker.shared.orientation
+        #endif
         let frame = model.currentFrame
         for element in model.elements where !element.isBed {
-            guard let entity = entities[element.channel] else { continue }
-            entity.position = model.worldPosition(of: element, frame: frame)
-            if let sphere = spheres[element.channel] {
-                sphere.isEnabled = model.showSpheres
-                let level = model.levels.indices.contains(element.channel) ? model.levels[element.channel] : 0
-                sphere.scale = SIMD3(repeating: 0.6 + min(level * 6, 3))
-            }
+            entities[element.channel]?.position = model.listenerPosition(of: element, frame: frame)
         }
         if appliedReverb != model.reverbDB {
             appliedReverb = model.reverbDB
@@ -126,4 +152,3 @@ struct AtmosSpikeImmersiveView: View {
         }
     }
 }
-#endif

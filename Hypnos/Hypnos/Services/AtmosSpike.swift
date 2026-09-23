@@ -35,9 +35,13 @@
  playhead in a small ring of slots with their tracks; the render callback
  finds the slot holding each frame's segment and plays silence (counted as
  an underrun) when it is not there yet.
+
+ None of this is visionOS-specific: every RealityKit audio API used here
+ also exists on iOS 18. Only where the listener sits differs per platform,
+ and that lives in `AtmosSpikeStageView`; positions here are relative to the
+ listener (`listenerPosition(of:frame:)`).
  */
 
-#if os(visionOS)
 import AVFoundation
 import Foundation
 import os
@@ -618,18 +622,21 @@ final class AtmosSpikeModel {
 
     // Transport
     private(set) var isPlaying = false
-    var isSpaceOpen = false
+    /// Whether a stage view (the player window, or the iOS player) is showing.
+    var isStageOpen = false
 
-    // Tuning — read by the immersive view every tick.
+    // Tuning — read by the stage view every tick.
     var masterGainDB: Float = 0
     var lfeGainDB: Float = 0
     var reverbDB: Float = 0
     var roomHalfWidth: Float = 2.0
     var roomHalfDepth: Float = 2.5
     var roomHeight: Float = 1.6
-    var earHeight: Float = 1.55
+    /// visionOS: how far in front of the player window the listener is
+    /// assumed to sit. A window can't see the head, so this is a guess.
+    var listenerDistance: Float = 1.5
     var flattenHeights = false
-    var showSpheres = true
+    var showMap = true
 
     // Telemetry
     private(set) var positionSeconds: Double = 0
@@ -812,11 +819,12 @@ final class AtmosSpikeModel {
         positionSeconds = Double(frame) / audio.sampleRate
     }
 
-    // MARK: Per-frame work (called by the immersive view)
+    // MARK: Per-frame work (called by the stage view)
 
-    /// World-space position for an element at `frame`, in the immersive
-    /// space's coordinates (origin at the floor below the viewer, −z forward).
-    func worldPosition(of element: Element, frame: Int) -> SIMD3<Float> {
+    /// Position for an element at `frame` relative to the listener's ears, in
+    /// metres: −z forward (toward the screen), +y up. The stage view places
+    /// the listener; this knows only the virtual room.
+    func listenerPosition(of element: Element, frame: Int) -> SIMD3<Float> {
         let p = state(of: element, frame: frame).pos
         let z = flattenHeights ? 0 : max(0, min(p.z, 1))
         var local = SIMD3<Float>(p.x * roomHalfWidth, z * roomHeight, -p.y * roomHalfDepth)
@@ -826,7 +834,7 @@ final class AtmosSpikeModel {
         if length < minRadius {
             local = length > 0.001 ? local / length * minRadius : SIMD3(0, minRadius, 0)
         }
-        return local + SIMD3(0, earHeight, 0)
+        return local
     }
 
     /// Current playback frame (UI clock; one render buffer behind the audio).
@@ -892,4 +900,3 @@ final class AtmosSpikeModel {
         }
     }
 }
-#endif
