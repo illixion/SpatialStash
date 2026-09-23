@@ -15,6 +15,7 @@ import SwiftUI
 struct AtmosSpikeSection: View {
     @Bindable private var model = AtmosSpikeModel.shared
     @State private var selected: URL?
+    @State private var searchTerm = ""
     @Environment(\.openImmersiveSpace) private var openImmersiveSpace
     @Environment(\.dismissImmersiveSpace) private var dismissImmersiveSpace
 
@@ -33,8 +34,13 @@ struct AtmosSpikeSection: View {
                 .pickerStyle(.menu)
             }
 
+            jellyfinSource
+
             if let error = model.loadError {
                 Text(error).font(.caption).foregroundColor(.red)
+            }
+            if let status = model.remoteStatus {
+                Text(status).font(.caption.monospaced()).foregroundColor(.secondary)
             }
 
             Button {
@@ -51,7 +57,7 @@ struct AtmosSpikeSection: View {
                 telemetry
             }
 
-            Text("Plays Atmos objects decoded off-device (truehdd → DAMF) as RealityKit spatial sources placed in a virtual room around you. Spheres show object positions; size follows level.")
+            Text("Plays Atmos objects decoded off-device (truehdd → DAMF) as RealityKit spatial sources placed in a virtual room around you. Spheres show object positions; size follows level. Local scenes come from Documents/AtmosSpike; Jellyfin items need the Atmos Objects server plugin.")
                 .font(.caption)
                 .foregroundColor(.secondary)
         }
@@ -59,6 +65,51 @@ struct AtmosSpikeSection: View {
             model.refreshScenes()
             if selected == nil { selected = model.loadedScene ?? model.availableScenes.first }
         }
+    }
+
+    /// Streams a library item from a Jellyfin server running the Atmos
+    /// Objects plugin. Loading an item opens the space once it has buffered.
+    private var jellyfinSource: some View {
+        DisclosureGroup("Jellyfin") {
+            TextField("Server (https://host/jellyfin)", text: $model.jellyfinServer)
+                .textContentType(.URL)
+                .keyboardType(.URL)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+            SecureField("API key", text: $model.jellyfinAPIKey)
+            HStack {
+                TextField("Search movies", text: $searchTerm)
+                    .autocorrectionDisabled()
+                    .onSubmit { Task { await model.searchJellyfin(searchTerm) } }
+                Button("Search") { Task { await model.searchJellyfin(searchTerm) } }
+                    .disabled(searchTerm.isEmpty)
+            }
+            ForEach(model.searchResults) { item in
+                Button {
+                    Task { await openJellyfin(item) }
+                } label: {
+                    HStack {
+                        Text(item.name)
+                        if let year = item.productionYear {
+                            Text(String(year)).foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        if model.loadedRemoteName == item.name {
+                            Image(systemName: "speaker.wave.3.fill")
+                        }
+                    }
+                }
+                .disabled(model.isLoading)
+            }
+        }
+    }
+
+    private func openJellyfin(_ item: AtmosSpikeJellyfin.Item) async {
+        if model.isSpaceOpen { await dismissImmersiveSpace() }
+        await model.loadJellyfin(item)
+        guard model.audio != nil, model.loadedRemoteName == item.name else { return }
+        if case .opened = await openImmersiveSpace(id: "AtmosSpikeSpace") { return }
+        AppLogger.atmosSpike.error("Immersive space did not open (another space may already be open)")
     }
 
     private var transport: some View {
@@ -103,6 +154,9 @@ struct AtmosSpikeSection: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(String(format: "Render rate: %.0f Hz (scene %.0f Hz)", model.measuredRate, model.audio?.sampleRate ?? 0))
             Text("Clock: \(model.clockReport)")
+            if !model.streamReport.isEmpty {
+                Text("Stream: \(model.streamReport)")
+            }
         }
         .font(.caption.monospaced())
         .foregroundColor(.secondary)
@@ -122,7 +176,7 @@ struct AtmosSpikeSection: View {
             return
         }
         guard let selected else { return }
-        if model.loadedScene != selected || model.audio == nil {
+        if model.loadedScene != selected || model.audio == nil || model.loadedRemoteName != nil {
             await model.load(selected)
         }
         guard model.audio != nil else { return }

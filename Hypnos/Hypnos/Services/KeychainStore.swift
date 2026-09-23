@@ -24,6 +24,7 @@ enum KeychainStore {
     enum Key: String, CaseIterable {
         case stashAPIKey
         case nextcloudAppPassword
+        case jellyfinAPIKey
     }
 
     // MARK: - Reading
