@@ -173,6 +173,13 @@ public sealed class MatroskaPackets
 /// hundred consecutive windows, knowing how many samples separate the packets,
 /// leaves exactly one frame on the access-unit grid. Verified against a full
 /// decode on a UHD Blu-ray remux: zero-sample error at cuts across the film.
+///
+/// Not every remux stamps its TrueHD packets that exactly. On The Wild Robot
+/// the timestamps drift from the sample count by more than half a
+/// millisecond and snap back about every 1,024 packets, as if interpolated
+/// between the disc's own timestamps. A run straddling a snap has no
+/// consistent frame (<see cref="IsConsistent"/>); the feeder then starts a
+/// fresh run at the next restart point, which solves.
 /// </summary>
 public sealed class StartSolver
 {
@@ -194,6 +201,9 @@ public sealed class StartSolver
     }
 
     public int Packets { get; private set; }
+
+    /// <summary>False once no frame fits every packet's window.</summary>
+    public bool IsConsistent => _lo <= _hi;
 
     /// <summary>Adds the next packet (from the first kept access unit on).</summary>
     public void Add(double timeMs, int accessUnits)

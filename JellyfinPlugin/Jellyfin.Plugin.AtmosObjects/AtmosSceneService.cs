@@ -53,8 +53,13 @@ public sealed class AtmosSceneService
     private const int MaxChannelsPerGroup = 8;
     private const int SampleRate = 48000;
     private const int SamplesPerAu = 40;
-    /// <summary>Decode starts this far before the requested segment so it is complete.</summary>
-    private const double PrerollSeconds = 1.5;
+    /// <summary>
+    /// Decode starts this far before the requested segment so it is complete.
+    /// It must also cover finding the start sample: on remuxes whose timestamps
+    /// drift (see <see cref="StartSolver"/>) that can take a few restarts,
+    /// measured up to 3.8 s of packets on The Wild Robot.
+    /// </summary>
+    private const double PrerollSeconds = 6;
     /// <summary>How far ahead of a running session a request still waits for it instead of restarting.</summary>
     private const int FollowSegments = 6;
     private static readonly TimeSpan IdleStop = TimeSpan.FromMinutes(10);
@@ -270,6 +275,9 @@ public sealed class AtmosSceneService
         }
 
         var state = new ItemState();
+        // No session can be running for an item not yet in _items: any work
+        // folder here was left by a server stopped mid-decode.
+        DeleteStale(ItemDirectory(itemId), "work-*");
         var stream = _mediaSourceManager.GetMediaStreams(itemId)
             .FirstOrDefault(s => s.Type == MediaStreamType.Audio
                 && string.Equals(s.Codec, "truehd", StringComparison.OrdinalIgnoreCase));
@@ -512,6 +520,20 @@ public sealed class AtmosSceneService
 
                 var units = CountAccessUnits(data);
                 solver.Add(time, units);
+                if (!solver.IsConsistent)
+                {
+                    // The timestamps drifted off the sample grid mid-run (see
+                    // StartSolver): start over at the next restart point.
+                    solver = null;
+                    run.Clear();
+                    if (++dropped > 50)
+                    {
+                        throw new InvalidDataException("Packet timestamps are inconsistent with a fixed access-unit length.");
+                    }
+
+                    continue;
+                }
+
                 runSamples += (long)units * SamplesPerAu;
                 run.Add(data);
                 if (run.Count >= MinimumRun && solver.Solve() is long frame)
@@ -957,6 +979,25 @@ public sealed class AtmosSceneService
         return double.TryParse(output.Trim().Split('\n')[0], NumberStyles.Float, CultureInfo.InvariantCulture, out var seconds)
             ? seconds * 1000
             : 0;
+    }
+
+    internal static void DeleteStale(string directory, string pattern)
+    {
+        if (!Directory.Exists(directory))
+        {
+            return;
+        }
+
+        foreach (var stale in Directory.GetDirectories(directory, pattern))
+        {
+            try
+            {
+                Directory.Delete(stale, recursive: true);
+            }
+            catch (IOException)
+            {
+            }
+        }
     }
 
     private void MarkUnsupported(Guid itemId, string reason)

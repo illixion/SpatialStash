@@ -191,6 +191,8 @@ public sealed class VideoSegmentService
         }
 
         var state = new ItemState { MediaPath = item.Path };
+        // Runs left by a server stopped mid-copy.
+        AtmosSceneService.DeleteStale(ItemDirectory(itemId), "run-*");
         try
         {
             state.Index = LoadIndex(itemId, item.Path, item.RunTimeTicks);
