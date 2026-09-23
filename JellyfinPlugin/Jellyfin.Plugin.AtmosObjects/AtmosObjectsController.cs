@@ -6,13 +6,16 @@ using Microsoft.AspNetCore.Mvc;
 namespace Jellyfin.Plugin.AtmosObjects;
 
 /// <summary>
-/// Client API. A client asks for the status, triggers preparation once, then
-/// reads scene.json and fetches FLAC segments around its playhead:
+/// Client API. A client reads the scene layout (which starts a decode at the
+/// requested point if needed), then fetches segments around its playhead;
+/// every segment request decodes on demand, so seeking anywhere works without
+/// preparing the film first:
 ///
-///   GET  /AtmosObjects/{itemId}                     status + progress
-///   POST /AtmosObjects/{itemId}/Prepare             start extraction (idempotent)
-///   GET  /AtmosObjects/{itemId}/Scene               scene.json (404 until ready)
-///   GET  /AtmosObjects/{itemId}/Segments/{n}/{g}    FLAC for segment n, channel group g
+///   GET  /AtmosObjects/{itemId}                          status
+///   POST /AtmosObjects/{itemId}/Prepare                  cache the whole film in the background
+///   GET  /AtmosObjects/{itemId}/Scene?startSeconds=T     layout
+///   GET  /AtmosObjects/{itemId}/Segments/{n}/Events      snapshot + events for segment n
+///   GET  /AtmosObjects/{itemId}/Segments/{n}/{g}         FLAC for segment n, channel group g
 /// </summary>
 [ApiController]
 [Route("AtmosObjects")]
@@ -47,18 +50,46 @@ public class AtmosObjectsController : ControllerBase
         => _scenes.Prepare(itemId) ? Accepted() : NotFound();
 
     [HttpGet("{itemId}/Scene")]
-    public ActionResult GetScene([FromRoute] Guid itemId)
+    public async Task<ActionResult> GetScene([FromRoute] Guid itemId, [FromQuery] double startSeconds, CancellationToken ct)
     {
-        var path = _scenes.ScenePath(itemId);
-        return System.IO.File.Exists(path)
-            ? PhysicalFile(path, MediaTypeNames.Application.Json)
-            : NotFound();
+        try
+        {
+            var scene = await _scenes.GetSceneAsync(itemId, startSeconds, ct).ConfigureAwait(false);
+            return scene is null
+                ? UnprocessableEntity(_scenes.GetStatus(itemId).Error)
+                : new JsonResult(scene, AtmosSceneService.JsonOptions);
+        }
+        catch (FileNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (Exception ex) when (ex is TimeoutException or InvalidOperationException)
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, ex.Message);
+        }
+    }
+
+    [HttpGet("{itemId}/Segments/{segment:int}/Events")]
+    public async Task<ActionResult> GetSegmentEvents([FromRoute] Guid itemId, [FromRoute] int segment, CancellationToken ct)
+    {
+        if (!await _scenes.EnsureSegmentAsync(itemId, segment, ct).ConfigureAwait(false))
+        {
+            return NotFound();
+        }
+
+        var path = _scenes.SegmentEvents(itemId, segment);
+        return path is null ? NotFound() : PhysicalFile(path, MediaTypeNames.Application.Json);
     }
 
     [HttpGet("{itemId}/Segments/{segment:int}/{group:int}")]
-    public ActionResult GetSegment([FromRoute] Guid itemId, [FromRoute] int segment, [FromRoute] int group)
+    public async Task<ActionResult> GetSegment([FromRoute] Guid itemId, [FromRoute] int segment, [FromRoute] int group, CancellationToken ct)
     {
-        var path = _scenes.SegmentPath(itemId, segment, group);
+        if (!await _scenes.EnsureSegmentAsync(itemId, segment, ct).ConfigureAwait(false))
+        {
+            return NotFound();
+        }
+
+        var path = _scenes.SegmentFlac(itemId, segment, group);
         return path is null ? NotFound() : PhysicalFile(path, "audio/flac");
     }
 }

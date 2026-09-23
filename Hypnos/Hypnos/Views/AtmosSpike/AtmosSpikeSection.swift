@@ -16,6 +16,8 @@ struct AtmosSpikeSection: View {
     @Bindable private var model = AtmosSpikeModel.shared
     @State private var selected: URL?
     @State private var searchTerm = ""
+    /// Scrubber position while dragging; nil follows playback.
+    @State private var scrubSeconds: Double?
     @Environment(\.openImmersiveSpace) private var openImmersiveSpace
     @Environment(\.dismissImmersiveSpace) private var dismissImmersiveSpace
 
@@ -131,7 +133,18 @@ struct AtmosSpikeSection: View {
                 }
             }
             .buttonStyle(.bordered)
-            Text(String(format: "%.1f / %.1f s", model.positionSeconds, model.durationSeconds))
+            // Seeks on release, so a drag across a film is one seek, not hundreds.
+            Slider(
+                value: Binding(get: { scrubSeconds ?? model.positionSeconds }, set: { scrubSeconds = $0 }),
+                in: 0...max(model.durationSeconds, 1),
+                onEditingChanged: { editing in
+                    if !editing, let target = scrubSeconds {
+                        model.seek(to: target)
+                        scrubSeconds = nil
+                    }
+                }
+            )
+            Text("\(Self.clock(scrubSeconds ?? model.positionSeconds)) / \(Self.clock(model.durationSeconds))")
                 .font(.caption.monospaced())
         }
     }
@@ -161,6 +174,11 @@ struct AtmosSpikeSection: View {
         .font(.caption.monospaced())
         .foregroundColor(.secondary)
         .textSelection(.enabled)
+    }
+
+    private static func clock(_ seconds: Double) -> String {
+        let s = Int(seconds)
+        return String(format: "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60)
     }
 
     private func slider(_ title: String, value: Binding<Float>, in range: ClosedRange<Float>, unit: String) -> some View {

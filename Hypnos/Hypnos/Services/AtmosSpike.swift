@@ -27,13 +27,14 @@
  timeline spread and any drift of each channel against the host clock.
 
  A scene can also stream from a Jellyfin server running the Atmos Objects
- plugin (`JellyfinPlugin/` at the repo root). The plugin runs the same
- truehdd extraction for a library item and serves the same scene.json, plus
- the audio as fixed-length FLAC segments split into channel groups of ≤8
- (FLAC's channel limit). `AtmosSpikeStreamer` keeps the segments around the
- playhead decoded in a small ring of slots; the render callback finds the
- slot holding each frame's segment and plays silence (counted as an
- underrun) when it is not there yet.
+ plugin (`JellyfinPlugin/` at the repo root), which decodes a library item
+ live from wherever playback is: its scene.json carries only the layout, and
+ each fixed-length segment comes as FLAC files (channel groups of ≤8, FLAC's
+ limit) plus an events file that opens with a snapshot of every element, so
+ a segment stands alone. `AtmosSpikeStreamer` keeps the segments around the
+ playhead in a small ring of slots with their tracks; the render callback
+ finds the slot holding each frame's segment and plays silence (counted as
+ an underrun) when it is not there yet.
  */
 
 #if os(visionOS)
@@ -63,7 +64,8 @@ struct AtmosSpikeSceneFile: Decodable {
 
     let sampleRate: Int
     let elements: [Element]
-    let events: [Event]
+    /// The whole timeline, for local scenes; streamed scenes serve events per segment.
+    let events: [Event]?
 
     // Present only in scenes served by the Jellyfin plugin.
     let frameCount: Int?
@@ -406,13 +408,6 @@ struct AtmosSpikeJellyfin: Sendable {
         }
     }
 
-    struct Status: Decodable, Sendable {
-        let state: String
-        let progressSeconds: Double
-        let durationSeconds: Double
-        let error: String?
-    }
-
     let server: URL
     let apiKey: String
 
@@ -430,16 +425,14 @@ struct AtmosSpikeJellyfin: Sendable {
         return page.items
     }
 
-    func status(_ itemId: String) async throws -> Status {
-        try await get("AtmosObjects/\(itemId)")
+    func scene(_ itemId: String, startSeconds: Double) async throws -> Data {
+        try await send(request("AtmosObjects/\(itemId)/Scene", query: [
+            URLQueryItem(name: "startSeconds", value: String(format: "%.3f", startSeconds)),
+        ]))
     }
 
-    func prepare(_ itemId: String) async throws {
-        _ = try await send(request("AtmosObjects/\(itemId)/Prepare", method: "POST"))
-    }
-
-    func scene(_ itemId: String) async throws -> Data {
-        try await send(request("AtmosObjects/\(itemId)/Scene"))
+    func segmentEvents(_ itemId: String, segment: Int) async throws -> [AtmosSpikeSceneFile.Event] {
+        try await get("AtmosObjects/\(itemId)/Segments/\(segment)/Events")
     }
 
     func segment(_ itemId: String, segment: Int, group: Int) async throws -> Data {
@@ -473,7 +466,9 @@ struct AtmosSpikeJellyfin: Sendable {
 
 /// Keeps the segments around the playhead decoded into the audio's slots:
 /// one behind (a short back-seek stays instant) and `lookahead` ahead.
-/// Fetches in playback order, one segment at a time, off the main actor.
+/// Fetches in playback order, one segment at a time, off the main actor. A
+/// segment not yet decoded on the server is decoded on request, so the first
+/// fetch after a long seek takes a second or two.
 final class AtmosSpikeStreamer: Sendable {
     let audio: AtmosSpikeAudio
     let client: AtmosSpikeJellyfin
@@ -483,6 +478,13 @@ final class AtmosSpikeStreamer: Sendable {
     let lookahead = 3
     let fetched = Atomic<Int>(0)
     let failures = Atomic<Int>(0)
+    /// Each resident segment's element tracks, by segment then element id.
+    /// Written here, read by the main actor every tick.
+    private let tracks = Mutex<[Int: [Int: AtmosSpikeTrack]]>([:])
+
+    func track(segment: Int, element: Int) -> AtmosSpikeTrack? {
+        tracks.withLock { $0[segment]?[element] }
+    }
 
     init(audio: AtmosSpikeAudio, client: AtmosSpikeJellyfin, itemId: String, groups: [[Int]], segmentCount: Int) {
         self.audio = audio
@@ -516,6 +518,7 @@ final class AtmosSpikeStreamer: Sendable {
     private func load(_ segment: Int, keeping wanted: Set<Int>) async throws {
         // Decode every group before claiming a slot, so the slot is only
         // unavailable for the copy itself.
+        let events = try await client.segmentEvents(itemId, segment: segment)
         var decoded: [(channels: [Int], buffer: AVAudioPCMBuffer)] = []
         for (index, channels) in groups.enumerated() {
             let data = try await client.segment(itemId, segment: segment, group: index)
@@ -537,6 +540,11 @@ final class AtmosSpikeStreamer: Sendable {
                 }
                 for f in frames..<capacity { slot.samples[f * stride + channel] = 0 }
             }
+        }
+        let byElement = Dictionary(grouping: events, by: \.id).mapValues { AtmosSpikeTrack(events: $0) }
+        tracks.withLock { all in
+            all = all.filter { wanted.contains($0.key) }
+            all[segment] = byElement
         }
         slot.segment.store(segment, ordering: .releasing)
     }
@@ -571,7 +579,8 @@ final class AtmosSpikeModel {
         let channel: Int
         let isBed: Bool
         let bedChannel: String?
-        let track: AtmosSpikeTrack
+        /// The whole timeline for a local scene; nil when streamed (see `state(of:frame:)`).
+        let track: AtmosSpikeTrack?
     }
 
     // Library
@@ -597,6 +606,7 @@ final class AtmosSpikeModel {
     private(set) var streamReport = ""
     @ObservationIgnored private var streamer: AtmosSpikeStreamer?
     @ObservationIgnored private var streamTask: Task<Void, Never>?
+    @ObservationIgnored private var lastStreamedState: [Int: (pos: SIMD3<Float>, gainDB: Float)] = [:]
 
     private var jellyfin: AtmosSpikeJellyfin? {
         let trimmed = jellyfinServer.trimmingCharacters(in: .whitespaces)
@@ -666,7 +676,7 @@ final class AtmosSpikeModel {
             install(file: file, audio: audio)
             loadedScene = directory
             loadedRemoteName = nil
-            AppLogger.atmosSpike.info("Loaded \(directory.lastPathComponent, privacy: .public): \(file.elements.count) elements, \(file.events.count) events, \(self.durationSeconds, format: .fixed(precision: 1))s")
+            AppLogger.atmosSpike.info("Loaded \(directory.lastPathComponent, privacy: .public): \(file.elements.count) elements, \(file.events?.count ?? 0) events, \(self.durationSeconds, format: .fixed(precision: 1))s")
         } catch {
             loadError = error.localizedDescription
             AppLogger.atmosSpike.error("Load failed: \(error.localizedDescription, privacy: .public)")
@@ -674,14 +684,14 @@ final class AtmosSpikeModel {
     }
 
     private func install(file: AtmosSpikeSceneFile, audio: AtmosSpikeAudio) {
-        let byId = Dictionary(grouping: file.events, by: \.id)
+        let byId = file.events.map { Dictionary(grouping: $0, by: \.id) }
         elements = file.elements.sorted { $0.channel < $1.channel }.map { element in
             Element(
                 id: element.id,
                 channel: element.channel,
                 isBed: element.kind == "bed",
                 bedChannel: element.bedChannel,
-                track: AtmosSpikeTrack(events: byId[element.id] ?? [])
+                track: byId.map { AtmosSpikeTrack(events: $0[element.id] ?? []) }
             )
         }
         self.audio = audio
@@ -718,24 +728,9 @@ final class AtmosSpikeModel {
             remoteStatus = nil
         }
         do {
-            var status = try await jellyfin.status(item.id)
-            if status.state == "none" || status.state == "failed" {
-                try await jellyfin.prepare(item.id)
-                status = try await jellyfin.status(item.id)
-            }
-            while status.state == "preparing" {
-                remoteStatus = "Preparing on server: \(Self.clock(status.progressSeconds)) / \(Self.clock(status.durationSeconds)) decoded"
-                try await Task.sleep(for: .seconds(2))
-                status = try await jellyfin.status(item.id)
-            }
-            guard status.state == "ready" else {
-                throw CocoaError(.featureUnsupported, userInfo: [
-                    NSLocalizedDescriptionKey: status.error ?? "Server says \(status.state).",
-                ])
-            }
-
-            remoteStatus = "Loading scene…"
-            let json = try await jellyfin.scene(item.id)
+            // The server starts decoding from here if nothing is cached yet.
+            remoteStatus = "Starting decode on server…"
+            let json = try await jellyfin.scene(item.id, startSeconds: 0)
             let file = try await Task.detached(priority: .userInitiated) {
                 try JSONDecoder().decode(AtmosSpikeSceneFile.self, from: json)
             }.value
@@ -758,7 +753,7 @@ final class AtmosSpikeModel {
             while !audio.isResident(0), streamer.failures.load(ordering: .relaxed) < 3 {
                 try await Task.sleep(for: .milliseconds(100))
             }
-            AppLogger.atmosSpike.info("Streaming \(item.name, privacy: .public): \(file.elements.count) elements, \(file.events.count) events, \(segmentCount) segments, groups \(groups.map(\.count), privacy: .public)")
+            AppLogger.atmosSpike.info("Streaming \(item.name, privacy: .public): \(file.elements.count) elements, \(segmentCount) segments, groups \(groups.map(\.count), privacy: .public)")
         } catch {
             loadError = error.localizedDescription
             AppLogger.atmosSpike.error("Jellyfin load failed: \(error.localizedDescription, privacy: .public)")
@@ -769,12 +764,22 @@ final class AtmosSpikeModel {
         streamTask?.cancel()
         streamTask = nil
         streamer = nil
+        lastStreamedState = [:]
         streamReport = ""
     }
 
-    private static func clock(_ seconds: Double) -> String {
-        let s = Int(seconds)
-        return String(format: "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60)
+    /// An element's position and gain at `frame`: from the scene's own timeline
+    /// when local, else from the streamed segment holding `frame`. A segment
+    /// not yet fetched keeps the element where it was last seen.
+    func state(of element: Element, frame: Int) -> (pos: SIMD3<Float>, gainDB: Float) {
+        if let track = element.track { return track.state(at: frame) }
+        if let audio, let streamer,
+           let track = streamer.track(segment: frame / audio.segmentFrames, element: element.id) {
+            let state = track.state(at: frame)
+            lastStreamedState[element.id] = state
+            return state
+        }
+        return lastStreamedState[element.id] ?? (SIMD3(0, 1, 0), -144)
     }
 
     // MARK: Transport
@@ -812,7 +817,7 @@ final class AtmosSpikeModel {
     /// World-space position for an element at `frame`, in the immersive
     /// space's coordinates (origin at the floor below the viewer, −z forward).
     func worldPosition(of element: Element, frame: Int) -> SIMD3<Float> {
-        let p = element.track.state(at: frame).pos
+        let p = state(of: element, frame: frame).pos
         let z = flattenHeights ? 0 : max(0, min(p.z, 1))
         var local = SIMD3<Float>(p.x * roomHalfWidth, z * roomHeight, -p.y * roomHalfDepth)
         // A source at the listener's head has no direction; keep a minimum radius.
@@ -832,7 +837,7 @@ final class AtmosSpikeModel {
         guard let audio else { return }
         let frame = currentFrame
         for element in elements {
-            let metaDB = element.track.state(at: frame).gainDB
+            let metaDB = state(of: element, frame: frame).gainDB
             let db = masterGainDB + metaDB + (element.isBed ? lfeGainDB : 0)
             audio.targetGain[element.channel] = db <= -120 ? 0 : powf(10, db / 20)
             let p = audio.peak[element.channel]

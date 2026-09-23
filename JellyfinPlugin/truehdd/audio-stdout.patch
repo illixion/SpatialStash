@@ -1,0 +1,166 @@
+diff --git a/src/cli/command.rs b/src/cli/command.rs
+index 13753be..ac99484 100644
+--- a/src/cli/command.rs
++++ b/src/cli/command.rs
+@@ -300,6 +300,13 @@ pub struct DecodeArgs {
+     #[arg(long)]
+     pub metadata_only: bool,
+ 
++    /// Stream decoded PCM to stdout (24-bit little-endian, interleaved) instead of
++    /// writing an audio file, so the output can be consumed while decoding. Needs a
++    /// single presentation. The DAMF header and metadata still go to --output-path,
++    /// and the metadata file is flushed after every update.
++    #[arg(long, conflicts_with_all = ["json", "metadata_only"])]
++    pub audio_stdout: bool,
++
+     /// Print a machine-readable result summary on stdout
+     #[arg(long)]
+     pub json: bool,
+diff --git a/src/cli/decode/handler.rs b/src/cli/decode/handler.rs
+index 867871c..d944ecc 100644
+--- a/src/cli/decode/handler.rs
++++ b/src/cli/decode/handler.rs
+@@ -38,6 +38,8 @@ pub struct DecodeHandler {
+     is_segmented: bool,
+     au_index: u64,
+     pub start_time: Instant,
++    /// Stream audio to stdout rather than a file (`--audio-stdout`).
++    pub audio_stdout: bool,
+ 
+     // Bed conformance buffering
+     atmos_probe_buffer: Vec<Vec<i32>>, // Buffer samples before we know channel layout
+@@ -208,6 +210,7 @@ impl DecodeHandler {
+             is_segmented: false,
+             au_index: 0,
+             start_time: Instant::now(),
++            audio_stdout: false,
+ 
+             // Bed conformance buffering
+             atmos_probe_buffer: Vec::new(),
+@@ -315,7 +318,7 @@ impl DecodeHandler {
+                 }
+ 
+                 // Handle first-time Atmos file rename (not for segmented mode and not if we were probing)
+-                if self.audio_writer.is_some() && !self.is_segmented && !was_atmos {
++                if self.audio_writer.is_some() && !self.is_segmented && !was_atmos && !self.audio_stdout {
+                     self.handle_atmos_rename(&decoded)?;
+                 }
+             }
+@@ -737,6 +740,13 @@ impl DecodeHandler {
+             return Ok(());
+         }
+ 
++        if self.audio_writer.is_none() && self.audio_stdout {
++            self.calculate_and_cache_channel_count(decoded);
++            let channel_info = self.get_channel_info(decoded.channel_count);
++            info!("Streaming audio to stdout ({})", channel_info.description());
++            self.audio_writer = Some(AudioWriter::create_stdout());
++        }
++
+         if self.audio_writer.is_none() {
+             // Make sure we have calculated the channel count
+             self.calculate_and_cache_channel_count(decoded);
+diff --git a/src/cli/decode/mod.rs b/src/cli/decode/mod.rs
+index b950e45..106b944 100644
+--- a/src/cli/decode/mod.rs
++++ b/src/cli/decode/mod.rs
+@@ -24,6 +24,10 @@ pub fn cmd_decode(args: &DecodeArgs, cli: &Cli, multi: Option<&MultiProgress>) -
+ 
+     let is_pipe = args.input.to_string_lossy() == "-";
+ 
++    if args.audio_stdout && !args.presentation.is_single_output() {
++        anyhow::bail!("--audio-stdout needs a single presentation");
++    }
++
+     if let Some(ref path) = args.output_path {
+         info!("Output path specified: {}", path.display());
+     }
+diff --git a/src/cli/decode/output.rs b/src/cli/decode/output.rs
+index ebb6ead..5617516 100644
+--- a/src/cli/decode/output.rs
++++ b/src/cli/decode/output.rs
+@@ -96,6 +96,8 @@ pub enum AudioWriter {
+     Pcm(BufWriter<File>),
+     Caf(CAFWriter<BufWriter<File>>),
+     W64(WAVWriter<File>),
++    /// Raw 24-bit little-endian PCM on stdout, for `--audio-stdout`.
++    Stdout(BufWriter<std::io::Stdout>),
+ }
+ 
+ impl AudioWriter {
+@@ -140,19 +142,18 @@ impl AudioWriter {
+         Ok(AudioWriter::W64(w64_writer))
+     }
+ 
++    pub fn create_stdout() -> Self {
++        AudioWriter::Stdout(BufWriter::with_capacity(1 << 16, std::io::stdout()))
++    }
++
+     pub fn write_pcm_samples(
+         &mut self,
+         samples: &[i32],
+         _channel_count: usize,
+     ) -> anyhow::Result<()> {
+         match self {
+-            AudioWriter::Pcm(pcm_writer) => {
+-                for &sample in samples {
+-                    let bytes = sample.to_le_bytes();
+-                    pcm_writer.write_all(&bytes[..3])?; // Write 24-bit
+-                }
+-                Ok(())
+-            }
++            AudioWriter::Pcm(pcm_writer) => write_pcm_24le(pcm_writer, samples),
++            AudioWriter::Stdout(stdout_writer) => write_pcm_24le(stdout_writer, samples),
+             AudioWriter::Caf(caf_writer) => Ok(caf_writer.write_pcm_24bit_as_packed(samples)?),
+             AudioWriter::W64(w64_writer) => Ok(w64_writer.write_pcm_24bit_as_packed(samples)?),
+         }
+@@ -161,12 +162,21 @@ impl AudioWriter {
+     pub fn finish(&mut self) -> anyhow::Result<()> {
+         match self {
+             AudioWriter::Pcm(pcm_writer) => Ok(pcm_writer.flush()?),
++            AudioWriter::Stdout(stdout_writer) => Ok(stdout_writer.flush()?),
+             AudioWriter::Caf(caf_writer) => Ok(caf_writer.finish()?),
+             AudioWriter::W64(w64_writer) => Ok(w64_writer.finish()?),
+         }
+     }
+ }
+ 
++fn write_pcm_24le<W: Write>(writer: &mut W, samples: &[i32]) -> anyhow::Result<()> {
++    for &sample in samples {
++        let bytes = sample.to_le_bytes();
++        writer.write_all(&bytes[..3])?; // Write 24-bit
++    }
++    Ok(())
++}
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+diff --git a/src/cli/decode/pipeline.rs b/src/cli/decode/pipeline.rs
+index d59a0b5..5d57be5 100644
+--- a/src/cli/decode/pipeline.rs
++++ b/src/cli/decode/pipeline.rs
+@@ -129,6 +129,7 @@ pub fn run_threaded_pipeline(
+         warp_mode: args.warp_mode,
+         frame_rate: args.frame_rate,
+         probe_range: args.probe_range,
++        audio_stdout: args.audio_stdout,
+         start_time: Instant::now(),
+     };
+ 
+@@ -410,6 +411,7 @@ struct PresentationOutputs {
+     warp_mode: Option<WarpMode>,
+     frame_rate: Option<FrameRate>,
+     probe_range: u64,
++    audio_stdout: bool,
+     start_time: Instant,
+ }
+ 
+@@ -451,6 +453,7 @@ impl PresentationOutputs {
+                 self.probe_range,
+             );
+             handler.start_time = self.start_time;
++            handler.audio_stdout = self.audio_stdout;
+             self.handlers[slot] = Some(handler);
+         }
+ 
