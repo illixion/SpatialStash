@@ -27,6 +27,7 @@ a second later, and each segment it decodes is cached for next time.
      <CacheDirectory />            <!-- empty: <jellyfin cache>/atmos-objects -->
      <SegmentSeconds>10</SegmentSeconds>
      <EncoderParallelism>4</EncoderParallelism>
+     <VideoCacheMegabytes>4096</VideoCacheMegabytes>
    </PluginConfiguration>
    ```
 4. Restart Jellyfin.
@@ -52,6 +53,9 @@ Every endpoint needs normal Jellyfin authentication (an API key or a user token)
 | `GET /AtmosObjects/{itemId}/Segments/{n}/{g}` | FLAC audio for segment `n`, channel group `g` |
 | `GET /AtmosObjects/{itemId}` | `{state, progressSeconds, durationSeconds, error}`, where `state` is `none`, `partial`, `preparing`, `ready`, `unsupported` or `failed` |
 | `POST /AtmosObjects/{itemId}/Prepare` | Decodes the whole film into the cache in the background |
+| `GET /AtmosObjects/{itemId}/Video` | The video index: segment start times and range info (see [Video](#video)) |
+| `GET /AtmosObjects/{itemId}/Video/Init` | The video's fragmented-MP4 init segment |
+| `GET /AtmosObjects/{itemId}/Video/Segments/{n}` | Video segment `n`: one keyframe interval, in film time |
 
 A segment request waits until that segment has been decoded, up to 45 s. It
 starts a decode at that segment unless one is already running just before
@@ -74,6 +78,49 @@ Events are `{id, t, ramp, gain, pos?}`:
 - A position is reached linearly over `ramp` frames.
 - Each segment's list opens with a snapshot of every element as it stands at
   the segment's first frame, so a segment can be used on its own.
+
+## Video
+
+The plugin also serves the film's video track, copied untouched, so a
+client can render it on the same clock as the object audio (Hypnos feeds it
+to `AVSampleBufferDisplayLayer`, which does the decoding and Dolby Vision
+display management itself).
+
+- **Segments are keyframe intervals** read from the Matroska Cues, the
+  file's own seek index. Reading it takes a fraction of a second, where
+  scanning packets would read the whole file. On a UHD remux the intervals
+  run 1–10 s, 5 s on average. Only Matroska is supported for now.
+- **Each segment is fragmented MP4 in film time:** its first frame presents
+  at `segmentStarts[n]`, the same time base as the scene's `startSeconds`.
+- **Dolby Vision profiles 5, 8 and 10 keep their configuration** (`dvh1`
+  with `dvcC`/`dvvC`). Profile 7's enhancement layer can't be decoded on
+  Apple hardware, so it is served as its HDR10 base layer (`hvc1`).
+
+The index (`index.json`) contains `segmentStarts`, `durationSeconds`,
+`codec`, `videoRange` (Jellyfin's range type), `dvProfile` and
+`dolbyVision`.
+
+A request for a segment that isn't cached starts a run: jellyfin-ffmpeg seeks
+and copies up to two minutes of video through its HLS muxer, split at every
+keyframe, and each finished segment is moved into the cache. Two ffmpeg
+quirks are corrected rather than trusted to flags:
+
+- **The seek can land one keyframe interval early.** A second output
+  (`mkvtimestamp_v2`) reports the first packet's original decode time,
+  which identifies the keyframe the run really starts on.
+- **The HLS muxer rebases timestamps to zero.** Each segment's `tfdt` is
+  shifted back so its first frame presents at the keyframe's film time.
+
+Segments are the film's own bitstream, so a full cache would duplicate the
+file. Beyond `VideoCacheMegabytes` per item (default 4096) the least
+recently used segments are dropped.
+
+On The Wild Robot (UHD, Dolby Vision profile 8.1), from a Mac over the tailnet:
+- The index is served in 0.26 s.
+- A cold mid-film segment arrives in 1–2 s.
+- Segments the same run has already copied arrive in about 0.1 s.
+- Consecutive segments are continuous in decode time, and each first frame
+  lands on its index time within the Cues' 1 ms rounding.
 
 ## How live decoding stays sample-exact
 
@@ -105,6 +152,9 @@ On an Endgame UHD remux:
 <cache>/v2/<itemId>/scene.json
 <cache>/v2/<itemId>/seg/<n>.events.json
 <cache>/v2/<itemId>/seg/<n>-<g>.flac      16-bit FLAC with TPDF dither, ≤8 channels
+<cache>/v2/<itemId>/video/index.json      keyframe index
+<cache>/v2/<itemId>/video/init.mp4        video init segment
+<cache>/v2/<itemId>/video/<n>.m4s         video segment n (LRU-trimmed)
 ```
 
 - A segment counts as cached once its last group's FLAC exists. Each file is

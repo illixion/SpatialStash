@@ -44,6 +44,9 @@ public class PluginConfiguration : MediaBrowser.Model.Plugins.BasePluginConfigur
 
     /// <summary>How many segment encoders run at once.</summary>
     public int EncoderParallelism { get; set; } = 4;
+
+    /// <summary>Video segments kept per item before the least recently used are dropped.</summary>
+    public int VideoCacheMegabytes { get; set; } = 4096;
 }
 
 public class PluginServiceRegistrator : IPluginServiceRegistrator
@@ -51,5 +54,6 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
     public void RegisterServices(IServiceCollection serviceCollection, IServerApplicationHost applicationHost)
     {
         serviceCollection.AddSingleton<AtmosSceneService>();
+        serviceCollection.AddSingleton<VideoSegmentService>();
     }
 }

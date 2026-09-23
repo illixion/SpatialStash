@@ -1,0 +1,510 @@
+using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.Globalization;
+using System.Text.Json;
+using MediaBrowser.Common.Configuration;
+using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.MediaEncoding;
+using MediaBrowser.Model.Entities;
+using Microsoft.Extensions.Logging;
+
+namespace Jellyfin.Plugin.AtmosObjects;
+
+/// <summary>The video index a client reads: one segment per keyframe interval (GOP).</summary>
+public sealed class VideoIndex
+{
+    public int Version { get; set; } = 1;
+    /// <summary>Presentation time of each segment's first frame (a keyframe), in container seconds.</summary>
+    public List<double> SegmentStarts { get; set; } = [];
+    public double DurationSeconds { get; set; }
+    public string Codec { get; set; } = string.Empty;
+    /// <summary>Jellyfin's range type (SDR, HDR10, DOVI, DOVIWithHDR10, DOVIWithEL, …).</summary>
+    public string VideoRange { get; set; } = string.Empty;
+    public int? DvProfile { get; set; }
+    /// <summary>True when the segments carry the Dolby Vision configuration (dvh1 + dvvC/dvcC).</summary>
+    public bool DolbyVision { get; set; }
+}
+
+/// <summary>
+/// Serves an item's video track, copied untouched, as fragmented-MP4 segments
+/// in film time, so a client can drive its own renderer from the same clock as
+/// the Atmos audio.
+///
+/// Segments are keyframe intervals taken from the Matroska Cues, so every
+/// segment starts with a frame a decoder can start from and any segment can
+/// be fetched on its own. A request for a segment that is not cached starts a
+/// run: jellyfin-ffmpeg seeks, copies the video out through its HLS muxer
+/// (fMP4 segments, split at every keyframe) for <see cref="RunSeconds"/>, and
+/// each finished segment is moved into the cache. Two quirks are handled
+/// here rather than trusted to ffmpeg flags:
+///
+/// - The seek can land a keyframe interval earlier than asked. A second
+///   output (mkvtimestamp_v2) reports the first packet's original decode
+///   time, which identifies the keyframe the run actually starts on.
+/// - The HLS muxer rebases timestamps to start at zero. Each segment's tfdt
+///   is shifted back so its first frame presents at the keyframe's film time.
+///
+///   &lt;cache&gt;/v2/&lt;itemId&gt;/video/index.json
+///   &lt;cache&gt;/v2/&lt;itemId&gt;/video/init.mp4
+///   &lt;cache&gt;/v2/&lt;itemId&gt;/video/&lt;n&gt;.m4s
+///
+/// The segments are the film's own bitstream, so a full cache would duplicate
+/// the file; the least recently used segments are dropped beyond
+/// <see cref="PluginConfiguration.VideoCacheMegabytes"/> per item.
+/// </summary>
+public sealed class VideoSegmentService
+{
+    /// <summary>Film seconds one run copies before it stops; a later request starts the next.</summary>
+    private const double RunSeconds = 120;
+    /// <summary>How far ahead of a run's progress a request still waits for it instead of starting another.</summary>
+    private const int FollowSegments = 8;
+    private static readonly TimeSpan SegmentWait = TimeSpan.FromSeconds(45);
+
+    private readonly ILibraryManager _libraryManager;
+    private readonly IMediaSourceManager _mediaSourceManager;
+    private readonly IMediaEncoder _mediaEncoder;
+    private readonly IApplicationPaths _paths;
+    private readonly ILogger<VideoSegmentService> _logger;
+    private readonly ConcurrentDictionary<Guid, ItemState> _items = new();
+
+    public VideoSegmentService(
+        ILibraryManager libraryManager,
+        IMediaSourceManager mediaSourceManager,
+        IMediaEncoder mediaEncoder,
+        IApplicationPaths paths,
+        ILogger<VideoSegmentService> logger)
+    {
+        _libraryManager = libraryManager;
+        _mediaSourceManager = mediaSourceManager;
+        _mediaEncoder = mediaEncoder;
+        _paths = paths;
+        _logger = logger;
+    }
+
+    private static PluginConfiguration Config => Plugin.Instance?.Configuration ?? new PluginConfiguration();
+
+    private string ItemDirectory(Guid itemId) => Path.Combine(
+        string.IsNullOrWhiteSpace(Config.CacheDirectory) ? Path.Combine(_paths.CachePath, "atmos-objects") : Config.CacheDirectory,
+        "v2",
+        itemId.ToString("N"),
+        "video");
+
+    private string IndexPath(Guid itemId) => Path.Combine(ItemDirectory(itemId), "index.json");
+
+    private string InitPath(Guid itemId) => Path.Combine(ItemDirectory(itemId), "init.mp4");
+
+    private string SegmentPath(Guid itemId, int segment) => Path.Combine(ItemDirectory(itemId), $"{segment}.m4s");
+
+    // MARK: Client entry points
+
+    /// <summary>The item's video index, or null for unknown items and files without a seek index.</summary>
+    public VideoIndex? GetIndex(Guid itemId) => GetState(itemId)?.Index;
+
+    /// <summary>Path of the init segment, making it with a short run if needed.</summary>
+    public async Task<string?> EnsureInitAsync(Guid itemId, CancellationToken ct)
+    {
+        if (File.Exists(InitPath(itemId)))
+        {
+            return InitPath(itemId);
+        }
+
+        return await EnsureSegmentAsync(itemId, 0, ct).ConfigureAwait(false) is null || !File.Exists(InitPath(itemId))
+            ? null
+            : InitPath(itemId);
+    }
+
+    /// <summary>Path of segment <paramref name="segment"/>, copying it out of the film if needed.</summary>
+    public async Task<string?> EnsureSegmentAsync(Guid itemId, int segment, CancellationToken ct)
+    {
+        var state = GetState(itemId);
+        if (state?.Index is not { } index || segment < 0 || segment >= index.SegmentStarts.Count)
+        {
+            return null;
+        }
+
+        state.LastRequest = DateTime.UtcNow;
+        var path = SegmentPath(itemId, segment);
+        var deadline = DateTime.UtcNow + SegmentWait;
+        var started = 0;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (File.Exists(path))
+            {
+                File.SetLastAccessTimeUtc(path, DateTime.UtcNow);
+                return path;
+            }
+
+            lock (state.Gate)
+            {
+                if (!state.Runs.Any(r => r.Covers(segment)))
+                {
+                    // Two runs that both finished without producing it: give up.
+                    if (started++ >= 2)
+                    {
+                        return null;
+                    }
+
+                    StartRun(itemId, state, segment);
+                }
+            }
+
+            await Task.Delay(50, ct).ConfigureAwait(false);
+        }
+
+        return null;
+    }
+
+    // MARK: State
+
+    private sealed class ItemState
+    {
+        public readonly object Gate = new();
+        public required string MediaPath { get; init; }
+        public VideoIndex? Index;
+        public readonly List<Run> Runs = [];
+        public DateTime LastRequest = DateTime.UtcNow;
+    }
+
+    private sealed class Run
+    {
+        public required int FirstSegment { get; init; }
+        public required int LastSegment { get; init; }
+        public volatile int NextSegment;
+        public volatile bool Finished;
+        public readonly CancellationTokenSource Cancellation = new();
+
+        public bool Covers(int segment) => !Finished && segment >= FirstSegment && segment <= LastSegment
+            && segment <= NextSegment + FollowSegments;
+    }
+
+    private ItemState? GetState(Guid itemId)
+    {
+        if (_items.TryGetValue(itemId, out var existing))
+        {
+            return existing;
+        }
+
+        var item = _libraryManager.GetItemById(itemId);
+        if (item is null || string.IsNullOrEmpty(item.Path))
+        {
+            return null;
+        }
+
+        var state = new ItemState { MediaPath = item.Path };
+        try
+        {
+            state.Index = LoadIndex(itemId, item.Path, item.RunTimeTicks);
+        }
+        catch (Exception ex) when (ex is IOException or EndOfStreamException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(ex, "Could not index video for {ItemId}", itemId);
+        }
+
+        return _items.GetOrAdd(itemId, state);
+    }
+
+    private VideoIndex? LoadIndex(Guid itemId, string mediaPath, long? runTimeTicks)
+    {
+        if (File.Exists(IndexPath(itemId)))
+        {
+            return JsonSerializer.Deserialize<VideoIndex>(File.ReadAllText(IndexPath(itemId)), AtmosSceneService.JsonOptions);
+        }
+
+        var stream = _mediaSourceManager.GetMediaStreams(itemId).FirstOrDefault(s => s.Type == MediaStreamType.Video);
+        var keyframes = MatroskaCues.ReadVideoKeyframes(mediaPath);
+        if (stream is null || keyframes is null)
+        {
+            _logger.LogWarning("No video stream or Matroska Cues for {ItemId}; video segments are unavailable", itemId);
+            return null;
+        }
+
+        // A single-layer Dolby Vision stream (profiles 5, 8, 10) keeps its
+        // configuration; profile 7's enhancement layer is not decodable on
+        // Apple hardware, so it is served as its HDR10 base layer.
+        var dvProfile = stream.DvProfile;
+        var index = new VideoIndex
+        {
+            SegmentStarts = keyframes,
+            DurationSeconds = runTimeTicks is long ticks ? TimeSpan.FromTicks(ticks).TotalSeconds : keyframes[^1],
+            Codec = stream.Codec ?? string.Empty,
+            VideoRange = stream.VideoRangeType.ToString(),
+            DvProfile = dvProfile,
+            DolbyVision = dvProfile is 5 or 8 or 10
+        };
+        Directory.CreateDirectory(ItemDirectory(itemId));
+        var tmp = IndexPath(itemId) + ".tmp";
+        File.WriteAllText(tmp, JsonSerializer.Serialize(index, AtmosSceneService.JsonOptions));
+        File.Move(tmp, IndexPath(itemId), overwrite: true);
+        _logger.LogInformation("Indexed video for {ItemId}: {Count} segments, {Range}", itemId, keyframes.Count, index.VideoRange);
+        return index;
+    }
+
+    // MARK: Runs
+
+    private void StartRun(Guid itemId, ItemState state, int segment)
+    {
+        var index = state.Index!;
+        var starts = index.SegmentStarts;
+        var last = segment;
+        while (last + 1 < starts.Count && starts[last + 1] - starts[segment] < RunSeconds)
+        {
+            last++;
+        }
+
+        // A seek elsewhere makes runs for the old position pointless.
+        foreach (var old in state.Runs.Where(r => !r.Finished && (segment < r.FirstSegment || segment > r.LastSegment)))
+        {
+            old.Cancellation.Cancel();
+        }
+
+        var run = new Run { FirstSegment = segment, LastSegment = last, NextSegment = segment };
+        state.Runs.RemoveAll(r => r.Finished);
+        state.Runs.Add(run);
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await ExecuteRunAsync(itemId, state, run).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (run.Cancellation.IsCancellationRequested)
+            {
+                _logger.LogInformation("Video run for {ItemId} at segment {Segment} cancelled at {Next}", itemId, segment, run.NextSegment);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Video run for {ItemId} at segment {Segment} failed", itemId, segment);
+            }
+            finally
+            {
+                run.Finished = true;
+            }
+        });
+    }
+
+    private async Task ExecuteRunAsync(Guid itemId, ItemState state, Run run)
+    {
+        var ct = run.Cancellation.Token;
+        var index = state.Index!;
+        var starts = index.SegmentStarts;
+        var dir = ItemDirectory(itemId);
+        var work = Path.Combine(dir, "run-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(work);
+
+        // Seek just past the keyframe (never past the next one), and stop just
+        // after the run's last segment so the muxer closes it at its keyframe.
+        var first = starts[run.FirstSegment];
+        var seek = run.FirstSegment == 0 ? 0 : Math.Min(first + 0.05, NextStart(starts, run.FirstSegment) - 0.001);
+        var end = run.LastSegment + 1 < starts.Count ? starts[run.LastSegment + 1] + 0.5 : index.DurationSeconds + 1;
+        var args = new List<string> { "-v", "error", "-nostdin", "-y" };
+        if (seek > 0)
+        {
+            args.AddRange(["-ss", Seconds(seek)]);
+        }
+
+        args.AddRange(["-t", Seconds(end - seek), "-i", state.MediaPath,
+            "-map", "0:v:0", "-map_chapters", "-1", "-map_metadata", "-1", "-c:v", "copy",
+            "-copyts", "-avoid_negative_ts", "disabled"]);
+        if (index.DolbyVision)
+        {
+            // -strict unofficial is what makes the mp4 muxer write dvcC/dvvC.
+            args.AddRange(["-tag:v", "dvh1", "-strict", "unofficial"]);
+        }
+        else if (string.Equals(index.Codec, "hevc", StringComparison.OrdinalIgnoreCase))
+        {
+            args.AddRange(["-tag:v", "hvc1"]);
+        }
+
+        args.AddRange(["-f", "hls", "-hls_segment_type", "fmp4", "-hls_time", "0.01", "-hls_list_size", "0",
+            "-hls_playlist_type", "vod", "-hls_flags", "temp_file",
+            "-hls_fmp4_init_filename", "init.mp4",
+            "-hls_segment_filename", Path.Combine(work, "seg%d.m4s"),
+            Path.Combine(work, "run.m3u8"),
+            "-map", "0:v:0", "-c:v", "copy", "-copyts", "-f", "mkvtimestamp_v2", "pipe:1"]);
+
+        _logger.LogInformation("Video run for {ItemId}: segments {First}-{Last}, seek {Seek:F3} s", itemId, run.FirstSegment, run.LastSegment, seek);
+        using var ffmpeg = StartProcess(_mediaEncoder.EncoderPath, args);
+        using var kill = ct.Register(() => TryKill(ffmpeg));
+        var stderr = ffmpeg.StandardError.ReadToEndAsync(CancellationToken.None);
+        var firstDts = new TaskCompletionSource<double>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var timestamps = Task.Run(async () =>
+        {
+            // "# timecode format v2", then one decode time in ms per packet.
+            // Only the first matters, but the pipe must be drained to the end.
+            while (await ffmpeg.StandardOutput.ReadLineAsync(CancellationToken.None).ConfigureAwait(false) is { } line)
+            {
+                if (!firstDts.Task.IsCompleted && double.TryParse(line, NumberStyles.Float, CultureInfo.InvariantCulture, out var ms))
+                {
+                    firstDts.TrySetResult(ms / 1000);
+                }
+            }
+
+            firstDts.TrySetException(new InvalidOperationException("ffmpeg reported no video packets."));
+        }, CancellationToken.None);
+
+        try
+        {
+            var dts = await firstDts.Task.WaitAsync(ct).ConfigureAwait(false);
+            // The first packet is the run's first keyframe: the earliest segment start at or after its decode time.
+            var firstSegment = starts.FindIndex(s => s >= dts - 0.0005);
+            if (firstSegment < 0)
+            {
+                throw new InvalidOperationException($"No keyframe at or after decode time {dts:F3} s.");
+            }
+
+            long? delta = null;
+            uint timescale = 0;
+            var produced = 0;
+            while (true)
+            {
+                var exited = ffmpeg.HasExited;
+                var next = Path.Combine(work, $"seg{produced}.m4s");
+                var after = Path.Combine(work, $"seg{produced + 1}.m4s");
+                if (!File.Exists(next) || (!File.Exists(after) && !exited))
+                {
+                    if (exited && !File.Exists(next))
+                    {
+                        break;
+                    }
+
+                    await Task.Delay(50, ct).ConfigureAwait(false);
+                    continue;
+                }
+
+                // seg{produced} is complete: the next one has started, or ffmpeg is done.
+                if (timescale == 0)
+                {
+                    var init = await File.ReadAllBytesAsync(Path.Combine(work, "init.mp4"), ct).ConfigureAwait(false);
+                    timescale = Fmp4.Timescale(init) ?? throw new InvalidOperationException("Init segment has no timescale.");
+                    if (!File.Exists(InitPath(itemId)))
+                    {
+                        WriteAtomically(InitPath(itemId), init);
+                    }
+                }
+
+                var data = await File.ReadAllBytesAsync(next, ct).ConfigureAwait(false);
+                var pts = Fmp4.FirstPresentationTime(data) ?? throw new InvalidOperationException($"seg{produced} has no samples.");
+                delta ??= (long)Math.Round(starts[firstSegment] * timescale) - pts;
+                var filmSeconds = (pts + delta.Value) / (double)timescale;
+                var segment = NearestSegment(starts, filmSeconds);
+                if (segment is { } n)
+                {
+                    Fmp4.ShiftDecodeTimes(data, delta.Value);
+                    if (!File.Exists(SegmentPath(itemId, n)))
+                    {
+                        WriteAtomically(SegmentPath(itemId, n), data);
+                    }
+
+                    run.NextSegment = n + 1;
+                }
+                else
+                {
+                    _logger.LogWarning("Video run for {ItemId}: segment at {Seconds:F3} s matches no keyframe in the index", itemId, filmSeconds);
+                }
+
+                File.Delete(next);
+                produced++;
+            }
+
+            await ffmpeg.WaitForExitAsync(ct).ConfigureAwait(false);
+            if (ffmpeg.ExitCode != 0)
+            {
+                throw new InvalidOperationException($"ffmpeg exited {ffmpeg.ExitCode}: {(await stderr.ConfigureAwait(false)).Trim()}");
+            }
+
+            _logger.LogInformation("Video run for {ItemId}: {Count} segments from {First}", itemId, produced, firstSegment);
+            TrimCache(itemId);
+        }
+        finally
+        {
+            TryKill(ffmpeg);
+            await Task.WhenAny(timestamps, Task.Delay(TimeSpan.FromSeconds(2), CancellationToken.None)).ConfigureAwait(false);
+            try
+            {
+                Directory.Delete(work, recursive: true);
+            }
+            catch (IOException)
+            {
+            }
+        }
+    }
+
+    private static double NextStart(List<double> starts, int segment) => segment + 1 < starts.Count ? starts[segment + 1] : double.MaxValue;
+
+    /// <summary>The segment starting within 2 ms of <paramref name="seconds"/> (Cues are ms-rounded).</summary>
+    private static int? NearestSegment(List<double> starts, double seconds)
+    {
+        var i = starts.BinarySearch(seconds);
+        if (i < 0)
+        {
+            i = ~i;
+        }
+
+        foreach (var candidate in new[] { i - 1, i })
+        {
+            if (candidate >= 0 && candidate < starts.Count && Math.Abs(starts[candidate] - seconds) < 0.002)
+            {
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Drops the least recently used segments beyond the per-item budget.</summary>
+    private void TrimCache(Guid itemId)
+    {
+        var budget = Math.Max(256, Config.VideoCacheMegabytes) * 1024L * 1024L;
+        var files = new DirectoryInfo(ItemDirectory(itemId)).GetFiles("*.m4s")
+            .OrderByDescending(f => f.LastAccessTimeUtc)
+            .ToList();
+        long total = 0;
+        foreach (var file in files)
+        {
+            total += file.Length;
+            if (total > budget)
+            {
+                file.Delete();
+            }
+        }
+    }
+
+    private static string Seconds(double value) => value.ToString("F3", CultureInfo.InvariantCulture);
+
+    private static void WriteAtomically(string path, byte[] contents)
+    {
+        var tmp = path + ".tmp";
+        File.WriteAllBytes(tmp, contents);
+        File.Move(tmp, path, overwrite: true);
+    }
+
+    private static void TryKill(Process process)
+    {
+        try
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+            }
+        }
+        catch (InvalidOperationException)
+        {
+        }
+    }
+
+    private static Process StartProcess(string fileName, IEnumerable<string> args)
+    {
+        var info = new ProcessStartInfo(fileName)
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        foreach (var arg in args)
+        {
+            info.ArgumentList.Add(arg);
+        }
+
+        return Process.Start(info) ?? throw new InvalidOperationException($"Could not start {fileName}");
+    }
+}

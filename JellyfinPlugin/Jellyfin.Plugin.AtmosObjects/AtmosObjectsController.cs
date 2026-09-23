@@ -16,6 +16,13 @@ namespace Jellyfin.Plugin.AtmosObjects;
 ///   GET  /AtmosObjects/{itemId}/Scene?startSeconds=T     layout
 ///   GET  /AtmosObjects/{itemId}/Segments/{n}/Events      snapshot + events for segment n
 ///   GET  /AtmosObjects/{itemId}/Segments/{n}/{g}         FLAC for segment n, channel group g
+///
+/// And the film's video, copied untouched as fragmented MP4 in film time, so
+/// the client can render it on the audio's clock:
+///
+///   GET  /AtmosObjects/{itemId}/Video                    index: segment start times
+///   GET  /AtmosObjects/{itemId}/Video/Init               init segment
+///   GET  /AtmosObjects/{itemId}/Video/Segments/{n}       segment n (one keyframe interval)
 /// </summary>
 [ApiController]
 [Route("AtmosObjects")]
@@ -23,10 +30,12 @@ namespace Jellyfin.Plugin.AtmosObjects;
 public class AtmosObjectsController : ControllerBase
 {
     private readonly AtmosSceneService _scenes;
+    private readonly VideoSegmentService _video;
 
-    public AtmosObjectsController(AtmosSceneService scenes)
+    public AtmosObjectsController(AtmosSceneService scenes, VideoSegmentService video)
     {
         _scenes = scenes;
+        _video = video;
     }
 
     [HttpGet("{itemId}")]
@@ -91,5 +100,26 @@ public class AtmosObjectsController : ControllerBase
 
         var path = _scenes.SegmentFlac(itemId, segment, group);
         return path is null ? NotFound() : PhysicalFile(path, "audio/flac");
+    }
+
+    [HttpGet("{itemId}/Video")]
+    public ActionResult GetVideoIndex([FromRoute] Guid itemId)
+    {
+        var index = _video.GetIndex(itemId);
+        return index is null ? NotFound() : new JsonResult(index, AtmosSceneService.JsonOptions);
+    }
+
+    [HttpGet("{itemId}/Video/Init")]
+    public async Task<ActionResult> GetVideoInit([FromRoute] Guid itemId, CancellationToken ct)
+    {
+        var path = await _video.EnsureInitAsync(itemId, ct).ConfigureAwait(false);
+        return path is null ? NotFound() : PhysicalFile(path, "video/mp4");
+    }
+
+    [HttpGet("{itemId}/Video/Segments/{segment:int}")]
+    public async Task<ActionResult> GetVideoSegment([FromRoute] Guid itemId, [FromRoute] int segment, CancellationToken ct)
+    {
+        var path = await _video.EnsureSegmentAsync(itemId, segment, ct).ConfigureAwait(false);
+        return path is null ? NotFound() : PhysicalFile(path, "video/iso.segment");
     }
 }
