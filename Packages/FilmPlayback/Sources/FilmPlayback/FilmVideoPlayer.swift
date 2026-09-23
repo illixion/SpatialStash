@@ -37,6 +37,8 @@ public final class FilmVideoPlayer {
     public private(set) var formatSummary = ""
     public private(set) var status = "Idle"
     public private(set) var isPlaying = false
+    /// The frame at the last seek target is queued and the renderer can start smoothly.
+    public private(set) var isPrimed = false
     /// Film time up to which samples have been enqueued.
     public private(set) var bufferedUntil: Double = 0
     public private(set) var currentSegment = 0
@@ -128,6 +130,7 @@ public final class FilmVideoPlayer {
         CMTimebaseSetRate(timebase, rate: 0)
         CMTimebaseSetTime(timebase, time: CMTime(seconds: target, preferredTimescale: 1_000_000_000))
         bufferedUntil = target
+        isPrimed = false
         let first = index.segment(containing: target)
         segments = segments.filter { abs($0.key - first) <= 2 }
         let requested = Date()
@@ -221,7 +224,8 @@ public final class FilmVideoPlayer {
         }
         guard !Task.isCancelled else { return }
         lastSeekLatency = Date().timeIntervalSince(requested)
-        status = "Playing"
+        isPrimed = true
+        status = resume ? "Playing" : "Ready"
         if resume {
             let host = CMClockGetTime(CMClockGetHostTimeClock()) + CMTime(seconds: startDelay, preferredTimescale: 1_000_000_000)
             start(filmTime: target, atHostTime: host)

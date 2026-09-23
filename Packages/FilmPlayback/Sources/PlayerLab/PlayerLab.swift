@@ -1,7 +1,7 @@
 /*
  PlayerLab - the film player on the Mac.
 
-   JELLYFIN_TOKEN=… swift run PlayerLab
+   JELLYFIN_TOKEN=… ./run-lab.sh [log]   (not `swift run`: head tracking needs the app bundle, see run-lab.sh)
 
  Environment:
    JELLYFIN_TOKEN   API key (required; never logged)
@@ -10,7 +10,7 @@
    FILM_START       start position in seconds
    FILM_AUTOPLAY    1 to start playing once loaded
    FILM_SCRIPT      timed actions for unattended runs, e.g. "6:seek=1800;12:pause;14:play;20:quit"
-                    (seconds after load : seek=<s> | play | pause | quit)
+                    (seconds after load : seek=<s> | play | pause | offset=<ms> | quit)
 
  Prints one telemetry line per second to stdout, so a run can be judged
  from its log as well as by eye.
@@ -23,7 +23,7 @@ import SwiftUI
 
 @main
 struct PlayerLab: App {
-    @State private var player = FilmVideoPlayer()
+    @State private var player = FilmPlayer()
     private let environment = ProcessInfo.processInfo.environment
 
     init() {
@@ -42,21 +42,28 @@ struct PlayerLab: App {
 }
 
 struct LabView: View {
-    let player: FilmVideoPlayer
+    @Bindable var player: FilmPlayer
     let environment: [String: String]
+    @Bindable private var tracker = HeadphoneHeadTracker.shared
     @State private var scrub: Double?
     @State private var now = 0.0
 
     var body: some View {
         VStack(spacing: 0) {
-            FilmVideoView(player: player)
-                .aspectRatio(16 / 9, contentMode: .fit)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(.black)
+            ZStack {
+                // The stage draws nothing; it only has to be in the hierarchy to run the generators.
+                FilmStageView(player: player) { tracker.orientation }
+                FilmVideoView(player: player.video)
+                    .aspectRatio(16 / 9, contentMode: .fit)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(.black)
             controls
                 .padding(12)
         }
         .task { await run() }
+        .onAppear { tracker.start() }
+        .onDisappear { tracker.stop() }
     }
 
     private var controls: some View {
@@ -79,9 +86,27 @@ struct LabView: View {
                 )
                 Text(Self.clock(scrub ?? now) + " / " + Self.clock(player.duration)).monospacedDigit()
             }
-            Text(player.formatSummary).font(.caption.monospaced())
+            HStack {
+                Text(String(format: "Picture offset %+.0f ms", player.avOffsetMs)).monospacedDigit()
+                Slider(value: $player.avOffsetMs, in: -300 ... 300, step: 10).frame(width: 240)
+                Text(String(format: "Gain %+.0f dB", player.masterGainDB)).monospacedDigit()
+                Slider(value: $player.masterGainDB, in: -24 ... 12, step: 1).frame(width: 160)
+            }
+            HStack {
+                Text(String(format: "Head: %@ · yaw %+.0f° pitch %+.0f°", tracker.status, tracker.yawDegrees, tracker.pitchDegrees))
+                    .monospacedDigit()
+                Button("Recenter") { tracker.recenter() }.disabled(!tracker.isTracking)
+                Text(String(format: "Prediction %.0f ms (route %.0f ms)", tracker.predictionMs, tracker.reportedLatencyMs)).monospacedDigit()
+                Slider(value: $tracker.predictionMs, in: 0 ... 400, step: 10).frame(width: 160)
+                Button("Default") { tracker.useReportedLatency() }
+            }
+            Text(player.video.formatSummary).font(.caption.monospaced())
             Text(String(format: "%@ · segment %d · buffered %.1f s ahead · last seek %.0f ms",
-                        player.status, player.currentSegment, player.bufferedUntil - now, player.lastSeekLatency * 1000))
+                        player.video.status, player.video.currentSegment, player.video.bufferedUntil - now, player.video.lastSeekLatency * 1000))
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+            Text(String(format: "Audio: %@ · %@ · output latency %.0f ms · skew %@", player.audioStatus, player.clockReport,
+                        player.outputLatency * 1000, player.scheduledSkewMs.map { String(format: "%+.0f ms", $0) } ?? "—"))
                 .font(.caption.monospaced())
                 .foregroundStyle(.secondary)
         }
@@ -96,7 +121,7 @@ struct LabView: View {
         let item = environment["FILM_ITEM"] ?? "e586b2bba9cfb3cb27fb0ddfa602ac2f"
         let start = Double(environment["FILM_START"] ?? "") ?? 0
         await player.load(FilmServerClient(baseURL: server, token: token, itemID: item), startAt: start)
-        print("PlayerLab: \(player.status) — \(player.formatSummary)")
+        print("PlayerLab: \(player.status) — \(player.video.formatSummary) — audio: \(player.audioStatus)")
         if environment["FILM_AUTOPLAY"] == "1" { player.play() }
 
         let script = Self.parse(environment["FILM_SCRIPT"] ?? "")
@@ -114,13 +139,18 @@ struct LabView: View {
                 case "quit": NSApplication.shared.terminate(nil)
                 default:
                     if action.hasPrefix("seek="), let target = Double(action.dropFirst(5)) { player.seek(to: target) }
+                    if action.hasPrefix("offset="), let ms = Double(action.dropFirst(7)) { player.avOffsetMs = ms }
                 }
                 next += 1
             }
             if Int(elapsed * 4) % 4 == 0 {
-                print(String(format: "PlayerLab: t=%.3f playing=%d seg=%d ahead=%.1f seek=%.0fms status=%@ layer=%d",
-                             now, player.isPlaying ? 1 : 0, player.currentSegment, player.bufferedUntil - now,
-                             player.lastSeekLatency * 1000, player.status, player.displayLayer.sampleBufferRenderer.status.rawValue))
+                print(String(format: "PlayerLab: t=%.3f playing=%d seg=%d ahead=%.1f seek=%.0fms video=%@ layer=%d | audio %@ latency=%.0fms skew=%@",
+                             now, player.isPlaying ? 1 : 0, player.video.currentSegment, player.video.bufferedUntil - now,
+                             player.video.lastSeekLatency * 1000, player.video.status,
+                             player.video.displayLayer.sampleBufferRenderer.status.rawValue,
+                             player.clockReport, player.outputLatency * 1000,
+                             player.scheduledSkewMs.map { String(format: "%+.1fms", $0) } ?? "-")
+                      + String(format: " | head %@ yaw=%+.0f", tracker.status, tracker.yawDegrees))
             }
             try? await Task.sleep(for: .milliseconds(250))
         }
