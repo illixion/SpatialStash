@@ -8,6 +8,13 @@
  `CMHeadphoneMotionManager` and turns it into a listener orientation, relative
  to where the head pointed at start or at the last Recenter.
 
+ Bluetooth adds latency after rendering (AirPods Max: tracking felt
+ instant, the sound field settled late), so the orientation handed to the
+ listener is predicted `predictionMs` ahead from the smoothed yaw and pitch
+ rates. It defaults to the route's reported output latency plus one IO
+ buffer, less `predictionTrimMs`: with AirPods Max (171 ms reported) the
+ full figure overshot slightly on sharp stops, and 20 ms less felt right.
+
  Axis mapping: yaw turns about RealityKit's +y (up), pitch about +x, roll
  about −z (the forward axis). Both frames are right-handed with positive
  angles counterclockwise, so yaw and pitch carry over with the same sign;
@@ -15,6 +22,7 @@
  */
 
 #if os(iOS)
+import AVFAudio
 import CoreMotion
 import Observation
 import simd
@@ -31,10 +39,21 @@ final class AtmosSpikeHeadTracker {
     private(set) var pitchDegrees: Double = 0
     /// Listener orientation to apply to the camera entity.
     private(set) var orientation = simd_quatf(ix: 0, iy: 0, iz: 0, r: 1)
+    /// How far ahead to predict the head, to cover output latency.
+    var predictionMs: Double = 0
+    /// Output latency plus IO buffer as the audio session reports it.
+    private(set) var reportedLatencyMs: Double = 0
 
     @ObservationIgnored private let manager = CMHeadphoneMotionManager()
     @ObservationIgnored private var reference: CMAttitude?
     @ObservationIgnored private let yawSign: Float = 1
+    /// Smoothed angular rates (rad/s) and the previous sample they came from.
+    @ObservationIgnored private var yawRate: Double = 0
+    @ObservationIgnored private var pitchRate: Double = 0
+    @ObservationIgnored private var previous: (time: TimeInterval, yaw: Double, pitch: Double)?
+    @ObservationIgnored private var predictionSet = false
+    /// Taken off the reported latency; see the header.
+    private let predictionTrimMs: Double = 20
 
     private init() {}
 
@@ -52,6 +71,14 @@ final class AtmosSpikeHeadTracker {
             break
         }
         reference = nil
+        previous = nil
+        yawRate = 0
+        pitchRate = 0
+        refreshReportedLatency()
+        if !predictionSet {
+            useReportedLatency()
+            predictionSet = true
+        }
         isTracking = true
         status = "Waiting for headphones…"
         manager.startDeviceMotionUpdates(to: .main) { [weak self] motion, error in
@@ -72,6 +99,18 @@ final class AtmosSpikeHeadTracker {
     /// Makes the current head direction "facing the screen".
     func recenter() {
         reference = nil
+        previous = nil
+    }
+
+    /// Sets the prediction from the route's current latency.
+    func useReportedLatency() {
+        refreshReportedLatency()
+        predictionMs = max(0, reportedLatencyMs - predictionTrimMs).rounded()
+    }
+
+    func refreshReportedLatency() {
+        let session = AVAudioSession.sharedInstance()
+        reportedLatencyMs = (session.outputLatency + session.ioBufferDuration) * 1000
     }
 
     private func update(motion: CMDeviceMotion?, error: Error?) {
@@ -86,14 +125,30 @@ final class AtmosSpikeHeadTracker {
         }
         let attitude = motion.attitude.copy() as! CMAttitude
         attitude.multiply(byInverseOf: reference)
-        let yaw = Float(attitude.yaw) * yawSign
-        let pitch = Float(attitude.pitch)
+        let yaw = attitude.yaw * Double(yawSign)
+        let pitch = attitude.pitch
         let roll = Float(attitude.roll)
-        orientation = simd_quatf(angle: yaw, axis: [0, 1, 0])
-            * simd_quatf(angle: pitch, axis: [1, 0, 0])
+
+        // Angular rates from successive samples, lightly smoothed; yaw wraps at ±π.
+        if let previous, motion.timestamp > previous.time {
+            let dt = motion.timestamp - previous.time
+            let dYaw = remainder(yaw - previous.yaw, 2 * .pi)
+            let alpha = 0.35
+            yawRate += alpha * (dYaw / dt - yawRate)
+            pitchRate += alpha * ((pitch - previous.pitch) / dt - pitchRate)
+        }
+        previous = (motion.timestamp, yaw, pitch)
+
+        // Aim ahead, capped so a jerk can't swing the field wildly.
+        let ahead = predictionMs / 1000
+        let limit = Double.pi / 4
+        let predictedYaw = yaw + max(-limit, min(yawRate * ahead, limit))
+        let predictedPitch = pitch + max(-limit, min(pitchRate * ahead, limit))
+        orientation = simd_quatf(angle: Float(predictedYaw), axis: [0, 1, 0])
+            * simd_quatf(angle: Float(predictedPitch), axis: [1, 0, 0])
             * simd_quatf(angle: roll, axis: [0, 0, -1])
-        yawDegrees = Double(yaw) * 180 / .pi
-        pitchDegrees = Double(pitch) * 180 / .pi
+        yawDegrees = yaw * 180 / .pi
+        pitchDegrees = pitch * 180 / .pi
         status = "Tracking"
     }
 }

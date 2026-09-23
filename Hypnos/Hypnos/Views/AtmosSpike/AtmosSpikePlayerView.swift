@@ -168,9 +168,24 @@ struct AtmosSpikeTuning: View {
 #if os(iOS)
 /// Status and Recenter for the AirPods head tracking.
 struct AtmosSpikeHeadTrackingRow: View {
-    private let tracker = AtmosSpikeHeadTracker.shared
+    @Bindable private var tracker = AtmosSpikeHeadTracker.shared
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            trackingStatus
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Prediction: \(Int(tracker.predictionMs)) ms (route reports \(Int(tracker.reportedLatencyMs)) ms)")
+                    .font(.caption)
+                HStack {
+                    Slider(value: $tracker.predictionMs, in: 0...400, step: 10)
+                    Button("Default") { tracker.useReportedLatency() }
+                    .buttonStyle(.bordered)
+                }
+            }
+        }
+    }
+
+    private var trackingStatus: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text(tracker.status)
