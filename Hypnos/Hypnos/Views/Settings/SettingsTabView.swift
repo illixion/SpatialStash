@@ -438,6 +438,8 @@ struct SettingsTabView: View {
                 #if os(visionOS)
                 // Atmos objects re-rendered as RealityKit spatial sources.
                 AtmosSpikeSection()
+                // Can app audio be anchored to a window instead?
+                SpatialAudioProbeSection()
                 #endif
 
                 Section("About") {
