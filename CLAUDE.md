@@ -560,6 +560,10 @@ A slideshow viewer that fetches images from a [RoboFrame](https://github.com/ill
 - Explicit resource cleanup in `cleanup()` methods rather than relying on ARC/deinit
 - The Xcode project's files are automatically managed, therefore there is no need to update project files when adding new source files. Just create the new .swift file in the appropriate folder and it will be included in the build.
 
+# Testing against Stash: use the dev instance
+
+**Never point tests, simulators or agents at a real Stash server**, not even read-only. `scripts/dev-stash.sh up` runs a disposable Stash in Docker at `http://127.0.0.1:9998` (loopback only, no API key), seeded with 12 generated photos and 5 clips covering H.264, 10-bit HEVC 4K and VP9/Opus WebM. The simulators share the Mac's loopback, so configure the app with that URL (in the simulator via `-UITestDefault stashServerURL=http://127.0.0.1:9998`). Use `reset` to re-seed and `rm` to delete it.
+
 # Stash GraphQL API
 
 You can find the Stash GraphQL API documentation in `internal_docs/Stash_Api_Docs`. **Important:** Claude Code prevents access to this folder while it is in .gitignore, therefore you must temporarily remove it from .gitignore to access the documentation and for your search tool to be able to see it. Undo changes to .gitignore after you are done.
