@@ -845,7 +845,8 @@ class AppModel {
     }
 
     var effectiveThumbnailStyle: ThumbnailStyle {
-        effectiveReduceMotion ? .flat : thumbnailStyle
+        guard PlatformCapabilities.supportsDiorama else { return .flat }
+        return effectiveReduceMotion ? .flat : thumbnailStyle
     }
 
     var effectiveThumbnailDiorama: Bool {
@@ -1462,8 +1463,10 @@ class AppModel {
         let loadedReduceMotion = UserDefaults.standard.bool(forKey: "reduceMotion")
 
         // Load thumbnail style. Migrates from legacy `thumbnailDiorama`
-        // bool: true → .diorama, false → .flat. Default for fresh
-        // installs is .diorama to preserve the prior look.
+        // bool: true → .diorama, false → .flat. Default for fresh installs
+        // is .diorama to preserve the prior look, but only where the
+        // platform supports it (`effectiveThumbnailStyle` also enforces
+        // this for values already persisted from before this guard existed).
         let loadedThumbnailStyle: ThumbnailStyle = {
             if let raw = UserDefaults.standard.string(forKey: "thumbnailStyle"),
                let style = ThumbnailStyle(rawValue: raw) {
@@ -1472,7 +1475,7 @@ class AppModel {
             if UserDefaults.standard.object(forKey: "thumbnailDiorama") != nil {
                 return UserDefaults.standard.bool(forKey: "thumbnailDiorama") ? .diorama : .flat
             }
-            return .diorama
+            return PlatformCapabilities.supportsDiorama ? .diorama : .flat
         }()
 
         // Load rounded corners (default: true)
