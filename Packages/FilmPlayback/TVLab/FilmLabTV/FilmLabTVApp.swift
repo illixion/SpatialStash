@@ -11,7 +11,8 @@
  Configured through launch arguments (the UserDefaults argument domain),
  so no server or token is built in:
    -FilmToken <key> -FilmItem <id> [-FilmServer <url>] [-FilmStart <s>]
- `TVLab/run-tv.sh` passes them.
+ `TVLab/check-tv.sh` passes them. `-YouTube <id>` runs the on-device
+ YouTube spike instead (YouTubeLab.swift).
  */
 
 import AVFoundation
@@ -22,7 +23,13 @@ import SwiftUI
 @main
 struct FilmLabTVApp: App {
     var body: some Scene {
-        WindowGroup { LabView() }
+        WindowGroup {
+            if let id = UserDefaults.standard.string(forKey: "YouTube") {
+                YouTubeLabView(videoID: id)
+            } else {
+                LabView()
+            }
+        }
     }
 }
 

@@ -4,13 +4,20 @@
 # rate and pixel encoding (luna videooutput/getStatus, read-only).
 #
 #   JELLYFIN_TOKEN=… ./check-tv.sh <item-id> [start-seconds] [seconds-to-watch]
+#   [VARIANT=<codec>] ./check-tv.sh --youtube <video-id> [seconds-to-watch]
 #
 # Deploy first with `FILMLAB=1 ~/bin/build-and-sign` from the repo root.
 # The TV needs an ssh-exec session open (ssh-exec exec --host root@<tv> …),
 # whose socket this reuses; luna-send only prints with a TTY, hence -tt.
 set -euo pipefail
-item="${1:?item id}"; start="${2:-600}"; watch="${3:-45}"
-: "${JELLYFIN_TOKEN:?set JELLYFIN_TOKEN}"
+if [[ "${1:-}" == --youtube ]]; then
+    args=(-YouTube "${2:?video id}"); watch="${3:-45}"
+    [[ -n "${VARIANT:-}" ]] && args+=(-YouTubeVariant "$VARIANT")
+else
+    item="${1:?item id}"; start="${2:-600}"; watch="${3:-45}"
+    : "${JELLYFIN_TOKEN:?set JELLYFIN_TOKEN}"
+    args=(-FilmToken "$JELLYFIN_TOKEN" -FilmItem "$item" -FilmStart "$start")
+fi
 device="${ATV_DEVICE:-ATV}"
 tv="${TV_HOST:-root@172.20.49.154}"
 socket="$HOME/.ssh/claude-sessions/${tv//[@.]/_}"
@@ -29,7 +36,7 @@ print("%s Hz  hdr=%s  %s %s" % (v.get("frameRate"), i.get("hdrType"), enc, rng))
 echo "TV before: $(tv_status)"
 : > "$log"
 xcrun devicectl device process launch --device "$device" --terminate-existing --console com.illixion.filmlab \
-    -- -FilmToken "$JELLYFIN_TOKEN" -FilmItem "$item" -FilmStart "$start" > "$log" 2>&1 &
+    -- "${args[@]}" > "$log" 2>&1 &
 launcher=$!
 for ((t = 5; t <= watch; t += 5)); do
     sleep 5
@@ -37,5 +44,5 @@ for ((t = 5; t <= watch; t += 5)); do
 done
 kill "$launcher" 2>/dev/null || true
 echo "--- app"
-grep -E 'FilmLabTV:|Terminating|signal' "$log" | grep -v 't=' | cut -c1-240
-grep 'FilmLabTV: t=' "$log" | tail -1 | cut -c1-240
+grep -E 'FilmLabTV:|Terminating|signal|ERROR' "$log" | grep -v 't=' | cut -c1-240 || true
+grep 'FilmLabTV: t=' "$log" | tail -1 | cut -c1-240 || true
