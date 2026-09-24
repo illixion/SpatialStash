@@ -44,6 +44,17 @@ public enum FilmServerError: Error, LocalizedError {
     }
 }
 
+/// A film or episode from a Jellyfin library search.
+public struct FilmLibraryItem: Decodable, Identifiable, Hashable, Sendable {
+    public let id: String
+    public let name: String
+    public let productionYear: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case id = "Id", name = "Name", productionYear = "ProductionYear"
+    }
+}
+
 public struct FilmServerClient: Sendable {
     public let baseURL: URL
     public let token: String
@@ -53,6 +64,27 @@ public struct FilmServerClient: Sendable {
         self.baseURL = baseURL
         self.token = token
         self.itemID = itemID
+    }
+
+    /// Films and episodes whose name matches `term`.
+    public static func search(baseURL: URL, token: String, term: String) async throws -> [FilmLibraryItem] {
+        struct Page: Decodable {
+            let items: [FilmLibraryItem]
+            enum CodingKeys: String, CodingKey { case items = "Items" }
+        }
+        var url = baseURL.appending(path: "Items")
+        url.append(queryItems: [
+            URLQueryItem(name: "searchTerm", value: term),
+            URLQueryItem(name: "IncludeItemTypes", value: "Movie,Episode"),
+            URLQueryItem(name: "Recursive", value: "true"),
+            URLQueryItem(name: "Limit", value: "25"),
+        ])
+        var request = URLRequest(url: url)
+        request.setValue(token, forHTTPHeaderField: "X-Emby-Token")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let code = (response as? HTTPURLResponse)?.statusCode ?? -1
+        guard code == 200 else { throw FilmServerError.http(path: "Items", status: code) }
+        return try JSONDecoder().decode(Page.self, from: data).items
     }
 
     public func videoIndex() async throws -> FilmVideoIndex {

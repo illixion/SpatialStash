@@ -66,6 +66,11 @@ public final class FilmVideoPlayer {
         CMTimebaseSetRate(self.timebase, rate: 0)
         displayLayer.controlTimebase = self.timebase
         displayLayer.videoGravity = .resizeAspect
+        // A layer's dynamic range defaults to .standard, which tone-maps HDR10
+        // and Dolby Vision frames down to SDR on macOS and iOS.
+        if #available(macOS 26, iOS 26, visionOS 26, *) {
+            displayLayer.preferredDynamicRange = .high
+        }
         #if !os(visionOS)
         displayLayer.preventsDisplaySleepDuringVideoPlayback = true
         #endif
@@ -80,13 +85,24 @@ public final class FilmVideoPlayer {
     public func load(_ client: FilmServerClient, startAt seconds: Double = 0) async {
         stop()
         self.client = client
+        index = nil
+        track = nil
+        format = nil
+        formatSummary = ""
         status = "Loading…"
         do {
             let index = try await client.videoIndex()
             let track = try FragmentedMP4Track(initSegment: await client.videoInit())
-            let format = try track.makeFormatDescription()
+            var format = try track.makeFormatDescription()
             self.index = index
             self.track = track
+            // The HDR static metadata is only in the keyframes' SEI; see
+            // HEVCStaticHDR. The segment request is the one the first feed
+            // needs anyway, so it costs no extra round trip.
+            let first = try await load(segment: index.segment(containing: seconds))
+            if let keyframe = first.samples.first(where: \.isSync) {
+                format = HEVCStaticHDR.applying(HEVCStaticHDR.metadata(in: first.data.subdata(in: keyframe.range)), to: format)
+            }
             self.format = format
             formatSummary = Self.summarize(format, track: track, index: index)
             logger.info("Loaded \(client.itemID, privacy: .public): \(self.formatSummary, privacy: .public)")
@@ -106,17 +122,23 @@ public final class FilmVideoPlayer {
 
     public func pause() {
         isPlaying = false
-        CMTimebaseSetRate(timebase, rate: 0)
+        halt()
     }
 
     /// Runs the timebase so `filmTime` is due at `hostTime`. This is the hook
     /// an external clock (the Atmos audio engine) uses to lead the picture.
     public func start(filmTime: Double, atHostTime hostTime: CMTime) {
-        CMTimebaseSetRateAndAnchorTime(
-            timebase, rate: 1,
-            anchorTime: CMTime(seconds: filmTime, preferredTimescale: 1_000_000_000),
-            immediateSourceTime: hostTime
-        )
+        let time = CMTime(seconds: filmTime, preferredTimescale: 1_000_000_000)
+        CMTimebaseSetRateAndAnchorTime(timebase, rate: 1, anchorTime: time, immediateSourceTime: hostTime)
+    }
+
+    private func halt() {
+        CMTimebaseSetRate(timebase, rate: 0)
+    }
+
+    private func park(at seconds: Double) {
+        CMTimebaseSetRate(timebase, rate: 0)
+        CMTimebaseSetTime(timebase, time: CMTime(seconds: seconds, preferredTimescale: 1_000_000_000))
     }
 
     public func seek(to seconds: Double, resume: Bool? = nil) {
@@ -127,8 +149,7 @@ public final class FilmVideoPlayer {
         feedTask?.cancel()
         startTask?.cancel()
         renderer.flush()
-        CMTimebaseSetRate(timebase, rate: 0)
-        CMTimebaseSetTime(timebase, time: CMTime(seconds: target, preferredTimescale: 1_000_000_000))
+        park(at: target)
         bufferedUntil = target
         isPrimed = false
         let first = index.segment(containing: target)
@@ -146,7 +167,7 @@ public final class FilmVideoPlayer {
         segments.values.forEach { $0.cancel() }
         segments.removeAll()
         renderer.flush(removingDisplayedImage: true, completionHandler: nil)
-        CMTimebaseSetRate(timebase, rate: 0)
+        halt()
         isPlaying = false
     }
 
