@@ -435,8 +435,8 @@ struct SettingsTabView: View {
                     DepthPipelineSpikeSection()
                 }
 
-                // Atmos objects re-rendered as RealityKit spatial sources.
-                AtmosSpikeSection()
+                // Films with their Atmos objects as RealityKit spatial sources.
+                FilmPlayerSection()
                 #if os(visionOS)
                 // Can app audio be anchored to a window instead?
                 SpatialAudioProbeSection()

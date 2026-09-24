@@ -64,7 +64,7 @@ enum IOSToolSheet: String, Identifiable {
     case console
     case gpuMemory = "gpu-memory"
     case videoAdjustments = "video-adjustments"
-    case atmosSpike = "atmos-spike-player"
+    case filmPlayer = "film-player"
 
     var id: String { rawValue }
 }
@@ -122,8 +122,8 @@ final class IOSWindowRouter {
             sheet = .gpuMemory
         case "video-adjustments":
             sheet = .videoAdjustments
-        case "atmos-spike-player":
-            sheet = .atmosSpike
+        case "film-player":
+            sheet = .filmPlayer
 
         default:
             unroutable(id, value)

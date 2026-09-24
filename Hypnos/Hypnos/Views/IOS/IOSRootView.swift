@@ -137,8 +137,8 @@ private struct IOSToolSheetView: View {
                     GPUMemoryMonitorView()
                 case .videoAdjustments:
                     VideoAdjustmentsWindowView()
-                case .atmosSpike:
-                    AtmosSpikePlayerView()
+                case .filmPlayer:
+                    FilmPlayerView()
                 }
             }
             .navigationTitle(title)
@@ -157,7 +157,7 @@ private struct IOSToolSheetView: View {
         case .console: return "Console"
         case .gpuMemory: return "GPU Memory"
         case .videoAdjustments: return "Adjustments"
-        case .atmosSpike: return "Atmos Spike"
+        case .filmPlayer: return "Film Player"
         }
     }
 }

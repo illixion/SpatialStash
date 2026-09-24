@@ -221,11 +221,11 @@ struct HypnosApp: App {
         }
         .immersionStyle(selection: .constant(.mixed), in: .mixed)
 
-        // Developer spike: Atmos objects rendered as spatial sources around
-        // this window (Settings → Developer → Atmos Object Spike). A dev
-        // window with no content of its own, so it never restores.
-        Window("Atmos Spike", id: AtmosSpikePlayerView.windowID) {
-            AtmosSpikePlayerView()
+        // Film player: picture plus Atmos objects as spatial sources around
+        // this window (Settings → Developer → Film Player). Opened with a
+        // loaded film, so it never restores on its own.
+        Window("Film Player", id: FilmPlayerView.windowID) {
+            FilmPlayerView()
         }
         .defaultSize(width: 1280, height: 720)
         .defaultLaunchBehavior(.suppressed)

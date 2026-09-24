@@ -112,7 +112,7 @@ enum AppLogger {
     static let streamURL = Logger(subsystem: subsystem, category: "StreamURL")
 
     /// Atmos object-audio spike (Settings → Developer)
-    static let atmosSpike = Logger(subsystem: subsystem, category: "AtmosSpike")
+    static let filmPlayer = Logger(subsystem: subsystem, category: "FilmPlayer")
 
     // The fake-3D signposter moved to RAVEMedia (`RAVEMediaLog.signposter`)
     // with the pipeline it instruments. Its subsystem is still this app's

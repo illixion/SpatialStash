@@ -135,7 +135,7 @@ final class ProbeSweep: @unchecked Sendable {
     var cycleFrames: Int { speakers.count * Int(Self.stepSeconds * Self.sampleRate) }
 
     /// Built here rather than in the view so the block is not main-actor
-    /// isolated (see `AtmosSpikeAudio.renderHandler(channel:)`).
+    /// isolated (see `AtmosObjectAudio.renderHandler(channel:)` in FilmPlayback).
     func makeSourceNode(format: AVAudioFormat) -> AVAudioSourceNode {
         AVAudioSourceNode(format: format) { _, _, frameCount, output in
             self.render(frameCount: Int(frameCount), into: UnsafeMutableAudioBufferListPointer(output))
@@ -493,7 +493,7 @@ struct SpatialAudioProbeSection: View {
 
     private func log(_ line: String) {
         report.append(line)
-        AppLogger.atmosSpike.info("Probe: \(line, privacy: .public)")
+        AppLogger.filmPlayer.info("Probe: \(line, privacy: .public)")
     }
 }
 
