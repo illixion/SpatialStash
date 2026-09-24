@@ -105,11 +105,24 @@ enum CacheBudget {
     /// Total capacity and importantly-usable free space of the app's volume.
     static func volumeStats() -> (capacity: Int64, available: Int64) {
         let home = URL(fileURLWithPath: NSHomeDirectory())
+        #if os(tvOS)
+        // `volumeAvailableCapacityForImportantUsageKey` is unavailable on
+        // tvOS — Apple TV apps aren't expected to keep large local caches in
+        // the first place (content re-streams instead of re-downloading), so
+        // there's no "important usage" carve-out to query. Fall back to the
+        // plain available-capacity key.
+        let values = try? home.resourceValues(forKeys: [
+            .volumeTotalCapacityKey, .volumeAvailableCapacityKey
+        ])
+        let capacity = Int64(values?.volumeTotalCapacity ?? 256_000_000_000)
+        let available = Int64(values?.volumeAvailableCapacity ?? 32_000_000_000)
+        #else
         let values = try? home.resourceValues(forKeys: [
             .volumeTotalCapacityKey, .volumeAvailableCapacityForImportantUsageKey
         ])
         let capacity = Int64(values?.volumeTotalCapacity ?? 256_000_000_000)
         let available = values?.volumeAvailableCapacityForImportantUsage ?? 32_000_000_000
+        #endif
         return (capacity, available)
     }
 

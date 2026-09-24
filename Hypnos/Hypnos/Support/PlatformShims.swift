@@ -1,5 +1,5 @@
 /*
- Hypnos - iOS compatibility layer
+ Hypnos - iOS/tvOS compatibility layer
 
  The app was written for visionOS first, and a handful of visionOS-only SwiftUI
  and RealityKit APIs are used from dozens of files: ornaments, glass backgrounds,
@@ -22,11 +22,18 @@
  - `applySpatialAudioPolicy()` → no-op; head-tracked spatial audio is a
                                  visionOS window-placement concern.
 
- Everything here is compiled **only on iOS**. The visionOS build sees the real
- APIs and nothing from this file, so it cannot change visionOS behaviour.
+ That `#if !os(visionOS)` section is compiled on **iOS and tvOS both** — tvOS
+ inherits the iOS stand-ins wherever they still make sense (the null-object
+ `ImagePresentationComponent`, the audio no-ops, `.offset(z:)`). Where tvOS
+ needs something genuinely different — a real `.ornament` has no remote-driven
+ equivalent, `.popover` doesn't exist at all — a further `#if os(tvOS)` /
+ `#else` split appears inline, so the iOS behaviour above is unchanged.
+ tvOS's *real* UI lives in `Views/TV/` and doesn't route through most of these
+ shims at all (see Hypnos/CLAUDE.md "tvOS"); they exist so the rest of the
+ shared module — which tvOS still compiles as one target — keeps building.
 
- `WindowGeometry` and `PlatformCapabilities` at the bottom are the two things
- that exist on both platforms: shared code calls them, and each platform
+ `WindowGeometry` and `PlatformCapabilities` at the bottom are the things that
+ exist on all three platforms: shared code calls them, and each platform
  supplies its own answer.
  */
 
@@ -69,6 +76,8 @@ enum PlatformCapabilities {
     static var deviceFamilyName: String {
         #if os(visionOS)
         return "Apple Vision Pro"
+        #elseif os(tvOS)
+        return "Apple TV"
         #else
         return UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone"
         #endif
@@ -143,16 +152,41 @@ private extension WindowGeometry.ResizingRestriction {
 // MARK: - Shared: status bar
 
 extension View {
-    /// visionOS has no status bar; iOS shows one with the clock, battery and
-    /// signal glyphs on top of every full-screen viewer. Hide it in sync with
-    /// the ornaments so a maximized photo/video/slideshow actually uses the
-    /// whole screen instead of leaving a bar of chrome behind after the rest
-    /// of the UI has auto-hidden.
+    /// visionOS has no status bar; tvOS has no status bar either (nothing to
+    /// hide — the whole screen is always the app's). iOS shows one with the
+    /// clock, battery and signal glyphs on top of every full-screen viewer.
+    /// Hide it in sync with the ornaments so a maximized photo/video/slideshow
+    /// actually uses the whole screen instead of leaving a bar of chrome
+    /// behind after the rest of the UI has auto-hidden.
     func hidesStatusBar(_ hidden: Bool) -> some View {
-        #if os(visionOS)
+        #if os(visionOS) || os(tvOS)
         return self
         #else
         return self.statusBar(hidden: hidden)
+        #endif
+    }
+
+    /// `.textSelection(.enabled)` doesn't exist on tvOS — there is no
+    /// pointer/cursor to select text with from a remote. Same call everywhere
+    /// else; a no-op there.
+    func selectableText() -> some View {
+        #if os(tvOS)
+        return self
+        #else
+        return self.textSelection(.enabled)
+        #endif
+    }
+
+    /// `.textFieldStyle(.roundedBorder)` doesn't exist on tvOS. These call
+    /// sites are all in shared settings/filter views the tvOS root UI doesn't
+    /// present (its own Settings is a remote-friendly subset — see
+    /// Hypnos/CLAUDE.md "tvOS"), so `.plain` here is only ever exercised by
+    /// dead code on tvOS; it exists to keep the module compiling.
+    func roundedTextFieldStyle() -> some View {
+        #if os(tvOS)
+        return self.textFieldStyle(.plain)
+        #else
+        return self.textFieldStyle(.roundedBorder)
         #endif
     }
 }
@@ -360,3 +394,62 @@ extension AVPlayer {
 }
 
 #endif
+
+// MARK: - tvOS-only: popover
+
+#if os(tvOS)
+extension View {
+    /// `.popover` doesn't exist on tvOS — there's no pointer to anchor a
+    /// floating panel to. The handful of shared-ornament call sites that use
+    /// it (`PhotoOrnamentView`'s Adjustments, `RemoteViewerOrnamentView`'s
+    /// Adjustments/Add Preset) belong to viewers the tvOS root UI never
+    /// presents, so this exists purely to keep the module compiling; a sheet
+    /// is the nearest tvOS-native stand-in for anything that did reach it.
+    ///
+    /// Scoped to exactly the `isPresented:content:` shape every call site
+    /// uses, and to `#if os(tvOS)` only, so it can never shadow or ambiguate
+    /// SwiftUI's real (defaulted-parameter) `popover` on iOS/visionOS.
+    func popover<Content: View>(
+        isPresented: Binding<Bool>,
+        @ViewBuilder content: @escaping () -> Content
+    ) -> some View {
+        sheet(isPresented: isPresented, content: content)
+    }
+}
+#endif
+
+// MARK: - Shared: disclosure group
+
+/// `DisclosureGroup` doesn't exist on tvOS — there's no pointer to click a
+/// disclosure triangle with, and every call site (association chips in
+/// `MediaDetailSheet`, cache/debug lists in Settings) belongs to a screen the
+/// tvOS root UI doesn't present (see Hypnos/CLAUDE.md "tvOS"). tvOS gets both
+/// halves shown at once, stacked, rather than a collapse that nothing can
+/// reach; everywhere else this is the real `DisclosureGroup`, unchanged.
+///
+/// A free function rather than a `View` extension: `DisclosureGroup` is a
+/// concrete type used as a value (not a modifier chained off `self`), so
+/// there's no receiver to attach a same-name method to.
+@ViewBuilder
+func platformDisclosureGroup<Content: View, Label: View>(
+    @ViewBuilder content: @escaping () -> Content,
+    @ViewBuilder label: @escaping () -> Label
+) -> some View {
+    #if os(tvOS)
+    VStack(alignment: .leading, spacing: 8) {
+        label()
+        content()
+    }
+    #else
+    DisclosureGroup { content() } label: { label() }
+    #endif
+}
+
+/// String-label overload, for the `DisclosureGroup("Title") { … }` call shape.
+@ViewBuilder
+func platformDisclosureGroup<Content: View>(
+    _ titleKey: LocalizedStringKey,
+    @ViewBuilder content: @escaping () -> Content
+) -> some View {
+    platformDisclosureGroup(content: content) { Text(titleKey) }
+}

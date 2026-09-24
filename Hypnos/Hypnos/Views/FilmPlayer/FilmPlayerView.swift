@@ -9,6 +9,15 @@
  tuning left in Settings. On iOS the same window id opens it as a tool
  sheet (`IOSWindowRouter`), with AirPods head tracking and tuning below the
  picture.
+
+ tvOS: picture only, no `FilmStageView`. Atmos object audio is built for
+ headphone tracking (AirPods) or the AVP's own head tracking — neither
+ means anything for a TV pointed at a fixed listening position, and doing
+ it properly (a real speaker-array or soundbar passthrough) is out of scope
+ for this port. So the tvOS branch never mounts the stage at all: nothing
+ ever consumes `FilmPlayer.audio`, so a film with Atmos objects plays its
+ picture silently rather than through any real or fake spatialisation. See
+ Hypnos/CLAUDE.md "tvOS" for the gap.
  */
 
 import RAVEFilm
@@ -57,6 +66,16 @@ struct FilmPlayerView: View {
                 .padding()
                 .frame(width: 640)
                 .glassBackgroundEffect()
+        }
+        #elseif os(tvOS)
+        ZStack(alignment: .bottom) {
+            Color.black.ignoresSafeArea()
+            FilmVideoView(player: player.video)
+            TVFilmTransport(player: player)
+                .padding(.bottom, 40)
+        }
+        .onPlayPauseCommand {
+            player.isPlaying ? player.pause() : player.play()
         }
         #else
         Form {
@@ -125,6 +144,34 @@ struct FilmObjectMap: View {
     }
 }
 
+#if os(tvOS)
+/// tvOS film transport: play/pause plus ±10s, all plain focusable buttons —
+/// there's no drag surface for a scrub bar, and Siri Remote's play/pause
+/// button is wired separately via `.onPlayPauseCommand` on the container.
+struct TVFilmTransport: View {
+    let player: FilmPlayer
+
+    var body: some View {
+        HStack(spacing: 24) {
+            Button { player.seek(to: player.currentTime - 10) } label: {
+                Label("−10s", systemImage: "gobackward.10")
+            }
+            Button {
+                player.isPlaying ? player.pause() : player.play()
+            } label: {
+                Label(player.isPlaying ? "Pause" : "Play", systemImage: player.isPlaying ? "pause.fill" : "play.fill")
+            }
+            Button { player.seek(to: player.currentTime + 10) } label: {
+                Label("+10s", systemImage: "goforward.10")
+            }
+        }
+        .labelStyle(.iconOnly)
+        .padding(24)
+        .background(.ultraThinMaterial, in: Capsule())
+    }
+}
+#endif
+
 struct FilmTransport: View {
     let player: FilmPlayer
     /// Scrubber position while dragging; nil follows playback.
@@ -148,7 +195,11 @@ struct FilmTransport: View {
             }
             .buttonStyle(.bordered)
             .labelStyle(.iconOnly)
+            #if !os(tvOS)
             // Seeks on release, so a drag across a film is one seek, not hundreds.
+            // tvOS has no drag surface for this — the ±10s buttons above are
+            // its only seek control (this view isn't used by the tvOS film
+            // player anyway; see TVFilmPlayerView).
             Slider(
                 value: Binding(get: { scrubSeconds ?? now }, set: { scrubSeconds = $0 }),
                 in: 0 ... max(player.duration, 1),
@@ -159,6 +210,7 @@ struct FilmTransport: View {
                     }
                 }
             )
+            #endif
             Text("\(Self.clock(scrubSeconds ?? now)) / \(Self.clock(player.duration))")
                 .font(.caption.monospaced())
         }
@@ -195,16 +247,24 @@ struct FilmTuning: View {
             #endif
             VStack(alignment: .leading, spacing: 2) {
                 Text(String(format: "Picture offset: %+.0f ms", player.avOffsetMs)).font(.caption)
+                #if !os(tvOS)
                 Slider(value: $player.avOffsetMs, in: -300 ... 300, step: 10)
+                #endif
             }
             Toggle("Flatten heights (A/B vs no height)", isOn: $player.flattenHeights)
         }
     }
 
+    // Not reachable on tvOS — this view is only built from the visionOS
+    // ornament section and the iOS Form tool sheet, never the tvOS film
+    // player (see TVFilmPlayerView) — but `Slider` still has to typecheck
+    // for a tvOS build of the module.
     private func slider(_ title: String, value: Binding<Float>, in range: ClosedRange<Float>, unit: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text("\(title): \(String(format: "%.1f", value.wrappedValue)) \(unit)").font(.caption)
+            #if !os(tvOS)
             Slider(value: value, in: range)
+            #endif
         }
     }
 }
@@ -257,7 +317,7 @@ struct FilmTelemetry: View {
             }
             .font(.caption.monospaced())
             .foregroundColor(.secondary)
-            .textSelection(.enabled)
+            .selectableText()
         }
     }
 }

@@ -5,6 +5,11 @@
  Downloads full video, converts to MV-HEVC, then plays the converted file.
  */
 
+// MV-HEVC (tagged pixel buffer group writing) is only used by the visionOS
+// immersive stereoscopic-video pipeline (StereoscopicVideoView is already
+// `#if os(visionOS)`-gated) and its APIs are unavailable on tvOS.
+#if !os(tvOS)
+
 import AVFoundation
 import Combine
 import RAVEMedia
@@ -550,3 +555,4 @@ enum StereoscopicPlayerError: Error, LocalizedError {
         }
     }
 }
+#endif

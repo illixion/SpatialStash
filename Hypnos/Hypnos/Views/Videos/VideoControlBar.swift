@@ -107,6 +107,11 @@ struct VideoControlBar: View {
             }
             .frame(width: CGFloat(w), height: 32)
             .contentShape(Rectangle())
+            #if !os(tvOS)
+            // Scrubbing needs a touch/pointer drag surface; the tvOS control
+            // bar is reached from the WebKit 2D player only (see file header),
+            // which doesn't exist on tvOS at all, so this whole interaction
+            // is unreachable there — gated to keep it compiling.
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
@@ -121,6 +126,7 @@ struct VideoControlBar: View {
             .onHover { hovering in
                 isScrubberHovering = hovering
             }
+            #endif
             .animation(.easeInOut(duration: 0.12), value: isTargeted)
         }
         .frame(height: 32)

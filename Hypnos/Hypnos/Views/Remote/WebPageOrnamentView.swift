@@ -7,6 +7,9 @@
  Styled to match RemoteViewerOrnamentView.
  */
 
+// tvOS has no WebKit.
+#if canImport(WebKit)
+
 import RAVEUI
 import SwiftUI
 
@@ -141,3 +144,4 @@ struct WebPageOrnamentView: View {
         return url.host ?? model.currentURLText
     }
 }
+#endif

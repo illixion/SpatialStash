@@ -165,6 +165,7 @@ struct VideoWindowView: View {
                             .id("\(video.id)_native")
 
                         case .webKit:
+                            #if canImport(WebKit)
                             WebVideoPlayerView(
                                 videoURL: windowModel.authenticatedStreamURL,
                                 // Native Safari controls are off; our SwiftUI
@@ -187,6 +188,18 @@ struct VideoWindowView: View {
                             )
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .id("\(video.id)_web")
+                            #else
+                            // No WebKit on tvOS, so no fallback decoder either —
+                            // if AVFoundation can't play the source natively,
+                            // there is nothing left to try. See Hypnos/CLAUDE.md
+                            // "tvOS" for the gap.
+                            ContentUnavailableView(
+                                "Can't Play This Video",
+                                systemImage: "exclamationmark.triangle",
+                                description: Text("This format needs a decoder that isn't available on Apple TV.")
+                            )
+                            .id("\(video.id)_unplayable")
+                            #endif
                         }
                     }
                 }

@@ -221,6 +221,7 @@ struct VideoQuickLookView: View {
         .cornerRadius(cornerRadius)
         .contentShape(Rectangle())
         .onTapGesture { animateDismiss() }
+        #if !os(tvOS)
         .gesture(
             DragGesture(minimumDistance: 30)
                 .onEnded { value in
@@ -229,6 +230,7 @@ struct VideoQuickLookView: View {
                     }
                 }
         )
+        #endif
     }
 
     @ViewBuilder
@@ -249,16 +251,32 @@ struct VideoQuickLookView: View {
                     pseudo3DEnabled = false
                 }
             )
-        } else if useWebKit {
-            WebVideoPlayerView(
-                videoURL: previewURL,
-                showControls: false,
-                onVideoSizeKnown: updateAspect,
-                loop: true,
-                playbackModel: playbackModel,
-                startMuted: isMuted
-            )
         } else {
+            // Each `#if`/`#else` branch below must be a complete, balanced
+            // statement — Swift can't pick up an `if` opened outside the
+            // block — so the WebKit-vs-tvOS split lives entirely inside this
+            // `else`, not spliced across the `if pseudo3DEnabled` above.
+            #if canImport(WebKit)
+            if useWebKit {
+                WebVideoPlayerView(
+                    videoURL: previewURL,
+                    showControls: false,
+                    onVideoSizeKnown: updateAspect,
+                    loop: true,
+                    playbackModel: playbackModel,
+                    startMuted: isMuted
+                )
+            } else {
+                nativeMetalPlayer
+            }
+            #else
+            nativeMetalPlayer
+            #endif
+        }
+    }
+
+    private var nativeMetalPlayer: some View {
+        Group {
             NativeMetalVideoPlayerView(
                 videoURL: previewURL,
                 onVideoSizeKnown: updateAspect,

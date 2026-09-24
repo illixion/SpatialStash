@@ -14,6 +14,9 @@
    tap anywhere reveals the controls instead of hitting a link.
  */
 
+// tvOS has no WebKit.
+#if canImport(WebKit)
+
 import os
 import RAVEUI
 import SwiftUI
@@ -211,3 +214,4 @@ struct WebPageWindowView: View {
         }
     }
 }
+#endif

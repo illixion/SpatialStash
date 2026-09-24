@@ -48,7 +48,9 @@ struct Video3DSettingsSheet: View {
                 advancedSection
             }
             .navigationTitle("3D Video Settings")
+            #if !os(tvOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
@@ -132,7 +134,9 @@ struct Video3DSettingsSheet: View {
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
                 }
+                #if !os(tvOS)
                 Slider(value: $fieldOfView, in: 60...120, step: 5)
+                #endif
             }
 
             VStack(alignment: .leading, spacing: 8) {
@@ -143,7 +147,9 @@ struct Video3DSettingsSheet: View {
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
                 }
+                #if !os(tvOS)
                 Slider(value: $disparityAdjustment, in: 0...400, step: 10)
+                #endif
             }
         } header: {
             Text("Advanced")

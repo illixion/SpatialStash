@@ -368,11 +368,13 @@ struct VisualAdjustmentsPopover: View {
                             .monospacedDigit()
                             .foregroundColor(.secondary)
                     }
+                    #if !os(tvOS)
                     Slider(
                         value: $model.displayDelay,
                         in: 3...120,
                         step: 1
                     )
+                    #endif
                 }
             }
         }
@@ -432,6 +434,11 @@ struct VisualAdjustmentsPopover: View {
                     .monospacedDigit()
                     .foregroundColor(value.wrappedValue != defaultValue ? .accentColor : .secondary)
             }
+            // This whole popover isn't part of the tvOS root UI (TV's photo/
+            // video adjustments, where they exist at all, avoid free-form
+            // sliders by design — see Hypnos/CLAUDE.md "tvOS") — kept
+            // compiling only, not reachable.
+            #if !os(tvOS)
             if linear {
                 Slider(value: value, in: range)
             } else {
@@ -440,6 +447,7 @@ struct VisualAdjustmentsPopover: View {
                     in: 0...1
                 )
             }
+            #endif
         }
     }
 

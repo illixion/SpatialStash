@@ -81,9 +81,13 @@ actor ThumbnailGenerator {
     private func createVideoThumbnail(for url: URL, maxSize: CGFloat) async -> UIImage? {
         // AVFoundation can't decode WebM — capture a frame via WebKit (the same
         // engine that plays it). Skip the AVAssetImageGenerator attempt entirely.
+        // tvOS has no WebKit, so a WebM file there just falls through to the
+        // placeholder below (AVAssetImageGenerator fails on it the same way).
+        #if canImport(WebKit)
         if url.pathExtension.lowercased() == "webm" {
             return await WebMThumbnailGenerator.shared.generateThumbnail(for: url, maxSize: maxSize)
         }
+        #endif
 
         let asset = AVURLAsset(url: url)
         let generator = AVAssetImageGenerator(asset: asset)

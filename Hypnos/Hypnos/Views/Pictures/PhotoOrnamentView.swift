@@ -568,6 +568,10 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
         )) {
             windowModel.startAutoHideTimer()
         } content: {
+            // No share sheet on tvOS (no AirDrop/Files/Messages target for a
+            // Siri Remote UX to hand a file to) — this button isn't part of
+            // the tvOS root UI's viewer anyway (see Hypnos/CLAUDE.md "tvOS").
+            #if !os(tvOS)
             if let url = windowModel.shareFileURL {
                 ActivityViewController(
                     activityItems: [url],
@@ -577,6 +581,7 @@ struct PhotoOrnamentView<ExtraMenuItems: View>: View {
                     )
                 )
             }
+            #endif
         }
     }
 

@@ -12,30 +12,32 @@
 		AA06000000000000000000C3 /* RAVEUI in Frameworks */ = {isa = PBXBuildFile; productRef = AA06000000000000000000C2 /* RAVEUI */; };
 		AA06000000000000000000C5 /* RAVEConsole in Frameworks */ = {isa = PBXBuildFile; productRef = AA06000000000000000000C4 /* RAVEConsole */; };
 		AA07000000000000000000D3 /* RAVEMedia in Frameworks */ = {isa = PBXBuildFile; productRef = AA07000000000000000000D2 /* RAVEMedia */; };
-		AA09000000000000000000F3 /* RAVESlideshow in Frameworks */ = {isa = PBXBuildFile; productRef = AA09000000000000000000F2 /* RAVESlideshow */; };
-		AA10000000000000000000A3 /* NextcloudMedia in Frameworks */ = {isa = PBXBuildFile; productRef = AA10000000000000000000A2 /* NextcloudMedia */; };
-		AA11000000000000000000A3 /* RAVEFilm in Frameworks */ = {isa = PBXBuildFile; productRef = AA11000000000000000000A2 /* RAVEFilm */; };
 		AA08000000000000000000ED /* RAVEUI in Frameworks */ = {isa = PBXBuildFile; productRef = AA08000000000000000000EC /* RAVEUI */; };
 		AA08000000000000000000F0 /* AccessibilityIdentifiers.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA08000000000000000000EF /* AccessibilityIdentifiers.swift */; };
 		AA08000000000000000000F1 /* AccessibilityIdentifiers.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA08000000000000000000EF /* AccessibilityIdentifiers.swift */; };
+		AA09000000000000000000F3 /* RAVESlideshow in Frameworks */ = {isa = PBXBuildFile; productRef = AA09000000000000000000F2 /* RAVESlideshow */; };
+		AA10000000000000000000A3 /* NextcloudMedia in Frameworks */ = {isa = PBXBuildFile; productRef = AA10000000000000000000A2 /* NextcloudMedia */; };
+		AA11000000000000000000A3 /* RAVEFilm in Frameworks */ = {isa = PBXBuildFile; productRef = AA11000000000000000000A2 /* RAVEFilm */; };
 /* End PBXBuildFile section */
 
-/* Begin PBXTargetDependency section */
-		AA08000000000000000000EA /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			target = 077865192D811C5500BCF113 /* Hypnos */;
-			targetProxy = AA08000000000000000000EB /* PBXContainerItemProxy */;
+/* Begin PBXContainerItemProxy section */
+		AA08000000000000000000EB /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 077865122D811C5500BCF113 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 077865192D811C5500BCF113;
+			remoteInfo = Hypnos;
 		};
-/* End PBXTargetDependency section */
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		0778651A2D811C5500BCF113 /* Hypnos.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Hypnos.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		1DE40D9B2F67E27D00990AE2 /* BuildInfo.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = BuildInfo.xcconfig; sourceTree = "<group>"; };
 		8E9DA7BDAEB07F2CBEB7EEF5 /* Hypnos.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = Hypnos.xcconfig; path = ../Configuration/Hypnos.xcconfig; sourceTree = "<group>"; };
 		A652FA6EBF76B35751285132 /* LICENSE.txt */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = LICENSE.txt; sourceTree = "<group>"; };
-		FB302A1BC44797EC0074C931 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = README.md; path = ../README.md; sourceTree = "<group>"; };
 		AA08000000000000000000E2 /* HypnosUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HypnosUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA08000000000000000000EF /* AccessibilityIdentifiers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccessibilityIdentifiers.swift; sourceTree = "<group>"; };
+		FB302A1BC44797EC0074C931 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = README.md; path = ../README.md; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -52,16 +54,6 @@
 		0778651C2D811C5500BCF113 /* Hypnos */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (077865282D811C5600BCF113 /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = Hypnos; sourceTree = "<group>"; };
 		AA08000000000000000000E3 /* HypnosUITests */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = HypnosUITests; sourceTree = "<group>"; };
 /* End PBXFileSystemSynchronizedRootGroup section */
-
-/* Begin PBXContainerItemProxy section */
-		AA08000000000000000000EB /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = 077865122D811C5500BCF113 /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = 077865192D811C5500BCF113;
-			remoteInfo = Hypnos;
-		};
-/* End PBXContainerItemProxy section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		077865172D811C5500BCF113 /* Frameworks */ = {
@@ -112,6 +104,14 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
+		AA08000000000000000000EE /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				AA08000000000000000000EF /* AccessibilityIdentifiers.swift */,
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
 		E52E8BFAE3BD5A722B806008 /* LICENSE */ = {
 			isa = PBXGroup;
 			children = (
@@ -119,14 +119,6 @@
 			);
 			name = LICENSE;
 			path = ..;
-			sourceTree = "<group>";
-		};
-		AA08000000000000000000EE /* Shared */ = {
-			isa = PBXGroup;
-			children = (
-				AA08000000000000000000EF /* AccessibilityIdentifiers.swift */,
-			);
-			path = Shared;
 			sourceTree = "<group>";
 		};
 		F9B36AF4F35D9FBDDB3435EE /* Configuration */ = {
@@ -274,6 +266,14 @@
 		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		AA08000000000000000000EA /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 077865192D811C5500BCF113 /* Hypnos */;
+			targetProxy = AA08000000000000000000EB /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
 		0778652A2D811C5600BCF113 /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -287,13 +287,14 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "$(TARGET_NAME)/Info.plist";
-				INFOPLIST_KEY_CFBundleDisplayName = "Hypnos";
+				INFOPLIST_KEY_CFBundleDisplayName = Hypnos;
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -301,12 +302,12 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = auto;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator xros xrsimulator";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator xros xrsimulator appletvos appletvsimulator";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 6.0;
-				TARGETED_DEVICE_FAMILY = "1,2,7";
+				TARGETED_DEVICE_FAMILY = "1,2,7,3";
+				TVOS_DEPLOYMENT_TARGET = 26.2;
 				XROS_DEPLOYMENT_TARGET = 26.0;
-				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 			};
 			name = Debug;
 		};
@@ -322,13 +323,14 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "$(TARGET_NAME)/Info.plist";
-				INFOPLIST_KEY_CFBundleDisplayName = "Hypnos";
+				INFOPLIST_KEY_CFBundleDisplayName = Hypnos;
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -336,12 +338,12 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = auto;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator xros xrsimulator";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator xros xrsimulator appletvos appletvsimulator";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 6.0;
-				TARGETED_DEVICE_FAMILY = "1,2,7";
+				TARGETED_DEVICE_FAMILY = "1,2,7,3";
+				TVOS_DEPLOYMENT_TARGET = 26.2;
 				XROS_DEPLOYMENT_TARGET = 26.0;
-				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 			};
 			name = Release;
 		};
@@ -399,6 +401,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
@@ -409,7 +412,6 @@
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				XROS_DEPLOYMENT_TARGET = 26.0;
-				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 			};
 			name = Debug;
 		};
@@ -461,6 +463,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
@@ -470,7 +473,6 @@
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				VALIDATE_PRODUCT = YES;
 				XROS_DEPLOYMENT_TARGET = 26.0;
-				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 			};
 			name = Release;
 		};
@@ -553,13 +555,13 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		AA05000000000000000000B1 /* XCLocalSwiftPackageReference "../../RAVEEngine" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = ../../RAVEEngine;
-		};
 		AA01000000000000000000A1 /* XCLocalSwiftPackageReference "../../RAVESDK" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../../RAVESDK;
+		};
+		AA05000000000000000000B1 /* XCLocalSwiftPackageReference "../../RAVEEngine" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../../RAVEEngine;
 		};
 		AA10000000000000000000A1 /* XCLocalSwiftPackageReference "../Packages/NextcloudMedia" */ = {
 			isa = XCLocalSwiftPackageReference;
@@ -568,6 +570,10 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		AA01000000000000000000A2 /* RAVENet */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = RAVENet;
+		};
 		AA05000000000000000000B2 /* RAVEDiagnostics */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = AA05000000000000000000B1 /* XCLocalSwiftPackageReference "../../RAVEEngine" */;
@@ -588,19 +594,15 @@
 			package = AA01000000000000000000A1 /* XCLocalSwiftPackageReference "../../RAVESDK" */;
 			productName = RAVEMedia;
 		};
-		AA09000000000000000000F2 /* RAVESlideshow */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = AA01000000000000000000A1 /* XCLocalSwiftPackageReference "../../RAVESDK" */;
-			productName = RAVESlideshow;
-		};
 		AA08000000000000000000EC /* RAVEUI */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = AA01000000000000000000A1 /* XCLocalSwiftPackageReference "../../RAVESDK" */;
 			productName = RAVEUI;
 		};
-		AA01000000000000000000A2 /* RAVENet */ = {
+		AA09000000000000000000F2 /* RAVESlideshow */ = {
 			isa = XCSwiftPackageProductDependency;
-			productName = RAVENet;
+			package = AA01000000000000000000A1 /* XCLocalSwiftPackageReference "../../RAVESDK" */;
+			productName = RAVESlideshow;
 		};
 		AA10000000000000000000A2 /* NextcloudMedia */ = {
 			isa = XCSwiftPackageProductDependency;

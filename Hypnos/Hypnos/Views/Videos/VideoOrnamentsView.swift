@@ -246,6 +246,10 @@ struct VideoOrnamentsView: View {
         )) {
             windowModel.startAutoHideTimer()
         } content: {
+            // No share sheet on tvOS (see PhotoOrnamentView's Share button
+            // for the same note) — this ornament isn't part of the tvOS root
+            // UI's video player anyway.
+            #if !os(tvOS)
             if let url = windowModel.shareFileURL {
                 ActivityViewController(
                     activityItems: [url],
@@ -255,6 +259,7 @@ struct VideoOrnamentsView: View {
                     )
                 )
             }
+            #endif
         }
     }
 

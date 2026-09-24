@@ -474,10 +474,15 @@ struct PhotosFilterSections: View {
                     }
                 }
 
+            // `DatePicker` doesn't exist on tvOS, and Filters isn't one of the
+            // tabs the tvOS root UI offers in the first place (see
+            // Hypnos/CLAUDE.md "tvOS") — this whole view is dead code there.
+            #if !os(tvOS)
             if criteria.dateRangeEnabled {
                 DatePicker("From", selection: startBinding, displayedComponents: .date)
                 DatePicker("To", selection: endBinding, displayedComponents: .date)
             }
+            #endif
         }
 
         Section {
@@ -1135,30 +1140,30 @@ struct OCountFilterView: View {
                     HStack {
                         if isVideoFilter {
                             TextField("Min", value: $appModel.currentVideoFilter.oCountRange.min, format: .number)
-                                .textFieldStyle(.roundedBorder)
+                                .roundedTextFieldStyle()
                                 .frame(width: 80)
                             Text("to")
                             TextField("Max", value: $appModel.currentVideoFilter.oCountRange.max, format: .number)
-                                .textFieldStyle(.roundedBorder)
+                                .roundedTextFieldStyle()
                                 .frame(width: 80)
                         } else {
                             TextField("Min", value: $appModel.currentFilter.oCountRange.min, format: .number)
-                                .textFieldStyle(.roundedBorder)
+                                .roundedTextFieldStyle()
                                 .frame(width: 80)
                             Text("to")
                             TextField("Max", value: $appModel.currentFilter.oCountRange.max, format: .number)
-                                .textFieldStyle(.roundedBorder)
+                                .roundedTextFieldStyle()
                                 .frame(width: 80)
                         }
                     }
                 } else if oCountModifier.requiresValue {
                     if isVideoFilter {
                         TextField("Value", value: $appModel.currentVideoFilter.oCountValue, format: .number)
-                            .textFieldStyle(.roundedBorder)
+                            .roundedTextFieldStyle()
                             .frame(width: 100)
                     } else {
                         TextField("Value", value: $appModel.currentFilter.oCountValue, format: .number)
-                            .textFieldStyle(.roundedBorder)
+                            .roundedTextFieldStyle()
                             .frame(width: 100)
                     }
                 }

@@ -5,6 +5,11 @@
  Handles buffering, chunk transitions, and looping.
  */
 
+// MV-HEVC (tagged pixel buffer group writing) is only used by the visionOS
+// immersive stereoscopic-video pipeline (StereoscopicVideoView is already
+// `#if os(visionOS)`-gated) and its APIs are unavailable on tvOS.
+#if !os(tvOS)
+
 import AVFoundation
 import RAVEMedia
 
@@ -286,3 +291,4 @@ extension ChunkBufferManager {
         (chunks.count, currentChunkIndex, totalChunks, bufferFillLevel)
     }
 }
+#endif

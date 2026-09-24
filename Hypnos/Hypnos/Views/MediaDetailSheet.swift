@@ -313,7 +313,7 @@ struct MediaDetailSheet: View {
     private func associationGroup(label: String, items: [String]) -> some View {
         let cleaned = items.filter { !$0.isEmpty }
         if !cleaned.isEmpty {
-            DisclosureGroup {
+            platformDisclosureGroup {
                 ForEach(Array(cleaned.enumerated()), id: \.offset) { _, item in
                     Text(item)
                         .font(.callout)
@@ -341,7 +341,7 @@ struct MediaDetailSheet: View {
     private func tagsAssociationGroup(_ tags: [MediaTag]) -> some View {
         let cleaned = tags.filter { !$0.name.isEmpty }
         if !cleaned.isEmpty {
-            DisclosureGroup {
+            platformDisclosureGroup {
                 ForEach(cleaned) { tag in
                     Button {
                         openTagGallery(tag)
@@ -398,8 +398,16 @@ struct MediaDetailSheet: View {
                     Text("Details")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
+                    #if !os(tvOS)
                     TextEditor(text: $editDetails)
                         .frame(minHeight: 80)
+                    #else
+                    // No multi-line text editor on tvOS, and this edit tab
+                    // isn't part of the tvOS root UI in the first place (see
+                    // Hypnos/CLAUDE.md "tvOS") — a single-line fallback keeps
+                    // the module compiling.
+                    TextField("Details", text: $editDetails)
+                    #endif
                 }
             }
 
@@ -1080,6 +1088,13 @@ private extension View {
     /// On visionOS, the context menu is triggered by pinch-and-hold on the gaze-focused
     /// element, so we don't need to read tap coordinates (which drift with gaze).
     func copyOnHold(_ value: String) -> some View {
+        #if os(tvOS)
+        // No system pasteboard on tvOS. This whole sheet isn't part of the
+        // tvOS root UI (see Hypnos/CLAUDE.md "tvOS"), so the modifier is a
+        // no-op here rather than offering a Copy action with nothing to copy
+        // to.
+        self
+        #else
         contextMenu {
             Button {
                 UIPasteboard.general.string = value
@@ -1087,6 +1102,7 @@ private extension View {
                 Label("Copy", systemImage: "doc.on.doc")
             }
         }
+        #endif
     }
 }
 

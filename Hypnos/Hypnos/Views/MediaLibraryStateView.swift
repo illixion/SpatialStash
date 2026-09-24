@@ -270,7 +270,7 @@ struct LibrarySafetyNetView: View {
     private var serverForm: some View {
         VStack(spacing: 10) {
             TextField("http://stash.local:9999", text: $draftServerURL)
-                .textFieldStyle(.roundedBorder)
+                .roundedTextFieldStyle()
                 .textContentType(.URL)
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
@@ -278,7 +278,7 @@ struct LibrarySafetyNetView: View {
                 .onSubmit { Task { await connect() } }
 
             SecureField("API key (optional)", text: $draftAPIKey)
-                .textFieldStyle(.roundedBorder)
+                .roundedTextFieldStyle()
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
                 .onSubmit { Task { await connect() } }

@@ -168,7 +168,7 @@ struct WelcomeSourcesPage: View {
         VStack(alignment: .leading, spacing: 12) {
             TextField("http://stash.local:9999", text: $draftServerURL)
                 .accessibilityIdentifier(A11y.Welcome.serverURLField)
-                .textFieldStyle(.roundedBorder)
+                .roundedTextFieldStyle()
                 .textContentType(.URL)
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
@@ -177,7 +177,7 @@ struct WelcomeSourcesPage: View {
 
             SecureField("API key (optional)", text: $draftAPIKey)
                 .accessibilityIdentifier(A11y.Welcome.serverKeyField)
-                .textFieldStyle(.roundedBorder)
+                .roundedTextFieldStyle()
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
                 .onSubmit { Task { await connectServer() } }

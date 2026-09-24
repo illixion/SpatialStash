@@ -272,7 +272,7 @@ struct RemoteViewerOrnamentView: View {
                 .font(.caption)
                 .foregroundColor(.secondary)
             TextField("rating:s -blood", text: $newPresetText)
-                .textFieldStyle(.roundedBorder)
+                .roundedTextFieldStyle()
                 .font(.body.monospaced())
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)

@@ -23,9 +23,11 @@ struct SettingsTabView: View {
     /// Depth models discovered in Documents/bundle, for the Fake-3D pickers.
     @State private var depthModels = DepthModelManager.shared
     @State private var showDepthModelManager = false
+    #if !os(tvOS)
     @State private var showExporter = false
     @State private var exportDocument: SettingsBackupDocument?
     @State private var isExporting = false
+    #endif
     /// Picker + confirmation + alerts, shared with the welcome flow.
     @State private var backupImporter = SettingsBackupImporter()
     @State private var showEnhancementsClearConfirmation = false
@@ -159,11 +161,13 @@ struct SettingsTabView: View {
                             Text(formatSlideshowDelay(appModel.slideshowDelay))
                                 .foregroundColor(.secondary)
                         }
+                        #if !os(tvOS)
                         Slider(
                             value: $appModel.slideshowDelay,
                             in: 3...120,
                             step: 1
                         )
+                        #endif
                     }
 
                     Toggle("Show Clock", isOn: $appModel.slideshowShowClock)
@@ -199,7 +203,9 @@ struct SettingsTabView: View {
                             Text(String(format: "%.0f%%", appModel.slideshowTextSize * 100))
                                 .foregroundColor(.secondary)
                         }
+                        #if !os(tvOS)
                         Slider(value: $appModel.slideshowTextSize, in: 0.5...3.0, step: 0.1)
+                        #endif
                     }
                 } header: {
                     Text("Slideshow Defaults")
@@ -309,6 +315,10 @@ struct SettingsTabView: View {
 
                 CacheSettingsSection()
 
+                // No Files app / document picker on tvOS to export to or
+                // import from — this whole section (and the state driving
+                // it) only exists on the other platforms.
+                #if !os(tvOS)
                 Section("Backup") {
                     Button {
                         isExporting = true
@@ -355,6 +365,7 @@ struct SettingsTabView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                #endif
 
                 Section("Developer") {
                     Toggle("Enable RoboFrame Viewer", isOn: Binding(
@@ -499,6 +510,7 @@ struct SettingsTabView: View {
                 WindowGroupRestoreSheet(group: group)
                     .environment(appModel)
             }
+            #if !os(tvOS)
             .fileExporter(
                 isPresented: $showExporter,
                 document: exportDocument,
@@ -507,6 +519,7 @@ struct SettingsTabView: View {
             ) { _ in
                 exportDocument = nil
             }
+            #endif
             .settingsBackupImport(backupImporter)
             .alert("Clear Saved Enhancements?", isPresented: $showEnhancementsClearConfirmation) {
                 Button("Disable & Clear Data", role: .destructive) {

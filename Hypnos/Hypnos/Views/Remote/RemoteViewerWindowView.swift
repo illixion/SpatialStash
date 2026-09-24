@@ -324,6 +324,10 @@ struct RemoteViewerWindowView: View {
                 // WKWebView here tears down its out-of-process WebContent/GPU
                 // helpers — which don't count toward our process footprint but do
                 // pin device memory — and it rebuilds on return to active.
+                //
+                // tvOS has no WebKit at all, so it always shows that static
+                // first frame instead of animating — see Hypnos/CLAUDE.md "tvOS".
+                #if canImport(WebKit)
                 if model.isRoomActive {
                     WebVideoPlayerView(
                         videoURL: hevcURL,
@@ -337,8 +341,10 @@ struct RemoteViewerWindowView: View {
                     .contrast(model.effectiveContrast)
                     .saturation(model.effectiveSaturation)
                 }
+                #endif
 
             case .animatedWebP(let url):
+                #if canImport(WebKit)
                 if model.isRoomActive {
                     AnimatedImageWebView(
                         imageURL: url,
@@ -354,8 +360,10 @@ struct RemoteViewerWindowView: View {
                     .contrast(model.effectiveContrast)
                     .saturation(model.effectiveSaturation)
                 }
+                #endif
 
             case .animatedJXL:
+                #if canImport(WebKit)
                 if model.isRoomActive {
                     AnimatedJXLWebView(imageData: model.currentAnimatedData)
                         .aspectRatio(model.currentImage?.size ?? CGSize(width: 1, height: 1), contentMode: .fit)
@@ -364,6 +372,7 @@ struct RemoteViewerWindowView: View {
                         .contrast(model.effectiveContrast)
                         .saturation(model.effectiveSaturation)
                 }
+                #endif
 
             case .image:
                 EmptyView()
@@ -546,35 +555,50 @@ struct RemoteViewerWindowView: View {
                                 model?.reportPseudo3DVideoFailure()
                             }
                         )
-                    } else if model.activeVideoIsAnimatedImage {
-                        // Native tier: WebKit plays H.264 in an <img>, managing
-                        // playback lifecycle itself (pause / resume on room
-                        // transitions) — no AVPlayer, no isRoomActive/duration
-                        // wiring. If the source isn't a codec <img> can decode,
-                        // onError escalates to the <video> tiers (raw → HLS).
-                        AnimatedImageWebView(imageURL: videoURL, onError: { [weak model] in
-                            model?.videoNativeImgFailed = true
-                        })
                     } else {
-                        // Fallback tiers: <video> plays the raw source natively
-                        // (WebM/AV1 the device supports); on decode error it
-                        // switches to the HLS stream (server-transcoded H.264).
-                        WebVideoPlayerView(
-                            videoURL: videoURL,
-                            fallbackVideoURL: model.currentVideoHLSURL,
-                            showControls: false,
-                            isRoomActive: model.isRoomActive,
-                            onDurationKnown: { [weak model] seconds in
-                                // During the image→video crossfade the incoming clip is
-                                // `nextPost` — loadedmetadata usually fires before the
-                                // engine commits it to `currentPost`. Attribute the
-                                // duration to the post that owns the video, not whatever
-                                // is still fading out.
-                                guard let model, let post = model.nextPost ?? model.currentPost else { return }
-                                model.onVideoDurationKnown(seconds, for: post)
-                            },
-                            loop: model.currentVideoLoops
-                        )
+                        // Swift's conditional compilation requires each
+                        // `#if`/`#else` branch to be a complete, independently
+                        // balanced statement — it can't pick up an `if` opened
+                        // outside the block, so the WebKit-vs-tvOS split lives
+                        // entirely inside this `else`, not spliced across the
+                        // `if let url3D` above.
+                        #if canImport(WebKit)
+                        if model.activeVideoIsAnimatedImage {
+                            // Native tier: WebKit plays H.264 in an <img>, managing
+                            // playback lifecycle itself (pause / resume on room
+                            // transitions) — no AVPlayer, no isRoomActive/duration
+                            // wiring. If the source isn't a codec <img> can decode,
+                            // onError escalates to the <video> tiers (raw → HLS).
+                            AnimatedImageWebView(imageURL: videoURL, onError: { [weak model] in
+                                model?.videoNativeImgFailed = true
+                            })
+                        } else {
+                            // Fallback tiers: <video> plays the raw source natively
+                            // (WebM/AV1 the device supports); on decode error it
+                            // switches to the HLS stream (server-transcoded H.264).
+                            WebVideoPlayerView(
+                                videoURL: videoURL,
+                                fallbackVideoURL: model.currentVideoHLSURL,
+                                showControls: false,
+                                isRoomActive: model.isRoomActive,
+                                onDurationKnown: { [weak model] seconds in
+                                    // During the image→video crossfade the incoming clip is
+                                    // `nextPost` — loadedmetadata usually fires before the
+                                    // engine commits it to `currentPost`. Attribute the
+                                    // duration to the post that owns the video, not whatever
+                                    // is still fading out.
+                                    guard let model, let post = model.nextPost ?? model.currentPost else { return }
+                                    model.onVideoDurationKnown(seconds, for: post)
+                                },
+                                loop: model.currentVideoLoops
+                            )
+                        }
+                        #else
+                        // tvOS: no WebKit, so no native-<img> or raw/HLS <video>
+                        // tiers either. A slideshow post needing either simply
+                        // doesn't play its video layer here.
+                        EmptyView()
+                        #endif
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)

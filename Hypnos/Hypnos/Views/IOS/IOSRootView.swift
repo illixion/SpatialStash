@@ -142,7 +142,9 @@ private struct IOSToolSheetView: View {
                 }
             }
             .navigationTitle(title)
+            #if !os(tvOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { router.sheet = nil }

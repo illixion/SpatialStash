@@ -266,6 +266,7 @@ struct QuickLook3DView: View {
         .cornerRadius(cornerRadius)
         .contentShape(Rectangle())
         .onTapGesture { animateDismiss() }
+        #if !os(tvOS)
         .gesture(
             DragGesture(minimumDistance: 30)
                 .onEnded { value in
@@ -274,6 +275,7 @@ struct QuickLook3DView: View {
                     }
                 }
         )
+        #endif
     }
 
     // MARK: - Pop offset

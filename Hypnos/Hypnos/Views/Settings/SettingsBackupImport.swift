@@ -127,6 +127,11 @@ private struct SettingsBackupImportModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
+            // `fileImporter` doesn't exist on tvOS — no Files app / document
+            // picker to pick a backup from. `isPickingFile` simply never gets
+            // set there (the Settings → Backup section that would set it is
+            // itself hidden from the tvOS Settings tab).
+            #if !os(tvOS)
             .fileImporter(
                 isPresented: Binding(get: { importer.isPickingFile },
                                      set: { importer.isPickingFile = $0 }),
@@ -149,6 +154,7 @@ private struct SettingsBackupImportModifier: ViewModifier {
                     importer.fail(error.localizedDescription, afterPickerDismissal: true)
                 }
             }
+            #endif
             .alert("Import Settings?", isPresented: Binding(get: { importer.isConfirming },
                                                            set: { importer.isConfirming = $0 })) {
                 Button("Import", role: .destructive) {

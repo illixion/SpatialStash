@@ -491,11 +491,13 @@ struct RemoteTabView: View {
                     Text(RemoteViewerConfig.webAutoRefreshLabel(editingConfig.webAutoRefreshInterval))
                         .foregroundColor(.secondary)
                 }
+                #if !os(tvOS)
                 Slider(
                     value: autoRefreshIndex,
                     in: 0...Double(RemoteViewerConfig.webAutoRefreshOptions.count - 1),
                     step: 1
                 )
+                #endif
                 Text("Reloads the page after this long with no interaction. Off by default.")
                     .font(.caption)
                     .foregroundColor(.secondary)
@@ -566,7 +568,9 @@ struct RemoteTabView: View {
                     Text(formatDelay(editingConfig.delay))
                         .foregroundColor(.secondary)
                 }
+                #if !os(tvOS)
                 Slider(value: $editingConfig.delay, in: 3...120, step: 1)
+                #endif
             }
 
             if PlatformCapabilities.supportsSpatial3D {
@@ -590,7 +594,9 @@ struct RemoteTabView: View {
                     Text(String(format: "%.0f%%", editingConfig.textSize * 100))
                         .foregroundColor(.secondary)
                 }
+                #if !os(tvOS)
                 Slider(value: $editingConfig.textSize, in: 0.5...3.0, step: 0.1)
+                #endif
             }
         }
 

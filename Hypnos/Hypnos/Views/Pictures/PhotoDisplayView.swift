@@ -401,6 +401,13 @@ struct PhotoDisplayView: View {
 
     @ViewBuilder
     private var imageContent: some View {
+        // The four animated-image branches below (cached HEVC playback, raw
+        // JXL/WebP/GIF-via-<img>) all render through WebKit, which doesn't
+        // exist on tvOS. There is no tvOS fallback for animated formats yet —
+        // an animated GIF/WebP/JXL on Apple TV falls through to the Metal/
+        // UIImage branches further down and shows its first decoded frame as
+        // a static image rather than animating. See Hypnos/CLAUDE.md "tvOS".
+        #if canImport(WebKit)
         if !windowModel.is3DMode, (windowModel.isAnimatedGIF || windowModel.isAnimatedJXL), let hevcURL = windowModel.animatedHEVCURL {
             // Play the cached HEVC conversion. Preferred path is the native
             // video-in-<img> tier: WebKit owns the animation loop and
@@ -559,7 +566,25 @@ struct PhotoDisplayView: View {
                     guard !suppressWindowResize else { return }
                     resizeGIFWindowToFit(newAspectRatio, within: currentBounds)
                 }
-        } else if windowModel.is3DMode {
+        } else {
+            nonAnimatedImageContent
+        }
+        #else
+        nonAnimatedImageContent
+        #endif
+    }
+
+    /// The `is3DMode` / Metal-texture / `UIImage` / loading-placeholder tail,
+    /// shared between the WebKit-available chain above and the tvOS build
+    /// (which skips straight here — see the header comment on `imageContent`).
+    /// Split out as its own statement rather than spliced mid-`if` across
+    /// `#if canImport(WebKit)`/`#else`, because Swift's conditional
+    /// compilation requires each branch to be a complete, independently
+    /// balanced statement; it cannot pick up an `if` opened in one branch and
+    /// continue it in another.
+    @ViewBuilder
+    private var nonAnimatedImageContent: some View {
+        if windowModel.is3DMode {
             #if os(visionOS)
             // Display with RealityKit for 3D spatial conversion (full resolution)
             GeometryReader3D { geometry in
@@ -1328,6 +1353,11 @@ private struct SwipeGestureModifier: ViewModifier {
     func body(content: Content) -> some View {
         #if os(visionOS)
         content.gesture(gesture)
+        #elseif os(tvOS)
+        // No touch surface to drag on tvOS — the TV root UI's own fullscreen
+        // photo viewer drives prev/next off the remote (`.onMoveCommand`)
+        // instead of a swipe. `DragGesture` itself is unavailable here.
+        content
         #else
         content
             .offset(y: dismissDrag)
@@ -1338,6 +1368,7 @@ private struct SwipeGestureModifier: ViewModifier {
         #endif
     }
 
+    #if !os(tvOS)
     private var gesture: some Gesture {
         DragGesture(minimumDistance: 20)
             .onChanged { value in
@@ -1369,8 +1400,13 @@ private struct SwipeGestureModifier: ViewModifier {
                 onEnded(value.translation.width, value.predictedEndTranslation.width)
             }
     }
+    #endif
 }
 
+// Only used from the RealityKit `is3DMode` branch above, which is itself
+// `#if os(visionOS)` — `targetedToAnyEntity()` and `DragGesture` are both
+// visionOS/iOS-only (unavailable on tvOS).
+#if os(visionOS)
 /// Adds a targeted entity drag gesture for swipe navigation on RealityKit views.
 /// Uses discrete detection (onEnded only) to avoid per-frame offset flicker on visionOS.
 private struct EntitySwipeGestureModifier: ViewModifier {
@@ -1388,3 +1424,4 @@ private struct EntitySwipeGestureModifier: ViewModifier {
         )
     }
 }
+#endif

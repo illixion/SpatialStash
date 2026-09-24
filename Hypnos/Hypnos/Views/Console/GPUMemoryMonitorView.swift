@@ -41,6 +41,27 @@ struct GPUMemoryMonitorView: View {
                 .font(.title2)
                 .fontWeight(.semibold)
 
+            // `Gauge`/`.accessoryLinear` don't exist on tvOS — RAVEConsole's
+            // own system monitor hit the same gap and settled on a
+            // `ProgressView` there (see RAVESDK/Sources/RAVEConsole); mirror
+            // that here rather than inventing a second shape.
+            #if os(tvOS)
+            VStack(spacing: 6) {
+                Text(formatBytes(currentAllocation))
+                    .font(.system(.title, design: .monospaced))
+                    .fontWeight(.bold)
+                    .foregroundStyle(allocationColor)
+                ProgressView(value: Double(currentAllocation), total: Double(gaugeMax))
+                    .tint(allocationColor)
+                HStack {
+                    Text("0")
+                    Spacer()
+                    Text(formatBytes(gaugeMax))
+                }
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            }
+            #else
             Gauge(value: Double(currentAllocation), in: 0...Double(gaugeMax)) {
                 Text("Allocated")
             } currentValueLabel: {
@@ -57,6 +78,7 @@ struct GPUMemoryMonitorView: View {
             }
             .gaugeStyle(.accessoryLinear)
             .tint(allocationGradient)
+            #endif
 
             HStack(spacing: 32) {
                 StatBox(label: "Current", value: formatBytes(currentAllocation))

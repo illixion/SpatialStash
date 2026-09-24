@@ -207,7 +207,9 @@ struct ContentView: View {
                 NavigationStack {
                     tabContent(tab)
                         .navigationTitle(tab.rawValue)
+                        #if !os(tvOS)
                         .navigationBarTitleDisplayMode(.inline)
+                        #endif
                         .toolbar {
                             IOSTabToolbar(tab: tab)
                         }

@@ -114,6 +114,11 @@ struct SettingsBackup: Codable {
 
 // MARK: - FileDocument Wrapper
 
+// `FileDocument` (and `fileExporter`/`fileImporter`, its SwiftUI presenters)
+// don't exist on tvOS — there is no Files app / document picker to hand a
+// backup file to. Settings → Backup is hidden from the tvOS Settings tab for
+// the same reason (see Hypnos/CLAUDE.md "tvOS").
+#if !os(tvOS)
 struct SettingsBackupDocument: FileDocument {
     static var readableContentTypes: [UTType] { [.json] }
 
@@ -134,3 +139,4 @@ struct SettingsBackupDocument: FileDocument {
         FileWrapper(regularFileWithContents: data)
     }
 }
+#endif

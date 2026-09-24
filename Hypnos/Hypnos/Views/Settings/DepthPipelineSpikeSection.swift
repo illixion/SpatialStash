@@ -57,17 +57,23 @@ struct DepthPipelineSpikeSection: View {
             }
 
             if !lines.isEmpty {
-                DisclosureGroup("Results") {
+                platformDisclosureGroup("Results") {
                     ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
                         Text(line.isEmpty ? " " : line)
                             .font(.caption.monospaced())
-                            .textSelection(.enabled)
+                            .selectableText()
                     }
+                    // No system pasteboard on tvOS — nothing else on the
+                    // Siri Remote to paste into anyway. This whole developer
+                    // diagnostic section isn't part of the tvOS root UI (see
+                    // Hypnos/CLAUDE.md "tvOS").
+                    #if !os(tvOS)
                     Button {
                         UIPasteboard.general.string = lines.joined(separator: "\n")
                     } label: {
                         Label("Copy Results", systemImage: "doc.on.doc")
                     }
+                    #endif
                 }
             }
 

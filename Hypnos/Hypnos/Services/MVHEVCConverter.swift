@@ -5,6 +5,11 @@
  Uses AVFoundation with tagged pixel buffers for stereoscopic encoding.
  */
 
+// MV-HEVC (tagged pixel buffer group writing) is only used by the visionOS
+// immersive stereoscopic-video pipeline (StereoscopicVideoView is already
+// `#if os(visionOS)`-gated) and its APIs are unavailable on tvOS.
+#if !os(tvOS)
+
 import AVFoundation
 import CoreMedia
 import CoreVideo
@@ -671,3 +676,4 @@ actor MVHEVCConverter {
         tempDirectory
     }
 }
+#endif

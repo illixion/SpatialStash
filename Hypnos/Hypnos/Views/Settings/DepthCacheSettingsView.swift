@@ -18,7 +18,7 @@ struct DepthCacheSettingsView: View {
     var body: some View {
         Group {
             if !entries.isEmpty {
-                DisclosureGroup {
+                platformDisclosureGroup {
                     ForEach(entries, id: \.directory) { entry in
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
