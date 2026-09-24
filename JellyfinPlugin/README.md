@@ -1,24 +1,55 @@
 # Atmos Objects (Jellyfin plugin)
 
-Serves the Atmos objects inside a film's TrueHD track as separate audio stems
+Serves the Atmos objects inside a film's audio track as separate audio stems
 plus their position metadata, so Hypnos can place its own spatial sources on
-the Vision Pro instead of needing a Dolby renderer. No Dolby code is involved:
-decoding is done by [truehdd](https://github.com/truehdd/truehdd), an
-open-source TrueHD decoder, with a small patch of ours (below).
+the Vision Pro instead of needing a Dolby renderer. No Dolby code is involved.
+Two source formats are supported, picked per item (TrueHD preferred, since
+it's the higher-quality format and lossless; EAC3 as a fallback):
+
+- **TrueHD Atmos** — decoded by an external subprocess,
+  [truehdd](https://github.com/truehdd/truehdd), an open-source TrueHD
+  decoder, with a small patch of ours (below).
+- **E-AC-3 with JOC objects** (Dolby Digital Plus Atmos) — decoded in-process
+  by [Cavern](https://github.com/VoidXH/Cavern), an open-source spatial audio
+  engine, via its `Cavern.Format` NuGet package. See "Dependencies" below for
+  the licence terms this brings — Cavern must stay confined to this plugin.
+
+Either way the plugin's own output — `scene.json`, segment Events (DAMF
+room-space positions), FLAC channel groups — is identical, so Hypnos clients
+need no changes to play either source. See `Eac3AtmosDecoder.cs` for the
+Cavern→DAMF coordinate mapping and why E-AC-3 needs no restart-point search
+the way TrueHD does.
 
 Decoding is live: a client can start or seek anywhere in a film and the
 plugin decodes from that point on request. It serves the first segment about
 a second later, and each segment it decodes is cached for next time.
 
+## Dependencies
+
+| Library | Used for | Distribution | Licence |
+|---|---|---|---|
+| [truehdd](https://github.com/truehdd/truehdd) | TrueHD decode (external subprocess) | Source pinned + patched, built locally (`truehdd/build.sh`) | Apache-2.0 |
+| [Cavern](https://github.com/VoidXH/Cavern) / `Cavern.Format` | E-AC-3 JOC decode (in-process) | Official NuGet packages, `Cavern`/`Cavern.Format` 2.1.0, referenced by the `.csproj` | Custom, free but requires crediting the creator — see below |
+
+Full licence texts and the required Cavern credit are in
+[`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md) at the repo root.
+**Cavern's licence requires naming the creator with a link
+(<http://en.sbence.hu>) wherever it's used publicly or commercially** — that
+credit is in the notices file; don't drop it if this plugin is redistributed.
+
 ## Install
 
 1. Build the plugin: `dotnet build Jellyfin.Plugin.AtmosObjects -c Release`.
-   This targets .NET 9 and Jellyfin 10.11.
-2. Build truehdd: `truehdd/build.sh`. It clones upstream at a pinned commit,
-   applies `truehdd/*.patch` and runs `cargo build --release`.
+   This targets .NET 9 and Jellyfin 10.11. `Cavern`/`Cavern.Format` restore
+   from NuGet automatically; nothing extra to build for the EAC3 path.
+2. Build truehdd (only needed for the TrueHD path — EAC3 items decode without
+   it): `truehdd/build.sh`. It clones upstream at a pinned commit, applies
+   `truehdd/*.patch` and runs `cargo build --release`.
 3. Copy `bin/Release/net9.0/Jellyfin.Plugin.AtmosObjects.dll` into
-   `<jellyfin data>/plugins/AtmosObjects_0.1.0.0/`, and point the plugin at
-   truehdd in
+   `<jellyfin data>/plugins/AtmosObjects_0.1.0.0/` (this now also carries the
+   `Cavern.dll`/`Cavern.Format.dll` NuGet assemblies — `dotnet build` copies
+   them into the same output folder, no separate step), and point the plugin
+   at truehdd in
    `<jellyfin data>/plugins/configurations/Jellyfin.Plugin.AtmosObjects.xml`:
 
    ```xml
@@ -67,8 +98,8 @@ The layout (`scene.json`, version 2) contains:
 - `frameCount`: estimated from the item's runtime until a decode reaches the
   end; `frameCountExact` says which.
 - `groups`: the audio channels in each group's FLAC, in file order.
-- `startSeconds`: the container time of frame 0, which is the TrueHD
-  track's first access unit.
+- `startSeconds`: the container time of frame 0, which is the audio
+  track's first access unit (TrueHD) or the first sample of the EAC3 decode.
 - `elements`: `{id, channel, kind: bed|object, bedChannel?}`.
 
 Events are `{id, t, ramp, gain, pos?}`:
@@ -146,6 +177,69 @@ On an Endgame UHD remux:
 - The same segment decoded from two different cut points gave bit-identical
   FLAC and identical events.
 
+## EAC3: coordinate mapping and verification
+
+`Eac3AtmosDecoder.cs` decodes E-AC-3+JOC with Cavern instead of solving for a
+restart-point run: E-AC-3 frames are independently decodable, so the plugin
+just has ffmpeg cut the track from a little before the target segment to the
+end of the file (`ffprobe` with the same seek first, to learn the exact
+container time the cut lands on — the raw `.ec3` elementary stream ffmpeg
+writes carries no timestamps of its own to read this back from afterwards),
+decodes the whole cut with Cavern, and discards a short warm-up prefix
+(`Eac3PrerollSeconds`, 0.75 s) before feeding the rest to the same `Grid`
+class the TrueHD path uses.
+
+**Cavern → DAMF coordinate mapping**, worked out from
+`ObjectInfoBlock.UpdateSource` in Cavern.Format
+(`Decoders/EnhancedAC3/ObjectInfoBlock.cs`), whose final line returns
+`Listener.EnvironmentSize * new Vector3(x*2-1, rawZ, y*-2+1)` for an OAMD
+object's own room-relative coordinates `x`/`y`/`z` (left-right, front-back,
+floor-ceiling, each roughly 0..1, raw `z` roughly -1..1):
+
+| DAMF | Cavern world axis | Formula |
+|---|---|---|
+| `x` (−1 left … +1 right) | `Position.X` | `x / EnvironmentSize.X` |
+| `y` (−1 back … +1 front) | `Position.Z` (**not** `.Y`) | `z_cavern / EnvironmentSize.Z` |
+| `z` (0 ear … 1 ceiling) | `Position.Y` (Cavern's up axis) | `clamp(y_cavern / EnvironmentSize.Y, 0, 1)` |
+
+X carries straight over; DAMF's front-back `y` is Cavern's *depth* axis
+(named `Z` there); DAMF's floor-ceiling `z` is Cavern's *up* axis (named `Y`
+there, and clamped to 0 since DAMF has no below-ear-level convention — nor
+does truehdd's own TrueHD DAMF output ever emit a negative `z`).
+
+**Verified against the public Dolby Atmos demo** (`DolbyElement4K_VisionAtmos.mkv`,
+110 s, TrueHD + EAC3/JOC tracks over the same picture — see
+`scripts/dev-jellyfin.sh`'s seeded items) two ways:
+- A standalone decode of the EAC3 track (Cavern directly, before this
+  mapping reached the plugin) found two objects pinned at the ceiling
+  (Cavern's raw, un-mapped Y ≈ 1.0 for ~68% of the run) — through the
+  mapping above they come out at `z` within 0.01 of 1.0, as expected.
+- **Cross-checked against truehdd's own DAMF output for the same demo's
+  TrueHD track**: its two elevated objects (IDs 16/17 in that decode) sit at
+  `pos: [-1, 0, 1]` and `[1, 0, 1]` — **exactly** the positions the EAC3 path
+  reports for its own two elevated objects (element ids 7/8) through the
+  plugin's live `/Segments/{n}/Events` endpoint on the dev instance. The
+  non-elevated objects' left/right/front/back spread matches too (front-left,
+  front-center, left-side, right-side, back-left, back-right, plus one object
+  panning left→right — the same quantized position set turns up in both
+  decodes of the same content).
+
+**Decode speed** (this Mac, EAC3 → Cavern, inside the dev Jellyfin
+container): a cold decode of the full 109.8 s track — ffmpeg's stream-copy
+cut plus Cavern's decode plus FLAC-encoding all 11 segments × 2 channel
+groups — completed in 11.8 s wall clock, **≈9.3× real time**.
+
+**A Cavern.Format 2.1.0 bug worth knowing about**: `EnhancedAC3Renderer.Dispose()`
+unconditionally disposes its `JointObjectCodingApplier`, which is only ever
+constructed on the object-based (JOC) rendering path — decoding a plain,
+channel-based E-AC-3 track (no JOC objects at all) and then disposing the
+renderer throws `NullReferenceException` inside Cavern's own `Dispose()`.
+`DecodeEac3Async` works around this by checking `HasObjects` **before**
+entering the `using (renderer)` block, so a no-objects renderer is never
+disposed at all (safe here — nothing else holds an unmanaged handle through
+it; the underlying reader is disposed separately). Confirmed against
+`NoAtmosTest.mkv`, the dev instance's plain-EAC3 seeded item.
+
 ## Cache and sessions
 
 ```
@@ -165,5 +259,7 @@ On an Endgame UHD remux:
 - Reaching the end records the exact frame count. If every segment is then
   cached, the item is marked `ready`.
 - The kept FLAC costs about 1 GB per hour of film.
-- A track that decodes cleanly without an Atmos object presentation is marked
-  `unsupported` and isn't retried.
+- A track that decodes cleanly without an Atmos object presentation (TrueHD)
+  or without any JOC dynamic objects (EAC3) is marked `unsupported` and isn't
+  retried. An item with neither a TrueHD nor an EAC3 audio track at all is
+  marked `unsupported` immediately, with no decode attempt.

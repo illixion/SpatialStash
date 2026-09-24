@@ -26,6 +26,15 @@ public enum SceneState
 
 public sealed record SceneStatus(SceneState State, double ProgressSeconds, double DurationSeconds, string? Error);
 
+/// <summary>Which decoder an item's Atmos track goes through.</summary>
+public enum AudioCodecKind
+{
+    /// <summary>truehdd, an external subprocess (see <see cref="AtmosSceneService"/>'s main doc comment).</summary>
+    TrueHd,
+    /// <summary>Cavern.Format, in-process (see <c>Eac3AtmosDecoder.cs</c>).</summary>
+    Eac3
+}
+
 /// <summary>
 /// Decodes an item's Atmos objects on demand, from any point in the film.
 ///
@@ -48,7 +57,7 @@ public sealed record SceneStatus(SceneState State, double ProgressSeconds, doubl
 /// has asked for the item in a while. Prepare runs one session from the start
 /// to the end, filling the whole cache.
 /// </summary>
-public sealed class AtmosSceneService
+public sealed partial class AtmosSceneService
 {
     private const int MaxChannelsPerGroup = 8;
     private const int SampleRate = 48000;
@@ -238,7 +247,7 @@ public sealed class AtmosSceneService
 
     // MARK: Item state
 
-    private sealed record ItemSource(string Path, int StreamIndex, double DurationSeconds, double OriginMs);
+    private sealed record ItemSource(string Path, int StreamIndex, double DurationSeconds, double OriginMs, AudioCodecKind Codec);
 
     private sealed class ItemState
     {
@@ -278,12 +287,18 @@ public sealed class AtmosSceneService
         // No session can be running for an item not yet in _items: any work
         // folder here was left by a server stopped mid-decode.
         DeleteStale(ItemDirectory(itemId), "work-*");
-        var stream = _mediaSourceManager.GetMediaStreams(itemId)
-            .FirstOrDefault(s => s.Type == MediaStreamType.Audio
-                && string.Equals(s.Codec, "truehd", StringComparison.OrdinalIgnoreCase));
+        var audioStreams = _mediaSourceManager.GetMediaStreams(itemId).Where(s => s.Type == MediaStreamType.Audio).ToList();
+        var truehd = audioStreams.FirstOrDefault(s => string.Equals(s.Codec, "truehd", StringComparison.OrdinalIgnoreCase));
+        // No TrueHD Atmos track: fall back to E-AC-3, decoded in-process by Cavern
+        // (Eac3AtmosDecoder.cs). Whether it actually carries JOC objects isn't known
+        // until the first decode attempt — see RunEac3SessionAsync's NoObjects outcome.
+        var eac3 = truehd is null
+            ? audioStreams.FirstOrDefault(s => string.Equals(s.Codec, "eac3", StringComparison.OrdinalIgnoreCase))
+            : null;
+        var stream = truehd ?? eac3;
         if (stream is null)
         {
-            MarkUnsupported(itemId, "No TrueHD audio track.");
+            MarkUnsupported(itemId, "No TrueHD or EAC3 audio track.");
         }
         else
         {
@@ -291,7 +306,8 @@ public sealed class AtmosSceneService
                 item.Path,
                 stream.Index,
                 item.RunTimeTicks is long ticks ? TimeSpan.FromTicks(ticks).TotalSeconds : 0,
-                ProbeOriginMs(item.Path, stream.Index));
+                ProbeOriginMs(item.Path, stream.Index),
+                truehd is not null ? AudioCodecKind.TrueHd : AudioCodecKind.Eac3);
         }
 
         return _items.GetOrAdd(itemId, state);
@@ -353,7 +369,13 @@ public sealed class AtmosSceneService
 
     // MARK: Live session
 
-    private async Task RunSessionAsync(Guid itemId, ItemState state, ItemSource source, LiveSession session)
+    /// <summary>Dispatches to the decoder matching the item's Atmos track.</summary>
+    private Task RunSessionAsync(Guid itemId, ItemState state, ItemSource source, LiveSession session) =>
+        source.Codec == AudioCodecKind.Eac3
+            ? RunEac3SessionAsync(itemId, state, source, session)
+            : RunTrueHdSessionAsync(itemId, state, source, session);
+
+    private async Task RunTrueHdSessionAsync(Guid itemId, ItemState state, ItemSource source, LiveSession session)
     {
         var ct = session.Cancellation.Token;
         if (!File.Exists(TruehddPath))
@@ -636,7 +658,8 @@ public sealed class AtmosSceneService
                     var startFrame = await startTask.ConfigureAwait(false);
                     var elements = DamfReader.ReadElements(basePath + ".atmos");
                     var layout = WriteLayoutIfMissing(itemId, state, source, elements);
-                    grid = new Grid(this, itemId, state, session, layout, basePath, startFrame, atStreamStart, segmentFrames, encoders, encoding);
+                    var events = new DamfEventSource(new DamfEventStream(startFrame), basePath + ".atmos.metadata");
+                    grid = new Grid(this, itemId, state, session, layout, events, startFrame, atStreamStart, segmentFrames, encoders, encoding);
                     grid.Append(pending.GetBuffer().AsSpan(0, (int)pending.Length));
                     pending = new MemoryStream();
                 }
@@ -685,7 +708,7 @@ public sealed class AtmosSceneService
         return AudioOutcome.Finished;
     }
 
-    /// <summary>Segment bookkeeping for one session's PCM.</summary>
+    /// <summary>Segment bookkeeping for one session's PCM, fed by either decoder.</summary>
     private sealed class Grid
     {
         private readonly AtmosSceneService _owner;
@@ -693,12 +716,11 @@ public sealed class AtmosSceneService
         private readonly ItemState _state;
         private readonly LiveSession _session;
         private readonly SceneDocument _layout;
-        private readonly string _metadataPath;
         private readonly int _frameBytes;
         private readonly int _segmentFrames;
         private readonly SemaphoreSlim _encoders;
         private readonly List<Task> _encoding;
-        private readonly DamfEventStream _events;
+        private readonly ISceneEventSource _events;
         private readonly byte[] _carry;
         private int _carryLength;
         private long _skipFrames;
@@ -708,19 +730,18 @@ public sealed class AtmosSceneService
         private int _cachedRun;
 
         public Grid(AtmosSceneService owner, Guid itemId, ItemState state, LiveSession session, SceneDocument layout,
-            string basePath, long startFrame, bool atStreamStart, int segmentFrames, SemaphoreSlim encoders, List<Task> encoding)
+            ISceneEventSource events, long startFrame, bool atStreamStart, int segmentFrames, SemaphoreSlim encoders, List<Task> encoding)
         {
             _owner = owner;
             _itemId = itemId;
             _state = state;
             _session = session;
             _layout = layout;
-            _metadataPath = basePath + ".atmos.metadata";
             _frameBytes = layout.Elements.Count * 3;
             _segmentFrames = segmentFrames;
             _encoders = encoders;
             _encoding = encoding;
-            _events = new DamfEventStream(startFrame);
+            _events = events;
             _carry = new byte[_frameBytes];
             _buffer = new byte[segmentFrames * _frameBytes];
 
@@ -833,7 +854,6 @@ public sealed class AtmosSceneService
             }
 
             var from = (long)segment * _segmentFrames;
-            _events.Pump(_metadataPath);
             var events = _events.Segment(from, from + frames);
             WriteAtomically(_owner.EventsPath(_itemId, segment), JsonSerializer.SerializeToUtf8Bytes(events, JsonOptions));
 
@@ -967,13 +987,28 @@ public sealed class AtmosSceneService
         File.Move(tmp, path, overwrite: true);
     }
 
-    /// <summary>Timestamp of the TrueHD track's first packet: scene frame 0.</summary>
-    private double ProbeOriginMs(string mediaPath, int streamIndex)
+    /// <summary>Timestamp of the track's first packet: scene frame 0.</summary>
+    private double ProbeOriginMs(string mediaPath, int streamIndex) => ProbePacketTimeMs(mediaPath, streamIndex, 0);
+
+    /// <summary>
+    /// Timestamp of the first packet ffprobe reads after seeking to
+    /// <paramref name="seekSeconds"/>. ffmpeg's own <c>-ss</c> input seek (used to
+    /// cut the EAC3 stream for Cavern, see <c>Eac3AtmosDecoder.cs</c>) lands on the
+    /// same packet, since both go through the same demuxer's seek — this is how the
+    /// EAC3 path learns the container time its extract actually starts at, the way
+    /// <see cref="StartSolver"/> does it for TrueHD from packet timestamps instead.
+    /// </summary>
+    private double ProbePacketTimeMs(string mediaPath, int streamIndex, double seekSeconds)
     {
-        using var process = StartProcess(_mediaEncoder.ProbePath,
-            ["-v", "error", "-select_streams", streamIndex.ToString(CultureInfo.InvariantCulture),
-             "-read_intervals", "%+#1", "-show_entries", "packet=pts_time", "-of", "csv=p=0", mediaPath],
-            redirectInput: false);
+        var args = new List<string> { "-v", "error" };
+        if (seekSeconds > 0)
+        {
+            args.AddRange(["-ss", seekSeconds.ToString("F3", CultureInfo.InvariantCulture)]);
+        }
+
+        args.AddRange(["-i", mediaPath, "-select_streams", streamIndex.ToString(CultureInfo.InvariantCulture),
+             "-read_intervals", "%+#1", "-show_entries", "packet=pts_time", "-of", "csv=p=0"]);
+        using var process = StartProcess(_mediaEncoder.ProbePath, args, redirectInput: false);
         var output = process.StandardOutput.ReadToEnd();
         process.WaitForExit();
         return double.TryParse(output.Trim().Split('\n')[0], NumberStyles.Float, CultureInfo.InvariantCulture, out var seconds)

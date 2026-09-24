@@ -8,6 +8,15 @@
     <FileVersion>0.1.0.0</FileVersion>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <!--
+      A class library doesn't copy PackageReference DLLs to its own output by
+      default (only executables do) — but a Jellyfin plugin folder IS the
+      output, so Cavern.dll/Cavern.Format.dll need to land next to this DLL
+      for the EAC3 path to load. TrueHD needs no equivalent: truehdd is an
+      external binary the server operator points the config at, not a
+      reference.
+    -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
   </PropertyGroup>
 
   <ItemGroup>
@@ -15,6 +24,17 @@
     <PackageReference Include="Jellyfin.Controller" Version="10.11.5" ExcludeAssets="runtime" />
     <PackageReference Include="Jellyfin.Model" Version="10.11.5" ExcludeAssets="runtime" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <!--
+      Decodes E-AC-3's JOC objects in-process (see Eac3AtmosDecoder.cs). Official
+      NuGet packages from https://github.com/VoidXH/Cavern, netstandard2.1, no
+      source pinning needed unlike truehdd. Cavern's licence (LICENCE.md in the
+      package, also reproduced in THIRD_PARTY_NOTICES.md at the repo root) is
+      free but requires crediting the author (http://en.sbence.hu) wherever it's
+      used publicly — the "Dependencies" section below carries that credit, and
+      this reference must not be copied into anything outside this plugin.
+    -->
+    <PackageReference Include="Cavern" Version="2.1.0" />
+    <PackageReference Include="Cavern.Format" Version="2.1.0" />
   </ItemGroup>
 
 </Project>

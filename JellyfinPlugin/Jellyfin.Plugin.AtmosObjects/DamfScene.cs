@@ -91,6 +91,83 @@ public static partial class DamfReader
 }
 
 /// <summary>
+/// Something that can produce the events for a scene segment, keyed by frame
+/// range. TrueHD (<see cref="DamfEventStream"/>, via <see cref="DamfEventSource"/>)
+/// and EAC3 (<see cref="CavernEventStream"/>) each fill their own per-element
+/// keyframe lists from a different decoder, then share the same cut-to-segment
+/// logic in <see cref="EventTimeline"/>.
+/// </summary>
+public interface ISceneEventSource
+{
+    List<SceneEvent> Segment(long from, long to);
+}
+
+/// <summary>
+/// The snapshot-plus-ramp segment cut shared by every <see cref="ISceneEventSource"/>:
+/// events are stored as one keyframe list per element id, and a segment opens
+/// with each element's interpolated state at <paramref name="from"/> so it can
+/// be used on its own, followed by the keyframes that fall inside the range.
+/// </summary>
+public static class EventTimeline
+{
+    public static List<SceneEvent> Segment(Dictionary<int, List<SceneEvent>> byElement, long from, long to)
+    {
+        var result = new List<SceneEvent>();
+        foreach (var (id, events) in byElement)
+        {
+            var snapshot = StateAt(events, from);
+            if (snapshot is not null)
+            {
+                result.Add(snapshot);
+            }
+
+            result.AddRange(events.Where(e => e.T > from && e.T < to));
+        }
+
+        result.Sort((a, b) => a.T != b.T ? a.T.CompareTo(b.T) : a.Id.CompareTo(b.Id));
+        return result;
+    }
+
+    private static SceneEvent? StateAt(List<SceneEvent> events, long frame)
+    {
+        var index = events.FindLastIndex(e => e.T <= frame);
+        if (index < 0)
+        {
+            return null;
+        }
+
+        var key = events[index];
+        double[]? pos = key.Pos;
+        var gain = key.Gain;
+        if (index > 0 && key.Ramp > 0 && frame < key.T + key.Ramp)
+        {
+            var prev = events[index - 1];
+            var u = (frame - key.T) / (double)key.Ramp;
+            gain = prev.Gain + ((key.Gain - prev.Gain) * u);
+            if (prev.Pos is not null && key.Pos is not null)
+            {
+                pos = prev.Pos.Zip(key.Pos, (a, b) => a + ((b - a) * u)).ToArray();
+            }
+        }
+
+        return new SceneEvent { Id = key.Id, T = frame, Ramp = 0, Gain = gain, Pos = pos };
+    }
+}
+
+/// <summary>
+/// Adapts <see cref="DamfEventStream"/> (which needs to re-read the growing
+/// .atmos.metadata file before every cut) to <see cref="ISceneEventSource"/>.
+/// </summary>
+public sealed class DamfEventSource(DamfEventStream stream, string metadataPath) : ISceneEventSource
+{
+    public List<SceneEvent> Segment(long from, long to)
+    {
+        stream.Pump(metadataPath);
+        return stream.Segment(from, to);
+    }
+}
+
+/// <summary>
 /// Follows the .atmos.metadata file truehdd is still writing (it flushes after
 /// every update) and keeps every element's keyframes in scene frames.
 ///
@@ -160,45 +237,7 @@ public sealed class DamfEventStream
             _id = null;
         }
 
-        var result = new List<SceneEvent>();
-        foreach (var (id, events) in _byElement)
-        {
-            var snapshot = StateAt(events, from);
-            if (snapshot is not null)
-            {
-                result.Add(snapshot);
-            }
-
-            result.AddRange(events.Where(e => e.T > from && e.T < to));
-        }
-
-        result.Sort((a, b) => a.T != b.T ? a.T.CompareTo(b.T) : a.Id.CompareTo(b.Id));
-        return result;
-    }
-
-    private static SceneEvent? StateAt(List<SceneEvent> events, long frame)
-    {
-        var index = events.FindLastIndex(e => e.T <= frame);
-        if (index < 0)
-        {
-            return null;
-        }
-
-        var key = events[index];
-        double[]? pos = key.Pos;
-        var gain = key.Gain;
-        if (index > 0 && key.Ramp > 0 && frame < key.T + key.Ramp)
-        {
-            var prev = events[index - 1];
-            var u = (frame - key.T) / (double)key.Ramp;
-            gain = prev.Gain + ((key.Gain - prev.Gain) * u);
-            if (prev.Pos is not null && key.Pos is not null)
-            {
-                pos = prev.Pos.Zip(key.Pos, (a, b) => a + ((b - a) * u)).ToArray();
-            }
-        }
-
-        return new SceneEvent { Id = key.Id, T = frame, Ramp = 0, Gain = gain, Pos = pos };
+        return EventTimeline.Segment(_byElement, from, to);
     }
 
     private void Consume(string line)
