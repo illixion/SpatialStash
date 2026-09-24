@@ -2647,7 +2647,27 @@ class AppModel {
         )
         await apiClient.updateConfig(config)
         let result = try await GraphQLImageSource(apiClient: apiClient).fetchImages(page: 0, pageSize: 1)
-        return result.totalCount ?? result.images.count
+        let count = result.totalCount ?? result.images.count
+
+        // A successful metadata query only proves the key's claims are
+        // accepted by GraphQL. Stash's media endpoints (images, thumbnails,
+        // streams) separately re-verify the key via a signed-URL check, which
+        // a key issued against a since-rotated server signing secret can fail
+        // even while every GraphQL query keeps succeeding — this silently
+        // broke every image/video/thumbnail in the app on 2026-09-24 while
+        // this same check kept reporting "Connected." `updateAPIClient()` is
+        // always called just before this (see the "Apply & Test Connection"
+        // button), so `MediaAuthorization` already carries the credential
+        // being tested here. `bypassCache: true` is required — a thumbnail
+        // fetched successfully before the key broke would otherwise still be
+        // sitting in disk cache and mask the failure.
+        if let firstImage = result.images.first {
+            guard (try? await ImageLoader.shared.loadRawData(from: firstImage.thumbnailURL, bypassCache: true)) != nil else {
+                throw ImageSourceError.mediaAuthenticationFailed
+            }
+        }
+
+        return count
     }
 
     /// Stores verified server credentials and starts browsing them.

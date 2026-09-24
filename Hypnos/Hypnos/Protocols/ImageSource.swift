@@ -25,6 +25,7 @@ enum ImageSourceError: Error, LocalizedError {
     case networkError(underlying: Error)
     case noImagesAvailable
     case decodingError(String)
+    case mediaAuthenticationFailed
 
     var errorDescription: String? {
         switch self {
@@ -36,6 +37,8 @@ enum ImageSourceError: Error, LocalizedError {
             return "No images available from the source"
         case .decodingError(let message):
             return "Decoding error: \(message)"
+        case .mediaAuthenticationFailed:
+            return "Server accepted the key for browsing, but a real image failed to load. Stash checks the key's signature separately for images/videos — a stale key can fail that even though metadata keeps working. Try regenerating the API key in Stash (Settings → Security) and entering the new one here."
         }
     }
 }

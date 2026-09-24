@@ -10,6 +10,28 @@ import os
 import SwiftUI
 import UniformTypeIdentifiers
 
+/// Outcome of a "Apply & Test Connection" check, carrying whether it should
+/// read as good news or bad — a failure (especially `ImageSourceError
+/// .mediaAuthenticationFailed`) needs a visibly different treatment than a
+/// plain success caption, or it's exactly as missable as the caption-only
+/// result this replaced.
+enum ConnectionTestOutcome {
+    case success(String)
+    case failure(String)
+
+    var message: String {
+        switch self {
+        case .success(let message), .failure(let message):
+            return message
+        }
+    }
+
+    var isFailure: Bool {
+        if case .failure = self { return true }
+        return false
+    }
+}
+
 struct SettingsTabView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(MainWindowModel.self) private var windowModel
@@ -31,8 +53,12 @@ struct SettingsTabView: View {
     /// Picker + confirmation + alerts, shared with the welcome flow.
     @State private var backupImporter = SettingsBackupImporter()
     @State private var showEnhancementsClearConfirmation = false
-    /// Outcome of the last "Apply & Test Connection", shown in place.
-    @State private var connectionTestResult: String?
+    /// Outcome of the last "Apply & Test Connection", shown in place. A
+    /// failure needs to read as a failure — a plain caption is easy to miss,
+    /// and this is exactly the kind of check whose whole point is catching a
+    /// server credential that looks fine (GraphQL still answers) but leaves
+    /// every image/video/thumbnail broken (see `verifyStashServer`).
+    @State private var connectionTestResult: ConnectionTestOutcome?
 
     var body: some View {
         @Bindable var appModel = appModel
@@ -287,9 +313,15 @@ struct SettingsTabView: View {
                     }
 
                     if let connectionTestResult {
-                        Text(connectionTestResult)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        if connectionTestResult.isFailure {
+                            Label(connectionTestResult.message, systemImage: "exclamationmark.triangle.fill")
+                                .font(.callout.weight(.semibold))
+                                .foregroundStyle(.red)
+                        } else {
+                            Text(connectionTestResult.message)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
 
                     Toggle("Server-Side Transcoding", isOn: $appModel.enableStashTranscoding)
@@ -632,10 +664,10 @@ struct SettingsTabView: View {
         do {
             let count = try await appModel.verifyStashServer(url: appModel.stashServerURL,
                                                             apiKey: appModel.stashAPIKey)
-            connectionTestResult = "Connected — \(count) image\(count == 1 ? "" : "s")"
+            connectionTestResult = .success("Connected — \(count) image\(count == 1 ? "" : "s")")
             AppLogger.settings.info("Connection successful, \(count, privacy: .public) images")
         } catch {
-            connectionTestResult = error.localizedDescription
+            connectionTestResult = .failure(error.localizedDescription)
             AppLogger.settings.error("Connection failed: \(error.localizedDescription, privacy: .public)")
         }
     }

@@ -283,10 +283,16 @@ actor ImageLoader {
     /// Load ONLY the raw Data for a URL without decoding to UIImage.
     /// Avoids the expensive normalizeImage() allocation for cases where
     /// only the bytes are needed (e.g. GIF detection).
-    func loadRawData(from url: URL) async throws -> Data? {
+    /// - Parameter bypassCache: Skip the memory/disk cache reads and always hit
+    ///   the network. Used by the Settings "Test Connection" check, where a
+    ///   previously-cached good thumbnail would otherwise mask a since-broken
+    ///   credential (e.g. a Stash API key whose signature no longer verifies)
+    ///   by silently serving the old bytes instead of re-authenticating.
+    ///   Successful fetches are still written to disk cache as usual.
+    func loadRawData(from url: URL, bypassCache: Bool = false) async throws -> Data? {
         guard let url = await resolvingPhotosAsset(url) else { return nil }
         // Check memory cache first (if already loaded, return cached data)
-        if let cached = cache.object(forKey: url as NSURL) {
+        if !bypassCache, let cached = cache.object(forKey: url as NSURL) {
             return cached.data
         }
 
@@ -296,7 +302,7 @@ actor ImageLoader {
         }
 
         // Check disk cache for remote URLs
-        if let diskData = await DiskImageCache.shared.loadData(for: url) {
+        if !bypassCache, let diskData = await DiskImageCache.shared.loadData(for: url) {
             return diskData
         }
 

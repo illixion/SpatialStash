@@ -17,7 +17,7 @@ import SwiftUI
 
 struct MacSettingsView: View {
     @Environment(AppModel.self) private var appModel
-    @State private var connectionTestResult: String?
+    @State private var connectionTestResult: ConnectionTestOutcome?
 
     var body: some View {
         Form {
@@ -59,9 +59,15 @@ struct MacSettingsView: View {
                 }
 
                 if let connectionTestResult {
-                    Text(connectionTestResult)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    if connectionTestResult.isFailure {
+                        Label(connectionTestResult.message, systemImage: "exclamationmark.triangle.fill")
+                            .font(.callout.weight(.semibold))
+                            .foregroundStyle(.red)
+                    } else {
+                        Text(connectionTestResult.message)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 Toggle("Server-Side Transcoding", isOn: Binding(
@@ -87,9 +93,9 @@ struct MacSettingsView: View {
                 url: appModel.stashServerURL,
                 apiKey: appModel.stashAPIKey
             )
-            connectionTestResult = "Connected — \(count) image\(count == 1 ? "" : "s")"
+            connectionTestResult = .success("Connected — \(count) image\(count == 1 ? "" : "s")")
         } catch {
-            connectionTestResult = error.localizedDescription
+            connectionTestResult = .failure(error.localizedDescription)
         }
     }
 }
