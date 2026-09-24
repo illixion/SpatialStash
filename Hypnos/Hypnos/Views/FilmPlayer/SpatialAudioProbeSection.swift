@@ -135,7 +135,7 @@ final class ProbeSweep: @unchecked Sendable {
     var cycleFrames: Int { speakers.count * Int(Self.stepSeconds * Self.sampleRate) }
 
     /// Built here rather than in the view so the block is not main-actor
-    /// isolated (see `AtmosObjectAudio.renderHandler(channel:)` in FilmPlayback).
+    /// isolated (see `AtmosObjectAudio.renderHandler(channel:)` in RAVESDK's RAVEFilm).
     func makeSourceNode(format: AVAudioFormat) -> AVAudioSourceNode {
         AVAudioSourceNode(format: format) { _, _, frameCount, output in
             self.render(frameCount: Int(frameCount), into: UnsafeMutableAudioBufferListPointer(output))

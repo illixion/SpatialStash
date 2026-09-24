@@ -14,7 +14,7 @@
 		AA07000000000000000000D3 /* RAVEMedia in Frameworks */ = {isa = PBXBuildFile; productRef = AA07000000000000000000D2 /* RAVEMedia */; };
 		AA09000000000000000000F3 /* RAVESlideshow in Frameworks */ = {isa = PBXBuildFile; productRef = AA09000000000000000000F2 /* RAVESlideshow */; };
 		AA10000000000000000000A3 /* NextcloudMedia in Frameworks */ = {isa = PBXBuildFile; productRef = AA10000000000000000000A2 /* NextcloudMedia */; };
-		AA11000000000000000000A3 /* FilmPlayback in Frameworks */ = {isa = PBXBuildFile; productRef = AA11000000000000000000A2 /* FilmPlayback */; };
+		AA11000000000000000000A3 /* RAVEFilm in Frameworks */ = {isa = PBXBuildFile; productRef = AA11000000000000000000A2 /* RAVEFilm */; };
 		AA08000000000000000000ED /* RAVEUI in Frameworks */ = {isa = PBXBuildFile; productRef = AA08000000000000000000EC /* RAVEUI */; };
 		AA08000000000000000000F0 /* AccessibilityIdentifiers.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA08000000000000000000EF /* AccessibilityIdentifiers.swift */; };
 		AA08000000000000000000F1 /* AccessibilityIdentifiers.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA08000000000000000000EF /* AccessibilityIdentifiers.swift */; };
@@ -75,7 +75,7 @@
 				AA07000000000000000000D3 /* RAVEMedia in Frameworks */,
 				AA09000000000000000000F3 /* RAVESlideshow in Frameworks */,
 				AA10000000000000000000A3 /* NextcloudMedia in Frameworks */,
-				AA11000000000000000000A3 /* FilmPlayback in Frameworks */,
+				AA11000000000000000000A3 /* RAVEFilm in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -165,7 +165,7 @@
 				AA07000000000000000000D2 /* RAVEMedia */,
 				AA09000000000000000000F2 /* RAVESlideshow */,
 				AA10000000000000000000A2 /* NextcloudMedia */,
-				AA11000000000000000000A2 /* FilmPlayback */,
+				AA11000000000000000000A2 /* RAVEFilm */,
 			);
 			productName = Hypnos;
 			productReference = 0778651A2D811C5500BCF113 /* Hypnos.app */;
@@ -227,7 +227,6 @@
 				AA01000000000000000000A1 /* XCLocalSwiftPackageReference "../../RAVESDK" */,
 				AA05000000000000000000B1 /* XCLocalSwiftPackageReference "../../RAVEEngine" */,
 				AA10000000000000000000A1 /* XCLocalSwiftPackageReference "../Packages/NextcloudMedia" */,
-				AA11000000000000000000A1 /* XCLocalSwiftPackageReference "../Packages/FilmPlayback" */,
 			);
 			productRefGroup = 0778651B2D811C5500BCF113 /* Products */;
 			projectDirPath = "";
@@ -566,10 +565,6 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../Packages/NextcloudMedia;
 		};
-		AA11000000000000000000A1 /* XCLocalSwiftPackageReference "../Packages/FilmPlayback" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = ../Packages/FilmPlayback;
-		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -612,10 +607,10 @@
 			package = AA10000000000000000000A1 /* XCLocalSwiftPackageReference "../Packages/NextcloudMedia" */;
 			productName = NextcloudMedia;
 		};
-		AA11000000000000000000A2 /* FilmPlayback */ = {
+		AA11000000000000000000A2 /* RAVEFilm */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = AA11000000000000000000A1 /* XCLocalSwiftPackageReference "../Packages/FilmPlayback" */;
-			productName = FilmPlayback;
+			package = AA01000000000000000000A1 /* XCLocalSwiftPackageReference "../../RAVESDK" */;
+			productName = RAVEFilm;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

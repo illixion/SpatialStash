@@ -2,7 +2,7 @@
  Hypnos - film player window
 
  The film's picture with its Atmos objects as spatial sources around it
- (FilmPlayback's `FilmVideoView` and `FilmStageView`, driven by one
+ (RAVEFilm's `FilmVideoView` and `FilmStageView`, driven by one
  `FilmPlayer`). On visionOS it is its own window: the sound stage is
  anchored to the window, so the screen is the front wall of the room
  wherever the window goes, and the transport sits in an ornament with
@@ -11,7 +11,7 @@
  picture.
  */
 
-import FilmPlayback
+import RAVEFilm
 import SwiftUI
 
 struct FilmPlayerView: View {

@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		BB10000000000000000000B3 /* FilmPlayback in Frameworks */ = {isa = PBXBuildFile; productRef = BB10000000000000000000B2 /* FilmPlayback */; };
+		BB10000000000000000000B3 /* RAVEFilm in Frameworks */ = {isa = PBXBuildFile; productRef = BB10000000000000000000B2 /* RAVEFilm */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -23,7 +23,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				BB10000000000000000000B3 /* FilmPlayback in Frameworks */,
+				BB10000000000000000000B3 /* RAVEFilm in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -66,7 +66,7 @@
 			);
 			name = FilmLabTV;
 			packageProductDependencies = (
-				BB10000000000000000000B2 /* FilmPlayback */,
+				BB10000000000000000000B2 /* RAVEFilm */,
 			);
 			productName = FilmLabTV;
 			productReference = BB10000000000000000000A4 /* FilmLabTV.app */;
@@ -92,7 +92,7 @@
 			mainGroup = BB10000000000000000000A1;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				BB10000000000000000000B1 /* XCLocalSwiftPackageReference ".." */,
+				BB10000000000000000000B1 /* XCLocalSwiftPackageReference "../../RAVESDK" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = BB10000000000000000000A3 /* Products */;
@@ -228,16 +228,16 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		BB10000000000000000000B1 /* XCLocalSwiftPackageReference ".." */ = {
+		BB10000000000000000000B1 /* XCLocalSwiftPackageReference "../../RAVESDK" */ = {
 			isa = XCLocalSwiftPackageReference;
-			relativePath = ..;
+			relativePath = ../../RAVESDK;
 		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		BB10000000000000000000B2 /* FilmPlayback */ = {
+		BB10000000000000000000B2 /* RAVEFilm */ = {
 			isa = XCSwiftPackageProductDependency;
-			productName = FilmPlayback;
+			productName = RAVEFilm;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

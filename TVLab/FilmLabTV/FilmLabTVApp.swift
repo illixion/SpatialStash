@@ -1,5 +1,5 @@
 /*
- Hypnos - FilmPlayback's Apple TV bench (picture only)
+ Hypnos - RAVEFilm's Apple TV bench (picture only)
 
  Plays one film's picture through FilmVideoPlayer, the same layer and
  host-clock timebase path the visionOS player uses, and asks the TV to
@@ -17,7 +17,7 @@
 
 import AVFoundation
 import AVKit
-import FilmPlayback
+import RAVEFilm
 import SwiftUI
 
 @main

@@ -1,15 +1,15 @@
 /*
  Hypnos - film player session (Settings → Developer → Film Player)
 
- App glue around FilmPlayback's `FilmPlayer`: the Jellyfin server and API
+ App glue around RAVEFilm's `FilmPlayer`: the Jellyfin server and API
  key, library search, which item is loaded, and whether the player is
  showing. The player itself (picture, Atmos object audio, one clock) lives
- in the package; see `Packages/FilmPlayback`. The server needs the Atmos
+ in RAVESDK's `RAVEFilm` target. The server needs the Atmos
  Objects plugin (`JellyfinPlugin/`), which serves both the video segments
  and the object audio.
  */
 
-import FilmPlayback
+import RAVEFilm
 import Foundation
 import Observation
 import os
