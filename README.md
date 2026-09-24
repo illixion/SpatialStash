@@ -228,7 +228,9 @@ The app follows a SwiftUI architecture with:
 
 ## License
 
-See [LICENSE.txt](LICENSE.txt) for licensing information.
+See [LICENSE.txt](LICENSE.txt) for licensing information, and
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for third-party components
+used by the app and the Jellyfin plugin (Cavern, truehdd, Depth Anything V2).
 
 ## Acknowledgments
 
