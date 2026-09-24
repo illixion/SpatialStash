@@ -8,6 +8,9 @@
 
 import AVFoundation
 import SwiftUI
+#if os(tvOS) || os(visionOS)
+import AVKit
+#endif
 
 #if os(macOS)
 public struct FilmVideoView: NSViewRepresentable {
@@ -52,10 +55,37 @@ public struct FilmVideoView: UIViewRepresentable {
         LayerHostView(videoLayer: player.displayLayer)
     }
 
-    public func updateUIView(_ view: LayerHostView, context: Context) {}
+    public func updateUIView(_ view: LayerHostView, context: Context) {
+        #if os(tvOS) || os(visionOS)
+        view.displayCriteria = player.displayCriteria
+        #endif
+    }
 
     public final class LayerHostView: UIView {
         private let videoLayer: AVSampleBufferDisplayLayer
+        #if os(tvOS) || os(visionOS)
+        /// Stated to the window's display manager while the view is in it.
+        var displayCriteria: AVDisplayCriteria? {
+            didSet { applyDisplayCriteria() }
+        }
+        private weak var criteriaWindow: UIWindow?
+
+        override public func didMoveToWindow() {
+            super.didMoveToWindow()
+            applyDisplayCriteria()
+        }
+
+        private func applyDisplayCriteria() {
+            if let criteriaWindow, criteriaWindow !== window {
+                criteriaWindow.avDisplayManager.preferredDisplayCriteria = nil
+            }
+            criteriaWindow = window
+            guard let window else { return }
+            window.avDisplayManager.preferredDisplayCriteria = displayCriteria
+            print("FilmVideoView: display criteria \(displayCriteria == nil ? "cleared" : "set"), "
+                + "matching enabled=\(window.avDisplayManager.isDisplayCriteriaMatchingEnabled)")
+        }
+        #endif
 
         init(videoLayer: AVSampleBufferDisplayLayer) {
             self.videoLayer = videoLayer

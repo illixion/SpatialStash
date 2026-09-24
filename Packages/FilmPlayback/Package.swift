@@ -11,12 +11,17 @@ import PackageDescription
 // visionOS and iOS are declared because the app links the library product.
 let package = Package(
     name: "FilmPlayback",
-    platforms: [.macOS(.v15), .visionOS(.v26), .iOS(.v26)],
+    platforms: [.macOS(.v15), .visionOS(.v26), .iOS(.v26), .tvOS(.v26)],
     products: [
         .library(name: "FilmPlayback", targets: ["FilmPlayback"]),
     ],
     targets: [
-        .target(name: "FilmPlayback"),
+        .target(
+            name: "FilmPlayback",
+            // UIWindow.avDisplayManager is an AVKit category; Swift's autolink
+            // drops the framework when nothing else from it is used.
+            linkerSettings: [.linkedFramework("AVKit", .when(platforms: [.tvOS, .visionOS]))]
+        ),
         .testTarget(
             name: "FilmPlaybackTests",
             dependencies: ["FilmPlayback"],

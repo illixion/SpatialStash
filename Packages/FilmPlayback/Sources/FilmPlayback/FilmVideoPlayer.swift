@@ -35,6 +35,10 @@ public final class FilmVideoPlayer {
     public private(set) var index: FilmVideoIndex?
     public private(set) var track: FragmentedMP4Track?
     public private(set) var formatSummary = ""
+    /// The picture's format as fed to the renderer, HDR static metadata included.
+    public private(set) var format: CMVideoFormatDescription?
+    /// Frames per second, from the first segment's sample durations.
+    public private(set) var frameRate: Double?
     public private(set) var status = "Idle"
     public private(set) var isPlaying = false
     /// The frame at the last seek target is queued and the renderer can start smoothly.
@@ -52,7 +56,6 @@ public final class FilmVideoPlayer {
 
     private let logger = Logger(subsystem: "com.illixion.hypnos", category: "FilmVideo")
     private var client: FilmServerClient?
-    private var format: CMVideoFormatDescription?
     private var feedTask: Task<Void, Never>?
     private var startTask: Task<Void, Never>?
     private var segments: [Int: Task<FragmentedMP4Segment, Error>] = [:]
@@ -76,6 +79,22 @@ public final class FilmVideoPlayer {
         #endif
     }
 
+    #if os(tvOS) || os(visionOS)
+    /// What the picture is, for the display: its dynamic range (from the
+    /// format, HDR metadata included) and its frame rate snapped to the
+    /// standard rate it approximates. `FilmVideoView` hands this to its
+    /// window's AVDisplayManager: tvOS switches the TV's mode with it, and
+    /// on visionOS it is how a player declares HDR video, as AVKit's player
+    /// does on its own.
+    public var displayCriteria: AVDisplayCriteria? {
+        guard let format else { return nil }
+        let measured = frameRate ?? 24
+        let standard: [Double] = [24000.0 / 1001, 24, 25, 30000.0 / 1001, 30, 50, 60000.0 / 1001, 60]
+        let rate = standard.min { abs($0 - measured) < abs($1 - measured) } ?? measured
+        return AVDisplayCriteria(refreshRate: Float(rate), formatDescription: format)
+    }
+    #endif
+
     /// Current film time.
     public var currentTime: Double { CMTimebaseGetTime(timebase).seconds }
     public var duration: Double { index?.durationSeconds ?? 0 }
@@ -88,6 +107,7 @@ public final class FilmVideoPlayer {
         index = nil
         track = nil
         format = nil
+        frameRate = nil
         formatSummary = ""
         status = "Loading…"
         do {
@@ -104,6 +124,11 @@ public final class FilmVideoPlayer {
                 format = HEVCStaticHDR.applying(HEVCStaticHDR.metadata(in: first.data.subdata(in: keyframe.range)), to: format)
             }
             self.format = format
+            // Averaged: a millisecond timescale (MKV-derived) alternates 41 and 42.
+            let total = first.samples.reduce(Int64(0)) { $0 + $1.duration }
+            if total > 0 {
+                frameRate = Double(first.samples.count) * Double(track.timescale) / Double(total)
+            }
             formatSummary = Self.summarize(format, track: track, index: index)
             logger.info("Loaded \(client.itemID, privacy: .public): \(self.formatSummary, privacy: .public)")
             status = "Ready"
