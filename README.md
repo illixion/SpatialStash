@@ -1,25 +1,24 @@
 # Hypnos
 
-A visionOS app for Apple Vision Pro that transforms your 2D images into immersive 3D spatial photos, with an iPhone and iPad version of the same app. Browse your media library from a [Stash](https://github.com/stashapp/stash) server, your photo library, local files, or use the built-in demo mode.
+Hypnos is a cross-platform media viewer and spatial media app for visionOS, iOS/iPadOS, tvOS, and macOS. It brings your photos and videos into a shared media experience: browse your library from [Stash](https://github.com/stashapp/stash), Jellyfin, your device photo library, local files, or the built-in demo content.
 
-The one project builds for both platforms. Everything that isn't about depth — the galleries, filters, slideshows, video playback, enhancements, background removal, the RoboFrame viewer, pinned web pages, settings backup — runs on iOS too. What stays Vision Pro-only is what needs a stereoscopic display or several windows: spatial 3D photo conversion, immersive 3D, pseudo-3D and MV-HEVC video, diorama layers, and the window manager. See [Platforms](#platforms).
+The project is deliberately one codebase with a single app target and platform-specific scene roots. The shared media pipeline — browsing, filters, slideshow, playback, visual adjustments, background removal, remote viewers, pinned web pages, settings backup, and caches — runs everywhere. What stays platform-specific is the windowing and depth-heavy UX: visionOS gets immersive 3D, multi-window scenes, and depth-oriented presentation; tvOS and macOS get their own native root views; iOS/iPadOS keeps the same media functionality in a single-window experience. See [Platforms](#platforms).
 
 ## Features
 
-- **2D to 3D Conversion** - Uses Apple's RealityKit to convert standard images into spatial 3D photos viewable on Vision Pro, with automatic restoration of 3D state for previously converted images
-- **Stash Server Integration** - Connect to your Stash media server via GraphQL API to browse images and videos
-- **Local Files** - Browse images and videos from the app's Documents folder
-- **Share Sheet Support** - Receive images and videos from other apps via the system share sheet, with save-to-files option
-- **Advanced Filtering** - Filter by galleries, tags, ratings, performers and more with saved filter presets
-- **Swipe Navigation** - Swipe between images in the gallery with smooth transitions
-- **Slideshow** - Random image/video slideshow with Ken Burns animation, dynamic brightness, clock overlay, and visual adjustments. Local gallery and app-gallery playback uses the shared `RAVESlideshow` lifecycle/provider/synchronization package; RoboFrame playback remains server-driven in the legacy Remote product until the dedicated client completes parity. Launches in a dedicated viewer window with configurable display options
-- **Rating & O-Count** - View and edit image ratings and O-count directly from the viewer
-- **Video Playback** - Stream videos directly from your Stash server or play local files
-- **Stereoscopic 3D Video** - Automatically detects SBS/OU stereoscopic formats from tags, converts to MV-HEVC, and plays in full immersive mode
-- **Pseudo 3D Video Conversion** - Converts flat videos into windowed stereoscopic 3D using Core ML monocular depth (Depth Anything V2). Choose between **real-time** (instant, 30fps inference-bound) or **pre-processed** (background conversion for exact-frame 60fps playback with offline-optimized depth quality). Adjustable depth strength, convergence, and Subtle/Medium/Strong presets. Models downloaded on-demand from Apple's Hugging Face repo, switchable and deletable from the view-mode menu. With "Real-Time 3D for All Videos" enabled in Settings, eligible videos auto-engage 3D on open
-- **Unlimited Windows** - Open multiple image viewer windows that persist in your space
-- **Memory Management** - Lightweight 2D display by default with automatic downsampling, configurable dynamic image resolution, and memory-aware window management
-- **Demo Mode** - Try the app with bundled sample images without server setup
+- **Spatial 2D → 3D conversion** - Uses Apple's RealityKit and monocular-depth workflows to convert standard images into spatial 3D photos, with automatic restore prompts for previously converted images
+- **Stash server integration** - Connect to a Stash media server via GraphQL API to browse and manage images, videos, galleries, tags, and metadata
+- **Jellyfin support** - Browse and play media from a Jellyfin server, including Atmos-object media paths on supported platforms
+- **iCloud Photos and local files** - Browse the device photo library, app Documents folders, and local media sources without extra setup
+- **Share sheet support** - Receive photos and videos from other apps, then save or open them in the app's own media pipeline
+- **Advanced filtering and metadata editing** - Filter by galleries, tags, performers, studios, ratings, and saved presets; edit ratings, metadata, and O-counts in the viewer
+- **Slideshow engine** - Shared slideshow logic for gallery and local content, with Ken Burns motion, dynamic brightness, clock overlays, and display settings; remote slideshow profiles remain server-driven via RoboFrame/WS
+- **Video playback and transcode fallback** - Stream media directly from Stash, local files, or streamed proxy sources; fall back to server-side transcoding when a source cannot decode directly
+- **Stereoscopic and pseudo-3D video** - Detect SBS/OU sources, convert to MV-HEVC for immersive playback, or convert flat videos into windowed stereoscopic 3D using Depth Anything V2 monocular depth
+- **Real-time and pre-processed depth pipelines** - Choose between instant real-time depth or background conversion with cached depth sidecars for higher-quality 3D playback and future re-use
+- **Multiple windows and native platform roots** - visionOS uses multiple windows and immersive scenes; macOS uses real multiple windows; tvOS uses a dedicated TV root; iOS/iPadOS uses a single-window shell
+- **Memory and cache management** - GPU-private textures, disk caches, configurable cache budgets, downsampling, and background cleanup keep the app responsive across platforms
+- **Demo mode** - Launch the app with bundled sample media for quick testing and previews
 
 ## Screenshots
 
@@ -31,37 +30,49 @@ The one project builds for both platforms. Everything that isn't about depth —
 
 ## Requirements
 
-- Apple Vision Pro or visionOS Simulator, **or** an iPhone/iPad or iOS Simulator
+- Apple Vision Pro or a visionOS Simulator
+- iPhone, iPad, Apple TV, or the matching simulator
+- macOS 26+ for the native macOS build
 - Xcode 26+
-- visionOS 26.0+ / iOS 26.0+
-- (Optional) [Stash](https://github.com/stashapp/stash) server for media library integration
+- visionOS 26.0+, iOS 26.0+, tvOS 26.2+, or macOS 26.0+
+- (Optional) [Stash](https://github.com/stashapp/stash) or Jellyfin server for media-library integration
 
 ## Platforms
 
-Hypnos is one target with two platforms. The scene graph is the only
-thing that differs: visionOS opens a window per viewer plus two immersive
-spaces; iOS has a single window in which the same viewers open as full-screen
-covers and the tool windows as sheets (`IOSWindowRouter`). Everything below the
-scene roots is shared code.
+Hypnos is one shared app target with platform-aware roots. The scene graph differs by platform, but the media model, pipeline, settings, and viewer logic are shared across most of the app.
 
-| Feature | visionOS | iOS / iPadOS |
-|---|---|---|
-| Photos, Stash and Local libraries, albums, filters, multi-select | ✓ | ✓ |
-| Photo viewer: Metal 2D display, swipe navigation, animated GIF/WebP/JXL, adjustments, auto-enhance, background removal, flip, share, info/edit | ✓ | ✓ |
-| Video: native Metal and WebKit players, custom transport, A-B loop, Stash transcode fallback, adjustments | ✓ | ✓ |
-| Slideshows (gallery and RoboFrame), Ken Burns, clock/sensor overlays, WebSocket control, Display Sync | ✓ | ✓ |
-| Pinned web pages, `hypnos://play` handoff, web-yt-dlp | ✓ | ✓ |
-| Settings backup/import, disk cache manager, debug console | ✓ | ✓ |
-| Spatial 3D photo conversion, Immersive 3D, Quick Look in 3D | ✓ | — needs a stereoscopic display |
-| Pseudo-3D and MV-HEVC immersive video, depth models | ✓ | — |
-| Diorama layers and diorama thumbnails | ✓ | — depth axis only |
-| Multiple windows, Windows tab, saved window groups, "open in new window" | ✓ | — one window; iPad can still open several app instances |
+| Feature | visionOS | iOS / iPadOS | tvOS | macOS |
+|---|---|---|---|---|
+| Core libraries, albums, filters, multi-select, local media | ✓ | ✓ | ✓ | ✓ |
+| Photo viewer, adjustments, background removal, autoplay slideshow, share/info/edit | ✓ | ✓ | — | ✓ |
+| Video playback, custom transport, A-B loop, transcode fallback | ✓ | ✓ | ✓ | ✓ |
+| Pinned web pages and `hypnos://play` handoff | ✓ | ✓ | — | ✓ |
+| Settings backup/import, disk cache manager, debug console | ✓ | ✓ | — | ✓ |
+| Spatial 3D photo conversion and immersive 3D | ✓ | — needs a stereoscopic display | — | — |
+| Pseudo-3D and MV-HEVC video with depth models | ✓ | — | — | ✓ |
+| Multiple windows, Windows tab, saved scene groups | ✓ | — single-window shell | — single-window shell | ✓ |
+| TV-root app navigation and Siri Remote focus flow | — | — | ✓ | — |
 
-Build for iOS from the command line with:
+Build from the command line with the platform you need:
 
 ```bash
+# visionOS
+xcodebuild -quiet -project Hypnos/Hypnos.xcodeproj -scheme Hypnos \
+  -destination 'generic/platform=visionOS' build CODE_SIGNING_ALLOWED=NO
+
+# iOS / iPadOS
 xcodebuild -quiet -project Hypnos/Hypnos.xcodeproj -scheme Hypnos \
   -destination 'generic/platform=iOS Simulator' build CODE_SIGNING_ALLOWED=NO
+
+# tvOS
+xcodebuild -project Hypnos/Hypnos.xcodeproj -target Hypnos -sdk appletvos \
+  SDKROOT=appletvos SUPPORTED_PLATFORMS='appletvos appletvsimulator' \
+  TARGETED_DEVICE_FAMILY=3 TVOS_DEPLOYMENT_TARGET=26.2 CODE_SIGNING_ALLOWED=NO \
+  SYMROOT=<scratch dir> build
+
+# macOS
+xcodebuild -quiet -project Hypnos/Hypnos.xcodeproj -scheme Hypnos \
+  -destination 'generic/platform=macOS' build CODE_SIGNING_ALLOWED=NO
 ```
 
 ## Dependencies
