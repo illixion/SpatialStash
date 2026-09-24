@@ -5,6 +5,8 @@
  not natively supported by AVPlayer.
  */
 
+// tvOS has no WebKit.
+#if canImport(WebKit)
 import Foundation
 import os
 import SwiftUI
@@ -1002,3 +1004,4 @@ struct WebVideoPlayerView: UIViewRepresentable {
         return literal
     }
 }
+#endif

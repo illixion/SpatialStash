@@ -6,6 +6,8 @@
  any view identity churn — that's the whole point of a pinned page.
  */
 
+// tvOS has no WebKit.
+#if canImport(WebKit)
 import SwiftUI
 import WebKit
 
@@ -30,3 +32,4 @@ struct PinnedWebPageView: UIViewRepresentable {
         model.setInteractionEnabled(interactionEnabled)
     }
 }
+#endif

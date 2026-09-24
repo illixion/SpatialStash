@@ -9,6 +9,8 @@
  AccessTo:) pattern WebVideoPlayerView uses for local playback.
  */
 
+// tvOS has no WebKit.
+#if canImport(WebKit)
 import os
 import UIKit
 import WebKit
@@ -231,3 +233,4 @@ private final class WebMFrameCapture: NSObject, WKScriptMessageHandler {
         """
     }
 }
+#endif

@@ -23,6 +23,8 @@
  needs no file-URL read access.
 */
 
+// tvOS has no WebKit.
+#if canImport(WebKit)
 import SwiftUI
 import WebKit
 import os
@@ -212,3 +214,4 @@ struct AnimatedJXLWebView: UIViewRepresentable {
         """
     }
 }
+#endif

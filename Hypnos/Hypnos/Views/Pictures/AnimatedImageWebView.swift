@@ -5,6 +5,8 @@
  Loads the image from its direct URL to preserve browser-native animation.
  */
 
+// tvOS has no WebKit.
+#if canImport(WebKit)
 import SwiftUI
 import WebKit
 
@@ -216,3 +218,4 @@ private extension String {
             .replacingOccurrences(of: "'", with: "\\'")
     }
 }
+#endif

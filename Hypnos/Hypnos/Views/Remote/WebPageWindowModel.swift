@@ -12,6 +12,8 @@
  the WebView only accepts input while the ornaments are visible.
  */
 
+// tvOS has no WebKit.
+#if canImport(WebKit)
 import Foundation
 import os
 import SwiftUI
@@ -348,3 +350,4 @@ final class WebPageWindowModel {
         }
     }
 }
+#endif
