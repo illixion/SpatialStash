@@ -57,9 +57,12 @@ wait_for_server() {
     # are live — an immediate POST to /Startup/User then 404s (seen directly,
     # not theoretical: on an otherwise-identical fresh container, /health was
     # already 200 but /Startup/User still 404'd for a few seconds). Poll the
-    # actual endpoint the wizard needs first.
+    # actual endpoint the wizard needs first. Once the wizard has run, the
+    # same route answers 401 instead, which also means it is live.
+    local code
     for _ in $(seq 1 30); do
-        [[ "$(api -o /dev/null -w '%{http_code}' "$base/Startup/Configuration")" == "200" ]] && return
+        code="$(api -o /dev/null -w '%{http_code}' "$base/Startup/Configuration")"
+        [[ "$code" == "200" || "$code" == "401" ]] && return
         sleep 1
     done
     echo "dev-jellyfin: server did not come up" >&2
