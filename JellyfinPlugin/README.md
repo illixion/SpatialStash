@@ -181,13 +181,16 @@ On an Endgame UHD remux:
 
 `Eac3AtmosDecoder.cs` decodes E-AC-3+JOC with Cavern instead of solving for a
 restart-point run: E-AC-3 frames are independently decodable, so the plugin
-just has ffmpeg cut the track from a little before the target segment to the
-end of the file (`ffprobe` with the same seek first, to learn the exact
-container time the cut lands on — the raw `.ec3` elementary stream ffmpeg
-writes carries no timestamps of its own to read this back from afterwards),
-decodes the whole cut with Cavern, and discards a short warm-up prefix
-(`Eac3PrerollSeconds`, 0.75 s) before feeding the rest to the same `Grid`
-class the TrueHD path uses.
+just has ffmpeg stream the track as a raw `.ec3` elementary stream on stdout,
+from a little before the target segment (`ffprobe` with the same seek first,
+via `-read_intervals`, to learn the exact container time the cut lands on —
+the raw stream carries no timestamps of its own to read this back from
+afterwards). Cavern decodes the pipe as it arrives, a short warm-up prefix
+(`Eac3PrerollSeconds`, 0.75 s) is discarded, and the rest feeds the same
+`Grid` class the TrueHD path uses. The session stops, and kills its ffmpeg,
+under the same rules as TrueHD: a newer seek, reaching already-cached
+segments, or 10 minutes without a request. Cutting to a file first instead
+would make ffmpeg demux to the end of the film before the first segment.
 
 **Cavern → DAMF coordinate mapping**, worked out from
 `ObjectInfoBlock.UpdateSource` in Cavern.Format

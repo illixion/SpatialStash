@@ -3,7 +3,9 @@ using System.Numerics;
 using Cavern;
 using Cavern.Channels;
 using Cavern.Format;
+using Cavern.Format.Decoders;
 using Cavern.Format.Renderers;
+using Cavern.Format.Utilities;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.AtmosObjects;
@@ -19,13 +21,19 @@ namespace Jellyfin.Plugin.AtmosObjects;
 ///
 /// E-AC-3 frames are independently decodable (no cross-frame restart-interval
 /// puzzle like TrueHD's <see cref="AtmosSceneService.FeedAsync"/>/<see
-/// cref="StartSolver"/>), so this path is much simpler: ffmpeg cuts the track
-/// from a little before the target segment to the end of the file as a raw
-/// elementary stream, Cavern decodes that from its own start, a short warm-up
+/// cref="StartSolver"/>), so this path is much simpler: ffmpeg copies the track
+/// from a little before the target segment as a raw elementary stream on its
+/// stdout, Cavern decodes that pipe as it arrives, a short warm-up
 /// prefix is discarded so the JOC/OAMD ramp state has settled before the audio
 /// that actually reaches the client, and the result is fed into the same
 /// <see cref="AtmosSceneService.Grid"/> the TrueHD path uses — so segment files,
 /// scene.json and Events are byte-for-byte the same shape either way.
+///
+/// The cut is streamed rather than written to a file first: extracting to the
+/// end of a three-hour film means demuxing tens of GB before the first segment,
+/// and on a USB disk that alone blows the ~1 s first-segment budget. Streaming
+/// also bounds the work to what the session decodes: when the grid says stop
+/// (cached region reached, or the viewer went idle) ffmpeg is killed with it.
 /// </summary>
 public sealed partial class AtmosSceneService
 {
@@ -52,83 +60,73 @@ public sealed partial class AtmosSceneService
         var atStreamStart = session.FirstSegment == 0;
         var targetSeconds = session.FirstSegment * (double)Config.SegmentSeconds;
         var seekSeconds = atStreamStart ? 0 : Math.Max(0, (source.OriginMs / 1000) + targetSeconds - Eac3PrerollSeconds);
-        var dir = ItemDirectory(itemId);
-        var work = Path.Combine(dir, "work-" + Guid.NewGuid().ToString("N")[..8]);
-        Directory.CreateDirectory(Path.Combine(dir, "seg"));
-        Directory.CreateDirectory(work);
-        var ec3Path = Path.Combine(work, "cut.ec3");
+        Directory.CreateDirectory(Path.Combine(ItemDirectory(itemId), "seg"));
         _logger.LogInformation(
             "Atmos (EAC3) session for {ItemId}: segment {Segment}, seek {Seek:F1} s, to end {ToEnd}",
             itemId, session.FirstSegment, seekSeconds, session.ToEnd);
 
+        // ffprobe's own seek lands on the same packet ffmpeg's stream copy
+        // below will start from (same demuxer, same seek), so this is the
+        // exact container time the cut begins at. The raw .ec3 elementary
+        // stream ffmpeg writes carries no timestamps of its own to read this
+        // back from afterwards, unlike the Matroska cut the TrueHD path takes.
+        var landingMs = atStreamStart ? source.OriginMs : ProbePacketTimeMs(source.Path, source.StreamIndex, seekSeconds);
+
+        var ffmpegArgs = new List<string> { "-v", "error", "-nostdin" };
+        if (!atStreamStart)
+        {
+            ffmpegArgs.AddRange(["-ss", seekSeconds.ToString("F3", CultureInfo.InvariantCulture)]);
+        }
+
+        ffmpegArgs.AddRange(["-i", source.Path, "-map", $"0:{source.StreamIndex}", "-c", "copy", "-f", "eac3", "-"]);
+        using var ffmpeg = StartProcess(_mediaEncoder.EncoderPath, ffmpegArgs, redirectInput: false);
+        using var kill = ct.Register(() => TryKill(ffmpeg));
+        var ffmpegErr = ffmpeg.StandardError.ReadToEndAsync(CancellationToken.None);
         try
         {
-            // ffprobe's own seek lands on the same packet ffmpeg's stream copy
-            // below will start from (same demuxer, same seek), so this is the
-            // exact container time the cut begins at. The raw .ec3 elementary
-            // stream ffmpeg writes carries no timestamps of its own to read this
-            // back from afterwards, unlike the Matroska cut the TrueHD path takes.
-            var landingMs = atStreamStart ? source.OriginMs : ProbePacketTimeMs(source.Path, source.StreamIndex, seekSeconds);
-
-            var ffmpegArgs = new List<string> { "-v", "error", "-nostdin" };
-            if (!atStreamStart)
-            {
-                ffmpegArgs.AddRange(["-ss", seekSeconds.ToString("F3", CultureInfo.InvariantCulture)]);
-            }
-
-            ffmpegArgs.AddRange(["-i", source.Path, "-map", $"0:{source.StreamIndex}", "-c", "copy", "-f", "eac3", "-y", ec3Path]);
-            string ffmpegErr;
-            int ffmpegExit;
-            using (var ffmpeg = StartProcess(_mediaEncoder.EncoderPath, ffmpegArgs, redirectInput: false))
-            {
-                var errTask = ffmpeg.StandardError.ReadToEndAsync(CancellationToken.None);
-                using var kill = ct.Register(() => TryKill(ffmpeg));
-                await ffmpeg.WaitForExitAsync(ct).ConfigureAwait(false);
-                ffmpegErr = await errTask.ConfigureAwait(false);
-                ffmpegExit = ffmpeg.ExitCode;
-            }
-
-            if (ffmpegExit != 0)
-            {
-                throw new InvalidOperationException($"ffmpeg exited {ffmpegExit} cutting the EAC3 track: {ffmpegErr.Trim()}");
-            }
-
-            var outcome = await DecodeEac3Async(itemId, state, source, session, ec3Path, landingMs, atStreamStart, targetSeconds, segmentFrames, ct)
+            var outcome = await DecodeEac3Async(itemId, state, source, session, ffmpeg.StandardOutput.BaseStream, landingMs, atStreamStart, targetSeconds, segmentFrames, ct)
                 .ConfigureAwait(false);
             _logger.LogInformation("Atmos (EAC3) session for {ItemId}: {Outcome} at segment {Segment}", itemId, outcome, session.NextSegment);
 
+            if (outcome != AudioOutcome.Finished)
+            {
+                // Stopped or NoObjects: nothing more is needed from the cut.
+                TryKill(ffmpeg);
+            }
+
+            await ffmpeg.WaitForExitAsync(ct).ConfigureAwait(false);
+            if (outcome == AudioOutcome.Finished && ffmpeg.ExitCode != 0)
+            {
+                // A failed cut also ends the pipe early, which would otherwise read as the end of the film.
+                throw new InvalidOperationException($"ffmpeg exited {ffmpeg.ExitCode} cutting the EAC3 track: {(await ffmpegErr.ConfigureAwait(false)).Trim()}");
+            }
+
             if (outcome == AudioOutcome.NoObjects)
             {
-                // Only a clean decode of the whole remaining stream says the track has no objects.
                 MarkUnsupported(itemId, "The EAC3 track has no JOC object presentation.");
             }
         }
-        finally
+        catch
         {
-            try
-            {
-                Directory.Delete(work, recursive: true);
-            }
-            catch (IOException)
-            {
-            }
+            TryKill(ffmpeg);
+            throw;
         }
     }
 
     /// <summary>
-    /// Decodes the cut EAC3 file with Cavern and feeds a <see cref="Grid"/>,
+    /// Decodes the streamed EAC3 cut with Cavern and feeds a <see cref="Grid"/>,
     /// discarding <see cref="Eac3PrerollSeconds"/> of warm-up audio first.
     /// </summary>
     private async Task<AudioOutcome> DecodeEac3Async(
-        Guid itemId, ItemState state, ItemSource source, LiveSession session, string ec3Path,
+        Guid itemId, ItemState state, ItemSource source, LiveSession session, Stream ec3,
         double landingMs, bool atStreamStart, double targetSeconds, int segmentFrames, CancellationToken ct)
     {
-        using var reader = AudioReader.Open(ec3Path);
-        reader.ReadHeader();
-        if (reader.GetRenderer() is not EnhancedAC3Renderer renderer)
-        {
-            return AudioOutcome.NoObjects;
-        }
+        // Built directly rather than through AudioReader.Open, which wants a
+        // seekable stream to size the file. Without a length the decoder can't
+        // seek, which a live cut never needs, and reports its end through
+        // Finished instead.
+        var decoder = new EnhancedAC3Decoder(BlockBuffer<byte>.Create(new FullReadStream(ec3), 4096));
+        var renderer = new EnhancedAC3Renderer(decoder);
 
         // Deliberately not `using (renderer)`: a plain (non-JOC) E-AC-3 track
         // decodes into Cavern's channel-based rendering branch, which never
@@ -158,12 +156,14 @@ public sealed partial class AtmosSceneService
             var events = new CavernEventStream();
             var grid = new Grid(this, itemId, state, session, layout, events, startFrame, atStreamStart, segmentFrames, encoders, encoding);
 
-            var total = reader.Length;
+            // One block is one E-AC-3 frame, and the decoder sets Finished once
+            // it fails to read the header after the frame it just returned, so
+            // checking before each block never drops or pads the last frame.
             long decoded = 0;
-            while (decoded < total)
+            while (!decoder.Finished)
             {
                 ct.ThrowIfCancellationRequested();
-                var take = (int)Math.Min(Eac3Block, total - decoded);
+                const int take = Eac3Block;
                 var samples = renderer.GetNextObjectSamples(take);
                 decoded += take;
 
@@ -351,4 +351,55 @@ public sealed class CavernEventStream : ISceneEventSource
 
         return true;
     }
+}
+
+/// <summary>
+/// A read-only stream wrapper whose reads return the full count asked for
+/// unless the input has ended. Cavern's decoder treats a short read as the end
+/// of the stream, and a pipe returns whatever ffmpeg has written so far: on a
+/// slow disk the first read came back short and the session "finished" after
+/// one frame.
+/// </summary>
+internal sealed class FullReadStream(Stream inner) : Stream
+{
+    public override bool CanRead => true;
+
+    public override bool CanSeek => false;
+
+    public override bool CanWrite => false;
+
+    public override long Length => throw new NotSupportedException();
+
+    public override long Position
+    {
+        get => throw new NotSupportedException();
+        set => throw new NotSupportedException();
+    }
+
+    public override int Read(byte[] buffer, int offset, int count)
+    {
+        var total = 0;
+        while (total < count)
+        {
+            var read = inner.Read(buffer, offset + total, count - total);
+            if (read == 0)
+            {
+                break;
+            }
+
+            total += read;
+        }
+
+        return total;
+    }
+
+    public override void Flush()
+    {
+    }
+
+    public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+    public override void SetLength(long value) => throw new NotSupportedException();
+
+    public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
 }

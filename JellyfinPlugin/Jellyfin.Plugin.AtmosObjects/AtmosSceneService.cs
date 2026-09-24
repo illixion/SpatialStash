@@ -1000,14 +1000,15 @@ public sealed partial class AtmosSceneService
     /// </summary>
     private double ProbePacketTimeMs(string mediaPath, int streamIndex, double seekSeconds)
     {
-        var args = new List<string> { "-v", "error" };
-        if (seekSeconds > 0)
+        // ffprobe has no -ss (it fails with "Option not found" and prints
+        // nothing); the seek goes in -read_intervals, which seeks the demuxer
+        // the same way ffmpeg's input -ss does.
+        var interval = (seekSeconds > 0 ? seekSeconds.ToString("F3", CultureInfo.InvariantCulture) : string.Empty) + "%+#1";
+        var args = new List<string>
         {
-            args.AddRange(["-ss", seekSeconds.ToString("F3", CultureInfo.InvariantCulture)]);
-        }
-
-        args.AddRange(["-i", mediaPath, "-select_streams", streamIndex.ToString(CultureInfo.InvariantCulture),
-             "-read_intervals", "%+#1", "-show_entries", "packet=pts_time", "-of", "csv=p=0"]);
+            "-v", "error", "-i", mediaPath, "-select_streams", streamIndex.ToString(CultureInfo.InvariantCulture),
+            "-read_intervals", interval, "-show_entries", "packet=pts_time", "-of", "csv=p=0"
+        };
         using var process = StartProcess(_mediaEncoder.ProbePath, args, redirectInput: false);
         var output = process.StandardOutput.ReadToEnd();
         process.WaitForExit();
