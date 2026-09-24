@@ -860,7 +860,7 @@ class PhotoWindowModel {
     /// ornament unlocks), remember why, and let `PhotoDisplayView` offer a retry.
     /// Every exit from a failed load goes through here — leaving
     /// `isLoadingDetailImage` set is what used to jam the window.
-    private func recordLoadFailure(_ message: String, url: URL, error: Error? = nil) {
+    func recordLoadFailure(_ message: String, url: URL, error: Error? = nil) {
         if let error {
             AppLogger.photoWindow.error(
                 "Error loading image data: \(error.localizedDescription, privacy: .public)"
@@ -875,7 +875,7 @@ class PhotoWindowModel {
         loadFailure = message
     }
 
-    private func loadFailureMessage(for error: Error) -> String {
+    func loadFailureMessage(for error: Error) -> String {
         if let urlError = error as? URLError {
             switch urlError.code {
             case .timedOut:
@@ -1130,8 +1130,8 @@ class PhotoWindowModel {
         }.value
 
         guard let texture = sendable?.texture else {
-            AppLogger.photoWindow.warning("Failed to create display texture for image")
-            isLoadingDetailImage = false
+            let error = ImageLoaderError.decodeFailed
+            recordLoadFailure(loadFailureMessage(for: error), url: sourceURL, error: error)
             return
         }
 

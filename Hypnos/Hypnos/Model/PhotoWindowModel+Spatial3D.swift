@@ -241,7 +241,6 @@ extension PhotoWindowModel {
             }
         } catch {
             AppLogger.photoWindow.error("Unable to initialize spatial 3D image: \(error.localizedDescription, privacy: .public)")
-            isLoadingDetailImage = false
 
             // Enhanced error handling for network scenarios
             if let urlError = error as? URLError {
@@ -256,12 +255,26 @@ extension PhotoWindowModel {
                     AppLogger.photoWindow.error("URL error code: \(urlError.code.rawValue, privacy: .public)")
                 }
             }
+            // Fall back to 2D rather than stranding the window in `is3DMode`
+            // with no ImagePresentationComponent — PhotoDisplayView renders
+            // the RealityView branch unconditionally on `is3DMode`, with no
+            // failure fallback of its own, so a window left in that state is
+            // permanently blank and non-interactive.
+            is3DMode = false
+            contentEntity.components.remove(ImagePresentationComponent.self)
+            recordLoadFailure(loadFailureMessage(for: error), url: imageURL, error: error)
             return
         }
 
         guard let spatial3DImage else {
             AppLogger.photoWindow.warning("Spatial3DImage is nil.")
-            isLoadingDetailImage = false
+            is3DMode = false
+            contentEntity.components.remove(ImagePresentationComponent.self)
+            recordLoadFailure(
+                loadFailureMessage(for: ImageLoaderError.decodeFailed),
+                url: imageURL,
+                error: ImageLoaderError.decodeFailed
+            )
             return
         }
 

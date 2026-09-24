@@ -29,11 +29,14 @@ final class CachedImageData: NSObject, @unchecked Sendable {
 /// nothing to load" and surface a retry rather than spinning forever.
 enum ImageLoaderError: LocalizedError {
     case httpStatus(Int)
+    case decodeFailed
 
     var errorDescription: String? {
         switch self {
         case .httpStatus(let code):
             return "The server returned HTTP \(code)."
+        case .decodeFailed:
+            return "This image's data couldn't be decoded. It may be corrupted."
         }
     }
 }
@@ -316,18 +319,27 @@ actor ImageLoader {
                 throw ImageLoaderError.httpStatus(httpResponse.statusCode)
             }
 
-            // A 2xx status doesn't guarantee a real image — Stash can answer
-            // with a broken/placeholder body (or a truncated one from a
-            // dropped connection) and still say 200. Unlike the full
-            // UIImage(data:)-decoding loaders, this path skips decoding for
-            // speed, so without this check a bad response would get written
-            // to DiskImageCache and served back on every future load —
-            // including after a relaunch, and even once the server starts
-            // returning the real thumbnail again — since disk-cache reads
-            // never revalidate against the network. A cheap header-only
-            // probe via CGImageSource is enough to reject non-image bytes
-            // without paying for a full decode.
-            guard CGImageSourceCreateWithData(data as CFData, nil) != nil else {
+            // A 2xx status doesn't guarantee a real image — an unauthenticated
+            // request against a Stash instance with login enabled 302s to
+            // /login, and URLSession follows that automatically, so this task
+            // sees a 200 carrying the login page's HTML rather than an error
+            // status. Stash can also answer with a broken/placeholder body,
+            // or a truncated one from a dropped connection, while still
+            // saying 200. Unlike the full UIImage(data:)-decoding loaders,
+            // this path skips decoding for speed, so without a real check a
+            // bad response would get written to DiskImageCache and served
+            // back on every future load — including after a relaunch, and
+            // even once the server starts returning the real image again —
+            // since disk-cache reads never revalidate against the network.
+            //
+            // CGImageSourceCreateWithData alone does NOT reject this: it
+            // lazily wraps the bytes and returns non-nil for arbitrary data,
+            // including plain HTML (verified — an ImageIO source built from a
+            // Stash login page reports 0 images and nil properties, but is
+            // still non-nil itself). Checking the image count is what
+            // actually asks "did this decode to a real image."
+            guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+                  CGImageSourceGetCount(source) > 0 else {
                 return nil
             }
 
