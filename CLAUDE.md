@@ -84,6 +84,190 @@ How the port is structured (all in `Support/` unless noted):
   composite of the visionOS layer stack, which keeps the same `AppIcon` name).
 - `HypnosUITests` stays visionOS-only.
 
+## tvOS
+
+The same target builds for tvOS 26.2+ (`SUPPORTED_PLATFORMS` adds appletvos,
+appletvsimulator; device family adds `3`, alongside iOS/iPadOS's `1,2,7`).
+Compile check:
+
+```bash
+xcodebuild -project Hypnos/Hypnos.xcodeproj -target Hypnos -sdk appletvos \
+  SDKROOT=appletvos SUPPORTED_PLATFORMS='appletvos appletvsimulator' \
+  TARGETED_DEVICE_FAMILY=3 TVOS_DEPLOYMENT_TARGET=26.2 CODE_SIGNING_ALLOWED=NO \
+  SYMROOT=<scratch dir> build
+```
+
+**Always compile all three platforms before committing.** tvOS is the
+strictest of the three SDKs here — several APIs the iOS build happily links
+(`Slider`, `DatePicker`, `DisclosureGroup`, `popover`, `.textFieldStyle(.roundedBorder)`,
+`UIPasteboard`, `Gauge`, `navigationBarTitleDisplayMode`, `DragGesture`,
+`UIActivityViewController`, `FileDocument`/`fileExporter`/`fileImporter`,
+`WebKit` at all) are unavailable on tvOS, and the whole shared module
+(views the tvOS UI never presents included) has to compile as one target.
+
+### Root UI: a real Apple TV app, not a squeezed iPad UI
+
+`Views/TV/` is a from-scratch root, selected in `HypnosApp` for `os(tvOS)`
+(`TVRootView`, a `WindowGroup` alongside iOS's), built for a Siri Remote and
+the focus engine — it shares data (`AppModel.galleryImages`/`galleryVideos`,
+`MediaContainer`, `FilmSession`) with the visionOS/iOS screens but reuses
+almost none of their views, whose gestures and chrome are touch/gaze-shaped:
+
+- **`TVRootView`** — a plain `TabView`, which tvOS renders as the platform's
+  own top tab bar with no ornament or custom chrome needed. Five tabs:
+  Pictures, Videos, Albums, Films, Settings (`TVTab.swift`, a small tvOS-only
+  enum — not an extra case on the shared `Tab`, which is keyed to
+  `RAVEA11y`/`RAVETabItem` and the visionOS/iOS developer-tab rules). No
+  Windows tab (one scene, nothing to summon), no Filters tab, no Remote/
+  Console developer tabs.
+- **`TVPicturesTabView` / `TVVideosTabView`** — `LazyVGrid` over the same
+  source/filter/pagination the visionOS/iOS grids use
+  (`loadInitialGallery`/`loadNextPage`/`hasMorePages`, and the `Videos`
+  equivalents). Cells are plain `Button`s styled `.buttonStyle(.card)` for
+  the standard tvOS focus lift — no custom hover/press gesture code, unlike
+  `GalleryThumbnailView`'s long-press-to-QuickLook handling (touch-only).
+  Thumbnails load through the existing `MediaThumbnail` view
+  (`Views/MediaThumbnail.swift`), already gesture-free and cross-platform.
+- **`TVPhotoViewerView`** — fullscreen image. Siri Remote left/right
+  (`.onMoveCommand`) move prev/next, Play/Pause (`.onPlayPauseCommand`) starts
+  or stops a slideshow timer, Menu (`.onExitCommand`) dismisses. None of
+  `PhotoDisplayView`'s rendering tiers, adjustments or 3D modes are reused.
+- **`TVVideoPlayerView`** — `AVPlayerViewController` via
+  `UIViewControllerRepresentable`, playing `GalleryVideo.streamURL` directly.
+  **There is no WebKit fallback on tvOS** — WebKit doesn't exist there at
+  all — so this is the only tier; a source neither AVFoundation nor the VP9
+  decoder (below) can open simply fails to play.
+- **`TVAlbumsTabView`** — the same `MediaContainer` grid and
+  `AppModel.applyContainer(_:isVideo:)` the visionOS/iOS Albums tab uses;
+  switches the tab selection to Pictures/Videos afterward instead of a
+  window-model field. **Local's nested folder browser
+  (`LocalFolderBrowserView`) isn't ported** — built for pointer/touch
+  up/down-a-folder-stack taps — so Local shows a placeholder directing back
+  to Pictures/Videos instead. Known gap.
+- **`TVFilmsTabView`** — Jellyfin search over the existing `FilmSession`,
+  presenting `FilmPlayerView` unchanged. `FilmPlayerView` already has a real
+  `#elseif os(tvOS)` branch (added alongside the visionOS/iOS ones): the
+  picture only, no `FilmStageView`, and a `Slider`-free transport
+  (`TVFilmTransport`, `Views/FilmPlayer/FilmPlayerView.swift`).
+  **Atmos object audio is out of scope on tvOS and is a known gap**: the
+  object-audio engine (`RAVEFilm`'s `AtmosObjectAudio`) needs headphone or
+  AVP head tracking to place objects around a listener, which means nothing
+  for a TV pointed at a fixed listening position, and a real
+  speaker-array/soundbar passthrough is a separate project. The tvOS branch
+  never mounts `FilmStageView` at all, so nothing ever consumes
+  `FilmPlayer.audio` — a film with Atmos objects plays its picture in
+  silence rather than through any real or fake spatialisation.
+- **`TVSettingsView`** — a remote-friendly subset of `SettingsTabView`:
+  library source, Stash server + test connection, a Local Files note,
+  `NextcloudSettingsSection` and `CacheSettingsSection` reused verbatim
+  (neither uses a `Slider` or anything else touch-only). No display
+  adjustments, depth models, or Backup import/export (no Files app on tvOS
+  to pick a file from or save one to).
+- **VP9 decoding**: `HypnosApp.init` calls
+  `VTRegisterSupplementalVideoDecoderIfAvailable(kCMVideoCodecType_VP9)` once,
+  guarded `#available(tvOS 26.2, *)`, matching the spike in
+  `TVLab/FilmLabTV/YouTubeLab.swift`. Without it AVFoundation can't decode the
+  WebM/VP9 sources Stash/Jellyfin commonly serve — there is no WebKit
+  fallback to decode them another way.
+- A DEBUG-only launch argument opens `TVRootView` straight to a given tab —
+  `-UITest -UITestDefault tvInitialTab=Videos` — reusing the existing
+  `-UITestDefault key=value` mechanism (`Support/UITestingConfiguration.swift`)
+  rather than inventing a second one. This exists because there is no XCUITest
+  driving tvOS (`HypnosUITests` stays visionOS-only, see below) and `simctl`
+  has no remote-button injection of its own, so it was the only way to get
+  every tab in front of a screenshot.
+
+### What's excluded, and why (capability flags + fencing)
+
+`PlatformCapabilities` (`Support/PlatformShims.swift`) — visionOS-only
+still means visionOS-only on tvOS: `supportsSpatial3D`,
+`supportsImmersiveSpaces`, `supportsMultipleWindows`, `supportsStereoVideo`
+(the windowed-stereo pseudo-3D pipeline — meaningless on a flat TV even
+though it needs no immersive space) and `supportsWindowResizing` are all
+false there, exactly as they already are on iOS; shared views that branch on
+them need no tvOS-specific change. `deviceFamilyName` adds an `Apple TV`
+case.
+
+Whole-file or whole-feature `#if !os(tvOS)` fences, mirroring the iOS
+pattern above:
+
+- **MV-HEVC stereoscopic conversion** — `MVHEVCConverter.swift`,
+  `ChunkBufferManager.swift`, `StereoscopicVideoPlayer.swift`. visionOS-immersive
+  only; their caller (`StereoscopicVideoView`) was already `#if os(visionOS)`
+  with an iOS stub, so nothing else needed to change.
+- **Settings → Backup** (`SettingsBackupDocument`'s `FileDocument`
+  conformance, and the `fileExporter`/`fileImporter`/`.settingsBackupImport`
+  call sites in `SettingsTabView.swift` and `SettingsBackupImport.swift`) —
+  no Files app / document picker on tvOS.
+- **The Share button** (`ActivityViewController`/`ActivityHostController` in
+  `Services/ShareSheetHelper.swift`, and its call sites in
+  `PhotoOrnamentView`/`VideoOrnamentsView`) — no `UIActivityViewController`
+  on tvOS, no AirDrop/Files/Messages target for a Siri Remote UX to hand a
+  file to either.
+- **WebKit-only files** (already `#if canImport(WebKit)` since commit
+  f4f914e: the web video player, animated GIF/WebP/JXL views, pinned web
+  pages, WebM thumbnails) — every *caller* of the types they declare
+  (`PhotoDisplayView`'s animated-image tiers, `RemoteViewerWindowView`,
+  `VideoWindowView`, `VideoQuickLookView`, `ThumbnailGenerator`'s WebM poster
+  path, `RemoteViewerSceneRoot`'s web-page mode) is gated the same way, with
+  a Metal/native fallback or a static first frame in place of the animation.
+  **There is no WebKit fallback on tvOS, full stop** — an animated
+  GIF/WebP/JXL shows its first decoded frame rather than animating, and a
+  video whose format needs WebKit to decode simply doesn't play.
+
+`Support/PlatformShims.swift` gained same-name stand-ins so the touch-only
+SwiftUI list above compiles out of call sites that belong to visionOS/iOS-only
+screens, without duplicating those views:
+
+- `.selectableText()` → `.textSelection(.enabled)` elsewhere, no-op on tvOS.
+- `.roundedTextFieldStyle()` → `.textFieldStyle(.roundedBorder)` elsewhere,
+  `.textFieldStyle(.plain)` on tvOS.
+- `.popover(isPresented:content:)`, `#if os(tvOS)`-only overload standing in
+  as a `.sheet` — scoped to exactly the shape every call site uses so it
+  can't shadow or ambiguate SwiftUI's real (defaulted-parameter) `popover` on
+  iOS/visionOS.
+- `platformDisclosureGroup(content:label:)` (a free function, not a `View`
+  extension — `DisclosureGroup` is a concrete type used as a value, not a
+  modifier chained off `self`) — the real `DisclosureGroup` elsewhere, an
+  always-expanded `VStack` on tvOS.
+- `hidesStatusBar` gained a tvOS branch (no status bar there either, nothing
+  to hide) alongside its existing visionOS/iOS ones.
+
+Remaining `Slider`/`DatePicker`/`DragGesture`/`Gauge`/
+`navigationBarTitleDisplayMode`/`UIPasteboard` call sites are wrapped
+`#if !os(tvOS)` individually at each site (`FiltersTabView`,
+`RemoteTabView`, `VisualAdjustmentsPopover`, `Video3DSettingsSheet`,
+`GPUMemoryMonitorView`, `VideoControlBar`, `MediaDetailSheet`,
+`DepthCacheSettingsView`/`DepthPipelineSpikeSection`, `ContentView`,
+`Views/IOS/IOSRootView.swift`) — all belong to visionOS/iOS-only screens the
+tvOS root UI never presents, so the tvOS branch is dead code kept only to
+satisfy the compiler. `CacheBudget.volumeStats()` falls back to the plain
+`volumeAvailableCapacityKey` on tvOS (`volumeAvailableCapacityForImportantUsageKey`
+doesn't exist there).
+
+### Known gaps
+
+- **Atmos object audio** (Films tab) — see above; films play picture-only,
+  silently, on tvOS.
+- **Local library folder browsing** (Albums tab) — not ported; Local shows a
+  placeholder on tvOS.
+- **Animated GIF/WebP/JXL** — render as a static first frame, not animated
+  (no WebKit).
+- **Photos as a library source** may have little or nothing to show on a TV
+  that has never had a personal camera roll in the way iOS/visionOS do;
+  Stash and Local remain the practical sources.
+- **tvOS has no XCUITest coverage.** `HypnosUITests` stays visionOS-only
+  (see below); the DEBUG launch-argument tab selector above is the only
+  automated hook into the tvOS UI so far.
+
+### Icon
+
+`Assets.xcassets/AppIcon.brandassets` — tvOS's layered-image-stack format
+(`App Icon.imagestack`, three fully-opaque Front/Middle/Back layers — a
+partially-transparent layer fails validation — plus a `Top Shelf Image`),
+derived from the same flattened 1024×1024 source the iOS `AppIcon.appiconset`
+uses. A simple, valid set; no per-layer parallax art was made.
+
 ## UI Tests (XCUITest)
 
 ```bash
