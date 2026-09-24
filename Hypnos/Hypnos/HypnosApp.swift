@@ -14,6 +14,10 @@ import os
 import RAVEUI
 import SwiftUI
 
+#if os(tvOS)
+import VideoToolbox
+#endif
+
 @main
 struct HypnosApp: App {
     @State private var appModel: AppModel
@@ -28,11 +32,22 @@ struct HypnosApp: App {
         UITestingConfiguration.applyIfNeeded()
         #endif
         _appModel = State(initialValue: AppModel())
+        #if os(tvOS)
+        // AVFoundation only decodes VP9/AV1 once the app opts in to the
+        // supplemental decoders, and Stash/Jellyfin sources are commonly
+        // WebM/VP9 (the original file, or a server transcode). Once, at
+        // launch, matching TVLab/FilmLabTV/YouTubeLab.swift's spike.
+        if #available(tvOS 26.2, *) {
+            VTRegisterSupplementalVideoDecoderIfAvailable(kCMVideoCodecType_VP9)
+        }
+        #endif
     }
 
     var body: some Scene {
         #if os(visionOS)
         visionOSScenes
+        #elseif os(tvOS)
+        tvOSScenes
         #else
         iOSScenes
         #endif
@@ -40,13 +55,26 @@ struct HypnosApp: App {
 
     // MARK: - iOS
 
-    #if !os(visionOS)
+    #if os(iOS)
     private var iOSScenes: some Scene {
         // One window. With `UIApplicationSupportsMultipleScenes` on, iPadOS can
         // still open several instances of it side by side; each is a complete
         // gallery with its own cover stack.
         WindowGroup("Hypnos", id: "main") {
             IOSRootView(appModel: appModel)
+        }
+    }
+    #endif
+
+    // MARK: - tvOS
+
+    #if os(tvOS)
+    private var tvOSScenes: some Scene {
+        // One window, like iOS — but a completely different root (see
+        // Views/TV/TVRootView.swift and Hypnos/CLAUDE.md "tvOS"), not
+        // `IOSRootView`'s cover-stack-over-a-touch-gallery shape.
+        WindowGroup("Hypnos", id: "main") {
+            TVRootView(appModel: appModel)
         }
     }
     #endif
