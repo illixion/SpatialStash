@@ -10,11 +10,13 @@ import PackageDescription
 // `swift test` beats a simulator round trip by an order of magnitude, and the
 // live bench (`swift run ncbench`) can hit a real server without a device.
 //
-// macOS is therefore a first-class platform here, not an afterthought; visionOS
-// and iOS are declared because the app links the library product.
+// macOS is therefore a first-class platform here, not an afterthought; visionOS,
+// iOS and tvOS are declared because the app links the library product on each
+// (tvOS added 2026-09-24 for Hypnos on Apple TV — an undeclared platform gets
+// SwiftPM's ancient default deployment floor, not an excluded one).
 let package = Package(
     name: "NextcloudMedia",
-    platforms: [.macOS(.v14), .visionOS(.v26), .iOS(.v26)],
+    platforms: [.macOS(.v14), .visionOS(.v26), .iOS(.v26), .tvOS(.v26)],
     products: [
         .library(name: "NextcloudMedia", targets: ["NextcloudMedia"]),
     ],

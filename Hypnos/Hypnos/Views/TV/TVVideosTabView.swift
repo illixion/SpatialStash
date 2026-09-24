@@ -30,7 +30,23 @@ struct TVVideosTabView: View {
             if appModel.galleryVideos.isEmpty {
                 await appModel.loadInitialVideos()
             }
+            autoPresentIfRequested()
         }
+    }
+
+    /// DEBUG-only, reusing the same `-UITestDefault key=value` mechanism as
+    /// `tvInitialTab` (`TVRootView`): `tvAutoPlayVideoIndex=N` opens the Nth
+    /// gallery video's player immediately. tvOS has no XCUITest and `simctl`
+    /// has no remote-button injection, so there is no other way to drive a
+    /// tap into `TVVideoPlayerView` for testing its codec-probe /
+    /// auth / HLS-transcode-fallback path against the dev Stash instance.
+    private func autoPresentIfRequested() {
+        #if DEBUG
+        guard let raw = UserDefaults.standard.string(forKey: "tvAutoPlayVideoIndex"),
+              let index = Int(raw),
+              appModel.galleryVideos.indices.contains(index) else { return }
+        presentedVideo = appModel.galleryVideos[index]
+        #endif
     }
 
     @ViewBuilder
@@ -38,6 +54,12 @@ struct TVVideosTabView: View {
         if appModel.galleryVideos.isEmpty && appModel.isLoadingVideos {
             ProgressView("Loading videos…")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if appModel.galleryVideos.isEmpty && appModel.effectiveLibrarySource == .photos {
+            TVPhotosLibraryStateView(kind: .videos, status: PhotosAuthorization.status) {
+                Task {
+                    await appModel.requestPhotosAccessAndReload()
+                }
+            }
         } else if appModel.galleryVideos.isEmpty {
             ContentUnavailableView(
                 "No Videos",

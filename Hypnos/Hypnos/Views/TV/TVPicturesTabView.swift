@@ -45,7 +45,22 @@ struct TVPicturesTabView: View {
             if appModel.galleryImages.isEmpty {
                 await appModel.loadInitialGallery()
             }
+            autoPresentIfRequested()
         }
+    }
+
+    /// DEBUG-only, mirroring `TVVideosTabView.autoPresentIfRequested` and
+    /// `TVRootView`'s `tvInitialTab`: `tvAutoOpenPictureIndex=N` opens the
+    /// Nth gallery image's fullscreen viewer immediately, since there is no
+    /// other way to drive a tap into `TVPhotoViewerView` for testing it
+    /// (auth, full-size decode) against the dev Stash instance.
+    private func autoPresentIfRequested() {
+        #if DEBUG
+        guard let raw = UserDefaults.standard.string(forKey: "tvAutoOpenPictureIndex"),
+              let index = Int(raw),
+              appModel.galleryImages.indices.contains(index) else { return }
+        presentedIndex = index
+        #endif
     }
 
     /// `fullScreenCover(item:)` needs an `Identifiable` binding; the viewer
@@ -66,6 +81,12 @@ struct TVPicturesTabView: View {
         if appModel.galleryImages.isEmpty && appModel.isLoadingGallery {
             ProgressView("Loading pictures…")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if appModel.galleryImages.isEmpty && appModel.effectiveLibrarySource == .photos {
+            TVPhotosLibraryStateView(kind: .pictures, status: PhotosAuthorization.status) {
+                Task {
+                    await appModel.requestPhotosAccessAndReload()
+                }
+            }
         } else if appModel.galleryImages.isEmpty {
             ContentUnavailableView(
                 "No Pictures",

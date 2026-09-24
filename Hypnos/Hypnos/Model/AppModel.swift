@@ -1537,9 +1537,24 @@ class AppModel {
 
         // Load remote viewer (default: false)
         // Defaults to .stash so an existing install with a server keeps showing
-        // exactly what it showed before this setting existed.
+        // exactly what it showed before this setting existed. tvOS has no such
+        // installed base to preserve (added 2026-09-24), so a fresh Apple TV
+        // picks its default from what's actually configured instead — see
+        // `AppModel.defaultTVLibrarySource`.
         let loadedLibrarySource = UserDefaults.standard.string(forKey: "librarySource")
-            .flatMap(LibrarySource.init(rawValue:)) ?? .stash
+            .flatMap(LibrarySource.init(rawValue:))
+            ?? {
+                #if os(tvOS)
+                return AppModel.defaultTVLibrarySource(
+                    hasStashServer: !loadedServerURL.isEmpty,
+                    hasNextcloudServer: !loadedNextcloudServerURL.isEmpty
+                        && !loadedNextcloudUsername.isEmpty
+                        && !loadedNextcloudAppPassword.isEmpty
+                )
+                #else
+                return .stash
+                #endif
+            }()
         let loadedEnableRemoteViewer = UserDefaults.standard.bool(forKey: "enableRemoteViewer")
 
         // Unset means "never decided", which for an install that already has a
@@ -2674,6 +2689,23 @@ class AppModel {
     var hasNextcloudServer: Bool {
         !nextcloudServerURL.isEmpty && !nextcloudUsername.isEmpty && !nextcloudAppPassword.isEmpty
     }
+
+    #if os(tvOS)
+    /// The library a fresh Apple TV install should open to, when nothing has
+    /// been persisted yet. Unlike the iOS/visionOS default (`.stash`, kept only
+    /// to preserve an existing install's behavior — see the call site), tvOS
+    /// has no installed base predating this setting, so it can pick the
+    /// sensible order directly: a configured server first (Stash, then
+    /// Nextcloud), else Photos when the library is actually usable, else Local
+    /// — Apple TV commonly has no iCloud Photos library at all (see
+    /// `Hypnos/CLAUDE.md` "tvOS" → Known gaps), so a denied/restricted Photos
+    /// library should not be the tab a first launch lands on.
+    static func defaultTVLibrarySource(hasStashServer: Bool, hasNextcloudServer: Bool) -> LibrarySource {
+        if hasStashServer { return .stash }
+        if hasNextcloudServer { return .nextcloud }
+        return PhotosAuthorization.isReadable ? .photos : .local
+    }
+    #endif
 
     /// Rebuilds the Nextcloud client and registers its credential.
     ///

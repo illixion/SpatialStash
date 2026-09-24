@@ -3,12 +3,14 @@
 # source without touching a real library. Never point tests, simulators or
 # agents at a personal Stash; use this.
 #
-#   scripts/dev-stash.sh up      create (first run) or start it, seeded and scanned
-#   scripts/dev-stash.sh reset   wipe its database and re-seed from scratch
-#   scripts/dev-stash.sh down    stop it
-#   scripts/dev-stash.sh rm      stop it and delete everything it stored
+#   scripts/dev-stash.sh up               create (first run) or start it, seeded and scanned
+#   scripts/dev-stash.sh reset            wipe its database and re-seed from scratch
+#   scripts/dev-stash.sh auth [user pass] set a login + generate an API key (default dev/dev)
+#   scripts/dev-stash.sh down             stop it
+#   scripts/dev-stash.sh rm               stop it and delete everything it stored
 #
-# Serves http://127.0.0.1:9998 (loopback only, no API key). The iOS, tvOS and
+# Serves http://127.0.0.1:9998 (loopback only, no API key by default — see
+# `auth` above for testing the app's API-key path). The iOS, tvOS and
 # visionOS simulators share the Mac's loopback, so the app can use that URL
 # directly. The media is generated with ffmpeg: 12 distinct photos and 5 clips
 # covering the codec paths the players branch on (H.264, 10-bit HEVC 4K,
@@ -19,6 +21,7 @@ name=hypnos-dev-stash
 port=9998
 root="${HYPNOS_DEV_STASH_DIR:-$HOME/.local/share/hypnos-dev-stash}"
 graphql="http://127.0.0.1:$port/graphql"
+apikey_file="$root/config/dev-api-key.txt"
 
 gql() { curl -s "$graphql" -H 'Content-Type: application/json' -d "$1"; }
 
@@ -90,6 +93,50 @@ setup_and_scan() {
     echo "dev-stash: http://127.0.0.1:$port"
 }
 
+enable_auth() {
+    local user="$1" pass="$2"
+
+    if [[ -f "$apikey_file" ]]; then
+        echo "dev-stash: auth already enabled (username=$user expected) — key at $apikey_file"
+        return
+    fi
+
+    # Requires the instance to still be unauthenticated: setting a
+    # username/password is what turns auth on in the first place, so this
+    # must run before Stash starts demanding a session for every request.
+    gql "$(printf '{"query":"mutation { configureGeneral(input: { username: \\"%s\\", password: \\"%s\\" }) { username } }"}' "$user" "$pass")" >/dev/null
+
+    # GraphQL now requires a session cookie; get one the same way a browser
+    # would, via the plain form-POST login endpoint, then use it once to mint
+    # a long-lived API key.
+    local cookiejar
+    cookiejar="$(mktemp)"
+    curl -s -c "$cookiejar" -X POST "http://127.0.0.1:$port/login" \
+        --data-urlencode "username=$user" --data-urlencode "password=$pass" >/dev/null
+
+    local response key
+    response="$(curl -s -b "$cookiejar" "$graphql" -H 'Content-Type: application/json' \
+        -d '{"query":"mutation { generateAPIKey(input: {}) }"}')"
+    rm -f "$cookiejar"
+    key="$(python3 -c 'import json,sys
+try:
+    print(json.load(sys.stdin)["data"]["generateAPIKey"])
+except Exception:
+    pass' <<<"$response")"
+
+    if [[ -z "$key" ]]; then
+        echo "dev-stash: failed to generate an API key (is auth already configured with different credentials?)" >&2
+        exit 1
+    fi
+
+    mkdir -p "$root/config"
+    printf '%s' "$key" > "$apikey_file"
+    chmod 600 "$apikey_file"
+    # The key itself is never echoed — callers read it from the file.
+    echo "dev-stash: auth enabled — username=$user password=$pass"
+    echo "dev-stash: API key written to $apikey_file (not printed)"
+}
+
 case "${1:-up}" in
     up)
         seed_media
@@ -103,6 +150,9 @@ case "${1:-up}" in
         start_container
         setup_and_scan
         ;;
+    auth)
+        enable_auth "${2:-dev}" "${3:-dev}"
+        ;;
     down)
         docker stop "$name" >/dev/null
         ;;
@@ -111,7 +161,7 @@ case "${1:-up}" in
         rm -rf "${root:?}"
         ;;
     *)
-        echo "usage: $0 up|reset|down|rm" >&2
+        echo "usage: $0 up|reset|auth [user pass]|down|rm" >&2
         exit 2
         ;;
 esac

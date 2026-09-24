@@ -66,7 +66,22 @@ actor StashAPIClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         if let apiKey = config.apiKey, !apiKey.isEmpty {
-            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+            // Mirrors `AppModel.updateStashMediaCredential`'s two cases: a
+            // plain Stash API key authenticates via Stash's own `ApiKey`
+            // header (`pkg/session.ApiKeyHeader` in Stash's source — verified
+            // against a real instance that `Authorization: Bearer <key>` gets
+            // a flat 401 there, which is exactly what silently broke this
+            // client against any Stash requiring login, even though the
+            // media/stream paths kept working via the `?apikey=` query
+            // param). A `Bearer …`-prefixed value is the manual escape hatch
+            // for a reverse proxy in front of Stash (Cloudflare Access,
+            // Authelia, …) that wants a real `Authorization: Bearer` token;
+            // that one is sent verbatim, not reinterpreted as a Stash key.
+            if apiKey.lowercased().hasPrefix("bearer ") {
+                request.setValue(apiKey, forHTTPHeaderField: "Authorization")
+            } else {
+                request.setValue(apiKey, forHTTPHeaderField: "ApiKey")
+            }
             AppLogger.stashAPI.log(level: AppLogger.effectiveDebugLevel, "Using API key authentication")
         }
 

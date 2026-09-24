@@ -133,10 +133,23 @@ almost none of their views, whose gestures and chrome are touch/gaze-shaped:
   or stops a slideshow timer, Menu (`.onExitCommand`) dismisses. None of
   `PhotoDisplayView`'s rendering tiers, adjustments or 3D modes are reused.
 - **`TVVideoPlayerView`** — `AVPlayerViewController` via
-  `UIViewControllerRepresentable`, playing `GalleryVideo.streamURL` directly.
-  **There is no WebKit fallback on tvOS** — WebKit doesn't exist there at
-  all — so this is the only tier; a source neither AVFoundation nor the VP9
-  decoder (below) can open simply fails to play.
+  `UIViewControllerRepresentable`. **There is no WebKit fallback on tvOS** —
+  WebKit doesn't exist there at all — but it still follows the same two
+  moves every other AVFoundation path in the app makes before opening a URL:
+  a `photos-asset:///` identity resolves through `PhotosAssetStore` first;
+  every other source runs through `NativeVideoDecodeProbe.canPlayNatively`
+  (which is what the VP9 supplemental decoder below actually unlocks — VP9
+  *inside an MP4* can decode, but the WebM *container* still can't) and
+  falls back to Stash's HLS transcode (`GalleryVideo.transcodeStreamURL`) —
+  the *only* fallback tier here, unlike the two-tier native/WebKit split
+  visionOS and iOS get — when it can't; a source with neither simply reports
+  it can't play rather than showing a stuck black screen. Every URL goes
+  through `MediaAuthorization.shared.asset(for:)`/`authorizedURL(_:)` so a
+  Stash server behind a login authenticates like everywhere else in the app
+  (see "Auth" below). DEBUG-only `tvAutoOpenPictureIndex=N` /
+  `tvAutoPlayVideoIndex=N` launch args (mirroring `tvInitialTab`) open a
+  specific gallery item's viewer/player immediately, since there is no other
+  way to drive a tap into either view for testing this path.
 - **`TVAlbumsTabView`** — the same `MediaContainer` grid and
   `AppModel.applyContainer(_:isVideo:)` the visionOS/iOS Albums tab uses;
   switches the tab selection to Pictures/Videos afterward instead of a
@@ -162,7 +175,30 @@ almost none of their views, whose gestures and chrome are touch/gaze-shaped:
   `NextcloudSettingsSection` and `CacheSettingsSection` reused verbatim
   (neither uses a `Slider` or anything else touch-only). No display
   adjustments, depth models, or Backup import/export (no Files app on tvOS
-  to pick a file from or save one to).
+  to pick a file from or save one to). `Packages/NextcloudMedia/Package.swift`
+  now declares `.tvOS(.v26)` (2026-09-24) — an undeclared platform gets
+  SwiftPM's ancient default deployment floor, not an excluded one, so
+  linking the package from the tvOS target needs the explicit entry.
+- **Default library source** (`AppModel.defaultTVLibrarySource`, `#if
+  os(tvOS)`) — applied only when nothing is persisted yet (a fresh install):
+  Stash if configured, else Nextcloud, else Photos when it's actually
+  readable, else Local. This is tvOS-only because the general default
+  (`.stash`) predates the setting and exists only to keep an *existing*
+  non-tv install's behavior unchanged — tvOS has no such installed base
+  to preserve, and Apple TV commonly has no iCloud Photos library at all
+  (see Known gaps), so landing a fresh install on an empty, denied Photos
+  tab would be a worse first impression than Local. A choice, once made
+  (including the user's own), is still persisted exactly as before.
+- **Photos on tvOS** — every `PHImageManager` request in
+  `PhotosAssetStore` already sets `isNetworkAccessAllowed = true` (images,
+  thumbnails, video) regardless of platform, since tvOS keeps almost
+  nothing locally and every one of those requests may need to pull from
+  iCloud Photos; no tvOS-specific change was needed there. What tvOS did
+  need is **`TVPhotosLibraryStateView`** (`Views/TV/`) — the Pictures/Videos
+  tabs' empty state when the Photos source is undetermined, denied, or
+  genuinely empty, with the fix named explicitly ("enable iCloud Photos in
+  Settings → Users and Accounts → iCloud on this Apple TV") rather than the
+  visionOS/iOS `PhotoLibraryStateView`'s touch-shaped inline server form.
 - **VP9 decoding**: `HypnosApp.init` calls
   `VTRegisterSupplementalVideoDecoderIfAvailable(kCMVideoCodecType_VP9)` once,
   guarded `#available(tvOS 26.2, *)`, matching the spike in
@@ -176,6 +212,42 @@ almost none of their views, whose gestures and chrome are touch/gaze-shaped:
   driving tvOS (`HypnosUITests` stays visionOS-only, see below) and `simctl`
   has no remote-button injection of its own, so it was the only way to get
   every tab in front of a screenshot.
+
+### Auth (all platforms, found via tvOS testing)
+
+"Authenticate every AVFoundation path" (commit ea220b7, `MediaAuthorization`)
+holds on tvOS the same way it does everywhere else — `TVVideoPlayerView`
+builds its `AVURLAsset` through `MediaAuthorization.shared.asset(for:)` — but
+testing it against `scripts/dev-stash.sh auth` (below) surfaced a real,
+**pre-existing, all-platform** bug: `StashAPIClient.query` unconditionally
+sent `Authorization: Bearer <apiKey>` for a plain Stash API key, which real
+Stash's session middleware (`pkg/session.ApiKeyHeader`/`ApiKeyParameter` in
+Stash's own source) rejects outright with a 401 — verified directly against
+the dev instance (`ApiKey: <key>` header and `?apikey=` query param both
+succeed; `Authorization: Bearer <key>` is a flat 401). `MediaAuthorization`
+itself already had this right (`updateStashMediaCredential` registers
+`.queryParam(name: "apikey", …)` for a plain key), so **stream/image URLs
+worked while every GraphQL browse call silently 401'd** — this is exactly
+what "the owner's real Stash now requires login" would have hit on any
+platform, not just tvOS. Fixed to mirror `updateStashMediaCredential`'s two
+cases: a plain key now sends the `ApiKey` header; a manually-pasted
+`Bearer …` value (the existing escape hatch for a reverse proxy in front of
+Stash — Cloudflare Access, Authelia, …) still goes out verbatim as
+`Authorization`.
+
+`scripts/dev-stash.sh auth [user pass]` (default `dev`/`dev`) turns login on
+for the dev instance — `configureGeneral(username:password:)`, a form-POST
+to `/login` for a session cookie, then `generateAPIKey` — so the app's
+authenticated path has something to test against. The key is written to
+`$root/config/dev-api-key.txt` and **never printed**; read it from that file
+when configuring a test run (e.g. `-UITestDefault stashAPIKey=$(cat …)`).
+That launch argument round-trips through `KeychainStore`'s existing
+UserDefaults→Keychain migration (`AppModel.init` already calls
+`KeychainStore.migrateFromUserDefaults(legacyKey: "stashAPIKey", …)` before
+reading it) — no new plumbing needed, but the app's build **must be signed**
+(the default ad-hoc simulator signing is enough; `CODE_SIGNING_ALLOWED=NO`
+is not) or every Keychain call fails with `errSecMissingEntitlement`
+(-34018), silently leaving the API key unset.
 
 ### What's excluded, and why (capability flags + fencing)
 
@@ -255,7 +327,11 @@ doesn't exist there).
   (no WebKit).
 - **Photos as a library source** may have little or nothing to show on a TV
   that has never had a personal camera roll in the way iOS/visionOS do;
-  Stash and Local remain the practical sources.
+  Stash and Local remain the practical sources. It works end to end when
+  iCloud Photos *is* on for the signed-in account (network access is always
+  allowed — see above), and the empty/denied states point at
+  Settings → Users and Accounts → iCloud rather than showing a bare "no
+  photos" message.
 - **tvOS has no XCUITest coverage.** `HypnosUITests` stays visionOS-only
   (see below); the DEBUG launch-argument tab selector above is the only
   automated hook into the tvOS UI so far.
@@ -562,7 +638,7 @@ A slideshow viewer that fetches images from a [RoboFrame](https://github.com/ill
 
 # Testing against Stash: use the dev instance
 
-**Never point tests, simulators or agents at a real Stash server**, not even read-only. `scripts/dev-stash.sh up` runs a disposable Stash in Docker at `http://127.0.0.1:9998` (loopback only, no API key), seeded with 12 generated photos and 5 clips covering H.264, 10-bit HEVC 4K and VP9/Opus WebM. The simulators share the Mac's loopback, so configure the app with that URL (in the simulator via `-UITestDefault stashServerURL=http://127.0.0.1:9998`). Use `reset` to re-seed and `rm` to delete it.
+**Never point tests, simulators or agents at a real Stash server**, not even read-only. `scripts/dev-stash.sh up` runs a disposable Stash in Docker at `http://127.0.0.1:9998` (loopback only, no API key by default), seeded with 12 generated photos and 5 clips covering H.264, 10-bit HEVC 4K and VP9/Opus WebM. The simulators share the Mac's loopback, so configure the app with that URL (in the simulator via `-UITestDefault stashServerURL=http://127.0.0.1:9998`). Use `reset` to re-seed and `rm` to delete it. `scripts/dev-stash.sh auth [user pass]` turns on login for testing the app's API-key path (see "Auth" under tvOS) — the generated key is written to a file, never printed, since it's a live (if disposable) credential.
 
 # Stash GraphQL API
 
