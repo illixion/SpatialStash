@@ -19,7 +19,28 @@ import SwiftUI
 
 struct TVRootView: View {
     let appModel: AppModel
-    @State private var selectedTab: TVTab = .pictures
+    @State private var selectedTab: TVTab
+
+    init(appModel: AppModel) {
+        self.appModel = appModel
+        // DEBUG-only: reuses the existing `-UITestDefault key=value` launch
+        // argument (Support/UITestingConfiguration.swift), which already
+        // lands in UserDefaults before this view is built. There is no
+        // XCUITest driving tvOS yet (HypnosUITests stays visionOS-only) and
+        // simctl has no remote-button injection of its own, so this is what
+        // let screenshots of every tab get taken at all —
+        // `-UITestDefault tvInitialTab=Videos` opens straight to Videos.
+        #if DEBUG
+        if let raw = UserDefaults.standard.string(forKey: "tvInitialTab"),
+           let tab = TVTab(rawValue: raw) {
+            _selectedTab = State(initialValue: tab)
+        } else {
+            _selectedTab = State(initialValue: .pictures)
+        }
+        #else
+        _selectedTab = State(initialValue: .pictures)
+        #endif
+    }
 
     var body: some View {
         TabView(selection: $selectedTab) {
