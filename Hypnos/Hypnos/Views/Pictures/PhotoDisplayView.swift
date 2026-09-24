@@ -9,7 +9,14 @@
 import os
 import RealityKit
 import SwiftUI
+#if canImport(UIKit)
 import UIKit
+#endif
+#if canImport(AppKit)
+import AppKit
+#endif
+import Foundation
+import ImageIO
 
 struct PhotoDisplayView: View {
     @Bindable var windowModel: PhotoWindowModel
@@ -769,7 +776,7 @@ struct PhotoDisplayView: View {
         } else if let uiImage = windowModel.displayImage {
             // Fallback: lightweight 2D display with UIImage (used for idle-downscale thumbnails
             // and 3D adjustment previews where Metal overhead isn't justified)
-            Image(uiImage: uiImage)
+            Image(platformImage: uiImage)
                 .resizable()
                 .aspectRatio(contentMode: .fit)
                 .brightness(windowModel.effectiveAdjustments.brightness)
@@ -1069,7 +1076,7 @@ struct PhotoDisplayView: View {
         // `preImmersiveSize` is a SwiftUI content size and the readback below
         // is a scene size; the two differ by the window's chrome insets, so
         // only this one can answer "has the window moved at all yet".
-        let preImmersiveGranted = resolvedWindowScene?.effectiveGeometry.coordinateSpace.bounds.size
+        let preImmersiveGranted = resolvedWindowScene?.effectiveGeometrySize
 
         resizeWindowToFit(
             windowModel.imageAspectRatio,
@@ -1104,7 +1111,7 @@ struct PhotoDisplayView: View {
                 // verifier bail during exactly the interval it exists to watch.
                 let ipc = windowModel.contentEntity.components[ImagePresentationComponent.self]
                 let stillHeadingImmersive = ipc?.desiredViewingMode == .spatial3DImmersive
-                let granted = scene.effectiveGeometry.coordinateSpace.bounds.size
+                let granted = scene.effectiveGeometrySize
 
                 AppLogger.views.log(
                     level: AppLogger.effectiveDebugLevel,
@@ -1317,14 +1324,18 @@ struct PhotoDisplayView: View {
         )
     }
 
-    private var resolvedWindowScene: UIWindowScene? {
+    private var resolvedWindowScene: PlatformWindowScene? {
         if let sceneDelegate {
             return sceneDelegate.windowScene
         }
 
+        #if os(macOS)
+        return nil
+        #else
         return UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
             .first { $0.activationState == .foregroundActive }
+        #endif
     }
 }
 

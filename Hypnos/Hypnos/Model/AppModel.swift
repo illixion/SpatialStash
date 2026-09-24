@@ -13,6 +13,10 @@ import RAVEUI
 import RealityKit
 import SwiftUI
 
+#if canImport(AppKit)
+import AppKit
+#endif
+
 enum Spatial3DImageState {
     case notGenerated
     case generating
@@ -822,7 +826,13 @@ class AppModel {
     /// notification observer registered in `init`. Stored separately so
     /// SwiftUI views observing `effectiveReduceMotion` rebuild when the
     /// system setting changes outside the app.
-    private(set) var systemReduceMotion: Bool = UIAccessibility.isReduceMotionEnabled
+    private(set) var systemReduceMotion: Bool = {
+        #if os(macOS)
+        return NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        #else
+        return UIAccessibility.isReduceMotionEnabled
+        #endif
+    }()
 
     /// True when either the user toggle or the system Accessibility setting
     /// requests reduced motion. This is the value views should react to.
@@ -1744,6 +1754,21 @@ class AppModel {
         // app-level downscale-restore cycles.
         // Track system Accessibility "Reduce Motion" so effectiveReduceMotion
         // updates live when the user changes it outside the app.
+        #if os(macOS)
+        NotificationCenter.default.addObserver(
+            forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            Task { @MainActor [weak self] in
+                self?.systemReduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            }
+        }
+        // No `UIApplication.didReceiveMemoryWarningNotification` equivalent
+        // on macOS — there's no per-app low-memory warning system the way
+        // iOS has one (the `DispatchSource` memory-pressure monitor
+        // elsewhere in this initializer covers macOS's own signal instead).
+        #else
         NotificationCenter.default.addObserver(
             forName: UIAccessibility.reduceMotionStatusDidChangeNotification,
             object: nil,
@@ -1785,6 +1810,7 @@ class AppModel {
                 }
             }
         }
+        #endif
 
         // DispatchSource for logging memory pressure events.
         // Only listens for .critical — .warning events are left for the OS

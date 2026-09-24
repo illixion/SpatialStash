@@ -73,7 +73,7 @@ final class WindowResizeCoalescer {
     ///   because they have read back evidence that the grant was wrong.
     @discardableResult
     func request(
-        _ scene: UIWindowScene?,
+        _ scene: PlatformWindowScene?,
         size: CGSize? = nil,
         restriction: WindowGeometry.ResizingRestriction? = nil,
         animated: Bool = false,
@@ -81,7 +81,7 @@ final class WindowResizeCoalescer {
     ) -> Bool {
         guard size != nil || restriction != nil else { return false }
 
-        let sceneSize = scene?.effectiveGeometry.coordinateSpace.bounds.size
+        let sceneSize = scene?.effectiveGeometrySize
         var sizeToSend = size
         var restrictionToSend = restriction
 

@@ -20,9 +20,13 @@ struct FilmPlayerSection: View {
         Section("Film Player") {
             TextField("Server (https://host/jellyfin)", text: $session.server)
                 .textContentType(.URL)
+                #if !os(macOS)
                 .keyboardType(.URL)
-                .autocorrectionDisabled()
+                #endif
+                #if !os(macOS)
                 .textInputAutocapitalization(.never)
+                #endif
+                .autocorrectionDisabled()
             SecureField("API key", text: $session.apiKey)
             HStack {
                 TextField("Search films", text: $searchTerm)

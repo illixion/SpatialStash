@@ -15,7 +15,14 @@ import CoreImage
 import Metal
 import MetalKit
 import ImageIO
+#if canImport(UIKit)
 import UIKit
+#endif
+#if canImport(AppKit)
+import AppKit
+#endif
+import Foundation
+import ImageIO
 
 /// Sendable wrapper for MTLTexture. Metal texture objects are thread-safe GPU
 /// resource handles, but the protocol doesn't declare Sendable conformance.

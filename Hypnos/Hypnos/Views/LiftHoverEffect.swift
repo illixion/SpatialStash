@@ -27,6 +27,19 @@ struct LiftHoverEffect: CustomHoverEffect {
     }
 }
 
+#elseif os(macOS)
+
+// `.hoverEffect` doesn't exist on macOS at all — a real mouse cursor already
+// shows hover with no help needed, unlike iPad's trackpad pointer (which
+// `.hoverEffect(.lift)` is built for). No-op.
+struct LiftHoverEffect {}
+
+extension View {
+    func hoverEffect(_ effect: LiftHoverEffect) -> some View {
+        self
+    }
+}
+
 #else
 
 struct LiftHoverEffect {}

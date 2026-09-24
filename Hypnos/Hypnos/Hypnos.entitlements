@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- macOS only (see CODE_SIGN_ENTITLEMENTS[sdk=macosx*] in project.pbxproj).
+	     iOS/tvOS/visionOS ship with no entitlements file at all, and App
+	     Sandbox is a macOS-specific security model those platforms don't
+	     have — this file exists only so the Mac build can be sandboxed. -->
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<!-- Talking to Stash/Nextcloud servers on the local network or a
+	     Tailscale mesh. -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<!-- Settings → Backup export/import (SettingsBackupDocument's
+	     fileExporter/fileImporter) goes through the system's Open/Save
+	     panels, which need this entitlement under App Sandbox even though
+	     the panel itself is provided by the system. -->
+	<key>com.apple.security.files.user-selected.read-write</key>
+	<true/>
+</dict>
+</plist>

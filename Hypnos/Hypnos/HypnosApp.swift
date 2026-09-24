@@ -14,14 +14,18 @@ import os
 import RAVEUI
 import SwiftUI
 
-#if os(tvOS)
+#if os(tvOS) || os(macOS)
 import VideoToolbox
 #endif
 
 @main
 struct HypnosApp: App {
     @State private var appModel: AppModel
+    #if os(macOS)
+    @NSApplicationDelegateAdaptor private var appDelegate: AppDelegate
+    #else
     @UIApplicationDelegateAdaptor private var appDelegate: AppDelegate
+    #endif
 
     /// Written out rather than left to a property initializer so the UI-testing
     /// overrides land *before* `AppModel.init` reads UserDefaults. A default
@@ -32,12 +36,12 @@ struct HypnosApp: App {
         UITestingConfiguration.applyIfNeeded()
         #endif
         _appModel = State(initialValue: AppModel())
-        #if os(tvOS)
+        #if os(tvOS) || os(macOS)
         // AVFoundation only decodes VP9/AV1 once the app opts in to the
         // supplemental decoders, and Stash/Jellyfin sources are commonly
         // WebM/VP9 (the original file, or a server transcode). Once, at
         // launch, matching TVLab/FilmLabTV/YouTubeLab.swift's spike.
-        if #available(tvOS 26.2, *) {
+        if #available(tvOS 26.2, macOS 26.0, *) {
             VTRegisterSupplementalVideoDecoderIfAvailable(kCMVideoCodecType_VP9)
         }
         #endif
@@ -48,6 +52,8 @@ struct HypnosApp: App {
         visionOSScenes
         #elseif os(tvOS)
         tvOSScenes
+        #elseif os(macOS)
+        macOSScenes
         #else
         iOSScenes
         #endif
@@ -258,6 +264,73 @@ struct HypnosApp: App {
         .defaultSize(width: 1280, height: 720)
         .defaultLaunchBehavior(.suppressed)
         .restorationBehavior(.disabled)
+    }
+    #endif
+
+    // MARK: - macOS
+
+    #if os(macOS)
+    /// Real multiple windows, like visionOS — not the iOS/tvOS single-scene
+    /// router (`WindowActions.swift` routes `openWindow`/`dismissWindow`
+    /// straight to SwiftUI's own actions here, the same as visionOS).
+    ///
+    /// The shape deliberately doesn't mirror visionOS's *content* one scene at
+    /// a time: visionOS's `photo-detail`/`video-detail` windows host the full
+    /// RealityKit/fake-3D/adjustments viewer machinery, which is UIKit- and
+    /// visionOS-tuned throughout (see Hypnos/CLAUDE.md "macOS" for the full
+    /// seam/gap list) and stubbed out on macOS rather than ported this pass.
+    /// So macOS gets its own lightweight photo/video window content
+    /// (`Views/Mac/`) instead, plus the two tool windows that already have no
+    /// UIKit dependency (`ConsoleWindowView`, `GPUMemoryMonitorView`).
+    @SceneBuilder
+    private var macOSScenes: some Scene {
+        WindowGroup("Hypnos", id: "main") {
+            MacRootView()
+                .environment(appModel)
+        }
+        .defaultSize(width: 1280, height: 820)
+        .windowResizability(.contentSize)
+        .commands {
+            HypnosCommands(appModel: appModel)
+        }
+
+        WindowGroup(id: "photo-detail", for: MacPhotoWindowValue.self) { $value in
+            if let value {
+                MacPhotoViewerWindow(value: value)
+                    .environment(appModel)
+            }
+        }
+        .defaultSize(width: 1000, height: 760)
+
+        WindowGroup(id: "video-detail", for: GalleryVideo.self) { $video in
+            if let video {
+                MacVideoPlayerWindow(video: video)
+                    .environment(appModel)
+            }
+        }
+        .defaultSize(width: 1120, height: 700)
+
+        // Film player: picture plus Atmos objects (Settings → Developer →
+        // Film Player), the same window id and content as visionOS/iOS — see
+        // FilmPlayerView's own `#elseif os(iOS) / #else` (macOS) branch.
+        Window("Film Player", id: FilmPlayerView.windowID) {
+            FilmPlayerView()
+                .environment(appModel)
+        }
+        .defaultSize(width: 900, height: 800)
+        .restorationBehavior(.disabled)
+
+        Window("Console", id: "console") {
+            ConsoleWindowView()
+                .environment(appModel)
+        }
+        .defaultSize(width: 900, height: 600)
+
+        Window("GPU Memory", id: "gpu-memory") {
+            GPUMemoryMonitorView()
+                .environment(appModel)
+        }
+        .defaultSize(width: 500, height: 350)
     }
     #endif
 }

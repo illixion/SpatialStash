@@ -118,7 +118,9 @@ struct TabBarOrnament: View {
                 .contentShape(Capsule())
         }
         .buttonStyle(RAVETabBarButtonStyle(isSelected: false))
+        #if !os(macOS)
         .hoverEffect(.highlight)
+        #endif
         .help("Library — showing \(current.displayName)")
         .accessibilityLabel("Library — showing \(current.displayName)")
         .accessibilityIdentifier(A11y.librarySwitch)
@@ -167,7 +169,9 @@ struct TabBarOrnament: View {
             .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
         .buttonStyle(.plain)
+        #if !os(macOS)
         .hoverEffect(.highlight)
+        #endif
         .accessibilityIdentifier(A11y.librarySwitchOption(source.rawValue))
     }
 

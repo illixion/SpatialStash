@@ -76,8 +76,12 @@ struct NextcloudSettingsSection: View {
             .textFieldStyle(.plain)
             .textContentType(.URL)
             .autocorrectionDisabled()
+            #if !os(macOS)
             .textInputAutocapitalization(.never)
+            #endif
+            #if !os(macOS)
             .keyboardType(.URL)
+            #endif
             .disabled(signInState == .starting)
 
         switch signInState {

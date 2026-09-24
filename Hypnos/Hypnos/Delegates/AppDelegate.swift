@@ -9,6 +9,28 @@ import os
 import RAVEUI
 import SwiftUI
 
+// macOS has no `UIApplicationDelegate`/scene-session machinery — a `Window`/
+// `WindowGroup` scene maps straight to a real `NSWindow`, there is no
+// "restore a scene, then decide whether to summon a main window" dance (a
+// closed Mac window is just gone, and Cmd+N/the Dock icon already reopen one
+// the ordinary AppKit way), and this app doesn't yet route macOS's windows
+// through `RAVEWindowSessionRegistry` (see Hypnos/CLAUDE.md "macOS" — a known
+// gap, not a port of this file's visionOS/iOS logic). What does carry over
+// unchanged is the one-time app-launch housekeeping: local media directories
+// and the shared-media cache exist on every platform.
+#if os(macOS)
+@Observable
+class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        Task {
+            await LocalMediaSource.shared.ensureDirectoriesExist()
+        }
+        Task {
+            await SharedMediaCache.shared.cleanupOrphanedEntries()
+        }
+    }
+}
+#else
 @Observable
 class AppDelegate: NSObject, UIApplicationDelegate {
     /// Tracks whether we've already handled the initial activation so a
@@ -63,3 +85,4 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         return configuration
     }
 }
+#endif

@@ -21,7 +21,7 @@ struct RemoteViewerSceneRoot: View {
         // Resolved per body evaluation rather than cached: the profile list is
         // loaded in AppModel.init, so it's already populated even when visionOS
         // restores this scene during cold launch.
-        #if canImport(WebKit)
+        #if canImport(WebKit) && !os(macOS)
         if appModel.remoteViewerConfig(id: windowValue.configId)?.mode == .webPage {
             WebPageWindowView(windowValue: windowValue, onSizeSettled: onSizeSettled)
         } else {

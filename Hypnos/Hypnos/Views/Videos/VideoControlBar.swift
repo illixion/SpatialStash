@@ -122,7 +122,9 @@ struct VideoControlBar: View {
                         windowModel.endScrub(at: clamp(Double(value.location.x) / w) * dur)
                     }
             )
+            #if !os(macOS)
             .hoverEffect(.highlight)
+            #endif
             .onHover { hovering in
                 isScrubberHovering = hovering
             }

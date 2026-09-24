@@ -6,7 +6,14 @@
  while the engine handles timing, transitions, and prefetching.
  */
 
+#if canImport(UIKit)
 import UIKit
+#endif
+#if canImport(AppKit)
+import AppKit
+#endif
+import Foundation
+import ImageIO
 
 /// Result of a slideshow download. A still is decoded to a `UIImage` for the
 /// texture/crossfade/3D pipeline; a `.video` is a post the server handed back

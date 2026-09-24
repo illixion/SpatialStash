@@ -48,7 +48,7 @@ struct Video3DSettingsSheet: View {
                 advancedSection
             }
             .navigationTitle("3D Video Settings")
-            #if !os(tvOS)
+            #if !os(tvOS) && !os(macOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {

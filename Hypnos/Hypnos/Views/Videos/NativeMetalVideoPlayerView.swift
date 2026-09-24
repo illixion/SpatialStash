@@ -13,6 +13,17 @@ import RAVEMedia
 import os
 import SwiftUI
 
+// A real `UIViewRepresentable` (nothing visionOS-only here), so it already
+// compiles and runs on iOS/tvOS unchanged. macOS needs `NSViewRepresentable`
+// instead — a different protocol with different required method names, even
+// though every line of AVPlayer/Metal setup below is already fully
+// cross-platform. Nothing in the macOS UI (Views/Mac/) mounts this view —
+// `Views/Mac/MacVideoPlayerView.swift` uses AVKit's `AVPlayerView` directly,
+// which is the more idiomatic Mac choice anyway — so this pass stubs it
+// rather than writing the second (small, `Coordinator`-sharing) wrapper. See
+// Hypnos/CLAUDE.md "macOS" for the seam list and gaps.
+#if !os(macOS)
+
 private struct VideoRCASUniforms {
     var brightness: Float
     var contrast: Float
@@ -537,3 +548,23 @@ struct NativeMetalVideoPlayerView: UIViewRepresentable {
         }
     }
 }
+
+#else
+
+/// macOS stub — see the gate comment above.
+struct NativeMetalVideoPlayerView: View {
+    let videoURL: URL
+    var isRoomActive: Bool = true
+    var onVideoSizeKnown: ((CGSize) -> Void)? = nil
+    var visualAdjustments: VisualAdjustments = VisualAdjustments()
+    var loopController: VideoLoopController? = nil
+    var playbackModel: VideoWindowModel? = nil
+    var startMuted: Bool = true
+    var onPlaybackError: (() -> Void)? = nil
+
+    var body: some View {
+        Color.clear.onAppear { onPlaybackError?() }
+    }
+}
+
+#endif

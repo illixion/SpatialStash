@@ -43,7 +43,9 @@ struct WindowGroupRestoreSheet: View {
                                     .opacity(restoredEntryIds.contains(entry.id) ? 0.5 : 1.0)
                             }
                             .buttonStyle(.plain)
+                            #if !os(macOS)
                             .hoverEffectDisabled()
+                            #endif
                             .hoverEffect(LiftHoverEffect())
 
                             if isSelectionMode {
@@ -74,7 +76,9 @@ struct WindowGroupRestoreSheet: View {
                             .cornerRadius(12)
                         }
                         .buttonStyle(.plain)
+                        #if !os(macOS)
                         .hoverEffectDisabled()
+                        #endif
                         .hoverEffect(LiftHoverEffect())
                     }
                 }
@@ -110,7 +114,13 @@ struct WindowGroupRestoreSheet: View {
             }
             .navigationTitle(group.name)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItem(placement: {
+                    #if os(macOS)
+                    return ToolbarItemPlacement.automatic
+                    #else
+                    return ToolbarItemPlacement.topBarLeading
+                    #endif
+                }()) {
                     Button {
                         isSelectionMode.toggle()
                         selectedEntryIds.removeAll()
@@ -127,7 +137,13 @@ struct WindowGroupRestoreSheet: View {
                     .contentShape(Circle())
                 }
 
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: {
+                    #if os(macOS)
+                    return ToolbarItemPlacement.automatic
+                    #else
+                    return ToolbarItemPlacement.topBarTrailing
+                    #endif
+                }()) {
                     if isSelectionMode {
                         Button(role: .destructive) {
                             appModel.removeEntriesFromWindowGroup(group, entryIds: selectedEntryIds)

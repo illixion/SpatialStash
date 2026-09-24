@@ -25,6 +25,18 @@ struct ScaleHoverEffect: CustomHoverEffect {
     }
 }
 
+#elseif os(macOS)
+
+// `.hoverEffect` doesn't exist on macOS — a real mouse cursor already shows
+// hover with no help needed. No-op.
+struct ScaleHoverEffect {}
+
+extension View {
+    func hoverEffect(_ effect: ScaleHoverEffect) -> some View {
+        self
+    }
+}
+
 #else
 
 struct ScaleHoverEffect {}

@@ -5,8 +5,13 @@
  Loads the image from its direct URL to preserve browser-native animation.
  */
 
-// tvOS has no WebKit.
-#if canImport(WebKit)
+// tvOS has no WebKit. macOS's WKWebView exists, but this view's transparent/
+// no-scroll setup (`webView.scrollView.*`) is UIKit-`WKWebView`-only API with
+// no macOS equivalent property, and nothing in the macOS UI (Views/Mac/)
+// mounts this view, so it gets a stub like a visionOS-only view gets on iOS —
+// see Hypnos/CLAUDE.md "macOS" for the seam list and the plan for a real
+// NSViewRepresentable later.
+#if canImport(WebKit) && !os(macOS)
 import SwiftUI
 import WebKit
 
@@ -216,6 +221,29 @@ private extension String {
     var jsEscapedForSingleQuotedString: String {
         replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "'", with: "\\'")
+    }
+}
+#elseif os(macOS)
+import SwiftUI
+
+/// macOS stub — see the gate comment above. Reports its element unplayable
+/// immediately, the same as a real decode failure, so a caller chained onto
+/// `onError` (the slideshow's native-`<img>`-tier fall-through) falls forward
+/// onto its next tier instead of showing a permanently blank frame.
+struct AnimatedImageWebView: View {
+    enum ElementType: String {
+        case image
+        case video
+    }
+
+    let imageURL: URL
+    var elementType: ElementType = .image
+    var imageData: Data?
+    var imageDataMimeType: String = "image/webp"
+    var onError: (() -> Void)?
+
+    var body: some View {
+        Color.clear.onAppear { onError?() }
     }
 }
 #endif

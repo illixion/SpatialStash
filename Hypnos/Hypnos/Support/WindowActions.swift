@@ -10,10 +10,15 @@
  spelling — but read the action through these proxies instead of SwiftUI's
  environment keys directly:
 
- - on visionOS each proxy wraps the real SwiftUI action, so behaviour is
-   unchanged;
- - on iOS each proxy talks to `IOSWindowRouter`, which turns a window value into
-   a full-screen cover (viewers) or a sheet (tool panels) inside the one window.
+ - on visionOS **and macOS** each proxy wraps the real SwiftUI action — macOS
+   gets real multiple windows too (see `Hypnos/CLAUDE.md` "macOS"), not the
+   iOS/tvOS single-scene router. `pushWindow` has no macOS equivalent (it's a
+   visionOS-only API: "replace this window's content in place"), so a push on
+   macOS just opens a new window instead — the ordinary Mac convention is
+   separate windows, not one window that swaps its content;
+ - on iOS and tvOS each proxy talks to `IOSWindowRouter`, which turns a window
+   value into a full-screen cover (viewers) or a sheet (tool panels) inside the
+   one window.
 
  The proxies are `DynamicProperty` wrappers so a view declares them exactly as
  it declared the environment action: `@OpenWindowProxy private var openWindow`.
@@ -26,7 +31,7 @@ import SwiftUI
 /// Stand-in for SwiftUI's `OpenWindowAction` with the same call shapes.
 @MainActor
 struct WindowOpenAction {
-    #if os(visionOS)
+    #if os(visionOS) || os(macOS)
     let action: OpenWindowAction
 
     func callAsFunction(id: String) {
@@ -51,7 +56,8 @@ struct WindowOpenAction {
 
 /// Stand-in for SwiftUI's `PushWindowAction`. On iOS a push and an open land on
 /// the same cover stack; the distinction survives only as the viewer's
-/// `wasPushed` chrome (back button vs. gallery button).
+/// `wasPushed` chrome (back button vs. gallery button). On macOS, which has no
+/// `pushWindow` API at all, a push just opens a new window (see file header).
 @MainActor
 struct WindowPushAction {
     #if os(visionOS)
@@ -63,6 +69,16 @@ struct WindowPushAction {
 
     func callAsFunction<V: Codable & Hashable>(id: String, value: V) {
         action(id: id, value: value)
+    }
+    #elseif os(macOS)
+    let openAction: OpenWindowAction
+
+    func callAsFunction(id: String) {
+        openAction(id: id)
+    }
+
+    func callAsFunction<V: Codable & Hashable>(id: String, value: V) {
+        openAction(id: id, value: value)
     }
     #else
     let router: IOSWindowRouter?
@@ -80,7 +96,7 @@ struct WindowPushAction {
 /// Stand-in for SwiftUI's `DismissWindowAction`.
 @MainActor
 struct WindowDismissAction {
-    #if os(visionOS)
+    #if os(visionOS) || os(macOS)
     let action: DismissWindowAction
 
     func callAsFunction() {
@@ -117,7 +133,7 @@ struct WindowDismissAction {
 
 @propertyWrapper
 struct OpenWindowProxy: DynamicProperty {
-    #if os(visionOS)
+    #if os(visionOS) || os(macOS)
     @Environment(\.openWindow) private var action
 
     var wrappedValue: WindowOpenAction { WindowOpenAction(action: action) }
@@ -136,6 +152,10 @@ struct PushWindowProxy: DynamicProperty {
     @Environment(\.pushWindow) private var action
 
     var wrappedValue: WindowPushAction { WindowPushAction(action: action) }
+    #elseif os(macOS)
+    @Environment(\.openWindow) private var action
+
+    var wrappedValue: WindowPushAction { WindowPushAction(openAction: action) }
     #else
     @Environment(IOSWindowRouter.self) private var router: IOSWindowRouter?
 
@@ -147,7 +167,7 @@ struct PushWindowProxy: DynamicProperty {
 
 @propertyWrapper
 struct DismissWindowProxy: DynamicProperty {
-    #if os(visionOS)
+    #if os(visionOS) || os(macOS)
     @Environment(\.dismissWindow) private var action
 
     var wrappedValue: WindowDismissAction { WindowDismissAction(action: action) }

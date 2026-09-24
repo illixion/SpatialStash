@@ -65,15 +65,15 @@ struct GalleryThumbnailView: View {
             if let dioramaPair, appModel.effectiveThumbnailDiorama {
                 // Two-layer diorama: blurred-subject backdrop, masked foreground
                 // popped forward in z for an Apple TV-style parallax pop.
-                Image(uiImage: dioramaPair.backdrop)
+                Image(platformImage: dioramaPair.backdrop)
                     .resizable()
                     .scaledToFill()
-                Image(uiImage: dioramaPair.foreground)
+                Image(platformImage: dioramaPair.foreground)
                     .resizable()
                     .scaledToFill()
                     .offset(z: 24)
             } else if let loadedImage {
-                Image(uiImage: loadedImage)
+                Image(platformImage: loadedImage)
                     .resizable()
                     .scaledToFill()
             } else if isLoading {
@@ -219,11 +219,15 @@ struct GalleryThumbnailView: View {
         let reduceMotion: Bool
 
         func body(content: Content) -> some View {
+            #if os(macOS)
+            content.hoverEffect(ScaleHoverEffect())
+            #else
             if reduceMotion {
                 content.hoverEffect(.highlight)
             } else {
                 content.hoverEffect(ScaleHoverEffect())
             }
+            #endif
         }
     }
 

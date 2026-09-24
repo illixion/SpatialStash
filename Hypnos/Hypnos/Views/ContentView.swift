@@ -207,19 +207,25 @@ struct ContentView: View {
                 NavigationStack {
                     tabContent(tab)
                         .navigationTitle(tab.rawValue)
-                        #if !os(tvOS)
+                        #if !os(tvOS) && !os(macOS)
                         .navigationBarTitleDisplayMode(.inline)
                         #endif
+                        #if !os(macOS)
                         .toolbar {
                             IOSTabToolbar(tab: tab)
                         }
+                        #endif
                 }
             }
         }
         // Nothing behind the welcome flow is useful yet, and a visible tab
         // bar under it invites an escape into an empty gallery. Set on the
         // page, not the TabView — tab-bar visibility is a content preference.
+        // No `.tabBar` toolbar placement on macOS (this whole `#else` branch
+        // is dead code there anyway — the Mac UI uses `MacRootView` instead).
+        #if !os(macOS)
         .toolbarVisibility(showWelcome ? .hidden : .visible, for: .tabBar)
+        #endif
     }
 
     /// Routed through `MainTabCatalog.select` rather than straight to the

@@ -8,6 +8,20 @@ The delegate class for the scene.
 import os
 import SwiftUI
 
+// macOS has no `UIScene`/`UIWindowSceneDelegate` at all — a `Window`/
+// `WindowGroup` scene maps straight to a real `NSWindow`, with no delegate
+// object in between. The scene-lifecycle logging and `windowScene` tracking
+// below are meaningless there (and already no-ops for window-geometry
+// purposes — see `PlatformWindowScene` in `Support/PlatformShims.swift`), but
+// `@Environment(SceneDelegate.self)` is read from several shared views, so
+// macOS gets a minimal stand-in that only carries the cross-platform static
+// pieces (the incoming-shared-URL backlog) that `IncomingURLHandler` needs on
+// every platform.
+#if os(macOS)
+@Observable class SceneDelegate: NSObject {
+    weak var windowScene: PlatformWindowScene?
+}
+#else
 @Observable class SceneDelegate: NSObject, UIWindowSceneDelegate {
     weak var windowScene: UIWindowScene?
 
@@ -63,7 +77,10 @@ import SwiftUI
             "[Scene \(windowScene.session.persistentIdentifier, privacy: .public)] \(event, privacy: .public) activation=\(String(describing: windowScene.activationState), privacy: .public) scene=\(Int(sceneSize.width), privacy: .public)x\(Int(sceneSize.height), privacy: .public) windows=\(windowScene.windows.count, privacy: .public) visible=\(visibleWindows, privacy: .public)"
         )
     }
+}
+#endif
 
+extension SceneDelegate {
     /// Broadcast notification consumed by every mounted `IncomingURLHandler`.
     /// Posted on the main queue so SwiftUI observers receive it on the main actor.
     static let sharedURLNotification = Notification.Name("Hypnos.sharedURLReceived")
@@ -77,7 +94,10 @@ import SwiftUI
     /// live observer first and `consumePending` removes them from the backlog so
     /// a later-mounting window can't reopen them.
     private static let pendingLock = NSLock()
-    private static var pendingURLs: [URL] = []
+    // `nonisolated(unsafe)`: every access goes through `pendingLock` above,
+    // so this is ordinary lock-protected shared state, not a data race —
+    // the same shape as `PlatformImage.swift`'s associated-object keys.
+    private nonisolated(unsafe) static var pendingURLs: [URL] = []
 
     /// Take (and clear) any URLs delivered before a handler was listening.
     static func drainPendingURLs() -> [URL] {
@@ -95,7 +115,7 @@ import SwiftUI
         pendingURLs.removeAll { $0 == url }
     }
 
-    private static func deliverSharedURLs(_ urls: [URL]) {
+    fileprivate static func deliverSharedURLs(_ urls: [URL]) {
         pendingLock.lock()
         pendingURLs.append(contentsOf: urls)
         pendingLock.unlock()

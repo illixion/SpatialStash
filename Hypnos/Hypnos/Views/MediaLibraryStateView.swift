@@ -22,7 +22,14 @@
 
 import Photos
 import SwiftUI
+#if canImport(UIKit)
 import UIKit
+#endif
+#if canImport(AppKit)
+import AppKit
+#endif
+import Foundation
+import ImageIO
 
 /// The shared shape. Every state below is this with different words, which is
 /// what keeps them recognisable as the same kind of message.
@@ -141,7 +148,16 @@ struct PhotoLibraryStateView: View {
                 message: "Hypnos can't see your photo library. Allow access in Settings to browse and convert your \(kind.noun), or connect a media server instead.",
                 actionTitle: "Open Settings",
                 action: {
+                    #if os(macOS)
+                    // No per-app Settings deep link on macOS (this button
+                    // belongs to the visionOS/iOS Photos permission screen,
+                    // which the Mac UI doesn't use — see Hypnos/CLAUDE.md
+                    // "macOS"). Open System Settings generally rather than
+                    // do nothing.
+                    guard let url = URL(string: "x-apple.systempreferences:") else { return }
+                    #else
                     guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+                    #endif
                     openURL(url)
                 }
             ) {
@@ -273,14 +289,20 @@ struct LibrarySafetyNetView: View {
                 .roundedTextFieldStyle()
                 .textContentType(.URL)
                 .autocorrectionDisabled()
+                #if !os(macOS)
                 .textInputAutocapitalization(.never)
+                #endif
+                #if !os(macOS)
                 .keyboardType(.URL)
+                #endif
                 .onSubmit { Task { await connect() } }
 
             SecureField("API key (optional)", text: $draftAPIKey)
                 .roundedTextFieldStyle()
                 .autocorrectionDisabled()
+                #if !os(macOS)
                 .textInputAutocapitalization(.never)
+                #endif
                 .onSubmit { Task { await connect() } }
 
             HStack(spacing: 12) {

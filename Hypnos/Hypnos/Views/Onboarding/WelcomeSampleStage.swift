@@ -26,7 +26,14 @@
 import os
 import RealityKit
 import SwiftUI
+#if canImport(UIKit)
 import UIKit
+#endif
+#if canImport(AppKit)
+import AppKit
+#endif
+import Foundation
+import ImageIO
 
 @MainActor
 @Observable
@@ -173,7 +180,7 @@ struct WelcomeSampleImage: View {
                 if model.isShowingRealityKit {
                     spatialImage
                 } else if let image = model.flatImage {
-                    Image(uiImage: image)
+                    Image(platformImage: image)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                 }
@@ -183,7 +190,7 @@ struct WelcomeSampleImage: View {
                 // WelcomeSampleControls) so `isShowingRealityKit` never asks
                 // for it anyway.
                 if let image = model.flatImage {
-                    Image(uiImage: image)
+                    Image(platformImage: image)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                 }

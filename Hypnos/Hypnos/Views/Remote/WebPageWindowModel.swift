@@ -13,7 +13,7 @@
  */
 
 // tvOS has no WebKit.
-#if canImport(WebKit)
+#if canImport(WebKit) && !os(macOS)
 import Foundation
 import os
 import SwiftUI

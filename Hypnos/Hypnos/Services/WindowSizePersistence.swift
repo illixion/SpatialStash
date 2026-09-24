@@ -12,7 +12,11 @@
 
 import os
 import SwiftUI
+
+#if canImport(UIKit)
 import UIKit
+#endif
+import Foundation
 
 @MainActor
 final class WindowSizePersistence {
@@ -43,7 +47,7 @@ final class WindowSizePersistence {
     /// Resolves **this** window's scene. Must never fall back to the
     /// foreground-active scene: during cold launch that can be a different
     /// window, which would then receive our resize.
-    var windowScene: (() -> UIWindowScene?)?
+    var windowScene: (() -> PlatformWindowScene?)?
 
     private var writebackTask: Task<Void, Never>?
     private var suppressTask: Task<Void, Never>?

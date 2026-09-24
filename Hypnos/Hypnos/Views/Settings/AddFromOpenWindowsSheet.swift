@@ -64,7 +64,9 @@ struct AddFromOpenWindowsSheet: View {
                                     }
                                 }
                                 .buttonStyle(.plain)
+                                #if !os(macOS)
                                 .hoverEffectDisabled()
+                                #endif
                                 .hoverEffect(LiftHoverEffect())
                             }
                         }

@@ -10,7 +10,10 @@ import SwiftUI
 // UIActivityViewController (the share sheet) doesn't exist on tvOS — there's
 // no AirDrop/Files/Messages target for a Siri Remote UX to hand a file to.
 // The Share button is hidden from the tvOS ornaments at each call site.
-#if !os(tvOS)
+// macOS has its own share sheet (NSSharingServicePicker), but nothing in the
+// macOS UI (Views/Mac/) currently offers a Share button, so this is a known
+// gap rather than a port yet — see Hypnos/CLAUDE.md "macOS".
+#if !os(tvOS) && !os(macOS)
 struct ActivityViewController: UIViewControllerRepresentable {
     let activityItems: [Any]
     @Binding var isPresented: Bool

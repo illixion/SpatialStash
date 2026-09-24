@@ -8,7 +8,14 @@
 import CoreGraphics
 import os
 import RAVESlideshow
+#if canImport(UIKit)
 import UIKit
+#endif
+#if canImport(AppKit)
+import AppKit
+#endif
+import Foundation
+import ImageIO
 
 @MainActor
 class GalleryContentProvider: SlideshowContentProvider, RAVESlideshowContentProvider {

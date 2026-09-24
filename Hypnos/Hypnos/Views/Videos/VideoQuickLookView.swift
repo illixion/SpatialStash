@@ -32,7 +32,14 @@
 import RAVEMedia
 import os
 import SwiftUI
+#if canImport(UIKit)
 import UIKit
+#endif
+#if canImport(AppKit)
+import AppKit
+#endif
+import Foundation
+import ImageIO
 
 /// Z-offset so the preview and side menu sit clearly in front of any
 /// diorama-thumbnail foreground layers in the grid below.
@@ -203,7 +210,7 @@ struct VideoQuickLookView: View {
             // clip buffers (the Metal/Web players are transparent until frames
             // arrive).
             if let poster = posterImage ?? initialImage {
-                Image(uiImage: poster)
+                Image(platformImage: poster)
                     .resizable()
                     .scaledToFill()
                     .frame(width: size.width, height: size.height)
@@ -363,7 +370,9 @@ struct VideoQuickLookView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        #if !os(macOS)
         .hoverEffect()
+        #endif
         .disabled(disabled)
     }
 

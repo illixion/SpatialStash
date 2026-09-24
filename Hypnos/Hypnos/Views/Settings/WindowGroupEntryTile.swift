@@ -59,7 +59,7 @@ private struct EntryThumbnail: View {
             Color.secondary.opacity(0.2)
 
             if let loadedImage {
-                Image(uiImage: loadedImage)
+                Image(platformImage: loadedImage)
                     .resizable()
                     .scaledToFill()
             } else if isLoading {

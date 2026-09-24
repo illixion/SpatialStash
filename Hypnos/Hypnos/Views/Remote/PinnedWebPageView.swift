@@ -6,8 +6,9 @@
  any view identity churn — that's the whole point of a pinned page.
  */
 
-// tvOS has no WebKit.
-#if canImport(WebKit)
+// tvOS has no WebKit. Stubbed on macOS too, like the other WKWebView views in
+// this file's family — see Hypnos/CLAUDE.md "macOS".
+#if canImport(WebKit) && !os(macOS)
 import SwiftUI
 import WebKit
 
@@ -33,3 +34,7 @@ struct PinnedWebPageView: UIViewRepresentable {
     }
 }
 #endif
+// No macOS stub: nothing on macOS references this type — its sole caller,
+// `WebPageWindowView.swift`, is itself excluded from macOS (see that file's
+// gate) — unlike the other WebKit views in this app's family, which callers
+// outside their own file still construct on every platform.

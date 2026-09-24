@@ -9,8 +9,13 @@
  AccessTo:) pattern WebVideoPlayerView uses for local playback.
  */
 
-// tvOS has no WebKit.
-#if canImport(WebKit)
+// tvOS has no WebKit. macOS is excluded too: this generator renders into a
+// real offscreen UIWindow/UIWindowScene to force a WKWebView layout pass, a
+// technique with no macOS equivalent (NSWindow/WKWebView don't need it — a
+// hosted WKWebView lays out once added to a view hierarchy regardless of
+// window visibility), and nothing mounts this path on macOS. See
+// Hypnos/CLAUDE.md "macOS".
+#if canImport(WebKit) && !os(macOS)
 import os
 import UIKit
 import WebKit

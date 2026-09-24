@@ -671,7 +671,7 @@ struct RemoteViewerWindowView: View {
             )
             .id(metalRendererGeneration)
         } else {
-            Image(uiImage: image)
+            Image(platformImage: image)
                 .resizable()
                 .brightness(model.effectiveBrightness)
                 .contrast(model.effectiveContrast)
@@ -693,7 +693,7 @@ struct RemoteViewerWindowView: View {
                 sharpen: 0
             )
         } else {
-            Image(uiImage: image)
+            Image(platformImage: image)
                 .resizable()
                 .brightness(model.effectiveBrightness)
                 .contrast(model.effectiveContrast)
@@ -854,7 +854,7 @@ struct RemoteViewerWindowView: View {
         )
         var value = RemoteViewerWindowValue(configId: windowValue.configId)
         if let scene = resolvedWindowScene {
-            let size = scene.effectiveGeometry.coordinateSpace.bounds.size
+            let size = scene.effectiveGeometrySize
             if Self.isPlausibleWindowSize(size) {
                 value.restoredSize = RAVECodableSize(size)
             }
@@ -1032,7 +1032,7 @@ struct RemoteViewerWindowView: View {
     /// window's scene from the environment: the old foreground-active fallback
     /// could resolve to a *different* window and send it our resize, which is
     /// exactly the failure mode `VideoWindowView`'s aspect lock documents.
-    private var resolvedWindowScene: UIWindowScene? {
+    private var resolvedWindowScene: PlatformWindowScene? {
         sceneDelegate?.windowScene
     }
 

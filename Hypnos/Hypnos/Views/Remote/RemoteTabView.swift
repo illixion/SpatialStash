@@ -464,8 +464,12 @@ struct RemoteTabView: View {
             TextField("Page URL", text: $editingConfig.webPageURL)
                 .textContentType(.URL)
                 .autocorrectionDisabled()
+                #if !os(macOS)
                 .textInputAutocapitalization(.never)
+                #endif
+                #if !os(macOS)
                 .keyboardType(.URL)
+                #endif
 
             if !editingConfig.webPageURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                editingConfig.resolvedWebPageURL == nil {
@@ -538,11 +542,15 @@ struct RemoteTabView: View {
             TextField("RoboFrame API Endpoint", text: $editingConfig.apiEndpoint)
                 .textContentType(.URL)
                 .autocorrectionDisabled()
+                #if !os(macOS)
                 .textInputAutocapitalization(.never)
+                #endif
 
             TextField("WebSocket Device ID", text: $editingConfig.wsDeviceId)
                 .autocorrectionDisabled()
+                #if !os(macOS)
                 .textInputAutocapitalization(.never)
+                #endif
 
             Text("Home Assistant uses this stable ID. The server keeps each window's slideshow session independent.")
                 .font(.caption)
@@ -550,7 +558,9 @@ struct RemoteTabView: View {
 
             SecureField("Access Token", text: $editingConfig.accessToken)
                 .autocorrectionDisabled()
+                #if !os(macOS)
                 .textInputAutocapitalization(.never)
+                #endif
 
             Link("RoboFrame on GitHub", destination: RemoteViewerConfig.roboFrameRepositoryURL)
                 .font(.caption)
@@ -644,7 +654,9 @@ struct RemoteTabView: View {
                     )
                     .font(.body.monospaced())
                     .autocorrectionDisabled()
+                    #if !os(macOS)
                     .textInputAutocapitalization(.never)
+                    #endif
                 }
             }
             .onDelete { indexSet in
@@ -654,7 +666,9 @@ struct RemoteTabView: View {
             HStack {
                 TextField("Tags (space-separated)", text: $newModTagPreset)
                     .autocorrectionDisabled()
+                    #if !os(macOS)
                     .textInputAutocapitalization(.never)
+                    #endif
                 Button("Add Preset") {
                     let tags = newModTagPreset.trimmingCharacters(in: .whitespaces)
                         .components(separatedBy: " ")

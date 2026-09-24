@@ -8,7 +8,14 @@
  */
 
 import SwiftUI
+#if canImport(UIKit)
 import UIKit
+#endif
+#if canImport(AppKit)
+import AppKit
+#endif
+import Foundation
+import ImageIO
 
 // MARK: - Media Type Abstraction
 
@@ -433,7 +440,9 @@ struct MediaDetailSheet: View {
                 }
                 HStack {
                     TextField("Search studios...", text: $studioSearchText)
+                        #if !os(macOS)
                         .textInputAutocapitalization(.never)
+                        #endif
                 }
                 .onChange(of: studioSearchText) { _, query in
                     Task { await searchStudios(query: query) }
@@ -470,7 +479,9 @@ struct MediaDetailSheet: View {
                 }
                 HStack {
                     TextField("Search performers...", text: $performerSearchText)
+                        #if !os(macOS)
                         .textInputAutocapitalization(.never)
+                        #endif
                 }
                 .onChange(of: performerSearchText) { _, query in
                     Task { await searchPerformers(query: query) }
@@ -509,7 +520,9 @@ struct MediaDetailSheet: View {
                 }
                 HStack {
                     TextField("Search tags...", text: $tagSearchText)
+                        #if !os(macOS)
                         .textInputAutocapitalization(.never)
+                        #endif
                 }
                 .onChange(of: tagSearchText) { _, query in
                     Task { await searchTags(query: query) }
@@ -531,7 +544,9 @@ struct MediaDetailSheet: View {
                 ForEach(editUrls.indices, id: \.self) { index in
                     HStack {
                         TextField("URL", text: $editUrls[index])
+                            #if !os(macOS)
                             .textInputAutocapitalization(.never)
+                            #endif
                         Button {
                             editUrls.remove(at: index)
                         } label: {

@@ -258,8 +258,12 @@ struct SettingsTabView: View {
                         .textFieldStyle(.plain)
                         .textContentType(.URL)
                         .autocorrectionDisabled()
+                        #if !os(macOS)
                         .textInputAutocapitalization(.never)
+                        #endif
+                        #if !os(macOS)
                         .keyboardType(.URL)
+                        #endif
                         .onSubmit {
                             appModel.updateAPIClient()
                         }
@@ -267,7 +271,9 @@ struct SettingsTabView: View {
                     SecureField("API Key (optional)", text: $appModel.stashAPIKey)
                         .textFieldStyle(.plain)
                         .autocorrectionDisabled()
+                        #if !os(macOS)
                         .textInputAutocapitalization(.never)
+                        #endif
                         .onSubmit {
                             appModel.updateAPIClient()
                         }

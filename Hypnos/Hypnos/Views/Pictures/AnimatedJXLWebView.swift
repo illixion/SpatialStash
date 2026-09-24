@@ -23,8 +23,13 @@
  needs no file-URL read access.
 */
 
-// tvOS has no WebKit.
-#if canImport(WebKit)
+// tvOS has no WebKit. macOS's WKWebView exists, but this view's transparent/
+// no-scroll setup (`webView.scrollView.*`) is UIKit-`WKWebView`-only API with
+// no macOS equivalent property, and nothing in the macOS UI (Views/Mac/)
+// mounts this view, so it gets the same stub-and-fail-closed treatment as a
+// visionOS-only view on iOS: see Hypnos/CLAUDE.md "macOS" for the seam list
+// and the plan to give this a real NSViewRepresentable later.
+#if canImport(WebKit) && !os(macOS)
 import SwiftUI
 import WebKit
 import os
@@ -212,6 +217,20 @@ struct AnimatedJXLWebView: UIViewRepresentable {
         </script>
         </body></html>
         """
+    }
+}
+#elseif os(macOS)
+import SwiftUI
+
+/// macOS stub — see the gate comment above. No decode, no HEVC caching; the
+/// caller (`PhotoDisplayView`'s animated-image tier) simply shows nothing
+/// where a JXL animation would play until this gets a real implementation.
+struct AnimatedJXLWebView: View {
+    let imageData: Data?
+    var sourceURL: URL? = nil
+
+    var body: some View {
+        Color.clear
     }
 }
 #endif

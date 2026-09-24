@@ -10,7 +10,14 @@ import AVFoundation
 import Foundation
 import ImageIO
 import os
+#if canImport(UIKit)
 import UIKit
+#endif
+#if canImport(AppKit)
+import AppKit
+#endif
+import Foundation
+import ImageIO
 
 /// Memory-efficient thumbnail generator using ImageIO
 actor ThumbnailGenerator {
@@ -83,7 +90,9 @@ actor ThumbnailGenerator {
         // engine that plays it). Skip the AVAssetImageGenerator attempt entirely.
         // tvOS has no WebKit, so a WebM file there just falls through to the
         // placeholder below (AVAssetImageGenerator fails on it the same way).
-        #if canImport(WebKit)
+        // macOS is excluded too — WebMThumbnailGenerator's offscreen-render
+        // trick is UIWindow/UIWindowScene-specific (see its own gate).
+        #if canImport(WebKit) && !os(macOS)
         if url.pathExtension.lowercased() == "webm" {
             return await WebMThumbnailGenerator.shared.generateThumbnail(for: url, maxSize: maxSize)
         }

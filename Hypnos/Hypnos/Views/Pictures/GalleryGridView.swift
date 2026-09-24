@@ -7,7 +7,14 @@
 
 import Photos
 import SwiftUI
+#if canImport(UIKit)
 import UIKit
+#endif
+#if canImport(AppKit)
+import AppKit
+#endif
+import Foundation
+import ImageIO
 
 struct GalleryGridView: View {
     @Environment(AppModel.self) private var appModel
@@ -342,13 +349,17 @@ struct GalleryGridView: View {
         } catch {}
     }
 
-    private var resolvedWindowScene: UIWindowScene? {
+    private var resolvedWindowScene: PlatformWindowScene? {
         if let sceneDelegate {
             return sceneDelegate.windowScene
         }
 
+        #if os(macOS)
+        return nil
+        #else
         return UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
             .first { $0.activationState == .foregroundActive }
+        #endif
     }
 }

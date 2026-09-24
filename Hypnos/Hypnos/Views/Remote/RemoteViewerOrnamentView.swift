@@ -275,7 +275,9 @@ struct RemoteViewerOrnamentView: View {
                 .roundedTextFieldStyle()
                 .font(.body.monospaced())
                 .autocorrectionDisabled()
+                #if !os(macOS)
                 .textInputAutocapitalization(.never)
+                #endif
                 .frame(minWidth: 320)
                 .onSubmit { commitNewPreset() }
             HStack {

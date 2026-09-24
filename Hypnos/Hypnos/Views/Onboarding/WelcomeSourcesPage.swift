@@ -171,15 +171,21 @@ struct WelcomeSourcesPage: View {
                 .roundedTextFieldStyle()
                 .textContentType(.URL)
                 .autocorrectionDisabled()
+                #if !os(macOS)
                 .textInputAutocapitalization(.never)
+                #endif
+                #if !os(macOS)
                 .keyboardType(.URL)
+                #endif
                 .onSubmit { Task { await connectServer() } }
 
             SecureField("API key (optional)", text: $draftAPIKey)
                 .accessibilityIdentifier(A11y.Welcome.serverKeyField)
                 .roundedTextFieldStyle()
                 .autocorrectionDisabled()
+                #if !os(macOS)
                 .textInputAutocapitalization(.never)
+                #endif
                 .onSubmit { Task { await connectServer() } }
 
             HStack(spacing: 12) {

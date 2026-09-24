@@ -77,7 +77,7 @@ struct FilmPlayerView: View {
         .onPlayPauseCommand {
             player.isPlaying ? player.pause() : player.play()
         }
-        #else
+        #elseif os(iOS)
         Form {
             Section(session.loadedItem?.name ?? "") {
                 ZStack {
@@ -97,6 +97,30 @@ struct FilmPlayerView: View {
         }
         .onAppear { HeadphoneHeadTracker.shared.start() }
         .onDisappear { HeadphoneHeadTracker.shared.stop() }
+        #else
+        // macOS: picture plus Atmos object audio, same as iOS, but without
+        // AirPods head tracking (`HeadphoneHeadTracker` is iOS-only — there's
+        // no Mac equivalent API). `FilmStageView`'s `listenerOrientation`
+        // defaults to identity, which is exactly "no tracking": the sound
+        // stage stays fixed relative to the picture instead of turning with
+        // the listener's head. RAVEFilm's `FilmStageView` already documents
+        // itself as supporting this ("iOS and macOS: a virtual camera").
+        Form {
+            Section(session.loadedItem?.name ?? "") {
+                ZStack {
+                    FilmStageView(player: player)
+                    FilmVideoView(player: player.video)
+                }
+                .aspectRatio(16 / 9, contentMode: .fit)
+                .listRowInsets(EdgeInsets())
+                FilmTransport(player: player)
+            }
+            Section("Objects") {
+                FilmObjectMap(player: player).aspectRatio(1, contentMode: .fit)
+            }
+            Section("Tuning") { FilmTuning() }
+            Section("Telemetry") { FilmTelemetry(player: player) }
+        }
         #endif
     }
 }

@@ -463,11 +463,15 @@ struct VideoWindowView: View {
 
     // MARK: - Window Aspect Ratio
 
-    private var resolvedWindowScene: UIWindowScene? {
+    private var resolvedWindowScene: PlatformWindowScene? {
         if let sceneDelegate { return sceneDelegate.windowScene }
+        #if os(macOS)
+        return nil
+        #else
         return UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
             .first { $0.activationState == .foregroundActive }
+        #endif
     }
 
     /// Lock the window's resize aspect ratio to the video's native dimensions
@@ -530,7 +534,7 @@ struct VideoWindowView: View {
         aspectRelockTask = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(500))
             guard !Task.isCancelled, let scene = resolvedWindowScene else { return }
-            let granted = scene.coordinateSpace.bounds.size
+            let granted = scene.effectiveGeometrySize
             AppLogger.videoWindow.info("Aspect lock readback: granted \(Int(granted.width))x\(Int(granted.height))")
             guard granted.width > 0, granted.height > 0,
                   abs(granted.width - windowSize.width) > 2 || abs(granted.height - windowSize.height) > 2

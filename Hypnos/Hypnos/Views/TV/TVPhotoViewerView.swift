@@ -42,7 +42,7 @@ struct TVPhotoViewerView: View {
             Color.black.ignoresSafeArea()
 
             if let currentImage {
-                Image(uiImage: currentImage)
+                Image(platformImage: currentImage)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
             } else if isLoading {

@@ -5,8 +5,13 @@
  not natively supported by AVPlayer.
  */
 
-// tvOS has no WebKit.
-#if canImport(WebKit)
+// tvOS has no WebKit. macOS's WKWebView exists, but this player's transparent/
+// custom-controls setup and JS bridge (`webView.scrollView.*`, the message
+// handlers wired in `makeUIView`) need real macOS adaptation this pass didn't
+// reach — nothing in the macOS UI (Views/Mac/) mounts it; macOS's own video
+// window uses a plain AVKit `AVPlayerView` instead (`Views/Mac/`). See
+// Hypnos/CLAUDE.md "macOS" for the seam list and gaps.
+#if canImport(WebKit) && !os(macOS)
 import Foundation
 import os
 import SwiftUI
@@ -1002,6 +1007,33 @@ struct WebVideoPlayerView: UIViewRepresentable {
             return "\"\""
         }
         return literal
+    }
+}
+#elseif os(macOS)
+import SwiftUI
+
+/// macOS stub — see the gate comment above. Reports its source unplayable
+/// immediately so a caller chained onto `onSourceUnplayable`
+/// (`VideoWindowModel.handleSourceUnplayable`) falls forward onto Stash's
+/// server transcode instead of showing a permanently blank frame; a caller
+/// with no transcode to fall back to just stays blank, same as it would if
+/// the transcode attempt itself failed.
+struct WebVideoPlayerView: View {
+    let videoURL: URL
+    var fallbackVideoURL: URL? = nil
+    var showControls: Bool = true
+    var isRoomActive: Bool = true
+    var onVideoSizeKnown: ((CGSize) -> Void)? = nil
+    var onDurationKnown: ((Double) -> Void)? = nil
+    var loop: Bool = true
+    var visualAdjustments: VisualAdjustments? = nil
+    var loopController: VideoLoopController? = nil
+    var playbackModel: VideoWindowModel? = nil
+    var startMuted: Bool = true
+    var onSourceUnplayable: (() -> Void)? = nil
+
+    var body: some View {
+        Color.clear.onAppear { onSourceUnplayable?() }
     }
 }
 #endif

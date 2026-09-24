@@ -35,7 +35,14 @@
 import os
 import RealityKit
 import SwiftUI
+#if canImport(UIKit)
 import UIKit
+#endif
+#if canImport(AppKit)
+import AppKit
+#endif
+import Foundation
+import ImageIO
 
 /// Z-offset applied to the preview and side menu so they sit clearly
 /// in front of any diorama-thumbnail foreground layers (z: 24) in
@@ -247,7 +254,7 @@ struct QuickLook3DView: View {
                 EmptyView()
                 #endif
             } else if let loadedImage {
-                Image(uiImage: loadedImage)
+                Image(platformImage: loadedImage)
                     .resizable()
                     .scaledToFill()
                     .frame(width: size.width, height: size.height)
@@ -354,7 +361,9 @@ struct QuickLook3DView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        #if !os(macOS)
         .hoverEffect()
+        #endif
         .disabled(disabled)
     }
 

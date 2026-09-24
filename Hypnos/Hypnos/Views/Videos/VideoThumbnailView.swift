@@ -71,7 +71,7 @@ struct VideoThumbnailView: View {
 
                 // Thumbnail image
                 if let loadedImage {
-                    Image(uiImage: loadedImage)
+                    Image(platformImage: loadedImage)
                         .resizable()
                         .scaledToFill()
                 } else {

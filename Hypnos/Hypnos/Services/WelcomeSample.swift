@@ -23,7 +23,14 @@
  degrade the first screen, never break the flow that follows it.
  */
 
+#if canImport(UIKit)
 import UIKit
+#endif
+#if canImport(AppKit)
+import AppKit
+#endif
+import Foundation
+import ImageIO
 import os
 
 @MainActor

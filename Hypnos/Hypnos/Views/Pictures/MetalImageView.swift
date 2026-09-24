@@ -12,6 +12,16 @@ import MetalKit
 import os
 import SwiftUI
 
+// This is a real `UIViewRepresentable`, not something visionOS-only, so it
+// already compiles and runs on iOS/tvOS unchanged. macOS needs an
+// `NSViewRepresentable` instead — a different protocol with different
+// required method names (`makeNSView`/`updateNSView`), even though `MTKView`
+// and every line of Metal setup below are already fully cross-platform.
+// Nothing in the macOS UI (Views/Mac/) mounts this view yet, so this pass
+// stubs it rather than writing that (small, mechanical, `Coordinator`-sharing)
+// second wrapper — see Hypnos/CLAUDE.md "macOS" for the seam list and gaps.
+#if !os(macOS)
+
 /// An on-demand MTKView can receive its first draw request before a restored
 /// visionOS scene has a drawable. Re-arm rendering when the view is attached or
 /// laid out instead of relying on that one early request.
@@ -417,3 +427,23 @@ struct MetalImageView: UIViewRepresentable {
         }
     }
 }
+
+#else
+
+/// macOS stub — see the gate comment above.
+struct MetalImageView: View {
+    let texture: MTLTexture?
+    let brightness: Float
+    let contrast: Float
+    let saturation: Float
+    let sharpen: Float
+    var diagnosticLabel: String? = nil
+    var onFramePresented: (() -> Void)? = nil
+    var onRenderStalled: (() -> Void)? = nil
+
+    var body: some View {
+        Color.clear
+    }
+}
+
+#endif

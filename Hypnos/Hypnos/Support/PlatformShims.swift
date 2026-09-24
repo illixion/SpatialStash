@@ -40,7 +40,10 @@
 import AVFoundation
 import RealityKit
 import SwiftUI
+
+#if canImport(UIKit)
 import UIKit
+#endif
 
 // MARK: - Shared: what this build can do
 
@@ -78,17 +81,48 @@ enum PlatformCapabilities {
         return "Apple Vision Pro"
         #elseif os(tvOS)
         return "Apple TV"
+        #elseif os(macOS)
+        return "Mac"
         #else
         return UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone"
         #endif
     }
 }
 
+// MARK: - Shared: window scene stand-in
+
+#if os(macOS)
+/// Stand-in for `UIWindowScene` — macOS has no scene delegate object at all (a
+/// `Window`/`WindowGroup` scene maps straight to a real `NSWindow`), and this
+/// app's window-*geometry-request* machinery is a no-op on macOS anyway, the
+/// same as it already is on iOS and tvOS (see `PlatformCapabilities.
+/// supportsWindowResizing`; ordinary AppKit window resizing covers macOS
+/// instead). This type is never actually instantiated — it exists purely so
+/// every `UIWindowScene`-shaped call site in the shared module (`SceneDelegate`,
+/// `WindowGeometry`/`WindowResizeCoalescer`/`WindowSizeNudge`, the several
+/// `resolvedWindowScene` properties) has a type to compile against.
+final class PlatformWindowScene {
+    var effectiveGeometrySize: CGSize { .zero }
+}
+#else
+typealias PlatformWindowScene = UIWindowScene
+
+extension UIWindowScene {
+    /// Same value as `effectiveGeometry.coordinateSpace.bounds.size`, named to
+    /// match `PlatformWindowScene.effectiveGeometrySize` so call sites read
+    /// the same on every platform.
+    var effectiveGeometrySize: CGSize {
+        effectiveGeometry.coordinateSpace.bounds.size
+    }
+}
+#endif
+
 // MARK: - Shared: window geometry requests
 
 /// The one place shared code asks the system to resize a window. visionOS
-/// honours it through `UIWindowScene.GeometryPreferences.Vision`; iOS windows
-/// are sized by the system, so the request is dropped.
+/// honours it through `UIWindowScene.GeometryPreferences.Vision`; iOS and
+/// tvOS windows are sized by the system, so the request is dropped; macOS
+/// windows are ordinary resizable AppKit windows, so it's dropped there too.
 @MainActor
 enum WindowGeometry {
     enum ResizingRestriction: Equatable {
@@ -107,7 +141,7 @@ enum WindowGeometry {
     ///   - animated: whether visionOS may animate the change. Most callers
     ///     want `false` so an aspect-fit resize snaps instead of gliding.
     static func request(
-        _ scene: UIWindowScene?,
+        _ scene: PlatformWindowScene?,
         size: CGSize? = nil,
         restriction: ResizingRestriction? = nil,
         animated: Bool = false
@@ -159,7 +193,7 @@ extension View {
     /// actually uses the whole screen instead of leaving a bar of chrome
     /// behind after the rest of the UI has auto-hidden.
     func hidesStatusBar(_ hidden: Bool) -> some View {
-        #if os(visionOS) || os(tvOS)
+        #if os(visionOS) || os(tvOS) || os(macOS)
         return self
         #else
         return self.statusBar(hidden: hidden)

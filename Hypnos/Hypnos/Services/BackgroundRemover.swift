@@ -10,7 +10,14 @@ import CoreImage
 import CoreImage.CIFilterBuiltins
 import ImageIO
 import os
+#if canImport(UIKit)
 import UIKit
+#endif
+#if canImport(AppKit)
+import AppKit
+#endif
+import Foundation
+import ImageIO
 import Vision
 
 actor BackgroundRemover {

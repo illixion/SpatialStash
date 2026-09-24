@@ -20,7 +20,14 @@ import ImageIO
 import os
 import RealityKit
 import SwiftUI
+#if canImport(UIKit)
 import UIKit
+#endif
+#if canImport(AppKit)
+import AppKit
+#endif
+import Foundation
+import ImageIO
 
 #if os(visionOS)
 

@@ -23,11 +23,21 @@ import os
 
 enum AudioSessionConfig {
     /// Configure a mixable playback session. Idempotent; safe to call repeatedly.
+    ///
+    /// `AVAudioSession` doesn't exist on macOS — there is no per-app audio
+    /// focus/category system there the way there is on iOS/tvOS/visionOS; a
+    /// Mac app's audio always mixes with everything else unless it explicitly
+    /// takes exclusive device access (which this app never does). So this is
+    /// a no-op on macOS rather than a port.
     static func configureMixedPlayback() {
+        #if os(macOS)
+        return
+        #else
         do {
             try AVAudioSession.sharedInstance().setCategory(.playback, options: [.mixWithOthers])
         } catch {
             AppLogger.appModel.error("Failed to set mixable audio session: \(error.localizedDescription, privacy: .public)")
         }
+        #endif
     }
 }

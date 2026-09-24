@@ -249,7 +249,7 @@ struct VideoOrnamentsView: View {
             // No share sheet on tvOS (see PhotoOrnamentView's Share button
             // for the same note) — this ornament isn't part of the tvOS root
             // UI's video player anyway.
-            #if !os(tvOS)
+            #if !os(tvOS) && !os(macOS)
             if let url = windowModel.shareFileURL {
                 ActivityViewController(
                     activityItems: [url],

@@ -7,7 +7,7 @@
  reads, so the two platforms agree on when each control appears.
  */
 
-#if !os(visionOS)
+#if !os(visionOS) && !os(macOS)
 
 import SwiftUI
 

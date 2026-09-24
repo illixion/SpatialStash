@@ -45,9 +45,9 @@ enum WindowSizeNudge {
     /// *scene* smaller by the chrome insets, and the next nudge measures the
     /// smaller window and shrinks again. That one fires on every tap on a 3D
     /// photo, so it had the most opportunities to walk a window down.
-    static func perform(on scene: UIWindowScene, delta: CGFloat) async {
+    static func perform(on scene: PlatformWindowScene, delta: CGFloat) async {
         guard !isSuppressed else { return }
-        let base = scene.effectiveGeometry.coordinateSpace.bounds.size
+        let base = scene.effectiveGeometrySize
         // Only guards against a degenerate scene: the nudge must not ask for a
         // non-positive size. A real minimum belongs to the persistence layer.
         guard base.width > 2, base.height > 2 else { return }

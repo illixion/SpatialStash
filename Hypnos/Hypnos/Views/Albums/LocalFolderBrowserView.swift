@@ -340,13 +340,17 @@ struct LocalFolderBrowserView: View {
         )
     }
 
-    private var resolvedWindowScene: UIWindowScene? {
+    private var resolvedWindowScene: PlatformWindowScene? {
         if let sceneDelegate {
             return sceneDelegate.windowScene
         }
+        #if os(macOS)
+        return nil
+        #else
         return UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
             .first { $0.activationState == .foregroundActive }
+        #endif
     }
 }
 
@@ -368,7 +372,7 @@ struct LocalMediaThumbnailView: View {
                 Color.secondary.opacity(0.2)
 
                 if let loadedImage {
-                    Image(uiImage: loadedImage)
+                    Image(platformImage: loadedImage)
                         .resizable()
                         .scaledToFill()
                 } else if isLoading {

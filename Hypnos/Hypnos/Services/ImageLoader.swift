@@ -9,6 +9,10 @@ import ImageIO
 import os
 import SwiftUI
 
+#if canImport(AppKit)
+import AppKit
+#endif
+
 /// Wrapper class to store image data in NSCache
 final class CachedImageData: NSObject, @unchecked Sendable {
     let image: UIImage
@@ -583,11 +587,26 @@ actor ImageLoader {
             width: (image.size.width * image.scale * factor).rounded(),
             height: (image.size.height * image.scale * factor).rounded()
         )
+        #if os(macOS)
+        // No `UIGraphicsImageRenderer` on macOS; `NSImage`'s own
+        // lock-focus-and-draw is the equivalent redraw-at-a-new-size idiom.
+        let resized = NSImage(size: pixelSize)
+        resized.lockFocus()
+        image.draw(
+            in: NSRect(origin: .zero, size: pixelSize),
+            from: NSRect(origin: .zero, size: image.size),
+            operation: .copy,
+            fraction: 1.0
+        )
+        resized.unlockFocus()
+        return resized
+        #else
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         return UIGraphicsImageRenderer(size: pixelSize, format: format).image { _ in
             image.draw(in: CGRect(origin: .zero, size: pixelSize))
         }
+        #endif
     }
 
     /// Load thumbnail for a local file using memory-efficient downsampling

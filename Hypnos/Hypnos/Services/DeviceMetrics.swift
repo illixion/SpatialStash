@@ -53,7 +53,7 @@ struct DeviceMetrics {
             deviceId: deviceId,
             app: app,
             footprintMB: physFootprintBytes() / (1024 * 1024),
-            availableMB: Int(os_proc_available_memory()) / (1024 * 1024),
+            availableMB: availableMemoryMB(),
             gpuMB: gpu / (1024 * 1024),
             photoWindows: photoWindows,
             slideshowWindows: slideshowWindows,
@@ -73,5 +73,18 @@ struct DeviceMetrics {
             }
         }
         return kr == KERN_SUCCESS ? Int(info.phys_footprint) : 0
+    }
+
+    /// `os_proc_available_memory()` is iOS/tvOS/visionOS jetsam telemetry —
+    /// macOS has no per-process memory-pressure budget of its own to report
+    /// (the kernel manages system-wide pressure differently, with no jetsam
+    /// equivalent), so this is 0 there. The other fields (`footprintMB`, GPU
+    /// allocation) still report real numbers on macOS.
+    private static func availableMemoryMB() -> Int {
+        #if os(macOS)
+        return 0
+        #else
+        return Int(os_proc_available_memory()) / (1024 * 1024)
+        #endif
     }
 }

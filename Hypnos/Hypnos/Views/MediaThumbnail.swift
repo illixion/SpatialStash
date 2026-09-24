@@ -24,7 +24,14 @@
  */
 
 import SwiftUI
+#if canImport(UIKit)
 import UIKit
+#endif
+#if canImport(AppKit)
+import AppKit
+#endif
+import Foundation
+import ImageIO
 
 /// Process-wide cache of decoded thumbnails.
 ///
@@ -97,7 +104,7 @@ struct MediaThumbnail: View {
                 .fill(Color.black.opacity(0.25))
 
             if let image {
-                Image(uiImage: image)
+                Image(platformImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
                     .transition(.opacity)

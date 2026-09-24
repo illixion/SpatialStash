@@ -16,7 +16,7 @@
  swipe. Every viewer already carries a back/gallery button in its bar.
  */
 
-#if !os(visionOS)
+#if !os(visionOS) && !os(macOS)
 
 import RAVEUI
 import SwiftUI

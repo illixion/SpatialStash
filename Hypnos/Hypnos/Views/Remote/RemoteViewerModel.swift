@@ -8,7 +8,14 @@
 
 import os
 import SwiftUI
+#if canImport(UIKit)
 import UIKit
+#endif
+#if canImport(AppKit)
+import AppKit
+#endif
+import Foundation
+import ImageIO
 
 @MainActor
 @Observable
@@ -295,9 +302,14 @@ class RemoteViewerModel: SlideshowEngine {
         // waiting out the broker's 5-10s heartbeat reap) actually completes
         // before the app suspends.
         endBackgroundFlushAssertion()
+        #if !os(macOS)
+        // No background-task assertion API on macOS — the app isn't
+        // suspended when it loses focus the way iOS/visionOS suspend a
+        // backgrounded scene, so there's nothing to hold open here.
         backgroundFlushAssertion = UIApplication.shared.beginBackgroundTask(withName: "roboframe-presence-flush") {
             Task { @MainActor [weak self] in self?.endBackgroundFlushAssertion() }
         }
+        #endif
         Task { [weak self] in
             await self?.wsSession?.flushAndSuspendIfAbsent()
             self?.endBackgroundFlushAssertion()
@@ -306,12 +318,16 @@ class RemoteViewerModel: SlideshowEngine {
 
     /// Assertion held while the background presence flush completes. visionOS
     /// would otherwise suspend us mid-send.
+    #if !os(macOS)
     @ObservationIgnored private var backgroundFlushAssertion: UIBackgroundTaskIdentifier = .invalid
+    #endif
 
     private func endBackgroundFlushAssertion() {
+        #if !os(macOS)
         guard backgroundFlushAssertion != .invalid else { return }
         UIApplication.shared.endBackgroundTask(backgroundFlushAssertion)
         backgroundFlushAssertion = .invalid
+        #endif
     }
 
     /// HA-driven panel state addressed to this window's deviceId
